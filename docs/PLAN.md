@@ -4,9 +4,10 @@ Companion to [PRD.md](PRD.md). Each milestone ends in a **git commit on a passin
 revert-friendly by design. Order is chosen so each milestone adds at most 2–3 genuinely new
 components (the CleanRL/SB3 lesson: localize bugs by construction).
 
-> **Status (2026-06-10): M0–M6 all complete, every pre-registered gate passed.**
-> Remaining work is the M7 stretch list plus the deferred items called out inline
-> (checkpointing, Dueling DQN, tensor pooling, PPO action masking).
+> **Status (2026-06-10): M0–M6 (the library) all complete, every pre-registered gate
+> passed.** New requirement inserted the same day: the **interactive web playground**
+> (PRD §7) — planned below as **M7–M10**, none started. The former stretch list is now
+> M11; checkpointing moved out of it into M7 as a hard requirement.
 
 ## M0 — Skeleton + core contracts  *(part of the quick demo)* ✅
 
@@ -99,18 +100,74 @@ parallel mode reproduces sequential **bitwise**, not just within tolerance.
 - **Gate passed:** masked Double DQN solves **30/30 (100%)** of the easy set
   (optimal 4–10) within 2× optimal after 40k steps (~1 min) — with the pure sparse
   −1/+100 reward; the potential-based shaped variant exists but wasn't needed.
-- Still open for later: medium/hard curriculum, imitation warm-start from BFS
-  solutions, wiring the existing `C:\Repos\Spelletjes\Rush Hour` app as a
-  front-end/visualizer (request a clean checkout when that starts).
+- Still open for later: medium/hard curriculum and imitation warm-start from BFS
+  solutions (M11). The interactive front-end is now the **M8 web playground page**;
+  the existing `C:\Repos\Spelletjes\Rush Hour` app remains a possible puzzle-data
+  source (M11 — request a clean checkout when that starts).
 
-## M7 — Stretch (unordered, not started)
+## M7 — Checkpointing + model store  *(prerequisite for the web app)*
+
+- Checkpoint formats per the PRD decisions: JSON for tabular Q-tables; versioned
+  little-endian binary for NN weights + Adam state + RNG state (full training resume);
+  versioned binary for the 2048 n-tuple weight tables (17×65 536 floats — by far the
+  largest artifact, ~4.4 MB).
+- `IModelStore`: one *current* checkpoint per (environment, algorithm) under a
+  configurable data directory; atomic save (write-temp-then-rename); load-or-null.
+- Demo sections gain `--save`/`--load` so trained agents survive between runs.
+- **Gate:** round-trip tests — reloaded agent produces bitwise-identical greedy
+  evaluation; an interrupted-and-resumed DQN run (weights + optimizer + RNG restored)
+  bitwise-matches an uninterrupted run with the same master seed.
+
+## M8 — Web host + Rush Hour page  *(first end-to-end playground slice)*
+
+- `src/RL.NET.Web`: ASP.NET Core host + Angular ClientApp wired through
+  **MintPlayer.AspNetCore.SpaServices** (`UseAngularCliServer` in dev — running the host
+  is all that's needed; never start `ng serve` separately). Landing page lists games.
+- Rush Hour page: HTML5-canvas board editor (place/drag vehicles, validation:
+  overlaps, red car on exit row), **manual play** with real rules, **reset to drawn
+  state**.
+- Solve API: `POST /api/rushhour/solve` with the drawn state → runs the stored trained
+  model (M7) and the BFS oracle → returns a **trajectory** (action + resulting state per
+  step) + metadata (solved, AI move count, BFS-optimal count).
+- Playback UI: back/forward step buttons + play/pause over the trajectory; always
+  recoverable to the drawn state.
+- **Gate:** e2e (Playwright against the running host) — draw a known puzzle, submit,
+  step through a returned solution that actually solves it; API integration test: a
+  generated easy puzzle returns a solving trajectory within 2× BFS-optimal.
+
+## M9 — 2048 page + training-on-demand + gallery
+
+- 2048 page: canvas tile editor, manual play (real merge/spawn rules), reset to drawn
+  state; solve returns an n-tuple-agent playout *from the drawn state* as a trajectory
+  (move + spawned tile per step) for deterministic browser replay.
+- Background training jobs: if the model store has no model for the requested
+  environment, the solve request enqueues a general training job (independent of the
+  submitted state) with progress (games played / current eval score) streamed or polled
+  by the browser; the solve completes when training does. Checkpoint saved on finish.
+- **Public game gallery:** submitted states + returned solutions persisted (JSON files
+  under the data directory next to the model store) and listed/replayable on the site.
+- **Gate:** with an empty model store, submitting a 2048 board visibly trains first and
+  then solves; with a warm store it solves immediately; gallery entries survive an app
+  restart.
+
+## M10 — Docker
+
+- Multi-stage Dockerfile: Node + .NET SDK build stage (Angular production build +
+  `dotnet publish`) → ASP.NET runtime image; data directory at `/data` (model store +
+  gallery) declared as a **volume**; configuration via environment variables.
+- docker-compose example with a named volume; README run instructions.
+- **Gate:** `docker build` + run, solve a drawn puzzle in the browser; `docker restart`
+  — model store and gallery still there (volume), no retraining needed.
+
+## M11 — Stretch (unordered, not started)
 
 MountainCar (exploration stress test) · Snake (demo gif) · TorchSharp `IComputeBackend`
 implementation · TensorBoard event writer · self-play scaffolding (TicTacToe + minimax oracle)
-· NuGet packaging · checkpointing/full training resume (deferred from M3) · Dueling DQN head
-(deferred from M3) · tensor/tape pooling (deferred from M2) · Categorical/PPO action masking
-(deferred from M5) · harder Rush Hour sets with curriculum + imitation from BFS solutions
-· Rush Hour front-end via `C:\Repos\Spelletjes\Rush Hour` (ask for a clean checkout first).
+· NuGet packaging · Dueling DQN head (deferred from M3) · tensor/tape pooling (deferred
+from M2) · Categorical/PPO action masking (deferred from M5) · harder Rush Hour sets with
+curriculum + imitation from BFS solutions · watch-only playground pages for CartPole/2048
+self-play · importing puzzles from `C:\Repos\Spelletjes\Rush Hour` as gallery data
+(ask for a clean checkout first).
 
 ## Testing strategy (cross-cutting, from research)
 
@@ -137,7 +194,7 @@ implementation · TensorBoard event writer · self-play scaffolding (TicTacToe +
 
 ## Immediate next step
 
-All planned milestones are done. Pick from the M7 stretch list — or take the library
-to a new game. Demo entry points: `dotnet run --project src/RL.NET.Demo -c Release --
-[grid|lake|cartpole|ppo|2048|2048dqn|rushhour] [seed]` (launch profiles exist for each).
-Tests: `dotnet test` (statistical gates carry `Category=Slow`).
+**Build M7 (checkpointing + model store)** — it unblocks everything in the web
+playground (M8–M10). Demo entry points: `dotnet run --project src/RL.NET.Demo -c Release
+-- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour] [seed]` (launch profiles exist for
+each). Tests: `dotnet test` (statistical gates carry `Category=Slow`).

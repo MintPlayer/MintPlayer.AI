@@ -38,6 +38,10 @@ out (vectorized environments) without rewrites.
    **Rush Hour** (the owner's own games) as showcase environments.
 6. **Reproducibility as a feature**: fixed RNG implementation, master-seed fan-out,
    deterministic single-threaded mode, seeded learning-curve regression tests.
+7. **Interactive web playground** *(added 2026-06-10, after the v1 gates passed)*: an
+   ASP.NET Core + Angular web app where anyone can draw a game state, play it, submit it
+   to a trained model, and step through the AI's solution — with persisted training
+   results and Docker deployment. Spec in [§7](#7-interactive-web-app-rlnet-playground).
 
 ## 3. Non-goals (v1)
 
@@ -66,6 +70,10 @@ Explicitly out of scope to prevent the scope creep every research thread warned 
 | Logging | CSV per run + live console metrics. TensorBoard event files deferred (needs a protobuf writer) | Keep v1 dependency-free. |
 | Checkpoints | JSON for tabular Q-tables; versioned little-endian binary for NN weights + optimizer state + RNG state (full resume) | Cross-version stability not promised in v1. |
 | License | **MIT**, stated up front, never churned | RLMatrix's license instability is precisely the gap being filled. |
+| Web stack | ASP.NET Core host + Angular SPA via **MintPlayer.AspNetCore.SpaServices** (`UseAngularCliServer` in dev — the host spawns and proxies the Angular dev server; built static assets in production) | Owner's standard hosting model; one process to run in dev, one container in prod. |
+| Model store | One *current* checkpoint per (environment, algorithm) in a configurable data directory (env var / appsettings), using the PRD checkpoint formats (JSON tabular / versioned binary NN, n-tuple tables as versioned binary too) | Training results survive restarts; the web app never trains from scratch unless the store is empty. |
+| Solve API contract | Solve endpoint returns a **trajectory** — per step: action + resulting board state (+ any stochastic event, e.g. the 2048 tile spawn) | 2048 is stochastic, so a bare move list is not replayable; returning states makes browser playback trivial and game-agnostic. |
+| Deployment | Multi-stage Dockerfile (Node + .NET SDK build stage → ASP.NET runtime); volume `/data` for the model store + submitted games | Anyone can pull/run it and see persisted models and the public game gallery. |
 | Reference fixtures | One-time Python/Gymnasium script generates golden trajectories (CartPole, FrozenLake) committed as test fixtures | A physics transcription error is indistinguishable from an algorithm bug. |
 
 ## 5. Public API sketch
@@ -117,7 +125,46 @@ than referencing `C:\Repos\Spelletjes\Rush Hour` (currently being modified by an
 session); the existing app can later consume RL.NET for visualization, and its puzzle
 definitions can be imported as data.
 
-## 7. Performance targets (measured with BenchmarkDotNet on dev machine)
+## 7. Interactive web app ("RL.NET Playground")
+
+*Requirement inserted 2026-06-10, after the library v1 (M0–M6) gates passed. Delivered as
+milestones M7–M10 in [PLAN.md](PLAN.md).*
+
+A new project `src/RL.NET.Web`: an **ASP.NET Core** application hosting an **Angular**
+front-end through **MintPlayer.AspNetCore.SpaServices** (the host runs and proxies the
+Angular CLI dev server in development; serves the built bundle in production).
+
+1. **One page per game/environment.** A landing page lists the environments; each game
+   gets its own page. v1 of the playground covers the two drawable board games —
+   **Rush Hour** and **2048**; watch-only pages for CartPole etc. can come later.
+2. **Draw + play + reset.** Each game page has an HTML5-canvas board editor: the user
+   draws a game state (places Rush Hour vehicles / sets 2048 tiles), can **play it
+   himself** with the real environment rules, and can **reset back to the drawn state**
+   at any time. The drawn state is validated (e.g. Rush Hour overlap/exit-row rules)
+   before play or submission.
+3. **Solve API.** A button posts the drawn game state to the backend:
+   - If a trained model for that environment exists in the **model store**, the backend
+     immediately runs it on the posted state and returns the solution.
+   - If not, the backend first **trains** — a background job, *independent of the
+     submitted state* (the model is general for the environment, not fitted per-puzzle) —
+     with progress observable from the browser; the solve runs when training completes.
+   - The response is a **trajectory**: per step, the action taken and the resulting board
+     state (plus stochastic events such as 2048 tile spawns), with metadata — solved or
+     not, move count, and for Rush Hour the BFS-optimal move count for comparison.
+4. **Solution playback.** The browser animates the returned trajectory with
+   **back/forward step buttons** (plus play/pause), and can always return to the user's
+   drawn initial state.
+5. **Persistent training results.** Trained models (n-tuple weight tables, NN weights +
+   optimizer + RNG state) are checkpointed to the model store on disk, so training never
+   restarts from scratch. *This promotes the checkpointing item deferred from M3 into a
+   hard requirement.*
+6. **Public game gallery.** Submitted game states (and the solutions returned for them)
+   are persisted and listed on the site for anyone to browse and replay.
+7. **Dockerized.** Multi-stage Dockerfile (Node + .NET SDK build → ASP.NET runtime
+   image); a **volume** (`/data`) persists the model store and the submitted-games
+   gallery across container restarts.
+
+## 8. Performance targets (measured with BenchmarkDotNet on dev machine)
 
 - Tabular: ≥ 500k env-steps/sec on GridWorld (training loop included)
 - NN: ≥ 1,000 Adam steps/sec, batch 64, net 4→64→64→2, single thread
@@ -125,7 +172,7 @@ definitions can be imported as data.
 - Training allocations: zero per-step gen0 allocations in steady state (pooled tensors/tape)
 - An early **spike benchmark validates the managed-GEMM assumption before M2 is built out**
 
-## 8. Risks
+## 9. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -137,3 +184,5 @@ definitions can be imported as data.
 | Premature abstraction (the SB3/CleanRL lesson) | Single-file reference per algorithm first; abstractions extracted only after gates pass and must reproduce seeded curves |
 | Rush Hour sparse reward too hard for vanilla DQN/PPO | Curriculum (easy→hard puzzle sets), shaped reward variant, BFS solver as oracle/imitation source; treat failure as a documented finding |
 | Hyperparameter fragility across envs | Known-good per-env configs committed with the test suite |
+| User-drawn Rush Hour puzzles are out-of-distribution for a model trained on generated sets | BFS oracle always produces a reference solution; UI reports both AI and optimal move counts; failures shown honestly as findings; harder-curriculum/imitation items raise generality later |
+| Long training jobs inside a web request | Training always runs as a tracked background job with polled/streamed progress; solve requests queue behind it rather than time out |
