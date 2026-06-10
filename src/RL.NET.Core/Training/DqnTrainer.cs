@@ -42,17 +42,29 @@ public sealed class GreedyQAgent(Mlp network, int actionCount, Xoshiro256StarSta
 {
     public double Epsilon { get; set; }
 
-    public int Act(float[] observation, bool greedy = false)
+    public int Act(float[] observation, bool greedy = false) => Act(observation, null, greedy);
+
+    /// <summary>Masked variant: exploration and argmax are restricted to legal actions.</summary>
+    public int Act(float[] observation, bool[]? mask, bool greedy = false)
     {
         if (!greedy && rng is not null && rng.NextDouble() < Epsilon)
-            return rng.NextInt(actionCount);
+        {
+            if (mask is null) return rng.NextInt(actionCount);
+            int legal = mask.Count(m => m);
+            int pick = rng.NextInt(legal);
+            for (int a = 0; a < actionCount; a++)
+                if (mask[a] && pick-- == 0) return a;
+        }
 
         using (GradMode.NoGrad())
         {
             var q = network.Forward(new Tensor(observation, 1, observation.Length));
-            int best = 0;
-            for (int a = 1; a < actionCount; a++)
-                if (q.Data[a] > q.Data[best]) best = a;
+            int best = -1;
+            for (int a = 0; a < actionCount; a++)
+            {
+                if (mask is not null && !mask[a]) continue;
+                if (best < 0 || q.Data[a] > q.Data[best]) best = a;
+            }
             return best;
         }
     }
@@ -75,9 +87,10 @@ public static class DqnTrainer
         target.CopyFrom(online);
 
         var adam = new Adam(online.Parameters(), options.LearningRate);
-        var buffer = new ReplayBuffer(options.BufferCapacity, obsDim);
+        var buffer = new ReplayBuffer(options.BufferCapacity, obsDim, actionCount);
         var bufferRng = seeds.CreateRng(RngStreams.Buffer);
         var agent = new GreedyQAgent(online, actionCount, seeds.CreateRng(RngStreams.Policy));
+        var maskProvider = env as IActionMaskProvider;
 
         var (obs, _) = env.Reset(seeds.Derive(RngStreams.Environment));
         float lastLoss = 0f;
@@ -86,11 +99,13 @@ public static class DqnTrainer
         for (int step = 1; step <= options.MaxSteps; step++)
         {
             agent.Epsilon = options.Epsilon.Value(step);
-            int action = agent.Act(obs);
+            int action = agent.Act(obs, maskProvider?.CurrentActionMask());
             var result = env.Step(action);
+            // Mask of the next state, captured BEFORE any autoreset (used by the TD-target max).
+            var nextMask = maskProvider?.CurrentActionMask();
 
             // Store terminated only — truncated transitions must still bootstrap.
-            buffer.Add(obs, action, result.Reward, result.Observation, result.Terminated);
+            buffer.Add(obs, action, result.Reward, result.Observation, result.Terminated, nextMask);
             obs = result.Done ? env.Reset().Observation : result.Observation;
 
             if (buffer.Count >= options.WarmupSteps && step % options.TrainEvery == 0)
@@ -101,7 +116,8 @@ public static class DqnTrainer
 
             if (step % options.EvalEvery == 0)
             {
-                lastEval = Evaluator.Evaluate(env, agent, options.EvalEpisodes, seeds.Derive(RngStreams.Evaluation)).MeanReturn;
+                lastEval = Evaluator.Evaluate(env, (float[] o, bool[]? m) => agent.Act(o, m, greedy: true),
+                    options.EvalEpisodes, seeds.Derive(RngStreams.Evaluation)).MeanReturn;
                 options.OnProgress?.Invoke(new DqnProgress(step, options.MaxSteps, lastEval, agent.Epsilon, lastLoss));
                 (obs, _) = env.Reset(); // evaluation ended mid-episode; start fresh
 
@@ -126,11 +142,17 @@ public static class DqnTrainer
 
             for (int i = 0; i < batch.Size; i++)
             {
-                int best = 0;
-                for (int a = 1; a < actions; a++)
-                    if (onlineQ.Data[i * actions + a] > onlineQ.Data[i * actions + best]) best = a;
+                // Argmax restricted to the next state's legal actions.
+                int best = -1;
+                for (int a = 0; a < actions; a++)
+                {
+                    if (!batch.NextMasks[i * actions + a]) continue;
+                    if (best < 0 || onlineQ.Data[i * actions + a] > onlineQ.Data[i * actions + best]) best = a;
+                }
 
-                double bootstrap = batch.Terminated[i] ? 0 : options.Gamma * targetQ.Data[i * actions + best];
+                double bootstrap = batch.Terminated[i] || best < 0
+                    ? 0
+                    : options.Gamma * targetQ.Data[i * actions + best];
                 targets[i] = (float)(batch.Rewards[i] + bootstrap);
             }
         }

@@ -6,21 +6,26 @@ using RLNet.Core.Schedules;
 using RLNet.Core.Solvers;
 using RLNet.Core.Training;
 using RLNet.Environments;
+using RLNet.Environments.Game2048;
 
-// Usage: RL.NET.Demo [grid|lake|cartpole ...] [seed]
-//        no env args = run everything.
+// Usage: RL.NET.Demo [grid|lake|cartpole|ppo|2048|2048dqn ...] [seed]
+//        no env args = run everything except 2048dqn (DQN needs a long budget there).
+string[] knownSections = ["grid", "lake", "cartpole", "ppo", "2048", "2048dqn"];
 var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 ulong masterSeed = 42;
 foreach (var arg in args)
 {
-    if (ulong.TryParse(arg, out var s)) masterSeed = s;
-    else selected.Add(arg);
+    if (knownSections.Contains(arg, StringComparer.OrdinalIgnoreCase)) selected.Add(arg);
+    else if (ulong.TryParse(arg, out var s)) masterSeed = s;
+    else Console.WriteLine($"(ignoring unknown argument '{arg}')");
 }
-bool ShouldRun(string name) => selected.Count == 0 || selected.Contains(name);
+bool ShouldRun(string name) => selected.Count == 0
+    ? name != "2048dqn"
+    : selected.Contains(name);
 bool animate = !Console.IsOutputRedirected;
 
 Console.WriteLine("RL.NET demo");
-Console.WriteLine($"master seed: {masterSeed}   (usage: RL.NET.Demo [grid|lake|cartpole|ppo ...] [seed])");
+Console.WriteLine($"master seed: {masterSeed}   (usage: RL.NET.Demo [{string.Join('|', knownSections)} ...] [seed])");
 Console.WriteLine();
 
 if (ShouldRun("grid"))
@@ -137,8 +142,126 @@ if (ShouldRun("ppo"))
     Console.WriteLine();
 }
 
+if (ShouldRun("2048"))
+{
+    Console.WriteLine("=== 2048 — afterstate TD(0) with n-tuple network (17×4-tuples, ~4.5 MB of weights) ===");
+    Console.WriteLine("    solved criterion (PRD): reach the 2048 tile in >= 10% of 100 greedy games");
+    var agent = new NTuple2048Agent();
+    var trainRng = new Xoshiro256StarStar(new SeedSequence(masterSeed).Derive(RngStreams.Policy));
+
+    const int totalGames = 100_000;
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    for (int game = 1; game <= totalGames; game++)
+    {
+        agent.PlayGame(trainRng, learn: true);
+        if (game % 10_000 == 0)
+        {
+            var (rate2048, rate1024, avgScore, bestTile) = Eval2048(agent, new SeedSequence(masterSeed).Derive(RngStreams.Evaluation), games: 100);
+            Console.WriteLine($"  game {game,7}/{totalGames}  greedy eval: avg score {avgScore,6:F0}  " +
+                              $"1024-rate {rate1024:P0}  2048-rate {rate2048:P0}  best tile {bestTile}");
+        }
+    }
+    sw.Stop();
+
+    var final = Eval2048(agent, new SeedSequence(masterSeed).Derive(RngStreams.Evaluation), games: 100);
+    Console.WriteLine($"trained {totalGames:N0} self-play games in {sw.Elapsed.TotalSeconds:F0} s");
+    Console.WriteLine($"final: 2048-rate {final.Rate2048:P0} over 100 games " +
+                      $"({(final.Rate2048 >= 0.10 ? "SOLVED" : "not solved")}, target >= 10%)");
+    Console.WriteLine();
+    if (animate) Animate2048(agent, new SeedSequence(masterSeed).Derive(RngStreams.Evaluation + 1));
+    Console.WriteLine();
+}
+
+if (ShouldRun("2048dqn"))
+{
+    Console.WriteLine("=== 2048 — generic masked Double DQN (demonstrates IActionMaskProvider) ===");
+    var seeds = new SeedSequence(masterSeed);
+    var env = new Env2048();
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var result = DqnTrainer.Train(env, new DqnOptions
+    {
+        Hidden = [256, 256],
+        MaxSteps = 300_000,
+        BufferCapacity = 100_000,
+        Epsilon = new LinearSchedule(1.0, 0.05, 100_000),
+        EvalEvery = 25_000,
+        EvalEpisodes = 10,
+        OnProgress = p => Console.WriteLine(
+            $"  step {p.Step,7}/{p.MaxSteps}  eval mean return: {p.EvalMeanReturn,7:F1}  epsilon: {p.Epsilon:F3}  loss: {p.LastLoss:F4}"),
+    }, seeds);
+    sw.Stop();
+
+    // Report in game terms: play 50 greedy games, count tiles reached.
+    int games2048 = 0, games1024 = 0, games512 = 0;
+    double totalScore = 0;
+    for (int g = 0; g < 50; g++)
+    {
+        env.Reset(seeds.Derive(RngStreams.Evaluation) + (ulong)g);
+        while (true)
+        {
+            var step = env.Step(result.Agent.Act(env.CurrentObservation(), env.CurrentActionMask(), greedy: true));
+            if (step.Done) break;
+        }
+        totalScore += env.Score;
+        if (env.MaxTile >= 2048) games2048++;
+        if (env.MaxTile >= 1024) games1024++;
+        if (env.MaxTile >= 512) games512++;
+    }
+    Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalMinutes:F1} min");
+    Console.WriteLine($"50 greedy games: avg score {totalScore / 50:F0}, 512-rate {games512 / 50.0:P0}, " +
+                      $"1024-rate {games1024 / 50.0:P0}, 2048-rate {games2048 / 50.0:P0}");
+    Console.WriteLine();
+}
+
 Console.WriteLine("done.");
 return;
+
+static (double Rate2048, double Rate1024, double AvgScore, int BestTile) Eval2048(
+    NTuple2048Agent agent, ulong seed, int games)
+{
+    var rng = new Xoshiro256StarStar(seed);
+    int hits2048 = 0, hits1024 = 0, bestExp = 0;
+    double totalScore = 0;
+    for (int g = 0; g < games; g++)
+    {
+        var (score, maxExp) = agent.PlayGame(rng, learn: false);
+        totalScore += score;
+        if (maxExp >= 11) hits2048++;
+        if (maxExp >= 10) hits1024++;
+        bestExp = Math.Max(bestExp, maxExp);
+    }
+    return (hits2048 / (double)games, hits1024 / (double)games, totalScore / games, 1 << bestExp);
+}
+
+static void Animate2048(NTuple2048Agent agent, ulong seed)
+{
+    Console.WriteLine("--- 2048 — greedy playback (every 4th move) ---");
+    var env = new Env2048();
+    env.Reset(seed);
+    int frameTop = Console.CursorTop;
+    Span<byte> scratch = stackalloc byte[16];
+
+    for (int move = 0; ; move++)
+    {
+        if (move % 4 == 0)
+        {
+            Console.SetCursorPosition(0, frameTop);
+            Console.Write(env.RenderString());
+            Thread.Sleep(50);
+        }
+
+        int action = agent.ChooseMove(env.Board, out _, scratch);
+        var step = env.Step(action);
+        if (step.Done)
+        {
+            Console.SetCursorPosition(0, frameTop);
+            Console.Write(env.RenderString());
+            Console.WriteLine($"game over after {move + 1} moves — final score {env.Score}, best tile {env.MaxTile}");
+            break;
+        }
+    }
+}
 
 static void PrintPolicyAndValues(GridEnvironmentBase env, TabularAgent agent, ValueIterationResult oracle)
 {

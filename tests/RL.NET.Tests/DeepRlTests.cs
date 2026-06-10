@@ -12,7 +12,7 @@ public class ReplayBufferTests
     [Fact]
     public void Wraparound_OverwritesOldestEntries()
     {
-        var buffer = new ReplayBuffer(capacity: 3, obsDim: 1);
+        var buffer = new ReplayBuffer(capacity: 3, obsDim: 1, actionCount: 5);
         for (int i = 0; i < 5; i++)
             buffer.Add([i], i, i, [i + 0.5f], false);
 
@@ -32,7 +32,7 @@ public class ReplayBufferTests
         // The trainer must pass terminated only. This guards the call-site convention:
         // a truncated-but-not-terminated transition is stored with terminated=false,
         // so its TD target still bootstraps.
-        var buffer = new ReplayBuffer(capacity: 2, obsDim: 1);
+        var buffer = new ReplayBuffer(capacity: 2, obsDim: 1, actionCount: 2);
         buffer.Add([1f], 0, 1.0, [2f], terminated: false); // truncated transition
         buffer.Add([3f], 1, 1.0, [4f], terminated: true);  // true terminal
 

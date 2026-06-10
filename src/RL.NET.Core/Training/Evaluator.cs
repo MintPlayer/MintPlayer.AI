@@ -20,7 +20,19 @@ public static class Evaluator
         IAgent<TObs, TAct> agent,
         int episodes,
         ulong seed)
+        => Evaluate(env, (obs, _) => agent.Act(obs, greedy: true), episodes, seed);
+
+    /// <summary>
+    /// Policy-function variant. For <see cref="IActionMaskProvider"/> environments the
+    /// current action mask is passed to the policy; otherwise the mask is null.
+    /// </summary>
+    public static EvalResult Evaluate<TObs, TAct>(
+        IEnvironment<TObs, TAct> env,
+        Func<TObs, bool[]?, TAct> policy,
+        int episodes,
+        ulong seed)
     {
+        var maskProvider = env as IActionMaskProvider;
         var returns = new double[episodes];
         var lengths = new double[episodes];
 
@@ -33,7 +45,7 @@ public static class Evaluator
 
             while (true)
             {
-                var step = env.Step(agent.Act(obs, greedy: true));
+                var step = env.Step(policy(obs, maskProvider?.CurrentActionMask()));
                 episodeReturn += step.Reward;
                 length++;
                 obs = step.Observation;

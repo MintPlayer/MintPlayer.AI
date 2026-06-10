@@ -59,12 +59,18 @@ components (the CleanRL/SB3 lesson: localize bugs by construction).
 - **Gate:** PPO CartPole ≥ 475 median/3 seeds; hand-computed 3-step GAE unit test;
   parallel mode reproduces sequential results at metric-level tolerance.
 
-## M5 — 2048  *(owner's game #1)*
+## M5 — 2048  *(owner's game #1)* ✅
 
 - Env: 4×4 board, log2-encoded observation, action masking for invalid moves,
   spawn 90% 2 / 10% 4; console renderer.
-- Train DQN and PPO; pre-registered gate: 2048 tile in ≥ 10% of 100 eval games.
-- Stretch: afterstate TD learning with n-tuple network (the literature SOTA approach, ≥ 80%).
+- Action-mask infrastructure (`IActionMaskProvider`): masked exploration/argmax in
+  DQN + GreedyQAgent, masked TD-target max via masks stored in the replay buffer,
+  masked evaluation. (Categorical/PPO masking deferred to when a game needs it.)
+- Afterstate TD(0) n-tuple learner (Szubert & Jaśkowski): **gate passed** — 84%
+  2048-rate after 100k self-play games (168 s), vs the pre-registered ≥ 10% target;
+  the ≥ 80% stretch criterion is met as well. Best tile observed: 8192.
+- Generic masked Double DQN runs on the same env via `2048dqn` demo section
+  (demonstrates the framework path; n-tuple remains the strong 2048 agent).
 
 ## M6 — Rush Hour  *(owner's game #2 — sparse-reward planning)*
 

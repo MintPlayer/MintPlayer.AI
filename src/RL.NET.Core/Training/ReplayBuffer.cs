@@ -8,53 +8,80 @@ namespace RLNet.Core.Training;
 /// time limit must still bootstrap from its next state, and storing the combined done flag
 /// is the classic silent DQN bug that caps learned values (PRD §8).
 /// </summary>
-public sealed class ReplayBuffer(int capacity, int obsDim)
+public sealed class ReplayBuffer
 {
-    private readonly float[] _obs = new float[capacity * obsDim];
-    private readonly float[] _nextObs = new float[capacity * obsDim];
-    private readonly int[] _actions = new int[capacity];
-    private readonly float[] _rewards = new float[capacity];
-    private readonly bool[] _terminated = new bool[capacity];
+    private readonly int _obsDim;
+    private readonly int _actionCount;
+    private readonly float[] _obs;
+    private readonly float[] _nextObs;
+    private readonly int[] _actions;
+    private readonly float[] _rewards;
+    private readonly bool[] _terminated;
+    private readonly bool[] _nextMask;
     private int _next;
 
-    public int Capacity => capacity;
+    public ReplayBuffer(int capacity, int obsDim, int actionCount)
+    {
+        Capacity = capacity;
+        _obsDim = obsDim;
+        _actionCount = actionCount;
+        _obs = new float[capacity * obsDim];
+        _nextObs = new float[capacity * obsDim];
+        _actions = new int[capacity];
+        _rewards = new float[capacity];
+        _terminated = new bool[capacity];
+        _nextMask = new bool[capacity * actionCount];
+    }
+
+    public int Capacity { get; }
     public int Count { get; private set; }
 
-    public void Add(ReadOnlySpan<float> obs, int action, double reward, ReadOnlySpan<float> nextObs, bool terminated)
+    /// <param name="nextActionMask">
+    /// Legal actions in the NEXT state (for masked TD-target max); empty span = all legal.
+    /// </param>
+    public void Add(ReadOnlySpan<float> obs, int action, double reward, ReadOnlySpan<float> nextObs,
+        bool terminated, ReadOnlySpan<bool> nextActionMask = default)
     {
-        obs.CopyTo(_obs.AsSpan(_next * obsDim, obsDim));
-        nextObs.CopyTo(_nextObs.AsSpan(_next * obsDim, obsDim));
+        obs.CopyTo(_obs.AsSpan(_next * _obsDim, _obsDim));
+        nextObs.CopyTo(_nextObs.AsSpan(_next * _obsDim, _obsDim));
         _actions[_next] = action;
         _rewards[_next] = (float)reward;
         _terminated[_next] = terminated;
+        if (nextActionMask.IsEmpty)
+            _nextMask.AsSpan(_next * _actionCount, _actionCount).Fill(true);
+        else
+            nextActionMask.CopyTo(_nextMask.AsSpan(_next * _actionCount, _actionCount));
 
-        _next = (_next + 1) % capacity;
-        Count = Math.Min(Count + 1, capacity);
+        _next = (_next + 1) % Capacity;
+        Count = Math.Min(Count + 1, Capacity);
     }
 
     public Batch Sample(int batchSize, Xoshiro256StarStar rng)
     {
-        var batch = new Batch(batchSize, obsDim);
+        var batch = new Batch(batchSize, _obsDim, _actionCount);
         for (int i = 0; i < batchSize; i++)
         {
             int index = rng.NextInt(Count);
-            _obs.AsSpan(index * obsDim, obsDim).CopyTo(batch.Obs.AsSpan(i * obsDim, obsDim));
-            _nextObs.AsSpan(index * obsDim, obsDim).CopyTo(batch.NextObs.AsSpan(i * obsDim, obsDim));
+            _obs.AsSpan(index * _obsDim, _obsDim).CopyTo(batch.Obs.AsSpan(i * _obsDim, _obsDim));
+            _nextObs.AsSpan(index * _obsDim, _obsDim).CopyTo(batch.NextObs.AsSpan(i * _obsDim, _obsDim));
             batch.Actions[i] = _actions[index];
             batch.Rewards[i] = _rewards[index];
             batch.Terminated[i] = _terminated[index];
+            _nextMask.AsSpan(index * _actionCount, _actionCount).CopyTo(batch.NextMasks.AsSpan(i * _actionCount, _actionCount));
         }
         return batch;
     }
 
-    public sealed class Batch(int size, int obsDim)
+    public sealed class Batch(int size, int obsDim, int actionCount)
     {
         public int Size { get; } = size;
         public int ObsDim { get; } = obsDim;
+        public int ActionCount { get; } = actionCount;
         public float[] Obs { get; } = new float[size * obsDim];
         public float[] NextObs { get; } = new float[size * obsDim];
         public int[] Actions { get; } = new int[size];
         public float[] Rewards { get; } = new float[size];
         public bool[] Terminated { get; } = new bool[size];
+        public bool[] NextMasks { get; } = new bool[size * actionCount];
     }
 }

@@ -18,13 +18,19 @@ no native dependencies. See [docs/PRD.md](docs/PRD.md) for the why and what, and
 ```
 dotnet run --project src/RL.NET.Demo -c Release                 # everything, seed 42
 dotnet run --project src/RL.NET.Demo -c Release -- cartpole     # just the DQN flagship
+dotnet run --project src/RL.NET.Demo -c Release -- 2048         # n-tuple TD plays 2048
 dotnet run --project src/RL.NET.Demo -c Release -- grid lake 7  # tabular envs, seed 7
 ```
 
-Demos: tabular Q-learning on GridWorld (verified exactly against value iteration) and
-slippery FrozenLake (Gymnasium-comparable, ≥70% success), and a from-scratch Double DQN
-solving a faithful CartPole-v1 port (bit-for-bit match against recorded Gymnasium
-trajectories; solved = mean return ≥ 475/500). Each ends with animated console playback.
+Demos (each ends with animated console playback):
+
+- **GridWorld / FrozenLake** — tabular Q-learning, verified exactly against value
+  iteration; FrozenLake is Gymnasium-comparable (≥70% success).
+- **CartPole-v1** (`cartpole` = Double DQN, `ppo` = PPO over 8 vectorized envs) —
+  faithful port, bit-for-bit match against recorded Gymnasium trajectories;
+  solved = mean return ≥ 475/500. Both solve in seconds.
+- **2048** (`2048` = afterstate TD(0) n-tuple network, `2048dqn` = generic masked
+  Double DQN) — reaches the 2048 tile in ~84% of games after ~3 minutes of self-play.
 
 ## Run the tests
 
