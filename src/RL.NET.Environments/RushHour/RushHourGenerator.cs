@@ -10,9 +10,15 @@ namespace RLNet.Environments.RushHour;
 /// </summary>
 public static class RushHourGenerator
 {
+    /// <param name="varyRedLength">
+    /// Also generate puzzles with a length-3 red vehicle (~40%). Off by default so
+    /// existing seeds keep producing bitwise-identical sets (M6 gate reproducibility);
+    /// models meant to solve user-drawn boards should train with this on.
+    /// </param>
     public static List<RushHourPuzzle> Generate(
         ulong seed, int count, int minOptimal, int maxOptimal,
-        int minVehicles = 5, int maxVehicles = 9, int maxAttempts = 200_000)
+        int minVehicles = 5, int maxVehicles = 9, int maxAttempts = 200_000,
+        bool varyRedLength = false)
     {
         var rng = new Xoshiro256StarStar(seed);
         var puzzles = new List<RushHourPuzzle>(count);
@@ -37,10 +43,13 @@ public static class RushHourGenerator
             var occupied = new bool[36];
             var vehicles = new List<Vehicle>();
 
-            // Red car: horizontal length 2 on the exit row, away from the exit.
-            int redCol = rng.NextInt(3);
-            vehicles.Add(new Vehicle(RushHourBoard.ExitRow, redCol, 2, Horizontal: true));
-            occupied[RushHourBoard.ExitRow * 6 + redCol] = occupied[RushHourBoard.ExitRow * 6 + redCol + 1] = true;
+            // Red vehicle: horizontal on the exit row, away from the exit. The short-circuit
+            // keeps the RNG consumption (and thus existing seeds' sets) unchanged when off.
+            int redLength = varyRedLength && rng.NextDouble() < 0.4 ? 3 : 2;
+            int redCol = rng.NextInt(4 - redLength + 1);
+            vehicles.Add(new Vehicle(RushHourBoard.ExitRow, redCol, redLength, Horizontal: true));
+            for (int k = 0; k < redLength; k++)
+                occupied[RushHourBoard.ExitRow * 6 + redCol + k] = true;
 
             int targetCount = minVehicles + rng.NextInt(maxVehicles - minVehicles + 1);
             for (int tries = 0; vehicles.Count < targetCount && tries < 60; tries++)

@@ -4,7 +4,7 @@ import { AnalyzeResponse, RushHourApi, SolveResponse, StatusResponse, VehicleDto
 import { EXIT_ROW, SIZE, canMove, canPlace, initialPositions, isSolved, occupancy } from './rush-hour-logic';
 
 type Mode = 'edit' | 'play' | 'playback';
-type Tool = 'red' | 'car-h' | 'car-v' | 'truck-h' | 'truck-v' | 'erase';
+type Tool = 'red' | 'red-truck' | 'car-h' | 'car-v' | 'truck-h' | 'truck-v' | 'erase';
 
 const CELL = 72;
 const PAD = 14;
@@ -113,12 +113,14 @@ export class RushHour {
     this.editMessage.set(null);
 
     switch (this.tool()) {
-      case 'red': {
+      case 'red':
+      case 'red-truck': {
         if (row !== EXIT_ROW) {
-          this.editMessage.set('The red car lives on row 3 — the exit row.');
+          this.editMessage.set('The red vehicle lives on row 3 — the exit row.');
           return;
         }
-        const red: VehicleDto = { row: EXIT_ROW, col: Math.min(col, SIZE - 2), length: 2, horizontal: true };
+        const length = this.tool() === 'red-truck' ? 3 : 2;
+        const red: VehicleDto = { row: EXIT_ROW, col: Math.min(col, SIZE - length), length, horizontal: true };
         if (!canPlace(vehicles.slice(1), red)) {
           this.editMessage.set('Another vehicle is in the way.');
           return;

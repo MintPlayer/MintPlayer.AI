@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using RLNet.Core.Checkpoints;
 using RLNet.Core.Random;
-using RLNet.Core.Schedules;
 using RLNet.Core.Training;
 using RLNet.Environments.RushHour;
 using RLNet.Web.Controllers;
@@ -64,6 +63,20 @@ public class RushHourApiTests(PlaygroundFactory factory) : IClassFixture<Playgro
     }
 
     [Fact]
+    public async Task Analyze_LengthThreeRedVehicle_IsSupported()
+    {
+        // Red truck at (2,1) occupies cols 1-3: two single-cell slides put its nose at the exit.
+        VehicleDto[] redTruck = [new(2, 1, 3, true)];
+        var response = await _client.PostAsJsonAsync("/api/rushhour/analyze", new RushHourBoardDto(redTruck));
+        response.EnsureSuccessStatusCode();
+        var analysis = await response.Content.ReadFromJsonAsync<AnalyzeResponse>();
+        Assert.NotNull(analysis);
+        Assert.True(analysis.Valid);
+        Assert.True(analysis.Solvable);
+        Assert.Equal(2, analysis.OptimalMoves);
+    }
+
+    [Fact]
     public async Task Analyze_OverlappingVehicles_Returns400WithReason()
     {
         VehicleDto[] overlapping = [new(2, 0, 2, true), new(2, 1, 2, true)];
@@ -120,21 +133,11 @@ public class TrainedPlaygroundFactory : PlaygroundFactory
 
     public TrainedPlaygroundFactory()
     {
-        // Same recipe/seed as RushHourModelService — passes the M6 gate (100% within 2× optimal).
-        Puzzles = RushHourGenerator.Generate(RushHourModelService.PuzzleSetSeed, count: 30, minOptimal: 4, maxOptimal: 10);
+        // Exactly the service's recipe — shared statics so the gate can't drift from production.
+        Puzzles = RushHourModelService.TrainingPuzzles();
         var env = new RushHourEnv(Puzzles, RushHourModelService.MaxMoves);
-        var result = DqnTrainer.Train(env, new DqnOptions
-        {
-            Hidden = [128, 128],
-            Gamma = 0.98,
-            LearningRate = 5e-4f,
-            MaxSteps = 200_000,
-            BufferCapacity = 100_000,
-            Epsilon = new LinearSchedule(1.0, 0.05, 60_000),
-            EvalEvery = 10_000,
-            EvalEpisodes = 20,
-            SolveThreshold = 88,
-        }, new SeedSequence(RushHourModelService.TrainingMasterSeed));
+        var result = DqnTrainer.Train(env, RushHourModelService.TrainingOptions(),
+            new SeedSequence(RushHourModelService.TrainingMasterSeed));
 
         var store = new FileModelStore(DataDirectory);
         store.Save(RushHourModelService.EnvironmentId, RushHourModelService.AlgorithmId,

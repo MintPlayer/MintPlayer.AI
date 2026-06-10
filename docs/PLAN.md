@@ -154,6 +154,29 @@ move-by-move legal, matches the server-reported states, ends solved, within 2× 
 - Playback UI: ⏮ ◀ ▶ ⏭ + play/pause + scrubber, AI/optimal trajectory toggle,
   last-moved-vehicle highlight; honest "AI did not solve this one" path when it fails.
 
+**Post-gate additions (same day, user feedback):**
+- Red vehicle is fully user-configurable: position along the exit row AND length —
+  new "Red truck (3)" tool next to "Red car (2)". Tool glyphs switched to
+  universally-rendered ↔/↕ arrows (the ▭/▯ rectangles were font-dependent tofu).
+- `RushHourGenerator` gained `varyRedLength` (off by default — existing seeds stay
+  bitwise-identical, M6 reproducibility intact).
+- **Generalization rework:** a model trained on a fixed 30-puzzle set memorizes it and
+  fails on arbitrary drawn boards. The web model now trains on **2,000 generated
+  puzzles** (optimal 2–12, 2–9 vehicles, both red lengths, 256×256 net) — reached the
+  eval-92 threshold at 300k steps (92.3). Browser-verified: drawn boards with shifted
+  red cars and red trucks now solve (mostly optimally); one truck-blocks-truck layout
+  remains an honest-finding failure (M11 imitation/curriculum is the principled fix).
+  The training recipe lives in `RushHourModelService.TrainingPuzzles()/TrainingOptions()`
+  and the Slow API gate consumes the same statics, so test and production can't drift.
+- Solve rollout budget now scales with difficulty: `max(60, 2 × optimal)` moves.
+- **Official ThinkFun cards 38/39/40** encoded as solver regression tests with their
+  published solutions replayed move-by-move on our board (legality asserted per
+  single-cell slide): BFS optima 77/82/81 single-cell moves, and all three printed
+  solutions turn out to be single-cell optimal once the final drive-out through the
+  exit is discounted. Card 40 was drawn vehicle-by-vehicle in the browser e2e: analyze
+  reported 81, the AI failed honestly within its 162-move budget, and the 81-step
+  optimal playback scrubbed to the red-car-at-exit frame.
+
 ## M9 — 2048 page + training-on-demand + gallery
 
 - 2048 page: canvas tile editor, manual play (real merge/spawn rules), reset to drawn

@@ -60,16 +60,18 @@
       @case ('edit') {
         <h3>1 · Draw</h3>
         <div class="tools">
-          <button [class.active]="tool() === 'red'" (click)="selectTool('red')">🚗 Red car</button>
-          <button [class.active]="tool() === 'car-h'" (click)="selectTool('car-h')">▭ Car ―</button>
-          <button [class.active]="tool() === 'car-v'" (click)="selectTool('car-v')">▯ Car |</button>
-          <button [class.active]="tool() === 'truck-h'" (click)="selectTool('truck-h')">▭▭ Truck ―</button>
-          <button [class.active]="tool() === 'truck-v'" (click)="selectTool('truck-v')">▯▯ Truck |</button>
+          <button [class.active]="tool() === 'red'" (click)="selectTool('red')">🚗 Red car (2)</button>
+          <button [class.active]="tool() === 'red-truck'" (click)="selectTool('red-truck')">🚚 Red truck (3)</button>
+          <button [class.active]="tool() === 'car-h'" (click)="selectTool('car-h')">Car ↔ (2)</button>
+          <button [class.active]="tool() === 'car-v'" (click)="selectTool('car-v')">Car ↕ (2)</button>
+          <button [class.active]="tool() === 'truck-h'" (click)="selectTool('truck-h')">Truck ↔ (3)</button>
+          <button [class.active]="tool() === 'truck-v'" (click)="selectTool('truck-v')">Truck ↕ (3)</button>
           <button [class.active]="tool() === 'erase'" (click)="selectTool('erase')">🧹 Erase</button>
         </div>
         <p class="hint">
-          Click a cell to place the selected vehicle (top-left corner). The red car can only
-          slide along the exit row.
+          Click a cell to place the selected vehicle (top-left corner). With a red tool
+          selected, click anywhere on the exit row to choose where the red vehicle starts —
+          it can only slide along that row.
         </p>
         @if (editMessage(); as message) {
           <p class="message">{{ message }}</p>

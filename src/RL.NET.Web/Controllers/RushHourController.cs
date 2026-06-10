@@ -67,8 +67,11 @@ public sealed class RushHourController(RushHourModelService model) : ControllerB
         if (optimal == 0)
             return BadRequest(new AnalyzeResponse(true, "The red car is already at the exit.", true, 0));
 
-        // Greedy masked rollout of the trained model on the user's puzzle.
-        var env = new RushHourEnv([puzzle], RushHourModelService.MaxMoves) { FixedPuzzleIndex = 0 };
+        // Greedy masked rollout of the trained model on the user's puzzle. The move budget
+        // scales with difficulty: expert boards (e.g. official card 40 = 81 single-cell
+        // moves) must not be truncated below what even a perfect player needs.
+        int maxMoves = Math.Max(RushHourModelService.MaxMoves, 2 * optimal);
+        var env = new RushHourEnv([puzzle], maxMoves) { FixedPuzzleIndex = 0 };
         env.Reset(1);
         var obs = env.CurrentObservation();
         var trajectory = new List<TrajectoryStepDto>();

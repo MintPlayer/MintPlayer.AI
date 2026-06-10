@@ -283,7 +283,9 @@ if (ShouldRun("rushhour"))
 {
     Console.WriteLine("=== Rush Hour — masked Double DQN on a 30-puzzle easy set (optimal 4-10 moves) ===");
     Console.WriteLine("    gate (PRD): >= 90% of the set solved within 2x the BFS-optimal move count");
-    var puzzles = RushHourGenerator.Generate(seed: 99, count: 30, minOptimal: 4, maxOptimal: 10);
+    // The quick M6 showcase set. (The web playground trains its own model on a much
+    // larger generated set so it can handle arbitrary user-drawn boards.)
+    var puzzles = RushHourGenerator.Generate(seed: 99, count: 30, minOptimal: 4, maxOptimal: 10, varyRedLength: true);
     Console.WriteLine($"generated {puzzles.Count} puzzles, avg optimal {puzzles.Average(p => p.OptimalMoves):F1} moves. Example:");
     Console.WriteLine(RushHourBoard.Render(puzzles[0], RushHourBoard.InitialPositions(puzzles[0])));
 

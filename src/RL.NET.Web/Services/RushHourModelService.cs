@@ -20,9 +20,30 @@ public sealed class RushHourModelService(IModelStore store, ILogger<RushHourMode
     public const string AlgorithmId = "dqn";
     public const int MaxMoves = 60;
 
-    // The generated training set: same parameters that passed the M6 gate (100% within 2× optimal).
+    // Unlike the M6 gate (fixed 30-puzzle set), this model must handle ANYTHING a user
+    // draws — so it trains on a procedurally-scaled set: ~2,000 generated puzzles across
+    // the whole easy-medium band, sparse layouts (down to 2 vehicles) and both red
+    // lengths. A small fixed set gets memorized; variety is what buys generalization.
     public const int PuzzleSetSeed = 99;
     public const ulong TrainingMasterSeed = 42;
+
+    public static List<RushHourPuzzle> TrainingPuzzles()
+        => RushHourGenerator.Generate(PuzzleSetSeed, count: 2000, minOptimal: 2, maxOptimal: 12,
+            minVehicles: 2, maxVehicles: 9, maxAttempts: 2_000_000, varyRedLength: true);
+
+    public static DqnOptions TrainingOptions(Action<DqnProgress>? onProgress = null) => new()
+    {
+        Hidden = [256, 256],
+        Gamma = 0.98,
+        LearningRate = 5e-4f,
+        MaxSteps = 500_000,
+        BufferCapacity = 100_000,
+        Epsilon = new LinearSchedule(1.0, 0.05, 150_000),
+        EvalEvery = 10_000,
+        EvalEpisodes = 40,
+        SolveThreshold = 92,
+        OnProgress = onProgress,
+    };
 
     private readonly object _lock = new();
     private GreedyQAgent? _agent;
@@ -69,32 +90,19 @@ public sealed class RushHourModelService(IModelStore store, ILogger<RushHourMode
             logger.LogInformation("No Rush Hour model in the store — training (~1 min)...");
             lock (_lock) Status = ModelStatus.Training;
 
-            var puzzles = RushHourGenerator.Generate(PuzzleSetSeed, count: 30, minOptimal: 4, maxOptimal: 10);
-            var env = new RushHourEnv(puzzles, MaxMoves);
-            var result = DqnTrainer.Train(env, new DqnOptions
+            var env = new RushHourEnv(TrainingPuzzles(), MaxMoves);
+            var result = DqnTrainer.Train(env, TrainingOptions(p =>
             {
-                Hidden = [128, 128],
-                Gamma = 0.98,
-                LearningRate = 5e-4f,
-                MaxSteps = 200_000,
-                BufferCapacity = 100_000,
-                Epsilon = new LinearSchedule(1.0, 0.05, 60_000),
-                EvalEvery = 10_000,
-                EvalEpisodes = 20,
-                SolveThreshold = 88,
-                OnProgress = p =>
+                cancellationToken.ThrowIfCancellationRequested();
+                lock (_lock)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    lock (_lock)
-                    {
-                        TrainingStep = p.Step;
-                        TrainingMaxSteps = p.MaxSteps;
-                        LastEvalReturn = p.EvalMeanReturn;
-                    }
-                    logger.LogInformation("Rush Hour training: step {Step}/{Max}, eval {Eval:F1}",
-                        p.Step, p.MaxSteps, p.EvalMeanReturn);
-                },
-            }, new SeedSequence(TrainingMasterSeed));
+                    TrainingStep = p.Step;
+                    TrainingMaxSteps = p.MaxSteps;
+                    LastEvalReturn = p.EvalMeanReturn;
+                }
+                logger.LogInformation("Rush Hour training: step {Step}/{Max}, eval {Eval:F1}",
+                    p.Step, p.MaxSteps, p.EvalMeanReturn);
+            }), new SeedSequence(TrainingMasterSeed));
 
             store.Save(EnvironmentId, AlgorithmId, s => MlpCheckpoint.Save(result.Network, s));
             _agent = new GreedyQAgent(result.Network, RushHourBoard.ActionCount);
