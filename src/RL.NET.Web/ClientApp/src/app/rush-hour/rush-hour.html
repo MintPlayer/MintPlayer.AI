@@ -1,0 +1,139 @@
+<h1>Rush Hour</h1>
+<p class="subtitle">
+  Draw a puzzle on the board, try it yourself, then let the trained Double DQN free the red car.
+</p>
+
+@if (modelStatus(); as status) {
+  @if (status.status === 'training') {
+    <div class="banner training">
+      Model is training on the server ({{ status.trainingStep }} / {{ status.trainingMaxSteps }} steps,
+      eval {{ status.lastEvalReturn | number: '1.0-0' }}) — you can draw and play meanwhile.
+    </div>
+  } @else if (status.status === 'failed') {
+    <div class="banner error">Model training failed: {{ status.error }}</div>
+  }
+}
+
+<div class="layout">
+  <div class="board-panel">
+    <canvas #board (pointerdown)="onCanvasClick($event)"></canvas>
+
+    @if (mode() === 'edit' && analysis(); as a) {
+      <div class="board-caption">
+        @if (!a.valid) {
+          <span class="bad">{{ a.error }}</span>
+        } @else if (!a.solvable) {
+          <span class="bad">✗ Unsolvable — the red car can never reach the exit.</span>
+        } @else if (a.optimalMoves === 0) {
+          <span class="good">The red car is already at the exit — give it some obstacles!</span>
+        } @else {
+          <span class="good">✓ Solvable — optimal: {{ a.optimalMoves }} moves</span>
+        }
+      </div>
+    }
+    @if (mode() === 'play') {
+      <div class="board-caption">
+        @if (playWon()) {
+          <span class="good">🎉 Solved in {{ movesUsed() }} moves (optimal: {{ analysis()?.optimalMoves }})</span>
+        } @else {
+          <span>Moves: {{ movesUsed() }} — click a vehicle, then use the arrow keys or buttons.</span>
+        }
+      </div>
+    }
+    @if (mode() === 'playback' && solution(); as s) {
+      <div class="board-caption">
+        <span [class.good]="s.solved" [class.bad]="!s.solved">
+          @if (showOptimal()) {
+            Optimal solution (BFS): move {{ playbackIndex() }} / {{ s.optimalMoves }}
+          } @else if (s.solved) {
+            AI solved it in {{ s.aiMoves }} moves (optimal {{ s.optimalMoves }}): move {{ playbackIndex() }} / {{ s.aiMoves }}
+          } @else {
+            The AI did not solve this one within {{ s.aiMoves }} moves (optimal {{ s.optimalMoves }}) — an honest finding. Watch the optimal solution instead.
+          }
+        </span>
+      </div>
+    }
+  </div>
+
+  <div class="side-panel">
+    @switch (mode()) {
+      @case ('edit') {
+        <h3>1 · Draw</h3>
+        <div class="tools">
+          <button [class.active]="tool() === 'red'" (click)="selectTool('red')">🚗 Red car</button>
+          <button [class.active]="tool() === 'car-h'" (click)="selectTool('car-h')">▭ Car ―</button>
+          <button [class.active]="tool() === 'car-v'" (click)="selectTool('car-v')">▯ Car |</button>
+          <button [class.active]="tool() === 'truck-h'" (click)="selectTool('truck-h')">▭▭ Truck ―</button>
+          <button [class.active]="tool() === 'truck-v'" (click)="selectTool('truck-v')">▯▯ Truck |</button>
+          <button [class.active]="tool() === 'erase'" (click)="selectTool('erase')">🧹 Erase</button>
+        </div>
+        <p class="hint">
+          Click a cell to place the selected vehicle (top-left corner). The red car can only
+          slide along the exit row.
+        </p>
+        @if (editMessage(); as message) {
+          <p class="message">{{ message }}</p>
+        }
+        <div class="actions">
+          <button (click)="clearBoard()">Clear board</button>
+          <button (click)="enterPlay()" [disabled]="!analysis()?.valid">2 · Play it yourself</button>
+          <button class="primary" (click)="solve()"
+                  [disabled]="busy() || !analysis()?.valid || !analysis()?.solvable || analysis()?.optimalMoves === 0 || modelStatus()?.status !== 'ready'">
+            {{ busy() ? 'Solving…' : '3 · Solve with AI' }}
+          </button>
+        </div>
+      }
+      @case ('play') {
+        <h3>Play it yourself</h3>
+        <p class="hint">Click a vehicle to select it, then move it with the arrow keys or these buttons.</p>
+        @if (selected() !== null) {
+          <div class="actions move-buttons">
+            <button (click)="tryMove(0)" [disabled]="!selectedCanMove().back">
+              {{ vehicles()[selected()!].horizontal ? '← Left' : '↑ Up' }}
+            </button>
+            <button (click)="tryMove(1)" [disabled]="!selectedCanMove().forward">
+              {{ vehicles()[selected()!].horizontal ? 'Right →' : 'Down ↓' }}
+            </button>
+          </div>
+        } @else {
+          <p class="hint">No vehicle selected yet.</p>
+        }
+        <div class="actions">
+          <button (click)="resetPlay()">↺ Reset to my drawing</button>
+          <button (click)="backToEdit()">✎ Back to editing</button>
+          <button class="primary" (click)="solve()"
+                  [disabled]="busy() || modelStatus()?.status !== 'ready' || analysis()?.optimalMoves === 0">
+            {{ busy() ? 'Solving…' : 'Solve with AI' }}
+          </button>
+        </div>
+      }
+      @case ('playback') {
+        <h3>AI solution</h3>
+        @if (solution(); as s) {
+          <div class="trajectory-toggle">
+            <button [class.active]="!showOptimal()" (click)="switchTrajectory(false)">
+              AI ({{ s.aiMoves }} moves)
+            </button>
+            <button [class.active]="showOptimal()" (click)="switchTrajectory(true)">
+              Optimal ({{ s.optimalMoves }} moves)
+            </button>
+          </div>
+          <div class="actions playback-controls">
+            <button (click)="seek(0)" [disabled]="playbackIndex() === 0" title="To start">⏮</button>
+            <button (click)="step(-1)" [disabled]="playbackIndex() === 0" title="Back">◀</button>
+            <button class="primary" (click)="togglePlay()">{{ playing() ? '⏸ Pause' : '▶ Play' }}</button>
+            <button (click)="step(1)" [disabled]="playbackIndex() >= activeTrajectory().length" title="Forward">▶|</button>
+            <button (click)="seek(activeTrajectory().length)"
+                    [disabled]="playbackIndex() >= activeTrajectory().length" title="To end">⏭</button>
+          </div>
+          <input class="scrubber" type="range" min="0" [max]="activeTrajectory().length"
+                 [value]="playbackIndex()" (input)="seek(+$any($event.target).value)" />
+        }
+        <div class="actions">
+          <button (click)="enterPlay()">↺ Back to my drawing (play)</button>
+          <button (click)="backToEdit()">✎ Back to editing</button>
+        </div>
+      }
+    }
+  </div>
+</div>

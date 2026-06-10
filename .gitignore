@@ -14,6 +14,14 @@ TestResults/
 coverage*.xml
 *.coverage
 
+## Node / Angular
+node_modules/
+src/RL.NET.Web/ClientApp/dist/
+src/RL.NET.Web/ClientApp/.angular/
+
+## Persisted models / submitted games (PRD §7 data directory)
+data/
+
 ## OS junk
 Thumbs.db
 .DS_Store

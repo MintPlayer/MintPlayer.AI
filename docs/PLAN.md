@@ -4,10 +4,10 @@ Companion to [PRD.md](PRD.md). Each milestone ends in a **git commit on a passin
 revert-friendly by design. Order is chosen so each milestone adds at most 2–3 genuinely new
 components (the CleanRL/SB3 lesson: localize bugs by construction).
 
-> **Status (2026-06-10): M0–M7 complete, every pre-registered gate passed.**
-> New requirement inserted the same day: the **interactive web playground** (PRD §7),
-> planned as M7–M10. M7 (checkpointing + model store) is done; next is **M8**
-> (web host + Rush Hour page). The former stretch list is now M11.
+> **Status (2026-06-10): M0–M8 complete, every pre-registered gate passed.**
+> The **interactive web playground** (PRD §7) is live for Rush Hour: draw on a canvas,
+> play it yourself, AI-solve with back/forward playback, persisted model. Next is
+> **M9** (2048 page + training-on-demand + gallery), then M10 (Docker). M11 = stretch.
 
 ## M0 — Skeleton + core contracts  *(part of the quick demo)* ✅
 
@@ -130,22 +130,29 @@ the 500.0 eval exactly.
   pass, n-tuple eval games, tabular Q exact); interrupted-and-resumed DQN
   bitwise-matches uninterrupted; atomic-save failure test.
 
-## M8 — Web host + Rush Hour page  *(first end-to-end playground slice)*
+## M8 — Web host + Rush Hour page  *(first end-to-end playground slice)* ✅
+**Result: both gates passed.** Playwright e2e against the running dev host: drew the
+hand-verified optimal-7 puzzle on the canvas, played it manually to a win (7 moves),
+reset to the drawing, hit "Solve with AI" — **the DQN solved it in 7 moves (optimal)**
+— and stepped the playback back/forward to the red-car-at-exit end state. API gate
+(xUnit, `Category=Slow`): a generated easy puzzle returns a trajectory that is verified
+move-by-move legal, matches the server-reported states, ends solved, within 2× optimal.
 
-- `src/RL.NET.Web`: ASP.NET Core host + Angular ClientApp wired through
-  **MintPlayer.AspNetCore.SpaServices** (`UseAngularCliServer` in dev — running the host
-  is all that's needed; never start `ng serve` separately). Landing page lists games.
-- Rush Hour page: HTML5-canvas board editor (place/drag vehicles, validation:
-  overlaps, red car on exit row), **manual play** with real rules, **reset to drawn
-  state**.
-- Solve API: `POST /api/rushhour/solve` with the drawn state → runs the stored trained
-  model (M7) and the BFS oracle → returns a **trajectory** (action + resulting state per
-  step) + metadata (solved, AI move count, BFS-optimal count).
-- Playback UI: back/forward step buttons + play/pause over the trajectory; always
-  recoverable to the drawn state.
-- **Gate:** e2e (Playwright against the running host) — draw a known puzzle, submit,
-  step through a returned solution that actually solves it; API integration test: a
-  generated easy puzzle returns a solving trajectory within 2× BFS-optimal.
+- `src/RL.NET.Web`: ASP.NET Core host + Angular 22 ClientApp (zoneless, signals) wired
+  through **MintPlayer.AspNetCore.SpaServices** (`UseSpaImproved` + `UseAngularCliServer`
+  with the `Local:` cliRegex — running the host is all that's needed; never start
+  `ng serve` separately). Landing page lists games.
+- Rush Hour page: HTML5-canvas board editor (red car/car/truck/erase tools, overlap +
+  exit-row validation, live BFS feedback "solvable — optimal N"), **manual play** with
+  real rules (click to select, arrow keys/buttons), **reset to drawn state**.
+- Solve API: `POST /api/rushhour/solve` → stored model (M7) + BFS oracle → **trajectory**
+  (action + resulting positions per step) for both the AI and the optimal solution, plus
+  metadata. Also `analyze` (validation + BFS, no model) and `status`.
+- `RushHourModelService`: lazy-loads the checkpoint from the model store; if absent, a
+  hosted service trains it at startup (progress streamed to the UI banner; the demo run
+  stopped at 40k steps, eval 95.7) and saves it — restarts load instantly.
+- Playback UI: ⏮ ◀ ▶ ⏭ + play/pause + scrubber, AI/optimal trajectory toggle,
+  last-moved-vehicle highlight; honest "AI did not solve this one" path when it fails.
 
 ## M9 — 2048 page + training-on-demand + gallery
 
@@ -204,11 +211,14 @@ self-play · importing puzzles from `C:\Repos\Spelletjes\Rush Hour` as gallery d
 | M5 2048 | 2048-tile rate ≥ 10% (stretch 80%) | **84%** after 100k games / 168 s |
 | M6 Rush Hour | ≥ 90% of easy set within 2× optimal | **100%** (30/30) after 40k steps / ~1 min |
 | M7 checkpoints | resumed DQN bitwise == uninterrupted | passed (+ all round-trips bitwise/exact) |
+| M8 web playground | e2e draw→solve→playback; API trajectory ≤ 2× optimal | passed (AI solved the e2e puzzle optimally, 7/7) |
 
 ## Immediate next step
 
-**Build M8 (web host + Rush Hour page)** — ASP.NET Core + Angular via
-MintPlayer.AspNetCore.SpaServices, canvas editor, solve API over the M7 model store.
-Demo entry points: `dotnet run --project src/RL.NET.Demo -c Release --
-[grid|lake|cartpole|ppo|2048|2048dqn|rushhour] [seed] [--load] [--save] [--data <dir>]`.
-Tests: `dotnet test` (statistical gates carry `Category=Slow`).
+**Build M9 (2048 page + training-on-demand + gallery)** — 2048 canvas editor, n-tuple
+playout trajectories (move + spawned tile per step), background training jobs with
+browser-visible progress, persisted public game gallery.
+Run the playground: `dotnet run --project src/RL.NET.Web` (Development spawns + proxies
+the Angular dev server itself — do not run `ng serve`). Console demos:
+`dotnet run --project src/RL.NET.Demo -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour]
+[seed] [--load] [--save] [--data <dir>]`. Tests: `dotnet test` (`Category=Slow` for gates).

@@ -1,0 +1,111 @@
+.subtitle {
+  color: #aab2c5;
+  margin-top: -0.5rem;
+}
+
+.banner {
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+
+  &.training {
+    background: #1d2c4f;
+    border: 1px solid #2f4a8a;
+  }
+
+  &.error {
+    background: #4f1d2c;
+    border: 1px solid #8a2f4a;
+  }
+}
+
+.layout {
+  display: flex;
+  gap: 2rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.board-panel {
+  canvas {
+    border-radius: 12px;
+    touch-action: manipulation;
+    cursor: pointer;
+  }
+
+  .board-caption {
+    margin-top: 0.5rem;
+    min-height: 1.5em;
+    max-width: 500px;
+
+    .good {
+      color: #4ade80;
+    }
+
+    .bad {
+      color: #f87171;
+    }
+  }
+}
+
+.side-panel {
+  flex: 1;
+  min-width: 260px;
+  max-width: 360px;
+  background: #1a1f2b;
+  border: 1px solid #2b3245;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+
+  h3 {
+    margin-top: 0.25rem;
+  }
+
+  .hint {
+    color: #aab2c5;
+    font-size: 0.9rem;
+  }
+
+  .message {
+    color: #fbbf24;
+    font-size: 0.9rem;
+  }
+}
+
+.tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+
+  &.move-buttons,
+  &.playback-controls {
+    flex-direction: row;
+  }
+
+  &.playback-controls button {
+    flex: 1;
+    padding: 0.45rem 0.3rem;
+  }
+}
+
+.trajectory-toggle {
+  display: flex;
+  gap: 0.5rem;
+
+  button {
+    flex: 1;
+  }
+}
+
+.scrubber {
+  width: 100%;
+  margin-top: 0.75rem;
+  accent-color: #2563eb;
+}

@@ -8,10 +8,22 @@ no native dependencies. See [docs/PRD.md](docs/PRD.md) for the why and what, and
 
 | Project | Contents |
 |---|---|
-| `src/RL.NET.Core` | Environment API (Gymnasium-faithful), spaces, seeded RNG, agents, trainers, solvers |
-| `src/RL.NET.Environments` | GridWorld, FrozenLake (more coming: CartPole, 2048, Rush Hour) |
-| `src/RL.NET.Demo` | Console demo — watch agents learn and play |
-| `tests/RL.NET.Tests` | xUnit suite incl. solved-threshold gates and determinism tests |
+| `src/RL.NET.Core` | Environment API (Gymnasium-faithful), spaces, seeded RNG, agents, trainers, solvers, checkpoints + model store |
+| `src/RL.NET.Environments` | GridWorld, FrozenLake, CartPole, 2048, Rush Hour (incl. BFS solver + puzzle generator) |
+| `src/RL.NET.Demo` | Console demo — watch agents learn and play (`--save`/`--load` persist trained models) |
+| `src/RL.NET.Web` | **RL.NET Playground** — ASP.NET Core + Angular web app: draw a Rush Hour puzzle on a canvas, play it yourself, then watch the trained DQN solve it with back/forward playback |
+| `tests/RL.NET.Tests` | xUnit suite incl. solved-threshold gates, determinism tests and web API integration tests |
+
+## Run the playground
+
+```
+dotnet run --project src/RL.NET.Web
+```
+
+Open the printed URL (default `http://localhost:5210`). In Development the host spawns and
+proxies the Angular dev server itself — don't run `ng serve` separately. On first start it
+trains the Rush Hour model (~1 min, progress shown in the page banner) and saves it under
+`data/`; later starts load instantly.
 
 ## Run the demo
 
