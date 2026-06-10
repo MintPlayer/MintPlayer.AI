@@ -24,4 +24,8 @@
     <ProjectReference Include="..\..\src\RL.NET.Environments\RL.NET.Environments.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

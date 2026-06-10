@@ -1,22 +1,31 @@
+using RLNet.Core.Agents;
 using RLNet.Core.Agents.Tabular;
+using RLNet.Core.Environments;
 using RLNet.Core.Random;
 using RLNet.Core.Schedules;
 using RLNet.Core.Solvers;
 using RLNet.Core.Training;
 using RLNet.Environments;
 
-ulong masterSeed = args.Length > 0 && ulong.TryParse(args[0], out var s) ? s : 42UL;
+// Usage: RL.NET.Demo [grid|lake|cartpole ...] [seed]
+//        no env args = run everything.
+var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+ulong masterSeed = 42;
+foreach (var arg in args)
+{
+    if (ulong.TryParse(arg, out var s)) masterSeed = s;
+    else selected.Add(arg);
+}
+bool ShouldRun(string name) => selected.Count == 0 || selected.Contains(name);
 bool animate = !Console.IsOutputRedirected;
 
-Console.WriteLine("RL.NET demo — tabular Q-learning (milestone M1)");
-Console.WriteLine($"master seed: {masterSeed}");
+Console.WriteLine("RL.NET demo");
+Console.WriteLine($"master seed: {masterSeed}   (usage: RL.NET.Demo [grid|lake|cartpole ...] [seed])");
 Console.WriteLine();
 
-// ---------------------------------------------------------------------------
-// Part 1 — GridWorld (deterministic): sanity-check against the exact solution
-// ---------------------------------------------------------------------------
-Console.WriteLine("=== GridWorld 4x4 (deterministic, step -0.04, goal +1) ===");
+if (ShouldRun("grid"))
 {
+    Console.WriteLine("=== GridWorld 4x4 — tabular Q-learning (deterministic, step -0.04, goal +1) ===");
     var seeds = new SeedSequence(masterSeed);
     var env = new GridWorldEnv();
     var agent = new QLearningAgent(env.StateCount, env.ActionCount, seeds.CreateRng(RngStreams.Policy)) { Gamma = 0.99 };
@@ -37,18 +46,14 @@ Console.WriteLine("=== GridWorld 4x4 (deterministic, step -0.04, goal +1) ===");
     Console.WriteLine($"trained 3000 episodes ({result.TotalSteps:N0} steps) in {sw.ElapsedMilliseconds} ms");
     Console.WriteLine($"greedy policy optimal (vs value iteration) in {optimalStates}/{env.StateCount} states");
     Console.WriteLine();
-    Console.WriteLine("learned policy:                value iteration values:");
     PrintPolicyAndValues(env, agent, oracle);
-
-    if (animate) AnimateGreedyEpisode(env, agent, seeds.Derive(RngStreams.Evaluation), "GridWorld — greedy playback");
+    if (animate) AnimateGridEpisode(env, agent, seeds.Derive(RngStreams.Evaluation), "GridWorld — greedy playback");
+    Console.WriteLine();
 }
 
-// ---------------------------------------------------------------------------
-// Part 2 — FrozenLake (slippery): learning under stochastic dynamics
-// ---------------------------------------------------------------------------
-Console.WriteLine();
-Console.WriteLine("=== FrozenLake 4x4 (slippery 1/3-1/3-1/3, Gymnasium-comparable) ===");
+if (ShouldRun("lake"))
 {
+    Console.WriteLine("=== FrozenLake 4x4 — tabular Q-learning (slippery 1/3-1/3-1/3, Gymnasium-comparable) ===");
     var seeds = new SeedSequence(masterSeed);
     var env = new FrozenLakeEnv();
     var agent = new QLearningAgent(env.StateCount, env.ActionCount, seeds.CreateRng(RngStreams.Policy)) { Gamma = 0.99 };
@@ -67,23 +72,46 @@ Console.WriteLine("=== FrozenLake 4x4 (slippery 1/3-1/3-1/3, Gymnasium-comparabl
     Console.WriteLine($"trained 100,000 episodes ({result.TotalSteps:N0} steps) in {sw.ElapsedMilliseconds} ms");
 
     var eval = Evaluator.Evaluate(env, agent, episodes: 1000, seeds.Derive(RngStreams.Evaluation));
-    var oracle = ValueIteration.Solve(env, gamma: 0.99);
     Console.WriteLine($"greedy success rate: {eval.SuccessRate():P1} over 1000 episodes (solved threshold: 70%)");
     Console.WriteLine();
-    Console.WriteLine("learned policy:                value iteration values:");
-    PrintPolicyAndValues(env, agent, oracle);
-
+    PrintPolicyAndValues(env, agent, ValueIteration.Solve(env, gamma: 0.99));
     if (animate)
-        for (int i = 1; i <= 3; i++)
-            AnimateGreedyEpisode(env, agent, seeds.Derive(RngStreams.Evaluation + i), $"FrozenLake — greedy playback {i}/3");
+        for (int i = 1; i <= 2; i++)
+            AnimateGridEpisode(env, agent, seeds.Derive(RngStreams.Evaluation + i), $"FrozenLake — greedy playback {i}/2");
+    Console.WriteLine();
 }
 
-Console.WriteLine();
-Console.WriteLine("done. (S start, F frozen/free, H hole, G goal, @ agent, <v>^ greedy action)");
+if (ShouldRun("cartpole"))
+{
+    Console.WriteLine("=== CartPole-v1 — Double DQN from scratch (solved: mean return >= 475/500) ===");
+    var seeds = new SeedSequence(masterSeed);
+    var env = new CartPoleEnv();
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var result = DqnTrainer.Train(env, new DqnOptions
+    {
+        MaxSteps = 150_000,
+        SolveThreshold = 475,
+        OnProgress = p => Console.WriteLine(
+            $"  step {p.Step,7}/{p.MaxSteps}  eval mean return: {p.EvalMeanReturn,6:F1}  epsilon: {p.Epsilon:F3}  loss: {p.LastLoss:F4}"),
+    }, seeds);
+    sw.Stop();
+
+    var eval = Evaluator.Evaluate(env, result.Agent, episodes: 100, seeds.Derive(RngStreams.Evaluation));
+    Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalSeconds:F1} s");
+    Console.WriteLine($"final greedy eval: {eval.MeanReturn:F1} mean return over 100 episodes " +
+                      $"({(eval.MeanReturn >= 475 ? "SOLVED" : "not solved")})");
+    Console.WriteLine();
+    if (animate) AnimateCartPole(env, result.Agent, seeds.Derive(RngStreams.Evaluation + 1));
+    Console.WriteLine();
+}
+
+Console.WriteLine("done.");
 return;
 
 static void PrintPolicyAndValues(GridEnvironmentBase env, TabularAgent agent, ValueIterationResult oracle)
 {
+    Console.WriteLine("learned policy:                value iteration values:");
     for (int row = 0; row < env.Rows; row++)
     {
         var policy = new System.Text.StringBuilder("  ");
@@ -100,7 +128,7 @@ static void PrintPolicyAndValues(GridEnvironmentBase env, TabularAgent agent, Va
     Console.WriteLine();
 }
 
-static void AnimateGreedyEpisode(GridEnvironmentBase env, TabularAgent agent, ulong seed, string title)
+static void AnimateGridEpisode(GridEnvironmentBase env, TabularAgent agent, ulong seed, string title)
 {
     Console.WriteLine($"--- {title} ---");
     var (state, _) = env.Reset(seed);
@@ -129,4 +157,37 @@ static void AnimateGreedyEpisode(GridEnvironmentBase env, TabularAgent agent, ul
         }
     }
     Console.WriteLine();
+}
+
+static void AnimateCartPole(CartPoleEnv env, IAgent<float[], int> agent, ulong seed)
+{
+    const int maxFrames = 250;
+    Console.WriteLine($"--- CartPole — greedy playback (showing up to {maxFrames} of 500 steps) ---");
+    var (obs, _) = env.Reset(seed);
+    int steps = 0;
+    int frameTop = Console.CursorTop;
+
+    while (true)
+    {
+        Console.SetCursorPosition(0, frameTop);
+        Console.Write(env.RenderString());
+        Console.WriteLine($"step {steps,3}/500   x={obs[0],6:F2}  theta={obs[2] * 180 / Math.PI,6:F1}°   ");
+        Thread.Sleep(20);
+
+        var step = env.Step(agent.Act(obs, greedy: true));
+        obs = step.Observation;
+        steps++;
+
+        if (step.Done || steps >= maxFrames)
+        {
+            Console.SetCursorPosition(0, frameTop);
+            Console.Write(env.RenderString());
+            Console.WriteLine(step.Truncated
+                ? $"step {steps,3}/500   survived the full episode — pole balanced!"
+                : step.Terminated
+                    ? $"step {steps,3}/500   pole fell."
+                    : $"step {steps,3}/500   still balancing after {maxFrames} shown steps — calling it a win.");
+            break;
+        }
+    }
 }

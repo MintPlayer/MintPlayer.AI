@@ -16,13 +16,15 @@ no native dependencies. See [docs/PRD.md](docs/PRD.md) for the why and what, and
 ## Run the demo
 
 ```
-dotnet run --project src/RL.NET.Demo            # default seed 42
-dotnet run --project src/RL.NET.Demo -- 1234    # custom master seed
+dotnet run --project src/RL.NET.Demo -c Release                 # everything, seed 42
+dotnet run --project src/RL.NET.Demo -c Release -- cartpole     # just the DQN flagship
+dotnet run --project src/RL.NET.Demo -c Release -- grid lake 7  # tabular envs, seed 7
 ```
 
-Trains tabular Q-learning on GridWorld (verified exactly against value iteration) and on
-slippery FrozenLake (Gymnasium-comparable, solved threshold 70% success), then prints
-policy maps and animates greedy playback in the console.
+Demos: tabular Q-learning on GridWorld (verified exactly against value iteration) and
+slippery FrozenLake (Gymnasium-comparable, ≥70% success), and a from-scratch Double DQN
+solving a faithful CartPole-v1 port (bit-for-bit match against recorded Gymnasium
+trajectories; solved = mean return ≥ 475/500). Each ends with animated console playback.
 
 ## Run the tests
 

@@ -38,7 +38,8 @@ components (the CleanRL/SB3 lesson: localize bugs by construction).
 ## M3 — CartPole + REINFORCE + DQN
 
 - **CartPole-v1 faithful port** (exact constants/update order from PRD §6) validated against
-  committed golden trajectories from Python Gymnasium.
+  committed golden trajectories from Python Gymnasium
+  (`tools/generate_goldens.py` → `tests/RL.NET.Tests/Fixtures/cartpole_golden.json`).
 - REINFORCE (reward-to-go, return normalization). Gate: CartPole ≥ 400 median/3 seeds +
   policy-gradient direction unit test (log-prob of rewarded action increases).
 - DQN: circular replay buffer (**stores `terminated` only**), target network (hard sync),
