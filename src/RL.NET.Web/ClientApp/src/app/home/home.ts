@@ -21,14 +21,23 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
-      <div class="card disabled">
+      <a class="card" routerLink="/2048">
         <h2>2048</h2>
         <p>
-          Set up a board and let the n-tuple network (84% win rate) play it out.
-          Coming in milestone M9.
+          Set up a board and let the n-tuple network (84% win rate) play it out,
+          move by move — same board, same playout, every time.
         </p>
-        <span class="cta">Coming soon</span>
-      </div>
+        <span class="cta">Play →</span>
+      </a>
+
+      <a class="card" routerLink="/gallery">
+        <h2>Gallery</h2>
+        <p>
+          Every board anyone submitted to the AI, with its solution — browse
+          and replay them.
+        </p>
+        <span class="cta">Browse →</span>
+      </a>
     </div>
   `,
   styles: `

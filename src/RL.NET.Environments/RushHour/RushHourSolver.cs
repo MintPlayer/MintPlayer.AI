@@ -148,7 +148,8 @@ public static class RushHourSolver
         return actions.Length > 0;
     }
 
-    private static ulong Encode(ReadOnlySpan<int> positions)
+    /// <summary>Packs a position vector into one ulong (4 bits per vehicle) — the canonical state key.</summary>
+    public static ulong Encode(ReadOnlySpan<int> positions)
     {
         ulong key = 0;
         for (int i = 0; i < positions.Length; i++)

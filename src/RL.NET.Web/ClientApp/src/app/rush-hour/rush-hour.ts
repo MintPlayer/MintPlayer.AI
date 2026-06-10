@@ -1,5 +1,6 @@
 import { DecimalPipe } from '@angular/common';
 import { Component, DestroyRef, ElementRef, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
 import { AnalyzeResponse, RushHourApi, SolveResponse, StatusResponse, VehicleDto } from './rush-hour-api';
 import { EXIT_ROW, SIZE, canMove, canPlace, initialPositions, isSolved, occupancy } from './rush-hour-logic';
 
@@ -87,6 +88,22 @@ export class RushHour {
     void this.refreshAnalysis();
     this.pollStatus();
     inject(DestroyRef).onDestroy(() => this.stopPlayback());
+
+    const replayId = inject(ActivatedRoute).snapshot.queryParamMap.get('replay');
+    if (replayId) void this.loadGalleryEntry(replayId);
+  }
+
+  private async loadGalleryEntry(id: string): Promise<void> {
+    const response = await fetch(`/api/gallery/${id}`);
+    if (!response.ok) return;
+    const entry = await response.json();
+    if (entry.game !== 'rushhour') return;
+    this.vehicles.set(entry.request.vehicles);
+    void this.refreshAnalysis();
+    this.solution.set(entry.response);
+    this.showOptimal.set(false);
+    this.playbackIndex.set(0);
+    this.mode.set('playback');
   }
 
   // ------------------------------------------------------------------ editing

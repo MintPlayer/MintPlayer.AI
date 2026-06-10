@@ -183,20 +183,28 @@ move-by-move legal, matches the server-reported states, ends solved, within 2× 
   reported 81, the AI failed honestly within its 162-move budget, and the 81-step
   optimal playback scrubbed to the red-car-at-exit frame.
 
-## M9 — 2048 page + training-on-demand + gallery
+## M9 — 2048 page + training-on-demand + gallery ✅
+**Result: gates passed (browser-verified).** With an empty store the page shows live
+training progress (10k/100k games, avg score climbing) while drawing/manual play stay
+usable, and solve returns 503 + status until ready; warm store solves instantly. The
+freshly-trained n-tuple played the starter board for **2,491 moves, 55,480 points,
+best tile 4096 — reached 2048** — scrubbed instantly in the browser from the compact
+trajectory. The playout landed in the gallery; clicking the entry replays it.
 
-- 2048 page: canvas tile editor, manual play (real merge/spawn rules), reset to drawn
-  state; solve returns an n-tuple-agent playout *from the drawn state* as a trajectory
-  (move + spawned tile per step) for deterministic browser replay.
-- Background training jobs: if the model store has no model for the requested
-  environment, the solve request enqueues a general training job (independent of the
-  submitted state) with progress (games played / current eval score) streamed or polled
-  by the browser; the solve completes when training does. Checkpoint saved on finish.
-- **Public game gallery:** submitted states + returned solutions persisted (JSON files
-  under the data directory next to the model store) and listed/replayable on the site.
-- **Gate:** with an empty model store, submitting a 2048 board visibly trains first and
-  then solves; with a warm store it solves immediately; gallery entries survive an app
-  restart.
+- 2048 page: canvas tile editor (click/right-click cycles values), manual play with
+  the real merge/spawn rules + arrow keys, reset to drawn state. The solve response is
+  **compact**: per step (action, spawn cell, spawn value, score gained) — 2048 states
+  are derivable deterministically, so per-step boards are omitted and `finalCells`
+  serves as the replay checksum (a test replays client-side rules and must land
+  exactly there). Spawns are seeded from a board hash → same drawing, same playout.
+- Training at startup, not per-request: `ITrainableModelService` (Rush Hour + 2048)
+  run in parallel by one hosted service; progress polled by the UI banner; checkpoint
+  saved on finish (restarts load instantly). Functionally equivalent to the planned
+  enqueue-on-solve (training is general, independent of the submitted state).
+- **Public gallery:** every solve is persisted (JSON per entry under `data/gallery`,
+  atomic write, corrupt entries skipped); `/gallery` lists newest-first and links
+  `/rushhour?replay=<id>` / `/2048?replay=<id>`, which load the entry straight into
+  playback. Unit-tested across store re-instantiation (restart survival).
 
 ## M10 — Docker
 

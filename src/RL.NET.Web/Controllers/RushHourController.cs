@@ -28,7 +28,7 @@ public sealed record StatusResponse(string Status, int TrainingStep, int Trainin
 
 [ApiController]
 [Route("api/rushhour")]
-public sealed class RushHourController(RushHourModelService model) : ControllerBase
+public sealed class RushHourController(RushHourModelService model, GalleryStore gallery) : ControllerBase
 {
     [HttpGet("status")]
     public StatusResponse Status()
@@ -67,32 +67,23 @@ public sealed class RushHourController(RushHourModelService model) : ControllerB
         if (optimal == 0)
             return BadRequest(new AnalyzeResponse(true, "The red car is already at the exit.", true, 0));
 
-        // Greedy masked rollout of the trained model on the user's puzzle. The move budget
-        // scales with difficulty: expert boards (e.g. official card 40 = 81 single-cell
+        // Cycle-avoiding greedy rollout of the trained model on the user's puzzle. The move
+        // budget scales with difficulty: expert boards (e.g. official card 40 = 81 single-cell
         // moves) must not be truncated below what even a perfect player needs.
         int maxMoves = Math.Max(RushHourModelService.MaxMoves, 2 * optimal);
-        var env = new RushHourEnv([puzzle], maxMoves) { FixedPuzzleIndex = 0 };
-        env.Reset(1);
-        var obs = env.CurrentObservation();
-        var trajectory = new List<TrajectoryStepDto>();
-        bool solved = false;
-        var positions = RushHourBoard.InitialPositions(puzzle);
-
-        while (true)
-        {
-            int action = agent.Act(obs, env.CurrentActionMask(), greedy: true);
-            var step = env.Step(action);
-            obs = step.Observation;
-            positions[action / 2] += action % 2 == 0 ? -1 : 1;
-            trajectory.Add(new TrajectoryStepDto(action / 2, action % 2, [.. positions]));
-            if (step.Terminated) solved = true;
-            if (step.Done) break;
-        }
+        var (solved, steps) = RushHourRollout.Run(agent, puzzle, maxMoves);
+        var trajectory = steps.Select(s => new TrajectoryStepDto(s.Vehicle, s.Direction, s.Positions)).ToArray();
 
         // Compacted: same optimal move count, but commutable moves grouped into fluid slides.
         var compactedOptimal = RushHourSolver.CompactSolution(puzzle, optimalActions);
-        return new SolveResponse(solved, trajectory.Count, optimal,
-            [.. trajectory], ReplayActions(puzzle, compactedOptimal));
+        var response = new SolveResponse(solved, trajectory.Length, optimal,
+            trajectory, ReplayActions(puzzle, compactedOptimal));
+
+        gallery.Add("rushhour",
+            solved ? $"AI solved it in {trajectory.Length} moves (optimal {optimal})"
+                   : $"AI failed within {trajectory.Length} moves (optimal {optimal})",
+            board, response);
+        return response;
     }
 
     private static TrajectoryStepDto[] ReplayActions(RushHourPuzzle puzzle, int[] actions)

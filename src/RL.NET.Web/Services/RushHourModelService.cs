@@ -9,12 +9,18 @@ namespace RLNet.Web.Services;
 
 public enum ModelStatus { Loading, Training, Ready, Failed }
 
+/// <summary>A model that can load itself from the store or train once at startup.</summary>
+public interface ITrainableModelService
+{
+    void EnsureModel(CancellationToken cancellationToken);
+}
+
 /// <summary>
 /// Owns the Rush Hour DQN: loads it from the model store at startup, or trains it once
 /// (same recipe that passed the M6 gate) and saves it — so the app never trains again
 /// across restarts (PRD §7.5). Thread-safe snapshot of training progress for /api/rushhour/status.
 /// </summary>
-public sealed class RushHourModelService(IModelStore store, ILogger<RushHourModelService> logger)
+public sealed class RushHourModelService(IModelStore store, ILogger<RushHourModelService> logger) : ITrainableModelService
 {
     public const string EnvironmentId = "rushhour";
     public const string AlgorithmId = "dqn";
@@ -27,21 +33,24 @@ public sealed class RushHourModelService(IModelStore store, ILogger<RushHourMode
     public const int PuzzleSetSeed = 99;
     public const ulong TrainingMasterSeed = 42;
 
+    // Band up to 20 covers the official deck's beginner cards (e.g. card 1 = optimal 16);
+    // random generation can't reach expert depths (card 40 = 81) — that needs the M11
+    // imitation/search work, not a wider band.
     public static List<RushHourPuzzle> TrainingPuzzles()
-        => RushHourGenerator.Generate(PuzzleSetSeed, count: 2000, minOptimal: 2, maxOptimal: 12,
-            minVehicles: 2, maxVehicles: 9, maxAttempts: 2_000_000, varyRedLength: true);
+        => RushHourGenerator.Generate(PuzzleSetSeed, count: 3000, minOptimal: 2, maxOptimal: 20,
+            minVehicles: 2, maxVehicles: 9, maxAttempts: 4_000_000, varyRedLength: true);
 
     public static DqnOptions TrainingOptions(Action<DqnProgress>? onProgress = null) => new()
     {
         Hidden = [256, 256],
         Gamma = 0.98,
         LearningRate = 5e-4f,
-        MaxSteps = 500_000,
+        MaxSteps = 600_000,
         BufferCapacity = 100_000,
-        Epsilon = new LinearSchedule(1.0, 0.05, 150_000),
+        Epsilon = new LinearSchedule(1.0, 0.05, 200_000),
         EvalEvery = 10_000,
         EvalEpisodes = 40,
-        SolveThreshold = 92,
+        SolveThreshold = 90, // perfect play on this band averages ≈ 91 (return = 101 − moves)
         OnProgress = onProgress,
     };
 
@@ -123,9 +132,9 @@ public sealed class RushHourModelService(IModelStore store, ILogger<RushHourMode
     }
 }
 
-/// <summary>Runs the load-or-train once, off the request path, at application startup.</summary>
-public sealed class ModelTrainingHostedService(RushHourModelService model) : BackgroundService
+/// <summary>Runs every model's load-or-train once, in parallel, off the request path, at startup.</summary>
+public sealed class ModelTrainingHostedService(IEnumerable<ITrainableModelService> models) : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
-        => Task.Run(() => model.EnsureModel(stoppingToken), stoppingToken);
+        => Task.WhenAll(models.Select(m => Task.Run(() => m.EnsureModel(stoppingToken), stoppingToken)));
 }

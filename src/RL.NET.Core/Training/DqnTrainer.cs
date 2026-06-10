@@ -45,6 +45,13 @@ public sealed class GreedyQAgent(Mlp network, int actionCount, Xoshiro256StarSta
 
     public int Act(float[] observation, bool greedy = false) => Act(observation, null, greedy);
 
+    /// <summary>Q-values for every action (no-grad single forward pass) — for callers that rank actions themselves.</summary>
+    public float[] QValues(float[] observation)
+    {
+        using (GradMode.NoGrad())
+            return (float[])network.Forward(new Tensor(observation, 1, observation.Length)).Data.Clone();
+    }
+
     /// <summary>Masked variant: exploration and argmax are restricted to legal actions.</summary>
     public int Act(float[] observation, bool[]? mask, bool greedy = false)
     {

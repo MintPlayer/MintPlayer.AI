@@ -126,6 +126,28 @@ public class RushHourApiTests(PlaygroundFactory factory) : IClassFixture<Playgro
     }
 }
 
+public class RushHourRolloutTests
+{
+    [Fact]
+    public void CycleAvoidance_SolvesTrivialPuzzle_EvenWithAnUntrainedNetwork()
+    {
+        // Lone red car, 4 moves to the exit. The only escape from "left undoes right"
+        // shuttling is the visited-state check — so even a RANDOM network must reach the
+        // exit in exactly 4 moves, never revisiting a state.
+        var puzzle = new RushHourPuzzle([new Vehicle(2, 0, 2, Horizontal: true)]);
+        var untrained = new GreedyQAgent(
+            new RLNet.Core.Nn.Mlp([72, 32, 32], new Xoshiro256StarStar(123), RLNet.Core.Nn.Activation.Relu),
+            RushHourBoard.ActionCount);
+
+        var (solved, steps) = RushHourRollout.Run(untrained, puzzle, maxMoves: 60);
+
+        Assert.True(solved);
+        Assert.Equal(4, steps.Count);
+        Assert.Equal(steps.Count, steps.Select(s => RushHourSolver.Encode(s.Positions)).Distinct().Count());
+    }
+
+}
+
 /// <summary>Host fixture with a model pre-trained into the store (the M8 API gate).</summary>
 public class TrainedPlaygroundFactory : PlaygroundFactory
 {

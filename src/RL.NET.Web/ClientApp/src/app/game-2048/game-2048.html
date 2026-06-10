@@ -1,0 +1,99 @@
+<h1>2048</h1>
+<p class="subtitle">
+  Set up a board, play it yourself, then let the n-tuple network (84% win rate) play it out.
+</p>
+
+@if (modelStatus(); as status) {
+  @if (status.status === 'training') {
+    <div class="banner training">
+      Model is training on the server ({{ status.gamesPlayed | number }} / {{ status.trainingGames | number }}
+      self-play games, avg score {{ status.avgScore | number: '1.0-0' }}) — you can draw and play meanwhile.
+    </div>
+  } @else if (status.status === 'failed') {
+    <div class="banner error">Model training failed: {{ status.error }}</div>
+  }
+}
+
+<div class="layout">
+  <div class="board-panel">
+    <canvas #board (pointerdown)="onCanvasClick($event)" (contextmenu)="onCanvasRightClick($event)"></canvas>
+
+    <div class="board-caption">
+      @switch (mode()) {
+        @case ('edit') {
+          <span>Click a cell to cycle its tile up (right-click cycles down).</span>
+        }
+        @case ('play') {
+          @if (playOver()) {
+            <span class="bad">Game over — score {{ playScore() | number }}, best tile {{ playMaxTile() | number }}.</span>
+          } @else {
+            <span>Score: {{ playScore() | number }} — move with the arrow keys.</span>
+          }
+        }
+        @case ('playback') {
+          @if (solution(); as s) {
+            <span [class.good]="s.reached2048">
+              Move {{ playbackIndex() | number }} / {{ stepCount() | number }} — score {{ playbackScore() | number }}
+              @if (playbackIndex() === stepCount()) {
+                · final: {{ s.score | number }} points, best tile {{ s.maxTile | number }}{{ s.reached2048 ? ' — reached 2048! 🎉' : '' }}
+              }
+            </span>
+          }
+        }
+      }
+    </div>
+  </div>
+
+  <div class="side-panel">
+    @switch (mode()) {
+      @case ('edit') {
+        <h3>1 · Set up</h3>
+        <p class="hint">
+          Click cells to place tiles (right-click to lower). The AI plays the same board the
+          same way every time, so results are comparable.
+        </p>
+        @if (message(); as m) {
+          <p class="message">{{ m }}</p>
+        }
+        <div class="actions">
+          <button (click)="clearBoard()">Reset board</button>
+          <button (click)="enterPlay()">2 · Play it yourself</button>
+          <button class="primary" (click)="solve()"
+                  [disabled]="busy() || modelStatus()?.status !== 'ready'">
+            {{ busy() ? 'Playing…' : '3 · Let the AI play' }}
+          </button>
+        </div>
+      }
+      @case ('play') {
+        <h3>Play it yourself</h3>
+        <p class="hint">Arrow keys slide the tiles. A new tile spawns after every move.</p>
+        <div class="actions">
+          <button (click)="resetPlay()">↺ Reset to my board</button>
+          <button (click)="backToEdit()">✎ Back to editing</button>
+          <button class="primary" (click)="solve()" [disabled]="busy() || modelStatus()?.status !== 'ready'">
+            {{ busy() ? 'Playing…' : 'Let the AI play' }}
+          </button>
+        </div>
+      }
+      @case ('playback') {
+        <h3>AI playout</h3>
+        @if (solution(); as s) {
+          <p class="hint">{{ s.steps.length | number }} moves, deterministic for this board.</p>
+          <div class="actions playback-controls">
+            <button (click)="stopPlayback(); seek(0)" [disabled]="playbackIndex() === 0" title="To start">⏮</button>
+            <button (click)="step(-1)" [disabled]="playbackIndex() === 0" title="Back">◀</button>
+            <button class="primary" (click)="togglePlay()">{{ playing() ? '⏸' : '▶' }}</button>
+            <button (click)="step(1)" [disabled]="playbackIndex() >= stepCount()" title="Forward">▶|</button>
+            <button (click)="stopPlayback(); seek(stepCount())" [disabled]="playbackIndex() >= stepCount()" title="To end">⏭</button>
+          </div>
+          <input class="scrubber" type="range" min="0" [max]="stepCount()"
+                 [value]="playbackIndex()" (input)="stopPlayback(); seek(+$any($event.target).value)" />
+        }
+        <div class="actions">
+          <button (click)="enterPlay()">↺ Play this board myself</button>
+          <button (click)="backToEdit()">✎ Back to editing</button>
+        </div>
+      }
+    }
+  </div>
+</div>
