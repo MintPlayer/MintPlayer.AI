@@ -1,0 +1,31 @@
+{
+  "profiles": {
+    "All demos": {
+      "commandName": "Project"
+    },
+    "GridWorld (tabular Q-learning)": {
+      "commandName": "Project",
+      "commandLineArgs": "grid"
+    },
+    "FrozenLake (tabular Q-learning)": {
+      "commandName": "Project",
+      "commandLineArgs": "lake"
+    },
+    "CartPole (Double DQN)": {
+      "commandName": "Project",
+      "commandLineArgs": "cartpole"
+    },
+    "CartPole (PPO, vectorized)": {
+      "commandName": "Project",
+      "commandLineArgs": "ppo"
+    },
+    "2048 (n-tuple TD)": {
+      "commandName": "Project",
+      "commandLineArgs": "2048"
+    },
+    "2048 (masked Double DQN)": {
+      "commandName": "Project",
+      "commandLineArgs": "2048dqn"
+    }
+  }
+}
