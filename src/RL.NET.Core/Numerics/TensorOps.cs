@@ -350,6 +350,21 @@ public sealed partial class Tensor
     /// <summary>Mean squared error between two same-shape tensors → scalar.</summary>
     public Tensor MseLoss(Tensor target) => Sub(target).Square().Mean();
 
+    /// <summary>Same elements, new shape (shares the forward buffer; gradient passes through).</summary>
+    public Tensor Reshape(params int[] shape)
+    {
+        int expected = 1;
+        foreach (int d in shape) expected *= d;
+        if (expected != Length)
+            throw new ArgumentException($"Cannot reshape {Length} elements to ({string.Join('x', shape)}).");
+
+        return MakeResult(Data, shape, [this], result => () =>
+        {
+            EnsureGrad();
+            System.Numerics.Tensors.TensorPrimitives.Add(Grad, result.Grad, Grad);
+        });
+    }
+
     private static void AccumulateGrad(Tensor tensor, float[] grad)
     {
         if (!tensor.NeedsGrad) return;

@@ -20,7 +20,7 @@ bool ShouldRun(string name) => selected.Count == 0 || selected.Contains(name);
 bool animate = !Console.IsOutputRedirected;
 
 Console.WriteLine("RL.NET demo");
-Console.WriteLine($"master seed: {masterSeed}   (usage: RL.NET.Demo [grid|lake|cartpole ...] [seed])");
+Console.WriteLine($"master seed: {masterSeed}   (usage: RL.NET.Demo [grid|lake|cartpole|ppo ...] [seed])");
 Console.WriteLine();
 
 if (ShouldRun("grid"))
@@ -103,6 +103,37 @@ if (ShouldRun("cartpole"))
                       $"({(eval.MeanReturn >= 475 ? "SOLVED" : "not solved")})");
     Console.WriteLine();
     if (animate) AnimateCartPole(env, result.Agent, seeds.Derive(RngStreams.Evaluation + 1));
+    Console.WriteLine();
+}
+
+if (ShouldRun("ppo"))
+{
+    Console.WriteLine("=== CartPole-v1 — PPO from scratch (8 vectorized envs, GAE, clipped surrogate) ===");
+    var seeds = new SeedSequence(masterSeed);
+    var evalEnv = new CartPoleEnv();
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var result = PpoTrainer.Train(_ => new CartPoleEnv(), evalEnv, new PpoOptions
+    {
+        TotalSteps = 400_000,
+        SolveThreshold = 475,
+        ParallelEnvs = true,
+        OnProgress = p =>
+        {
+            if (p.EnvSteps % 20_480 == 0)
+                Console.WriteLine(
+                    $"  step {p.EnvSteps,7}/{p.TotalSteps}  avg return (last 100 eps): {p.AvgReturn100,6:F1}  " +
+                    $"kl: {p.ApproxKl:F4}  clip: {p.ClipFraction:P0}  expl.var: {p.ExplainedVariance:F2}  lr: {p.LearningRate:E1}");
+        },
+    }, seeds);
+    sw.Stop();
+
+    var eval = Evaluator.Evaluate(evalEnv, result.Agent, episodes: 100, seeds.Derive(RngStreams.Evaluation));
+    Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalSeconds:F1} s");
+    Console.WriteLine($"final greedy eval: {eval.MeanReturn:F1} mean return over 100 episodes " +
+                      $"({(eval.MeanReturn >= 475 ? "SOLVED" : "not solved")})");
+    Console.WriteLine();
+    if (animate) AnimateCartPole(evalEnv, result.Agent, seeds.Derive(RngStreams.Evaluation + 1));
     Console.WriteLine();
 }
 

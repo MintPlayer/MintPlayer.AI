@@ -55,6 +55,9 @@ public sealed class Mlp : IModule
         }
     }
 
+    /// <summary>The constituent layers, e.g. for custom (re-)initialization schemes.</summary>
+    public IReadOnlyList<Linear> Layers => _layers;
+
     public Tensor Forward(Tensor input)
     {
         var x = input;
