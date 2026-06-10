@@ -26,6 +26,8 @@ export interface SolveResponse {
   optimalMoves: number;
   trajectory: TrajectoryStep[];
   optimalTrajectory: TrajectoryStep[];
+  /** 'greedy' = reactive policy, 'search' = policy-guided A*, 'dqn' = legacy fallback. */
+  aiMode: 'greedy' | 'search' | 'dqn';
 }
 
 export interface StatusResponse {

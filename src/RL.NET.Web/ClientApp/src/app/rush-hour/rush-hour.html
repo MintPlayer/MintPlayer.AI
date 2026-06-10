@@ -46,7 +46,8 @@
           @if (showOptimal()) {
             Optimal solution (BFS): move {{ playbackIndex() }} / {{ s.optimalMoves }}
           } @else if (s.solved) {
-            AI solved it in {{ s.aiMoves }} moves (optimal {{ s.optimalMoves }}): move {{ playbackIndex() }} / {{ s.aiMoves }}
+            {{ s.aiMode === 'search' ? 'AI (with lookahead)' : 'AI' }} solved it in {{ s.aiMoves }} moves
+            (optimal {{ s.optimalMoves }}): move {{ playbackIndex() }} / {{ s.aiMoves }}
           } @else {
             The AI did not solve this one within {{ s.aiMoves }} moves (optimal {{ s.optimalMoves }}) — an honest finding. Watch the optimal solution instead.
           }
@@ -114,7 +115,7 @@
         @if (solution(); as s) {
           <div class="trajectory-toggle">
             <button [class.active]="!showOptimal()" (click)="switchTrajectory(false)">
-              AI ({{ s.aiMoves }} moves)
+              {{ s.aiMode === 'search' ? 'AI + lookahead' : 'AI' }} ({{ s.aiMoves }} moves)
             </button>
             <button [class.active]="showOptimal()" (click)="switchTrajectory(true)">
               Optimal ({{ s.optimalMoves }} moves)

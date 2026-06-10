@@ -148,6 +148,51 @@ public class RushHourRolloutTests
 
 }
 
+/// <summary>Host fixture with a (deliberately untrained) policy net in the store.</summary>
+public class PolicyPlaygroundFactory : PlaygroundFactory
+{
+    public PolicyPlaygroundFactory()
+    {
+        var net = new RushHourPolicyNet(new Xoshiro256StarStar(3), hidden: 32);
+        new FileModelStore(DataDirectory).Save(
+            RushHourModelService.EnvironmentId, RushHourModelService.PolicyAlgorithmId, s => net.Save(s));
+    }
+}
+
+public class RushHourPolicySolveTests(PolicyPlaygroundFactory factory) : IClassFixture<PolicyPlaygroundFactory>
+{
+    private readonly HttpClient _client = factory.CreateClient();
+
+    [Fact]
+    public async Task Solve_PrefersPolicyNet_AndSearchSolvesEvenUntrained()
+    {
+        // The hand-verified optimal-7 board. An untrained policy almost certainly fails
+        // the greedy rollout, but policy-guided A* must still solve it (it degrades
+        // toward uniform-cost search) — and the response says which mode answered.
+        VehicleDto[] board = [new(2, 0, 2, true), new(0, 2, 3, false)];
+        var response = await _client.PostAsJsonAsync("/api/rushhour/solve", new RushHourBoardDto(board));
+        response.EnsureSuccessStatusCode();
+        var solution = await response.Content.ReadFromJsonAsync<SolveResponse>();
+
+        Assert.NotNull(solution);
+        Assert.True(solution.Solved);
+        Assert.Contains(solution.AiMode, new[] { "greedy", "search" });
+        Assert.Equal(7, solution.OptimalMoves);
+        Assert.Equal(solution.AiMoves, solution.Trajectory.Length);
+
+        // The returned trajectory must replay legally and end solved.
+        var puzzle = new RushHourPuzzle([new Vehicle(2, 0, 2, true), new Vehicle(0, 2, 3, false)]);
+        var positions = RushHourBoard.InitialPositions(puzzle);
+        foreach (var step in solution.Trajectory)
+        {
+            Assert.True(RushHourBoard.ActionMask(puzzle, positions)[step.Vehicle * 2 + step.Direction]);
+            positions[step.Vehicle] += step.Direction == 0 ? -1 : 1;
+            Assert.Equal(positions, step.Positions);
+        }
+        Assert.True(RushHourBoard.IsSolved(puzzle, positions));
+    }
+}
+
 /// <summary>Host fixture with a model pre-trained into the store (the M8 API gate).</summary>
 public class TrainedPlaygroundFactory : PlaygroundFactory
 {

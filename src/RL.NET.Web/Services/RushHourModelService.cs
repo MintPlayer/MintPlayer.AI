@@ -73,6 +73,44 @@ public sealed class RushHourModelService(IModelStore store, ILogger<RushHourMode
         }
     }
 
+    public const string PolicyAlgorithmId = "policy";
+    private RushHourPolicyNet? _policyNet;
+    private DateTime _policyLoadedUtc = DateTime.MinValue;
+    private static readonly TimeSpan PolicyRefresh = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// The imitation-learned policy/value net (preferred over the DQN when present), or
+    /// null if the store has none. Re-read every few minutes so a long-running training
+    /// campaign's improving checkpoints are picked up without restarting the host.
+    /// </summary>
+    public RushHourPolicyNet? PolicyNet
+    {
+        get
+        {
+            if (DateTime.UtcNow - _policyLoadedUtc < PolicyRefresh) return _policyNet;
+            lock (_lock)
+            {
+                if (DateTime.UtcNow - _policyLoadedUtc < PolicyRefresh) return _policyNet;
+                try
+                {
+                    using var stream = store.TryOpenRead(EnvironmentId, PolicyAlgorithmId);
+                    if (stream is not null)
+                    {
+                        _policyNet = RushHourPolicyNet.Load(stream);
+                        logger.LogInformation("Loaded Rush Hour policy net from the store.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // A mid-write or corrupt checkpoint must not break solving; keep the previous net.
+                    logger.LogWarning(ex, "Failed to (re)load the Rush Hour policy net; keeping the previous one.");
+                }
+                _policyLoadedUtc = DateTime.UtcNow;
+                return _policyNet;
+            }
+        }
+    }
+
     /// <summary>Loads a stored checkpoint if one exists; safe to call at any time.</summary>
     public bool TryLoadFromStore()
     {

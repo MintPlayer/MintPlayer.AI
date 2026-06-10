@@ -22,7 +22,8 @@ public sealed record SolveResponse(
     int AiMoves,
     int OptimalMoves,
     TrajectoryStepDto[] Trajectory,
-    TrajectoryStepDto[] OptimalTrajectory);
+    TrajectoryStepDto[] OptimalTrajectory,
+    string AiMode); // "greedy" (reactive policy) | "search" (policy-guided A*) | "dqn" (legacy fallback)
 
 public sealed record StatusResponse(string Status, int TrainingStep, int TrainingMaxSteps, double LastEvalReturn, string? Error);
 
@@ -57,8 +58,9 @@ public sealed class RushHourController(RushHourModelService model, GalleryStore 
         if (!TryBuildPuzzle(board, out var puzzle, out string? error))
             return BadRequest(new AnalyzeResponse(false, error, false, -1));
 
+        var policy = model.PolicyNet;
         var agent = model.Agent;
-        if (agent is null)
+        if (policy is null && agent is null)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, Status());
 
         int optimal = RushHourSolver.Solve(puzzle, maxStates: 2_000_000, out int[] optimalActions);
@@ -67,21 +69,47 @@ public sealed class RushHourController(RushHourModelService model, GalleryStore 
         if (optimal == 0)
             return BadRequest(new AnalyzeResponse(true, "The red car is already at the exit.", true, 0));
 
-        // Cycle-avoiding greedy rollout of the trained model on the user's puzzle. The move
-        // budget scales with difficulty: expert boards (e.g. official card 40 = 81 single-cell
-        // moves) must not be truncated below what even a perfect player needs.
+        // The move budget scales with difficulty: expert boards (e.g. official card 40 =
+        // 81 single-cell moves) must not be truncated below what a perfect player needs.
         int maxMoves = Math.Max(RushHourModelService.MaxMoves, 2 * optimal);
-        var (solved, steps) = RushHourRollout.Run(agent, puzzle, maxMoves);
-        var trajectory = steps.Select(s => new TrajectoryStepDto(s.Vehicle, s.Direction, s.Positions)).ToArray();
+        bool solved;
+        string aiMode;
+        TrajectoryStepDto[] trajectory;
+
+        if (policy is not null)
+        {
+            // Imitation-learned net: reactive play first; when that fails, the same net
+            // guides a budgeted A* (its value head is the heuristic) — still "the AI",
+            // now with lookahead, and honest about which mode produced the answer.
+            var greedy = RushHourPolicySearch.GreedyRollout(policy, puzzle, maxMoves);
+            if (greedy.Solved)
+            {
+                (solved, aiMode) = (true, "greedy");
+                trajectory = ReplayActions(puzzle, [.. greedy.Actions]);
+            }
+            else
+            {
+                var search = RushHourPolicySearch.Solve(policy, puzzle, maxExpansions: 150_000);
+                (solved, aiMode) = (search.Solved, "search");
+                trajectory = search.Solved ? ReplayActions(puzzle, search.Actions) : ReplayActions(puzzle, [.. greedy.Actions]);
+            }
+        }
+        else
+        {
+            var (dqnSolved, steps) = RushHourRollout.Run(agent!, puzzle, maxMoves);
+            (solved, aiMode) = (dqnSolved, "dqn");
+            trajectory = [.. steps.Select(s => new TrajectoryStepDto(s.Vehicle, s.Direction, s.Positions))];
+        }
 
         // Compacted: same optimal move count, but commutable moves grouped into fluid slides.
         var compactedOptimal = RushHourSolver.CompactSolution(puzzle, optimalActions);
         var response = new SolveResponse(solved, trajectory.Length, optimal,
-            trajectory, ReplayActions(puzzle, compactedOptimal));
+            trajectory, ReplayActions(puzzle, compactedOptimal), aiMode);
 
+        string how = aiMode == "search" ? "AI (with lookahead)" : "AI";
         gallery.Add("rushhour",
-            solved ? $"AI solved it in {trajectory.Length} moves (optimal {optimal})"
-                   : $"AI failed within {trajectory.Length} moves (optimal {optimal})",
+            solved ? $"{how} solved it in {trajectory.Length} moves (optimal {optimal})"
+                   : $"{how} failed within {trajectory.Length} moves (optimal {optimal})",
             board, response);
         return response;
     }
