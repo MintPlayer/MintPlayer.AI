@@ -14,8 +14,8 @@ BenchGemm(64, 64, 64);
 BenchGemm(64, 4, 64);
 BenchGemm(256, 128, 128);
 Console.WriteLine();
-BenchTrainingStep(batch: 64, hidden: 64, target: 1000);   // the PRD §7 acceptance config
-BenchTrainingStep(batch: 256, hidden: 128, target: null); // larger stress config, informational
+BenchTrainingStep(batch: 64, hidden: 64, targetStepsPerSec: 1000);   // the PRD §7 acceptance config
+BenchTrainingStep(batch: 256, hidden: 128, targetStepsPerSec: null); // larger stress config, informational
 
 static void BenchGemm(int m, int k, int n)
 {
@@ -41,7 +41,7 @@ static void BenchGemm(int m, int k, int n)
     Console.WriteLine($"GEMM [{m},{k}]x[{k},{n}]: {iterations / sw.Elapsed.TotalSeconds,10:N0} ops/sec  ({gflops:F2} GFLOP/s)");
 }
 
-static void BenchTrainingStep(int batch, int hidden, int? target)
+static void BenchTrainingStep(int batch, int hidden, int? targetStepsPerSec)
 {
     var rng = new Xoshiro256StarStar(2);
     var net = new Mlp([4, hidden, hidden, 2], rng, Activation.Relu);
@@ -57,8 +57,8 @@ static void BenchTrainingStep(int batch, int hidden, int? target)
     sw.Stop();
 
     double stepsPerSec = iterations / sw.Elapsed.TotalSeconds;
-    string verdict = target is null ? "(informational)"
-        : stepsPerSec >= target ? $"PASS (target >= {target:N0})" : $"FAIL (target >= {target:N0})";
+    string verdict = targetStepsPerSec is null ? "(informational)"
+        : stepsPerSec >= targetStepsPerSec ? $"PASS (target >= {targetStepsPerSec:N0})" : $"FAIL (target >= {targetStepsPerSec:N0})";
     Console.WriteLine($"full Adam step (fwd+bwd+clip+step), batch {batch}, 4->{hidden}->{hidden}->2: " +
                       $"{stepsPerSec,8:N0} steps/sec  ({stepsPerSec * batch:N0} samples/sec)  {verdict}");
 
