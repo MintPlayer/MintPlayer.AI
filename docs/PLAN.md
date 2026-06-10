@@ -4,7 +4,11 @@ Companion to [PRD.md](PRD.md). Each milestone ends in a **git commit on a passin
 revert-friendly by design. Order is chosen so each milestone adds at most 2–3 genuinely new
 components (the CleanRL/SB3 lesson: localize bugs by construction).
 
-## M0 — Skeleton + core contracts  *(part of the quick demo)*
+> **Status (2026-06-10): M0–M6 all complete, every pre-registered gate passed.**
+> Remaining work is the M7 stretch list plus the deferred items called out inline
+> (checkpointing, Dueling DQN, tensor pooling, PPO action masking).
+
+## M0 — Skeleton + core contracts  *(part of the quick demo)* ✅
 
 - Solution restructure: `src/RL.NET.Core`, `src/RL.NET.Environments`, `src/RL.NET.Demo`
   (existing console project), `tests/RL.NET.Tests` (xUnit).
@@ -15,7 +19,9 @@ components (the CleanRL/SB3 lesson: localize bugs by construction).
 - **Gate:** env dynamics unit tests pass (incl. FrozenLake slip distribution); RNG
   determinism test (same seed → identical sequences).
 
-## M1 — Tabular agents + the quick demo  *(deliverable: watchable demo)*
+## M1 — Tabular agents + the quick demo  *(deliverable: watchable demo)* ✅
+**Result:** GridWorld policy exactly optimal in 16/16 states (33 ms of training);
+FrozenLake 74.2% success (≈ the VI-optimal policy's own rate under the 100-step cap).
 
 - Q-learning + SARSA, epsilon schedule (linear decay), double-precision Q-tables.
 - Value iteration (oracle for tests), policy/value console visualization (arrow map).
@@ -23,7 +29,11 @@ components (the CleanRL/SB3 lesson: localize bugs by construction).
 - **Gate:** Q-learning greedy policy == value-iteration policy on GridWorld (exact);
   FrozenLake success ≥ 0.70/100 episodes (median of 3 seeds); bitwise seed-determinism test.
 
-## M2 — Tensors, autograd, NN  *(the from-scratch heart)*
+## M2 — Tensors, autograd, NN  *(the from-scratch heart)* ✅
+**Result:** managed GEMM 18–22 GFLOP/s single-thread; 3,441 Adam steps/s on the PRD
+config (target ≥ 1,000); gradient checks caught a real transposed-GEMM argument bug.
+*Deferred:* tensor/tape pooling (the zero-steady-state-allocation goal) — revisit if
+profiling ever shows GC pressure; current throughput met targets without it.
 
 - Spike first: benchmark hand-rolled GEMM (`TensorPrimitives.Dot` per row → tiled
   `Vector256<float>`) against the ≥1k Adam-steps/sec target before building everything else.
@@ -35,7 +45,11 @@ components (the CleanRL/SB3 lesson: localize bugs by construction).
 - **Gate:** finite-difference gradient checks on every op + composed losses;
   GEMM benchmark target met; zero steady-state allocations in the training inner loop.
 
-## M3 — CartPole + REINFORCE + DQN
+## M3 — CartPole + REINFORCE + DQN ✅
+**Result:** CartPole port matches Gymnasium golden trajectories bit-for-bit (float32);
+Double DQN solves CartPole in ~15k steps / 6.5 s with a perfect 500.0 final eval;
+REINFORCE gate ≥ 400 passed. *Deferred:* full-resume checkpointing and the Dueling
+head (Double DQN landed; neither was needed for any gate so far).
 
 - **CartPole-v1 faithful port** (exact constants/update order from PRD §6) validated against
   committed golden trajectories from Python Gymnasium
@@ -48,7 +62,10 @@ components (the CleanRL/SB3 lesson: localize bugs by construction).
 - **Gate:** DQN CartPole ≥ 475 median/3 seeds; overfit-one-transition test (loss→0, Q→r);
   truncation test (truncated transition bootstraps); replay wraparound unit test.
 
-## M4 — PPO + vectorized environments  *(the scale-out milestone)*
+## M4 — PPO + vectorized environments  *(the scale-out milestone)* ✅
+**Result:** PPO solves CartPole in ~20k env steps / 2.1 s (final eval 494/500).
+Built as `VectorEnv` (one class, `parallel` flag); since each env owns its RNG,
+parallel mode reproduces sequential **bitwise**, not just within tolerance.
 
 - `IVectorEnv`: sequential-deterministic (default) + parallel (Tasks) modes, autoreset with
   `final_observation` passthrough in `EnvInfo`.
@@ -86,11 +103,14 @@ components (the CleanRL/SB3 lesson: localize bugs by construction).
   solutions, wiring the existing `C:\Repos\Spelletjes\Rush Hour` app as a
   front-end/visualizer (request a clean checkout when that starts).
 
-## M7 — Stretch (unordered)
+## M7 — Stretch (unordered, not started)
 
 MountainCar (exploration stress test) · Snake (demo gif) · TorchSharp `IComputeBackend`
 implementation · TensorBoard event writer · self-play scaffolding (TicTacToe + minimax oracle)
-· NuGet packaging.
+· NuGet packaging · checkpointing/full training resume (deferred from M3) · Dueling DQN head
+(deferred from M3) · tensor/tape pooling (deferred from M2) · Categorical/PPO action masking
+(deferred from M5) · harder Rush Hour sets with curriculum + imitation from BFS solutions
+· Rush Hour front-end via `C:\Repos\Spelletjes\Rush Hour` (ask for a clean checkout first).
 
 ## Testing strategy (cross-cutting, from research)
 
@@ -103,7 +123,21 @@ implementation · TensorBoard event writer · self-play scaffolding (TicTacToe +
    (V must converge to r/(1−γ)) — isolate value vs policy vs exploration failures.
 6. **Golden trajectories** from Python Gymnasium for ported envs.
 
+## Gate results at a glance
+
+| Milestone | Gate | Result |
+|---|---|---|
+| M1 tabular | FrozenLake success ≥ 70% | 74.2% (≈ theoretical optimum) |
+| M2 numerics | ≥ 1k Adam steps/s (batch 64, 4→64→64→2) | 3,441/s; GEMM 18–22 GFLOP/s |
+| M3 DQN | CartPole ≥ 475 (median/3 seeds) | 500.0 in ~15k steps / 6.5 s |
+| M3 REINFORCE | CartPole ≥ 400 (median/3 seeds) | passed |
+| M4 PPO | CartPole ≥ 475 (median/3 seeds) | 494.1 in ~20k steps / 2.1 s |
+| M5 2048 | 2048-tile rate ≥ 10% (stretch 80%) | **84%** after 100k games / 168 s |
+| M6 Rush Hour | ≥ 90% of easy set within 2× optimal | **100%** (30/30) after 40k steps / ~1 min |
+
 ## Immediate next step
 
-Build M0 + M1 now → commit per milestone → demo: watch tabular Q-learning solve
-GridWorld/FrozenLake live in the console with a policy arrow map.
+All planned milestones are done. Pick from the M7 stretch list — or take the library
+to a new game. Demo entry points: `dotnet run --project src/RL.NET.Demo -c Release --
+[grid|lake|cartpole|ppo|2048|2048dqn|rushhour] [seed]` (launch profiles exist for each).
+Tests: `dotnet test` (statistical gates carry `Category=Slow`).

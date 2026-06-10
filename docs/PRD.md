@@ -1,6 +1,7 @@
 # RL.NET — Product Requirements Document
 
-**Status:** Draft v1 · 2026-06-10
+**Status:** v1 implemented · 2026-06-10 — all M0–M6 gates passed; see
+[PLAN.md](PLAN.md) for per-milestone results and the remaining stretch list.
 **Owner:** Pieterjan
 **Repo:** `C:\Repos\RL.NET` (net10.0, blank solution at start)
 
@@ -108,7 +109,7 @@ Pre-registered, objective "solved" definitions (fixed now so benchmarks stay mea
 | **FrozenLake 4×4** (slippery ⅓-⅓-⅓, +1 goal, 100-step cap) | Discrete(16) / Discrete(4) | Success rate ≥ 0.70 over 100 episodes | Stochasticity test (Gymnasium-comparable) |
 | **CartPole-v1** (faithful port: gravity 9.8, masscart 1.0, masspole 0.1, **length 0.5 = half-pole**, force 10.0, τ 0.02, explicit-Euler source order, terminate \|x\|>2.4 or \|θ\|>0.2095 rad, +1/step incl. terminal, truncate@500, init U(−0.05,0.05)⁴) | Box(4) / Discrete(2) | Mean return ≥ 475 over 100 consecutive episodes | Deep-RL flagship; literature-comparable |
 | **2048** (4×4, spawn 90% 2 / 10% 4, invalid moves masked) | Box(16) log2-encoded / Discrete(4) | Pre-registered: reach 2048 tile in ≥ 10% of 100 eval games (DQN target); stretch: TD/n-tuple agent ≥ 80% | Owner's game #1; stochastic, showy |
-| **Rush Hour** (6×6 sliding-block; action = (vehicle, ±1 slide); reward −1/step, +100 exit; per-difficulty puzzle sets) | Box(36) grid encoding / Discrete(≤32 masked) | ≥ 90% of *easy* puzzle set solved within 2× optimal moves (optimal via built-in BFS solver) | Owner's game #2; sparse-reward planning, curriculum learning |
+| **Rush Hour** (6×6 sliding-block; action = (vehicle, ±1 slide); reward −1/step, +100 exit; per-difficulty puzzle sets) | Box(72): vehicle-identity plane + red-car plane / Discrete(32 masked) | ≥ 90% of *easy* puzzle set solved within 2× optimal moves (optimal via built-in BFS solver) | Owner's game #2; sparse-reward planning, curriculum learning |
 | MountainCar-v0 (optional) | Box(2) / Discrete(3) | Mean ≥ −110 over 100 episodes | Exploration stress test (vanilla agents *legitimately* fail — that's a finding, not a bug) |
 
 Rush Hour note: board logic is reimplemented inside `RL.NET.Environments` (~150 LOC) rather
