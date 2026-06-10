@@ -169,6 +169,12 @@ move-by-move legal, matches the server-reported states, ends solved, within 2× 
   The training recipe lives in `RushHourModelService.TrainingPuzzles()/TrainingOptions()`
   and the Slow API gate consumes the same statics, so test and production can't drift.
 - Solve rollout budget now scales with difficulty: `max(60, 2 × optimal)` moves.
+- **Slide compaction** (`RushHourSolver.CompactSolution`): BFS returns an arbitrary
+  order among the equally-optimal solutions, which can split one fluid slide around
+  unrelated moves ("R left 1 … R left 1" instead of "R left 2"). A greedy run-reordering
+  pass groups commutable same-vehicle moves — identical move count, fewer visible
+  slides (card 40: 62 → 53 slides over the same 81 cell-moves; the official card
+  solution has 51). Used for the playground's optimal trajectory.
 - **Official ThinkFun cards 38/39/40** encoded as solver regression tests with their
   published solutions replayed move-by-move on our board (legality asserted per
   single-cell slide): BFS optima 77/82/81 single-cell moves, and all three printed

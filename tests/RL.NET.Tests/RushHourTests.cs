@@ -248,6 +248,54 @@ public class RushHourBoardTests
     }
 
     [Fact]
+    public void CompactSolution_GroupsInterleavedSlidesOfTheSameVehicle()
+    {
+        // Red at (2,0); truck A in column 4 covers the exit row. Optimal = 7 (A down ×3,
+        // red right ×4) — but this needlessly interleaved order is also valid:
+        var puzzle = new RushHourPuzzle([
+            new Vehicle(2, 0, 2, Horizontal: true),
+            new Vehicle(0, 4, 3, Horizontal: false),
+        ]);
+        int red = 1, truckDown = 1 * 2 + 1; // red right = action 1, truck down = action 3
+        int[] interleaved = [red, truckDown, red, truckDown, truckDown, red, red];
+        Assert.Equal(5, RushHourSolver.SlideCount(interleaved));
+
+        var compacted = RushHourSolver.CompactSolution(puzzle, interleaved);
+
+        Assert.Equal(interleaved.Length, compacted.Length); // still optimal
+        Assert.Equal(2, RushHourSolver.SlideCount(compacted)); // [A down ×3][red right ×4]
+        AssertActionsSolve(puzzle, compacted);
+    }
+
+    [Theory]
+    [InlineData(38)]
+    [InlineData(39)]
+    [InlineData(40)]
+    public void CompactSolution_OnOfficialCards_KeepsLengthAndNeverAddsSlides(int card)
+    {
+        var puzzle = card switch { 38 => OfficialCard38(), 39 => OfficialCard39(), _ => OfficialCard40() };
+        int optimal = RushHourSolver.Solve(puzzle, 2_000_000, out var raw);
+
+        var compacted = RushHourSolver.CompactSolution(puzzle, raw);
+
+        Assert.Equal(optimal, compacted.Length);
+        Assert.True(RushHourSolver.SlideCount(compacted) <= RushHourSolver.SlideCount(raw),
+            $"compacted has {RushHourSolver.SlideCount(compacted)} slides, raw has {RushHourSolver.SlideCount(raw)}");
+        AssertActionsSolve(puzzle, compacted);
+    }
+
+    private static void AssertActionsSolve(RushHourPuzzle puzzle, int[] actions)
+    {
+        var positions = RushHourBoard.InitialPositions(puzzle);
+        foreach (int action in actions)
+        {
+            Assert.True(RushHourBoard.ActionMask(puzzle, positions)[action], "illegal move in solution");
+            positions[action / 2] += action % 2 == 0 ? -1 : 1;
+        }
+        Assert.True(RushHourBoard.IsSolved(puzzle, positions));
+    }
+
+    [Fact]
     public void Solver_DetectsUnsolvable()
     {
         // A horizontal car on the exit row to the red car's right can never leave the row.

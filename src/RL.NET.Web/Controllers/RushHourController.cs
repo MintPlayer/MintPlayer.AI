@@ -89,8 +89,10 @@ public sealed class RushHourController(RushHourModelService model) : ControllerB
             if (step.Done) break;
         }
 
+        // Compacted: same optimal move count, but commutable moves grouped into fluid slides.
+        var compactedOptimal = RushHourSolver.CompactSolution(puzzle, optimalActions);
         return new SolveResponse(solved, trajectory.Count, optimal,
-            [.. trajectory], ReplayActions(puzzle, optimalActions));
+            [.. trajectory], ReplayActions(puzzle, compactedOptimal));
     }
 
     private static TrajectoryStepDto[] ReplayActions(RushHourPuzzle puzzle, int[] actions)
