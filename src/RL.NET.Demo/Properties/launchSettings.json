@@ -26,6 +26,10 @@
     "2048 (masked Double DQN)": {
       "commandName": "Project",
       "commandLineArgs": "2048dqn"
+    },
+    "Rush Hour (masked Double DQN)": {
+      "commandName": "Project",
+      "commandLineArgs": "rushhour"
     }
   }
 }

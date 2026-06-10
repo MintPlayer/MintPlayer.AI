@@ -72,16 +72,19 @@ components (the CleanRL/SB3 lesson: localize bugs by construction).
 - Generic masked Double DQN runs on the same env via `2048dqn` demo section
   (demonstrates the framework path; n-tuple remains the strong 2048 agent).
 
-## M6 — Rush Hour  *(owner's game #2 — sparse-reward planning)*
+## M6 — Rush Hour  *(owner's game #2 — sparse-reward planning)* ✅
 
-- Board logic reimplemented in `RL.NET.Environments` (6×6, vehicles len 2–3, action =
-  (vehicle, direction) with masking); puzzle sets imported as data (easy/medium/hard);
-  BFS optimal solver as oracle.
-- Curriculum training (easy → hard), optional shaped-reward variant
-  (e.g. +distance-of-red-car-to-exit), optional imitation warm-start from BFS solutions.
-- **Gate:** ≥ 90% of easy puzzle set solved within 2× optimal moves.
-- Later: wire the existing `C:\Repos\Spelletjes\Rush Hour` app as a front-end/visualizer
-  (request a clean checkout when that starts).
+- Board logic in `RL.NET.Environments/RushHour` (6×6, vehicles len 2–3, action =
+  vehicle·2+direction over a masked 32-action space); BFS optimal solver as oracle
+  (also returns the optimal action sequence for future imitation use).
+- Puzzle sets are generated deterministically from a seed (random layout + BFS filter
+  into difficulty bands) instead of imported data files.
+- **Gate passed:** masked Double DQN solves **30/30 (100%)** of the easy set
+  (optimal 4–10) within 2× optimal after 40k steps (~1 min) — with the pure sparse
+  −1/+100 reward; the potential-based shaped variant exists but wasn't needed.
+- Still open for later: medium/hard curriculum, imitation warm-start from BFS
+  solutions, wiring the existing `C:\Repos\Spelletjes\Rush Hour` app as a
+  front-end/visualizer (request a clean checkout when that starts).
 
 ## M7 — Stretch (unordered)
 

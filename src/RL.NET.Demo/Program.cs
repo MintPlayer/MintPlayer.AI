@@ -7,10 +7,11 @@ using RLNet.Core.Solvers;
 using RLNet.Core.Training;
 using RLNet.Environments;
 using RLNet.Environments.Game2048;
+using RLNet.Environments.RushHour;
 
 // Usage: RL.NET.Demo [grid|lake|cartpole|ppo|2048|2048dqn ...] [seed]
 //        no env args = run everything except 2048dqn (DQN needs a long budget there).
-string[] knownSections = ["grid", "lake", "cartpole", "ppo", "2048", "2048dqn"];
+string[] knownSections = ["grid", "lake", "cartpole", "ppo", "2048", "2048dqn", "rushhour"];
 var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 ulong masterSeed = 42;
 foreach (var arg in args)
@@ -214,8 +215,100 @@ if (ShouldRun("2048dqn"))
     Console.WriteLine();
 }
 
+if (ShouldRun("rushhour"))
+{
+    Console.WriteLine("=== Rush Hour — masked Double DQN on a 30-puzzle easy set (optimal 4-10 moves) ===");
+    Console.WriteLine("    gate (PRD): >= 90% of the set solved within 2x the BFS-optimal move count");
+    var puzzles = RushHourGenerator.Generate(seed: 99, count: 30, minOptimal: 4, maxOptimal: 10);
+    Console.WriteLine($"generated {puzzles.Count} puzzles, avg optimal {puzzles.Average(p => p.OptimalMoves):F1} moves. Example:");
+    Console.WriteLine(RushHourBoard.Render(puzzles[0], RushHourBoard.InitialPositions(puzzles[0])));
+
+    var seeds = new SeedSequence(masterSeed);
+    var env = new RushHourEnv(puzzles, maxMoves: 60);
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var result = DqnTrainer.Train(env, new DqnOptions
+    {
+        Hidden = [128, 128],
+        Gamma = 0.98,
+        LearningRate = 5e-4f,
+        MaxSteps = 200_000,
+        BufferCapacity = 100_000,
+        Epsilon = new LinearSchedule(1.0, 0.05, 60_000),
+        EvalEvery = 10_000,
+        EvalEpisodes = 20,
+        SolveThreshold = 88, // mean return ~ solving random puzzles within ~2x optimal
+        OnProgress = p => Console.WriteLine(
+            $"  step {p.Step,7}/{p.MaxSteps}  eval mean return: {p.EvalMeanReturn,6:F1}  epsilon: {p.Epsilon:F3}  loss: {p.LastLoss:F4}"),
+    }, seeds);
+    sw.Stop();
+
+    var (solvedInBudget, solvedAtAll) = EvaluateRushHourGate(env, result.Agent, puzzles);
+    Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalMinutes:F1} min");
+    Console.WriteLine($"gate: {solvedInBudget}/{puzzles.Count} puzzles solved within 2x optimal " +
+                      $"({solvedInBudget / (double)puzzles.Count:P0}, target >= 90%); {solvedAtAll}/{puzzles.Count} solved within 60 moves");
+    Console.WriteLine();
+    if (animate) AnimateRushHour(env, result.Agent, puzzleIndex: 0);
+    Console.WriteLine();
+}
+
 Console.WriteLine("done.");
 return;
+
+static (int SolvedInBudget, int SolvedAtAll) EvaluateRushHourGate(RushHourEnv env, GreedyQAgent agent, IReadOnlyList<RushHourPuzzle> puzzles)
+{
+    int solvedInBudget = 0, solvedAtAll = 0;
+    for (int i = 0; i < puzzles.Count; i++)
+    {
+        env.FixedPuzzleIndex = i;
+        env.Reset(1);
+        var obs = env.CurrentObservation();
+        while (true)
+        {
+            var step = env.Step(agent.Act(obs, env.CurrentActionMask(), greedy: true));
+            obs = step.Observation;
+            if (step.Terminated)
+            {
+                solvedAtAll++;
+                if (env.MovesUsed <= 2 * puzzles[i].OptimalMoves) solvedInBudget++;
+                break;
+            }
+            if (step.Truncated) break;
+        }
+    }
+    env.FixedPuzzleIndex = null;
+    return (solvedInBudget, solvedAtAll);
+}
+
+static void AnimateRushHour(RushHourEnv env, GreedyQAgent agent, int puzzleIndex)
+{
+    Console.WriteLine($"--- Rush Hour — greedy playback, puzzle {puzzleIndex} (optimal {env.CurrentPuzzle.OptimalMoves} moves) ---");
+    env.FixedPuzzleIndex = puzzleIndex;
+    env.Reset(1);
+    var obs = env.CurrentObservation();
+    int frameTop = Console.CursorTop;
+
+    while (true)
+    {
+        Console.SetCursorPosition(0, frameTop);
+        Console.Write(env.RenderString());
+        Thread.Sleep(250);
+
+        var step = env.Step(agent.Act(obs, env.CurrentActionMask(), greedy: true));
+        obs = step.Observation;
+
+        if (step.Done)
+        {
+            Console.SetCursorPosition(0, frameTop);
+            Console.Write(env.RenderString());
+            Console.WriteLine(step.Terminated
+                ? $"solved in {env.MovesUsed} moves (optimal {env.CurrentPuzzle.OptimalMoves})!"
+                : "move budget exhausted without solving.");
+            break;
+        }
+    }
+    env.FixedPuzzleIndex = null;
+}
 
 static (double Rate2048, double Rate1024, double AvgScore, int BestTile) Eval2048(
     NTuple2048Agent agent, ulong seed, int games)

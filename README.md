@@ -31,6 +31,8 @@ Demos (each ends with animated console playback):
   solved = mean return ≥ 475/500. Both solve in seconds.
 - **2048** (`2048` = afterstate TD(0) n-tuple network, `2048dqn` = generic masked
   Double DQN) — reaches the 2048 tile in ~84% of games after ~3 minutes of self-play.
+- **Rush Hour** (`rushhour`) — masked Double DQN on a generated 30-puzzle easy set with
+  a BFS oracle; solves 100% within 2× optimal after ~1 minute of training.
 
 ## Run the tests
 
