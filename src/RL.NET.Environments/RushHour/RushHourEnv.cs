@@ -87,14 +87,8 @@ public sealed class RushHourEnv : IEnvironment<float[], int>, IActionMaskProvide
 
     private float[] Observation()
     {
-        var obs = new float[72];
-        Span<int> grid = stackalloc int[36];
-        RushHourBoard.FillOccupancy(_puzzle, _positions, grid);
-        for (int i = 0; i < 36; i++)
-        {
-            if (grid[i] >= 0) obs[i] = (grid[i] + 1) / (float)RushHourBoard.MaxVehicles;
-            if (grid[i] == 0) obs[36 + i] = 1f;
-        }
+        var obs = new float[RushHourBoard.ObservationSize];
+        RushHourBoard.WriteObservation(_puzzle, _positions, obs);
         return obs;
     }
 

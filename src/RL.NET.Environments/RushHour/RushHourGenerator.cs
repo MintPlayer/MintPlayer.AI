@@ -38,8 +38,12 @@ public static class RushHourGenerator
                 $"Only generated {puzzles.Count}/{count} puzzles in band [{minOptimal},{maxOptimal}] after {maxAttempts} attempts.");
         return puzzles;
 
-        RushHourPuzzle? TryRandomLayout(Xoshiro256StarStar rng)
-        {
+        RushHourPuzzle? TryRandomLayout(Xoshiro256StarStar rng) => RandomLayout(rng, minVehicles, maxVehicles, varyRedLength);
+    }
+
+    /// <summary>One random (possibly null) layout draw — exposed for dataset mining (imitation learning).</summary>
+    public static RushHourPuzzle? RandomLayout(Xoshiro256StarStar rng, int minVehicles, int maxVehicles, bool varyRedLength)
+    {
             var occupied = new bool[36];
             var vehicles = new List<Vehicle>();
 
@@ -72,6 +76,5 @@ public static class RushHourGenerator
             }
 
             return vehicles.Count >= minVehicles ? new RushHourPuzzle([.. vehicles]) : null;
-        }
     }
 }

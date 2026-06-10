@@ -119,6 +119,25 @@ public static class RushHourBoard
     public static bool IsSolved(RushHourPuzzle puzzle, ReadOnlySpan<int> positions)
         => positions[0] + puzzle.Vehicles[0].Length - 1 == Size - 1;
 
+    public const int ObservationSize = 72;
+
+    /// <summary>
+    /// The canonical 72-float observation: a vehicle-identity plane ((index+1)/16,
+    /// 0 = empty) and a red-car occupancy plane. Shared by the env, the oracle
+    /// dataset builder and policy inference so they can never drift.
+    /// </summary>
+    public static void WriteObservation(RushHourPuzzle puzzle, ReadOnlySpan<int> positions, Span<float> observation)
+    {
+        observation.Clear();
+        Span<int> grid = stackalloc int[36];
+        FillOccupancy(puzzle, positions, grid);
+        for (int i = 0; i < 36; i++)
+        {
+            if (grid[i] >= 0) observation[i] = (grid[i] + 1) / (float)MaxVehicles;
+            if (grid[i] == 0) observation[36 + i] = 1f;
+        }
+    }
+
     public static string Render(RushHourPuzzle puzzle, ReadOnlySpan<int> positions)
     {
         Span<int> grid = stackalloc int[36];
