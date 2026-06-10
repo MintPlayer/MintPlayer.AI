@@ -1,0 +1,19 @@
+## .NET build artifacts
+bin/
+obj/
+out/
+
+## User-specific files
+*.user
+*.suo
+.vs/
+*.DotSettings.user
+
+## Test results / coverage
+TestResults/
+coverage*.xml
+*.coverage
+
+## OS junk
+Thumbs.db
+.DS_Store
