@@ -34,7 +34,18 @@ public sealed class ReplayBuffer
     }
 
     public int Capacity { get; }
-    public int Count { get; private set; }
+    public int Count { get; internal set; }
+
+    // Internal state access for checkpointing (Checkpoints/DqnTrainingState.cs).
+    internal int ObsDim => _obsDim;
+    internal int ActionCount => _actionCount;
+    internal float[] ObsData => _obs;
+    internal float[] NextObsData => _nextObs;
+    internal int[] ActionsData => _actions;
+    internal float[] RewardsData => _rewards;
+    internal bool[] TerminatedData => _terminated;
+    internal bool[] NextMaskData => _nextMask;
+    internal int NextIndex { get => _next; set => _next = value; }
 
     /// <param name="nextActionMask">
     /// Legal actions in the NEXT state (for masked TD-target max); empty span = all legal.

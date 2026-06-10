@@ -1,4 +1,5 @@
 using RLNet.Core.Agents;
+using RLNet.Core.Checkpoints;
 using RLNet.Core.Environments;
 using RLNet.Core.Nn;
 using RLNet.Core.Numerics;
@@ -35,7 +36,7 @@ public sealed record DqnOptions
 
 public readonly record struct DqnProgress(int Step, int MaxSteps, double EvalMeanReturn, double Epsilon, float LastLoss);
 
-public sealed record DqnResult(GreedyQAgent Agent, Mlp Network, int StepsTrained, double FinalEvalReturn);
+public sealed record DqnResult(GreedyQAgent Agent, Mlp Network, int StepsTrained, double FinalEvalReturn, DqnTrainingState State);
 
 /// <summary>Acts greedily from a Q-network (evaluation/playback); epsilon-greedy when given an RNG.</summary>
 public sealed class GreedyQAgent(Mlp network, int actionCount, Xoshiro256StarStar? rng = null) : IAgent<float[], int>
@@ -76,27 +77,72 @@ public sealed class GreedyQAgent(Mlp network, int actionCount, Xoshiro256StarSta
 /// </summary>
 public static class DqnTrainer
 {
-    public static DqnResult Train(IEnvironment<float[], int> env, DqnOptions options, SeedSequence seeds)
+    /// <param name="resume">
+    /// A previously saved training state to continue from. The same options and master
+    /// seed must be passed as in the original run; on <see cref="IStatefulEnvironment"/>
+    /// envs the resumed run is bitwise-identical to one that was never interrupted.
+    /// </param>
+    public static DqnResult Train(IEnvironment<float[], int> env, DqnOptions options, SeedSequence seeds,
+        DqnTrainingState? resume = null)
     {
         int obsDim = ((BoxSpace)env.ObservationSpace).Dimensions;
         int actionCount = ((DiscreteSpace)env.ActionSpace).N;
 
-        var initRng = seeds.CreateRng(RngStreams.Init);
-        var online = new Mlp([obsDim, .. options.Hidden, actionCount], initRng, Activation.Relu);
-        var target = new Mlp([obsDim, .. options.Hidden, actionCount], initRng, Activation.Relu);
-        target.CopyFrom(online);
+        DqnTrainingState state;
+        float[] obs;
+        if (resume is null)
+        {
+            var initRng = seeds.CreateRng(RngStreams.Init);
+            var online = new Mlp([obsDim, .. options.Hidden, actionCount], initRng, Activation.Relu);
+            var target = new Mlp([obsDim, .. options.Hidden, actionCount], initRng, Activation.Relu);
+            target.CopyFrom(online);
+            state = new DqnTrainingState
+            {
+                Online = online,
+                Target = target,
+                Optimizer = new Adam(online.Parameters(), options.LearningRate),
+                Buffer = new ReplayBuffer(options.BufferCapacity, obsDim, actionCount),
+                PolicyRng = seeds.CreateRng(RngStreams.Policy),
+                BufferRng = seeds.CreateRng(RngStreams.Buffer),
+            };
+            (obs, _) = env.Reset(seeds.Derive(RngStreams.Environment));
+        }
+        else
+        {
+            state = resume;
+            if (state.Buffer.Capacity != options.BufferCapacity)
+                throw new ArgumentException($"Resume state buffer capacity {state.Buffer.Capacity} != options {options.BufferCapacity}.");
+            if (state.CurrentObs.Length != obsDim)
+                throw new ArgumentException($"Resume state obs dim {state.CurrentObs.Length} != environment {obsDim}.");
 
-        var adam = new Adam(online.Parameters(), options.LearningRate);
-        var buffer = new ReplayBuffer(options.BufferCapacity, obsDim, actionCount);
-        var bufferRng = seeds.CreateRng(RngStreams.Buffer);
-        var agent = new GreedyQAgent(online, actionCount, seeds.CreateRng(RngStreams.Policy));
+            if (state.EnvState is not null && env is IStatefulEnvironment stateful)
+            {
+                stateful.RestoreState(state.EnvState);
+                obs = state.CurrentObs;
+            }
+            else
+            {
+                // Env can't be restored: start a fresh episode (training continues, bitwise equality doesn't).
+                (obs, _) = env.Reset(seeds.Derive(RngStreams.Environment));
+            }
+        }
+
+        var agent = new GreedyQAgent(state.Online, actionCount, state.PolicyRng);
         var maskProvider = env as IActionMaskProvider;
+        float lastLoss = state.LastLoss;
+        double lastEval = state.LastEval;
 
-        var (obs, _) = env.Reset(seeds.Derive(RngStreams.Environment));
-        float lastLoss = 0f;
-        double lastEval = double.NegativeInfinity;
+        DqnResult Finish(int stepsTrained)
+        {
+            state.CurrentObs = obs;
+            state.StepsCompleted = stepsTrained;
+            state.LastLoss = lastLoss;
+            state.LastEval = lastEval;
+            state.EnvState = (env as IStatefulEnvironment)?.SaveState();
+            return new DqnResult(agent, state.Online, stepsTrained, lastEval, state);
+        }
 
-        for (int step = 1; step <= options.MaxSteps; step++)
+        for (int step = state.StepsCompleted + 1; step <= options.MaxSteps; step++)
         {
             agent.Epsilon = options.Epsilon.Value(step);
             int action = agent.Act(obs, maskProvider?.CurrentActionMask());
@@ -105,14 +151,15 @@ public static class DqnTrainer
             var nextMask = maskProvider?.CurrentActionMask();
 
             // Store terminated only — truncated transitions must still bootstrap.
-            buffer.Add(obs, action, result.Reward, result.Observation, result.Terminated, nextMask);
+            state.Buffer.Add(obs, action, result.Reward, result.Observation, result.Terminated, nextMask);
             obs = result.Done ? env.Reset().Observation : result.Observation;
 
-            if (buffer.Count >= options.WarmupSteps && step % options.TrainEvery == 0)
-                lastLoss = TrainStep(online, target, adam, buffer.Sample(options.BatchSize, bufferRng), options);
+            if (state.Buffer.Count >= options.WarmupSteps && step % options.TrainEvery == 0)
+                lastLoss = TrainStep(state.Online, state.Target, state.Optimizer,
+                    state.Buffer.Sample(options.BatchSize, state.BufferRng), options);
 
             if (step % options.TargetSyncEvery == 0)
-                target.CopyFrom(online);
+                state.Target.CopyFrom(state.Online);
 
             if (step % options.EvalEvery == 0)
             {
@@ -122,11 +169,11 @@ public static class DqnTrainer
                 (obs, _) = env.Reset(); // evaluation ended mid-episode; start fresh
 
                 if (options.SolveThreshold.HasValue && lastEval >= options.SolveThreshold.Value)
-                    return new DqnResult(agent, online, step, lastEval);
+                    return Finish(step);
             }
         }
 
-        return new DqnResult(agent, online, options.MaxSteps, lastEval);
+        return Finish(options.MaxSteps);
     }
 
     private static float TrainStep(Mlp online, Mlp target, Adam adam, ReplayBuffer.Batch batch, DqnOptions options)

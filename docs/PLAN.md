@@ -4,10 +4,10 @@ Companion to [PRD.md](PRD.md). Each milestone ends in a **git commit on a passin
 revert-friendly by design. Order is chosen so each milestone adds at most 2–3 genuinely new
 components (the CleanRL/SB3 lesson: localize bugs by construction).
 
-> **Status (2026-06-10): M0–M6 (the library) all complete, every pre-registered gate
-> passed.** New requirement inserted the same day: the **interactive web playground**
-> (PRD §7) — planned below as **M7–M10**, none started. The former stretch list is now
-> M11; checkpointing moved out of it into M7 as a hard requirement.
+> **Status (2026-06-10): M0–M7 complete, every pre-registered gate passed.**
+> New requirement inserted the same day: the **interactive web playground** (PRD §7),
+> planned as M7–M10. M7 (checkpointing + model store) is done; next is **M8**
+> (web host + Rush Hour page). The former stretch list is now M11.
 
 ## M0 — Skeleton + core contracts  *(part of the quick demo)* ✅
 
@@ -105,18 +105,30 @@ parallel mode reproduces sequential **bitwise**, not just within tolerance.
   the existing `C:\Repos\Spelletjes\Rush Hour` app remains a possible puzzle-data
   source (M11 — request a clean checkout when that starts).
 
-## M7 — Checkpointing + model store  *(prerequisite for the web app)*
+## M7 — Checkpointing + model store  *(prerequisite for the web app)* ✅
+**Result:** all gates passed (11 new tests, 106 total green). The resume test
+serializes a DQN run interrupted at 2k steps to bytes, deserializes, resumes on a
+fresh env, and lands bitwise-identical to an uninterrupted 4k-step run — weights,
+target net, both RNG streams and the env snapshot. Demo round-trip: CartPole trains
+in ~6 s, `--save` writes an 18 KB checkpoint, `--load` skips training and reproduces
+the 500.0 eval exactly.
 
-- Checkpoint formats per the PRD decisions: JSON for tabular Q-tables; versioned
-  little-endian binary for NN weights + Adam state + RNG state (full training resume);
-  versioned binary for the 2048 n-tuple weight tables (17×65 536 floats — by far the
-  largest artifact, ~4.4 MB).
-- `IModelStore`: one *current* checkpoint per (environment, algorithm) under a
-  configurable data directory; atomic save (write-temp-then-rename); load-or-null.
-- Demo sections gain `--save`/`--load` so trained agents survive between runs.
-- **Gate:** round-trip tests — reloaded agent produces bitwise-identical greedy
-  evaluation; an interrupted-and-resumed DQN run (weights + optimizer + RNG restored)
-  bitwise-matches an uninterrupted run with the same master seed.
+- Checkpoint formats per the PRD decisions (`RLNet.Core.Checkpoints`): JSON for
+  tabular Q-tables (`TabularCheckpoint`); versioned little-endian binary for MLPs
+  (`MlpCheckpoint`), Adam moments+step (`AdamCheckpoint`) and the 2048 n-tuple tables
+  (`NTuple2048Agent.Save/Load`, 17×65 536 floats ≈ 4.5 MB).
+- Full DQN training resume: `DqnTrainingState` (nets, optimizer, replay buffer, RNG
+  streams, current obs, env snapshot) + `DqnTrainer.Train(..., resume:)`. New
+  `IStatefulEnvironment` (snapshot/restore complete env state incl. RNG) — implemented
+  by CartPole; envs without it resume with a fresh episode (functional, not bitwise).
+- `IModelStore` / `FileModelStore`: one *current* checkpoint per (environment,
+  algorithm) as `<root>/<env>.<algo>.ckpt`; atomic save (temp + rename, old checkpoint
+  survives a failed write); List/Delete for the web app's status pages.
+- Demo: `--save` / `--load` / `--data <dir>` (default `./data`) on the cartpole, 2048,
+  2048dqn and rushhour sections; "persisted model" launch profiles added.
+- **Gate (passed):** round-trip tests — reloaded agents bitwise-identical (MLP forward
+  pass, n-tuple eval games, tabular Q exact); interrupted-and-resumed DQN
+  bitwise-matches uninterrupted; atomic-save failure test.
 
 ## M8 — Web host + Rush Hour page  *(first end-to-end playground slice)*
 
@@ -191,10 +203,12 @@ self-play · importing puzzles from `C:\Repos\Spelletjes\Rush Hour` as gallery d
 | M4 PPO | CartPole ≥ 475 (median/3 seeds) | 494.1 in ~20k steps / 2.1 s |
 | M5 2048 | 2048-tile rate ≥ 10% (stretch 80%) | **84%** after 100k games / 168 s |
 | M6 Rush Hour | ≥ 90% of easy set within 2× optimal | **100%** (30/30) after 40k steps / ~1 min |
+| M7 checkpoints | resumed DQN bitwise == uninterrupted | passed (+ all round-trips bitwise/exact) |
 
 ## Immediate next step
 
-**Build M7 (checkpointing + model store)** — it unblocks everything in the web
-playground (M8–M10). Demo entry points: `dotnet run --project src/RL.NET.Demo -c Release
--- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour] [seed]` (launch profiles exist for
-each). Tests: `dotnet test` (statistical gates carry `Category=Slow`).
+**Build M8 (web host + Rush Hour page)** — ASP.NET Core + Angular via
+MintPlayer.AspNetCore.SpaServices, canvas editor, solve API over the M7 model store.
+Demo entry points: `dotnet run --project src/RL.NET.Demo -c Release --
+[grid|lake|cartpole|ppo|2048|2048dqn|rushhour] [seed] [--load] [--save] [--data <dir>]`.
+Tests: `dotnet test` (statistical gates carry `Category=Slow`).

@@ -23,6 +23,10 @@
       "commandName": "Project",
       "commandLineArgs": "2048"
     },
+    "2048 (n-tuple TD, persisted model)": {
+      "commandName": "Project",
+      "commandLineArgs": "2048 --load --save"
+    },
     "2048 (masked Double DQN)": {
       "commandName": "Project",
       "commandLineArgs": "2048dqn"
@@ -30,6 +34,10 @@
     "Rush Hour (masked Double DQN)": {
       "commandName": "Project",
       "commandLineArgs": "rushhour"
+    },
+    "Rush Hour (persisted model)": {
+      "commandName": "Project",
+      "commandLineArgs": "rushhour --load --save"
     }
   }
 }

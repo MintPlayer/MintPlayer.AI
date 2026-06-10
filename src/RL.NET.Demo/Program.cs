@@ -1,6 +1,8 @@
 using RLNet.Core.Agents;
 using RLNet.Core.Agents.Tabular;
+using RLNet.Core.Checkpoints;
 using RLNet.Core.Environments;
+using RLNet.Core.Nn;
 using RLNet.Core.Random;
 using RLNet.Core.Schedules;
 using RLNet.Core.Solvers;
@@ -9,14 +11,21 @@ using RLNet.Environments;
 using RLNet.Environments.Game2048;
 using RLNet.Environments.RushHour;
 
-// Usage: RL.NET.Demo [grid|lake|cartpole|ppo|2048|2048dqn ...] [seed]
+// Usage: RL.NET.Demo [grid|lake|cartpole|ppo|2048|2048dqn ...] [seed] [--load] [--save] [--data <dir>]
 //        no env args = run everything except 2048dqn (DQN needs a long budget there).
+//        --load: skip training when the model store has a checkpoint; --save: checkpoint after training.
 string[] knownSections = ["grid", "lake", "cartpole", "ppo", "2048", "2048dqn", "rushhour"];
 var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 ulong masterSeed = 42;
-foreach (var arg in args)
+bool loadModels = false, saveModels = false;
+string dataDir = "data";
+for (int argIndex = 0; argIndex < args.Length; argIndex++)
 {
+    var arg = args[argIndex];
     if (knownSections.Contains(arg, StringComparer.OrdinalIgnoreCase)) selected.Add(arg);
+    else if (arg.Equals("--load", StringComparison.OrdinalIgnoreCase)) loadModels = true;
+    else if (arg.Equals("--save", StringComparison.OrdinalIgnoreCase)) saveModels = true;
+    else if (arg.Equals("--data", StringComparison.OrdinalIgnoreCase) && argIndex + 1 < args.Length) dataDir = args[++argIndex];
     else if (ulong.TryParse(arg, out var s)) masterSeed = s;
     else Console.WriteLine($"(ignoring unknown argument '{arg}')");
 }
@@ -24,10 +33,29 @@ bool ShouldRun(string name) => selected.Count == 0
     ? name != "2048dqn"
     : selected.Contains(name);
 bool animate = !Console.IsOutputRedirected;
+var store = new FileModelStore(dataDir);
 
 Console.WriteLine("RL.NET demo");
-Console.WriteLine($"master seed: {masterSeed}   (usage: RL.NET.Demo [{string.Join('|', knownSections)} ...] [seed])");
+Console.WriteLine($"master seed: {masterSeed}   (usage: RL.NET.Demo [{string.Join('|', knownSections)} ...] [seed] [--load] [--save] [--data <dir>])");
+if (loadModels || saveModels)
+    Console.WriteLine($"model store: {store.RootDirectory}  (load: {loadModels}, save: {saveModels})");
 Console.WriteLine();
+
+Mlp? TryLoadMlp(string envId, string algoId)
+{
+    if (!loadModels) return null;
+    using var stream = store.TryOpenRead(envId, algoId);
+    if (stream is null) return null;
+    Console.WriteLine($"loaded '{envId}.{algoId}' from {store.PathOf(envId, algoId)} — skipping training");
+    return MlpCheckpoint.Load(stream);
+}
+
+void SaveMlp(string envId, string algoId, Mlp network)
+{
+    if (!saveModels) return;
+    store.Save(envId, algoId, s => MlpCheckpoint.Save(network, s));
+    Console.WriteLine($"saved '{envId}.{algoId}' to {store.PathOf(envId, algoId)}");
+}
 
 if (ShouldRun("grid"))
 {
@@ -93,22 +121,32 @@ if (ShouldRun("cartpole"))
     var seeds = new SeedSequence(masterSeed);
     var env = new CartPoleEnv();
 
-    var sw = System.Diagnostics.Stopwatch.StartNew();
-    var result = DqnTrainer.Train(env, new DqnOptions
+    GreedyQAgent agent;
+    if (TryLoadMlp("cartpole", "dqn") is { } network)
     {
-        MaxSteps = 150_000,
-        SolveThreshold = 475,
-        OnProgress = p => Console.WriteLine(
-            $"  step {p.Step,7}/{p.MaxSteps}  eval mean return: {p.EvalMeanReturn,6:F1}  epsilon: {p.Epsilon:F3}  loss: {p.LastLoss:F4}"),
-    }, seeds);
-    sw.Stop();
+        agent = new GreedyQAgent(network, 2);
+    }
+    else
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = DqnTrainer.Train(env, new DqnOptions
+        {
+            MaxSteps = 150_000,
+            SolveThreshold = 475,
+            OnProgress = p => Console.WriteLine(
+                $"  step {p.Step,7}/{p.MaxSteps}  eval mean return: {p.EvalMeanReturn,6:F1}  epsilon: {p.Epsilon:F3}  loss: {p.LastLoss:F4}"),
+        }, seeds);
+        sw.Stop();
+        Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalSeconds:F1} s");
+        agent = result.Agent;
+        SaveMlp("cartpole", "dqn", result.Network);
+    }
 
-    var eval = Evaluator.Evaluate(env, result.Agent, episodes: 100, seeds.Derive(RngStreams.Evaluation));
-    Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalSeconds:F1} s");
+    var eval = Evaluator.Evaluate(env, agent, episodes: 100, seeds.Derive(RngStreams.Evaluation));
     Console.WriteLine($"final greedy eval: {eval.MeanReturn:F1} mean return over 100 episodes " +
                       $"({(eval.MeanReturn >= 475 ? "SOLVED" : "not solved")})");
     Console.WriteLine();
-    if (animate) AnimateCartPole(env, result.Agent, seeds.Derive(RngStreams.Evaluation + 1));
+    if (animate) AnimateCartPole(env, agent, seeds.Derive(RngStreams.Evaluation + 1));
     Console.WriteLine();
 }
 
@@ -147,25 +185,41 @@ if (ShouldRun("2048"))
 {
     Console.WriteLine("=== 2048 — afterstate TD(0) with n-tuple network (17×4-tuples, ~4.5 MB of weights) ===");
     Console.WriteLine("    solved criterion (PRD): reach the 2048 tile in >= 10% of 100 greedy games");
-    var agent = new NTuple2048Agent();
-    var trainRng = new Xoshiro256StarStar(new SeedSequence(masterSeed).Derive(RngStreams.Policy));
 
-    const int totalGames = 100_000;
-    var sw = System.Diagnostics.Stopwatch.StartNew();
-    for (int game = 1; game <= totalGames; game++)
+    NTuple2048Agent agent;
+    var loadedStream = loadModels ? store.TryOpenRead("2048", "ntuple") : null;
+    if (loadedStream is not null)
     {
-        agent.PlayGame(trainRng, learn: true);
-        if (game % 10_000 == 0)
+        using (loadedStream) agent = NTuple2048Agent.Load(loadedStream);
+        Console.WriteLine($"loaded '2048.ntuple' from {store.PathOf("2048", "ntuple")} — skipping training");
+    }
+    else
+    {
+        agent = new NTuple2048Agent();
+        var trainRng = new Xoshiro256StarStar(new SeedSequence(masterSeed).Derive(RngStreams.Policy));
+
+        const int totalGames = 100_000;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        for (int game = 1; game <= totalGames; game++)
         {
-            var (rate2048, rate1024, avgScore, bestTile) = Eval2048(agent, new SeedSequence(masterSeed).Derive(RngStreams.Evaluation), games: 100);
-            Console.WriteLine($"  game {game,7}/{totalGames}  greedy eval: avg score {avgScore,6:F0}  " +
-                              $"1024-rate {rate1024:P0}  2048-rate {rate2048:P0}  best tile {bestTile}");
+            agent.PlayGame(trainRng, learn: true);
+            if (game % 10_000 == 0)
+            {
+                var (rate2048, rate1024, avgScore, bestTile) = Eval2048(agent, new SeedSequence(masterSeed).Derive(RngStreams.Evaluation), games: 100);
+                Console.WriteLine($"  game {game,7}/{totalGames}  greedy eval: avg score {avgScore,6:F0}  " +
+                                  $"1024-rate {rate1024:P0}  2048-rate {rate2048:P0}  best tile {bestTile}");
+            }
+        }
+        sw.Stop();
+        Console.WriteLine($"trained {totalGames:N0} self-play games in {sw.Elapsed.TotalSeconds:F0} s");
+        if (saveModels)
+        {
+            store.Save("2048", "ntuple", s => agent.Save(s));
+            Console.WriteLine($"saved '2048.ntuple' to {store.PathOf("2048", "ntuple")}");
         }
     }
-    sw.Stop();
 
     var final = Eval2048(agent, new SeedSequence(masterSeed).Derive(RngStreams.Evaluation), games: 100);
-    Console.WriteLine($"trained {totalGames:N0} self-play games in {sw.Elapsed.TotalSeconds:F0} s");
     Console.WriteLine($"final: 2048-rate {final.Rate2048:P0} over 100 games " +
                       $"({(final.Rate2048 >= 0.10 ? "SOLVED" : "not solved")}, target >= 10%)");
     Console.WriteLine();
@@ -179,19 +233,30 @@ if (ShouldRun("2048dqn"))
     var seeds = new SeedSequence(masterSeed);
     var env = new Env2048();
 
-    var sw = System.Diagnostics.Stopwatch.StartNew();
-    var result = DqnTrainer.Train(env, new DqnOptions
+    GreedyQAgent agent;
+    if (TryLoadMlp("2048", "dqn") is { } network)
     {
-        Hidden = [256, 256],
-        MaxSteps = 300_000,
-        BufferCapacity = 100_000,
-        Epsilon = new LinearSchedule(1.0, 0.05, 100_000),
-        EvalEvery = 25_000,
-        EvalEpisodes = 10,
-        OnProgress = p => Console.WriteLine(
-            $"  step {p.Step,7}/{p.MaxSteps}  eval mean return: {p.EvalMeanReturn,7:F1}  epsilon: {p.Epsilon:F3}  loss: {p.LastLoss:F4}"),
-    }, seeds);
-    sw.Stop();
+        agent = new GreedyQAgent(network, 4);
+    }
+    else
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = DqnTrainer.Train(env, new DqnOptions
+        {
+            Hidden = [256, 256],
+            MaxSteps = 300_000,
+            BufferCapacity = 100_000,
+            Epsilon = new LinearSchedule(1.0, 0.05, 100_000),
+            EvalEvery = 25_000,
+            EvalEpisodes = 10,
+            OnProgress = p => Console.WriteLine(
+                $"  step {p.Step,7}/{p.MaxSteps}  eval mean return: {p.EvalMeanReturn,7:F1}  epsilon: {p.Epsilon:F3}  loss: {p.LastLoss:F4}"),
+        }, seeds);
+        sw.Stop();
+        Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalMinutes:F1} min");
+        agent = result.Agent;
+        SaveMlp("2048", "dqn", result.Network);
+    }
 
     // Report in game terms: play 50 greedy games, count tiles reached.
     int games2048 = 0, games1024 = 0, games512 = 0;
@@ -201,7 +266,7 @@ if (ShouldRun("2048dqn"))
         env.Reset(seeds.Derive(RngStreams.Evaluation) + (ulong)g);
         while (true)
         {
-            var step = env.Step(result.Agent.Act(env.CurrentObservation(), env.CurrentActionMask(), greedy: true));
+            var step = env.Step(agent.Act(env.CurrentObservation(), env.CurrentActionMask(), greedy: true));
             if (step.Done) break;
         }
         totalScore += env.Score;
@@ -209,7 +274,6 @@ if (ShouldRun("2048dqn"))
         if (env.MaxTile >= 1024) games1024++;
         if (env.MaxTile >= 512) games512++;
     }
-    Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalMinutes:F1} min");
     Console.WriteLine($"50 greedy games: avg score {totalScore / 50:F0}, 512-rate {games512 / 50.0:P0}, " +
                       $"1024-rate {games1024 / 50.0:P0}, 2048-rate {games2048 / 50.0:P0}");
     Console.WriteLine();
@@ -226,29 +290,39 @@ if (ShouldRun("rushhour"))
     var seeds = new SeedSequence(masterSeed);
     var env = new RushHourEnv(puzzles, maxMoves: 60);
 
-    var sw = System.Diagnostics.Stopwatch.StartNew();
-    var result = DqnTrainer.Train(env, new DqnOptions
+    GreedyQAgent agent;
+    if (TryLoadMlp("rushhour", "dqn") is { } network)
     {
-        Hidden = [128, 128],
-        Gamma = 0.98,
-        LearningRate = 5e-4f,
-        MaxSteps = 200_000,
-        BufferCapacity = 100_000,
-        Epsilon = new LinearSchedule(1.0, 0.05, 60_000),
-        EvalEvery = 10_000,
-        EvalEpisodes = 20,
-        SolveThreshold = 88, // mean return ~ solving random puzzles within ~2x optimal
-        OnProgress = p => Console.WriteLine(
-            $"  step {p.Step,7}/{p.MaxSteps}  eval mean return: {p.EvalMeanReturn,6:F1}  epsilon: {p.Epsilon:F3}  loss: {p.LastLoss:F4}"),
-    }, seeds);
-    sw.Stop();
+        agent = new GreedyQAgent(network, RushHourBoard.ActionCount);
+    }
+    else
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = DqnTrainer.Train(env, new DqnOptions
+        {
+            Hidden = [128, 128],
+            Gamma = 0.98,
+            LearningRate = 5e-4f,
+            MaxSteps = 200_000,
+            BufferCapacity = 100_000,
+            Epsilon = new LinearSchedule(1.0, 0.05, 60_000),
+            EvalEvery = 10_000,
+            EvalEpisodes = 20,
+            SolveThreshold = 88, // mean return ~ solving random puzzles within ~2x optimal
+            OnProgress = p => Console.WriteLine(
+                $"  step {p.Step,7}/{p.MaxSteps}  eval mean return: {p.EvalMeanReturn,6:F1}  epsilon: {p.Epsilon:F3}  loss: {p.LastLoss:F4}"),
+        }, seeds);
+        sw.Stop();
+        Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalMinutes:F1} min");
+        agent = result.Agent;
+        SaveMlp("rushhour", "dqn", result.Network);
+    }
 
-    var (solvedInBudget, solvedAtAll) = EvaluateRushHourGate(env, result.Agent, puzzles);
-    Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalMinutes:F1} min");
+    var (solvedInBudget, solvedAtAll) = EvaluateRushHourGate(env, agent, puzzles);
     Console.WriteLine($"gate: {solvedInBudget}/{puzzles.Count} puzzles solved within 2x optimal " +
                       $"({solvedInBudget / (double)puzzles.Count:P0}, target >= 90%); {solvedAtAll}/{puzzles.Count} solved within 60 moves");
     Console.WriteLine();
-    if (animate) AnimateRushHour(env, result.Agent, puzzleIndex: 0);
+    if (animate) AnimateRushHour(env, agent, puzzleIndex: 0);
     Console.WriteLine();
 }
 

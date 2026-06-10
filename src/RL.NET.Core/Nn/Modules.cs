@@ -58,6 +58,12 @@ public sealed class Mlp : IModule
     /// <summary>The constituent layers, e.g. for custom (re-)initialization schemes.</summary>
     public IReadOnlyList<Linear> Layers => _layers;
 
+    /// <summary>Activation between hidden layers (checkpoints need it to reconstruct the net).</summary>
+    public Activation HiddenActivation => _hidden;
+
+    /// <summary>Layer sizes [input, hidden..., output], recovered from the weight shapes.</summary>
+    public int[] Sizes => [_layers[0].Weight.Rows, .. _layers.Select(l => l.Weight.Cols)];
+
     public Tensor Forward(Tensor input)
     {
         var x = input;

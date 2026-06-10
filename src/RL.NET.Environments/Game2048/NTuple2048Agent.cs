@@ -1,3 +1,5 @@
+using System.Text;
+using RLNet.Core.Checkpoints;
 using RLNet.Core.Random;
 
 namespace RLNet.Environments.Game2048;
@@ -26,6 +28,39 @@ public sealed class NTuple2048Agent
 
     /// <summary>Total learning rate, split evenly across the 17 tables.</summary>
     public double Alpha { get; set; } = 0.1;
+
+    public const string CheckpointKind = "ntuple2048";
+    private const int CheckpointVersion = 1;
+
+    /// <summary>Versioned binary checkpoint: alpha + the 17 weight tables (~4.5 MB).</summary>
+    public void Save(Stream destination)
+    {
+        using var writer = new BinaryWriter(destination, Encoding.UTF8, leaveOpen: true);
+        CheckpointFormat.WriteHeader(writer, CheckpointKind, CheckpointVersion);
+        writer.Write(Alpha);
+        writer.Write(_tables.Length);
+        foreach (var table in _tables)
+            CheckpointFormat.WriteFloats(writer, table);
+    }
+
+    public static NTuple2048Agent Load(Stream source)
+    {
+        using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
+        CheckpointFormat.ReadHeader(reader, CheckpointKind, CheckpointVersion);
+        var agent = new NTuple2048Agent { Alpha = reader.ReadDouble() };
+
+        int tableCount = reader.ReadInt32();
+        if (tableCount != agent._tables.Length)
+            throw new InvalidDataException($"Checkpoint has {tableCount} tuple tables, expected {agent._tables.Length}.");
+        for (int t = 0; t < tableCount; t++)
+        {
+            var table = CheckpointFormat.ReadFloats(reader);
+            if (table.Length != 65536)
+                throw new InvalidDataException($"Tuple table {t} has {table.Length} entries, expected 65536.");
+            agent._tables[t] = table;
+        }
+        return agent;
+    }
 
     private static int[][] BuildTuples()
     {

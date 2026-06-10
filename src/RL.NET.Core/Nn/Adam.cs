@@ -26,6 +26,14 @@ public sealed class Adam
     /// <summary>Mutable so trainers can anneal it from a schedule.</summary>
     public float LearningRate { get; set; }
 
+    // Internal state access for checkpointing (Checkpoints/AdamCheckpoint.cs).
+    internal float Beta1 => _beta1;
+    internal float Beta2 => _beta2;
+    internal float EpsilonValue => _epsilon;
+    internal int StepCount { get => _step; set => _step = value; }
+    internal float[][] FirstMoments => _m;
+    internal float[][] SecondMoments => _v;
+
     public void Step()
     {
         _step++;

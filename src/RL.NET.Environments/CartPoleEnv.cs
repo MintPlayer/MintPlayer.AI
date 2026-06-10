@@ -12,7 +12,7 @@ namespace RLNet.Environments;
 /// step including the terminating one; termination angle is 12° while the observation
 /// bound is 24°. Solved: mean return ≥ 475 over 100 consecutive episodes.
 /// </summary>
-public sealed class CartPoleEnv : IEnvironment<float[], int>
+public sealed class CartPoleEnv : IEnvironment<float[], int>, IStatefulEnvironment
 {
     public const double Gravity = 9.8;
     public const double MassCart = 1.0;
@@ -93,6 +93,38 @@ public sealed class CartPoleEnv : IEnvironment<float[], int>
     }
 
     private float[] Observation() => [(float)_x, (float)_xDot, (float)_theta, (float)_thetaDot];
+
+    /// <summary>Complete snapshot — physics, step counter, done flag and RNG — for bitwise-exact training resume.</summary>
+    public byte[] SaveState()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        var (s0, s1, s2, s3) = _rng.GetState();
+        writer.Write(s0);
+        writer.Write(s1);
+        writer.Write(s2);
+        writer.Write(s3);
+        writer.Write(_x);
+        writer.Write(_xDot);
+        writer.Write(_theta);
+        writer.Write(_thetaDot);
+        writer.Write(_elapsedSteps);
+        writer.Write(_done);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    public void RestoreState(byte[] state)
+    {
+        using var reader = new BinaryReader(new MemoryStream(state));
+        _rng.SetState(reader.ReadUInt64(), reader.ReadUInt64(), reader.ReadUInt64(), reader.ReadUInt64());
+        _x = reader.ReadDouble();
+        _xDot = reader.ReadDouble();
+        _theta = reader.ReadDouble();
+        _thetaDot = reader.ReadDouble();
+        _elapsedSteps = reader.ReadInt32();
+        _done = reader.ReadBoolean();
+    }
 
     public string RenderString()
     {
