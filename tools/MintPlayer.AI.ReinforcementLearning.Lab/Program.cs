@@ -164,20 +164,24 @@ return;
 {
     var obs = new float[batch * RushHourBoard.ObservationSize];
     var maskOffsets = new float[batch * RushHourBoard.ActionCount];
-    var labels = new int[batch];
+    var weights = new float[batch * RushHourBoard.ActionCount];
     var targets = new float[batch];
     for (int i = 0; i < batch; i++)
     {
         var s = samples[offset + i];
         s.Obs.CopyTo(obs.AsSpan(i * RushHourBoard.ObservationSize));
         s.MaskOffsets.CopyTo(maskOffsets.AsSpan(i * RushHourBoard.ActionCount));
-        labels[i] = s.Label;
+        // Soft target: uniform over ALL optimal actions — a single arbitrary label
+        // penalizes the other equally-good moves and flattens the policy.
+        float w = 1f / System.Numerics.BitOperations.PopCount(s.LabelMask);
+        for (uint bits = s.LabelMask; bits != 0; bits &= bits - 1)
+            weights[i * RushHourBoard.ActionCount + System.Numerics.BitOperations.TrailingZeroCount(bits)] = w;
         targets[i] = s.Distance / RushHourPolicyNet.DistanceScale;
     }
 
     var (logits, value) = net.Forward(new Tensor(obs, batch, RushHourBoard.ObservationSize));
     var logProbs = logits.Add(new Tensor(maskOffsets, batch, RushHourBoard.ActionCount)).LogSoftmax();
-    var ce = logProbs.Gather(labels).Mean().MulScalar(-1f);
+    var ce = logProbs.Mul(new Tensor(weights, batch, RushHourBoard.ActionCount)).Sum().MulScalar(-1f / batch);
     var huber = value.Reshape(batch).HuberLoss(new Tensor(targets, batch));
     var loss = ce.Add(huber);
 
@@ -193,7 +197,7 @@ return;
         for (int a = 1; a < RushHourBoard.ActionCount; a++)
             if (logProbs.Data[i * RushHourBoard.ActionCount + a] > logProbs.Data[i * RushHourBoard.ActionCount + argmax])
                 argmax = a;
-        if (argmax == labels[i]) correct++;
+        if ((samples[offset + i].LabelMask >> argmax & 1) != 0) correct++; // any optimal action counts
     }
     return (ce.Data[0], huber.Data[0], correct / (double)batch);
 }
@@ -305,7 +309,7 @@ static Sample MakeSample(RushHourPuzzle puzzle, RushHourOracle.LabeledState stat
     var offsets = new float[RushHourBoard.ActionCount];
     for (int a = 0; a < offsets.Length; a++)
         if (!mask[a]) offsets[a] = -1e9f;
-    return new Sample(obs, offsets, state.OptimalAction, state.DistanceToGoal);
+    return new Sample(obs, offsets, state.OptimalActionsMask, state.DistanceToGoal);
 }
 
 static void Shuffle<T>(IList<T> list, Xoshiro256StarStar rng)
@@ -320,4 +324,4 @@ static void Shuffle<T>(IList<T> list, Xoshiro256StarStar rng)
 static void Log(string message)
     => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 
-internal sealed record Sample(float[] Obs, float[] MaskOffsets, int Label, float Distance);
+internal sealed record Sample(float[] Obs, float[] MaskOffsets, uint LabelMask, float Distance);

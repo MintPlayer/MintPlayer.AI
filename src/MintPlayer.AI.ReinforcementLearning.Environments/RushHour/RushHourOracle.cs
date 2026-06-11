@@ -11,7 +11,14 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.RushHour;
 /// </summary>
 public static class RushHourOracle
 {
-    public readonly record struct LabeledState(int[] Positions, int OptimalAction, int DistanceToGoal);
+    /// <summary>
+    /// <paramref name="OptimalActionsMask"/> has a bit set for EVERY action stepping one
+    /// closer to the goal — most states have several. Training cross-entropy against a
+    /// single arbitrary representative penalizes the other equally-optimal actions and
+    /// flattens the policy; supervise against the full set instead.
+    /// <paramref name="OptimalAction"/> is the lowest-indexed one, kept for convenience.
+    /// </summary>
+    public readonly record struct LabeledState(int[] Positions, int OptimalAction, uint OptimalActionsMask, int DistanceToGoal);
 
     /// <summary>
     /// Labels every reachable, solvable, not-yet-solved state. Returns null when the
@@ -74,28 +81,25 @@ public static class RushHourOracle
                 }
         }
 
-        // Label: for each solvable non-goal state, the first action stepping one closer.
+        // Label: for each solvable non-goal state, every action stepping one closer.
         var labeled = new List<LabeledState>(distance.Count);
         foreach (var (key, d) in distance)
         {
             if (d == 0) continue;
             var positions = states[key];
             RushHourBoard.FillOccupancy(puzzle, positions, grid);
-            int optimal = -1;
-            for (int vehicle = 0; vehicle < n && optimal < 0; vehicle++)
+            uint mask = 0;
+            for (int vehicle = 0; vehicle < n; vehicle++)
                 for (int direction = 0; direction <= 1; direction++)
                 {
                     if (!RushHourBoard.CanMove(puzzle, positions, grid, vehicle, direction)) continue;
                     var next = (int[])positions.Clone();
                     next[vehicle] += direction == 0 ? -1 : 1;
                     if (distance.TryGetValue(RushHourSolver.Encode(next), out int nd) && nd == d - 1)
-                    {
-                        optimal = vehicle * 2 + direction;
-                        break;
-                    }
+                        mask |= 1u << (vehicle * 2 + direction);
                 }
-            if (optimal >= 0)
-                labeled.Add(new LabeledState(positions, optimal, d));
+            if (mask != 0)
+                labeled.Add(new LabeledState(positions, System.Numerics.BitOperations.TrailingZeroCount(mask), mask, d));
         }
         return labeled;
     }

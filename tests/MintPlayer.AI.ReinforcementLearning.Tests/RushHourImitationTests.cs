@@ -22,18 +22,25 @@ public class RushHourImitationTests
         var start = labeled.Single(s => s.Positions.SequenceEqual(RushHourBoard.InitialPositions(puzzle)));
         Assert.Equal(7, start.DistanceToGoal);          // matches the BFS solver
         Assert.Equal(3, start.OptimalAction);           // truck down is the only optimal first move
+        Assert.Equal(1u << 3, start.OptimalActionsMask);
 
-        // Every label is self-consistent: applying the optimal action lands on a state
-        // labeled exactly one move closer (or on the goal).
+        // Every label is self-consistent: applying ANY masked optimal action lands on a
+        // state labeled exactly one move closer (or on the goal), and the convenience
+        // single action is the lowest masked bit.
         var byKey = labeled.ToDictionary(s => RushHourSolver.Encode(s.Positions));
         foreach (var state in labeled)
         {
-            var next = (int[])state.Positions.Clone();
-            next[state.OptimalAction / 2] += state.OptimalAction % 2 == 0 ? -1 : 1;
-            int nextDistance = RushHourBoard.IsSolved(puzzle, next)
-                ? 0
-                : byKey[RushHourSolver.Encode(next)].DistanceToGoal;
-            Assert.Equal(state.DistanceToGoal - 1, nextDistance);
+            Assert.Equal(System.Numerics.BitOperations.TrailingZeroCount(state.OptimalActionsMask), state.OptimalAction);
+            for (uint bits = state.OptimalActionsMask; bits != 0; bits &= bits - 1)
+            {
+                int action = System.Numerics.BitOperations.TrailingZeroCount(bits);
+                var next = (int[])state.Positions.Clone();
+                next[action / 2] += action % 2 == 0 ? -1 : 1;
+                int nextDistance = RushHourBoard.IsSolved(puzzle, next)
+                    ? 0
+                    : byKey[RushHourSolver.Encode(next)].DistanceToGoal;
+                Assert.Equal(state.DistanceToGoal - 1, nextDistance);
+            }
         }
     }
 
