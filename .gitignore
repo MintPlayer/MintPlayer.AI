@@ -16,8 +16,8 @@ coverage*.xml
 
 ## Node / Angular
 node_modules/
-src/RL.NET.Web/ClientApp/dist/
-src/RL.NET.Web/ClientApp/.angular/
+src/RLDemo.Web/ClientApp/dist/
+src/RLDemo.Web/ClientApp/.angular/
 
 ## Persisted models / submitted games (PRD §7 data directory)
 data/

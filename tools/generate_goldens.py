@@ -3,7 +3,7 @@
 The C# port replays the same initial states and action sequences and must reproduce
 these observations bit-for-bit at float64 physics / float32 observation precision.
 
-Usage: python tools/generate_goldens.py  (writes tests/RL.NET.Tests/Fixtures/cartpole_golden.json)
+Usage: python tools/generate_goldens.py  (writes tests/MintPlayer.AI.ReinforcementLearning.Tests/Fixtures/cartpole_golden.json)
 """
 import json
 import os
@@ -47,7 +47,7 @@ fixture = {
     ],
 }
 
-out = os.path.join(os.path.dirname(__file__), "..", "tests", "RL.NET.Tests", "Fixtures", "cartpole_golden.json")
+out = os.path.join(os.path.dirname(__file__), "..", "tests", "MintPlayer.AI.ReinforcementLearning.Tests", "Fixtures", "cartpole_golden.json")
 os.makedirs(os.path.dirname(out), exist_ok=True)
 with open(out, "w") as f:
     json.dump(fixture, f, indent=1)

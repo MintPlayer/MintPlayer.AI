@@ -1,9 +1,9 @@
-# RL.NET — Product Requirements Document
+# MintPlayer.AI.ReinforcementLearning — Product Requirements Document
 
 **Status:** v1 implemented · 2026-06-10 — all M0–M6 gates passed; see
 [PLAN.md](PLAN.md) for per-milestone results and the remaining stretch list.
 **Owner:** Pieterjan
-**Repo:** `C:\Repos\RL.NET` (net10.0, blank solution at start)
+**Repo:** `C:\Repos\MintPlayer.AI.ReinforcementLearning` (net10.0, blank solution at start)
 
 ## 1. Vision
 
@@ -19,7 +19,7 @@ serious, stable, dependency-light RL story:
   on TorchSharp's multi-hundred-MB native payload (CUDA-Windows ~3 GB).
 - There is **no Gymnasium-equivalent environment standard for .NET** at all.
 
-RL.NET fills that gap as an *educational-but-usable* library: every component (tensor math,
+MintPlayer.AI.ReinforcementLearning fills that gap as an *educational-but-usable* library: every component (tensor math,
 autograd, replay buffer, algorithms) implemented in readable managed C#, verified against
 literature benchmarks, with an architecture that scales up (pluggable compute backend) and
 out (vectorized environments) without rewrites.
@@ -65,7 +65,7 @@ Explicitly out of scope to prevent the scope creep every research thread warned 
 | Environment API | Gymnasium-faithful, **generic** `IEnvironment<TObs, TAct>`: `Reset(seed) → (obs, info)`, `Step(act) → (obs, reward, terminated, truncated, info)` | The `terminated`/`truncated` split is load-bearing (bootstrap iff NOT terminated); conflating them is the most common silent RL bug. Info channel carries `final_observation` for autoreset/vec envs. |
 | Precision | `float` (Single) throughout the tensor/NN stack; `double` for tabular Q-tables and reward accumulation | float32 matches literature/PyTorch; doubles make tabular exact-value tests clean. |
 | RNG | Own **xoshiro256\*\*** implementation + SplitMix64 master-seed fan-out (env / policy / init / buffer streams) | `System.Random`'s algorithm is not contractually stable across .NET versions — a reproducibility hazard. |
-| Solution layout | `src/RL.NET.Core` (tensors, autograd, NN, spaces, agents, training), `src/RL.NET.Environments`, `src/RL.NET.Demo` (console CLI — repurposed existing project), `tests/RL.NET.Tests` | Small enough to move fast, split along the natural package seams for later. Root namespace `RLNet`. |
+| Solution layout | `src/MintPlayer.AI.ReinforcementLearning.Core` (tensors, autograd, NN, spaces, agents, training), `src/MintPlayer.AI.ReinforcementLearning.Environments`, `src/RLDemo.Console` (console CLI — repurposed existing project), `tests/MintPlayer.AI.ReinforcementLearning.Tests` | Small enough to move fast, split along the natural package seams for later. Root namespace `MintPlayer.AI.ReinforcementLearning`. |
 | Test framework | **xUnit**. Fast unit tests always; statistical solve-threshold tests (3 seeds, median) in an opt-in `[Trait("Category","Slow")]` bucket | RL bugs are statistical; single-seed pass/fail lies. |
 | Logging | CSV per run + live console metrics. TensorBoard event files deferred (needs a protobuf writer) | Keep v1 dependency-free. |
 | Checkpoints | JSON for tabular Q-tables; versioned little-endian binary for NN weights + optimizer state + RNG state (full resume) | Cross-version stability not promised in v1. |
@@ -120,17 +120,17 @@ Pre-registered, objective "solved" definitions (fixed now so benchmarks stay mea
 | **Rush Hour** (6×6 sliding-block; action = (vehicle, ±1 slide); reward −1/step, +100 exit; per-difficulty puzzle sets) | Box(72): vehicle-identity plane + red-car plane / Discrete(32 masked) | ≥ 90% of *easy* puzzle set solved within 2× optimal moves (optimal via built-in BFS solver) | Owner's game #2; sparse-reward planning, curriculum learning |
 | MountainCar-v0 (optional) | Box(2) / Discrete(3) | Mean ≥ −110 over 100 episodes | Exploration stress test (vanilla agents *legitimately* fail — that's a finding, not a bug) |
 
-Rush Hour note: board logic is reimplemented inside `RL.NET.Environments` (~150 LOC) rather
+Rush Hour note: board logic is reimplemented inside `MintPlayer.AI.ReinforcementLearning.Environments` (~150 LOC) rather
 than referencing `C:\Repos\Spelletjes\Rush Hour` (currently being modified by another
-session); the existing app can later consume RL.NET for visualization, and its puzzle
+session); the existing app can later consume MintPlayer.AI.ReinforcementLearning for visualization, and its puzzle
 definitions can be imported as data.
 
-## 7. Interactive web app ("RL.NET Playground")
+## 7. Interactive web app ("MintPlayer.AI.ReinforcementLearning Playground")
 
 *Requirement inserted 2026-06-10, after the library v1 (M0–M6) gates passed. Delivered as
 milestones M7–M10 in [PLAN.md](PLAN.md).*
 
-A new project `src/RL.NET.Web`: an **ASP.NET Core** application hosting an **Angular**
+A new project `src/RLDemo.Web`: an **ASP.NET Core** application hosting an **Angular**
 front-end through **MintPlayer.AspNetCore.SpaServices** (the host runs and proxies the
 Angular CLI dev server in development; serves the built bundle in production).
 

@@ -1,4 +1,4 @@
-# RL.NET — Implementation Plan
+# MintPlayer.AI.ReinforcementLearning — Implementation Plan
 
 Companion to [PRD.md](PRD.md). Each milestone ends in a **git commit on a passing gate**;
 revert-friendly by design. Order is chosen so each milestone adds at most 2–3 genuinely new
@@ -13,8 +13,8 @@ components (the CleanRL/SB3 lesson: localize bugs by construction).
 
 ## M0 — Skeleton + core contracts  *(part of the quick demo)* ✅
 
-- Solution restructure: `src/RL.NET.Core`, `src/RL.NET.Environments`, `src/RL.NET.Demo`
-  (existing console project), `tests/RL.NET.Tests` (xUnit).
+- Solution restructure: `src/MintPlayer.AI.ReinforcementLearning.Core`, `src/MintPlayer.AI.ReinforcementLearning.Environments`, `src/RLDemo.Console`
+  (existing console project), `tests/MintPlayer.AI.ReinforcementLearning.Tests` (xUnit).
 - `IEnvironment<TObs,TAct>`, `StepResult<TObs>`, `EnvInfo`, `Space<T>` (`DiscreteSpace`, `BoxSpace`).
 - `Xoshiro256StarStar` RNG + SplitMix64 `SeedSequence` fan-out.
 - `MetricsLogger` (CSV + console), greedy evaluation loop, console renderer abstraction.
@@ -56,7 +56,7 @@ head (Double DQN landed; neither was needed for any gate so far).
 
 - **CartPole-v1 faithful port** (exact constants/update order from PRD §6) validated against
   committed golden trajectories from Python Gymnasium
-  (`tools/generate_goldens.py` → `tests/RL.NET.Tests/Fixtures/cartpole_golden.json`).
+  (`tools/generate_goldens.py` → `tests/MintPlayer.AI.ReinforcementLearning.Tests/Fixtures/cartpole_golden.json`).
 - REINFORCE (reward-to-go, return normalization). Gate: CartPole ≥ 400 median/3 seeds +
   policy-gradient direction unit test (log-prob of rewarded action increases).
 - DQN: circular replay buffer (**stores `terminated` only**), target network (hard sync),
@@ -94,7 +94,7 @@ parallel mode reproduces sequential **bitwise**, not just within tolerance.
 
 ## M6 — Rush Hour  *(owner's game #2 — sparse-reward planning)* ✅
 
-- Board logic in `RL.NET.Environments/RushHour` (6×6, vehicles len 2–3, action =
+- Board logic in `MintPlayer.AI.ReinforcementLearning.Environments/RushHour` (6×6, vehicles len 2–3, action =
   vehicle·2+direction over a masked 32-action space); BFS optimal solver as oracle
   (also returns the optimal action sequence for future imitation use).
 - Puzzle sets are generated deterministically from a seed (random layout + BFS filter
@@ -115,7 +115,7 @@ target net, both RNG streams and the env snapshot. Demo round-trip: CartPole tra
 in ~6 s, `--save` writes an 18 KB checkpoint, `--load` skips training and reproduces
 the 500.0 eval exactly.
 
-- Checkpoint formats per the PRD decisions (`RLNet.Core.Checkpoints`): JSON for
+- Checkpoint formats per the PRD decisions (`MintPlayer.AI.ReinforcementLearning.Core.Checkpoints`): JSON for
   tabular Q-tables (`TabularCheckpoint`); versioned little-endian binary for MLPs
   (`MlpCheckpoint`), Adam moments+step (`AdamCheckpoint`) and the 2048 n-tuple tables
   (`NTuple2048Agent.Save/Load`, 17×65 536 floats ≈ 4.5 MB).
@@ -140,7 +140,7 @@ reset to the drawing, hit "Solve with AI" — **the DQN solved it in 7 moves (op
 (xUnit, `Category=Slow`): a generated easy puzzle returns a trajectory that is verified
 move-by-move legal, matches the server-reported states, ends solved, within 2× optimal.
 
-- `src/RL.NET.Web`: ASP.NET Core host + Angular 22 ClientApp (zoneless, signals) wired
+- `src/RLDemo.Web`: ASP.NET Core host + Angular 22 ClientApp (zoneless, signals) wired
   through **MintPlayer.AspNetCore.SpaServices** (`UseSpaImproved` + `UseAngularCliServer`
   with the `Local:` cliRegex — running the host is all that's needed; never start
   `ng serve` separately). Landing page lists games.
@@ -235,7 +235,7 @@ success even at 99% accuracy), so the night built the principled ladder instead:
   head, trained with masked cross-entropy + Huber on the from-scratch autograd.
 - **`RushHourPolicySearch`** — cycle-avoiding greedy rollout, and **A\* with the value
   head as heuristic**: search turns a 91%-accurate policy into an exact solver.
-- **`tools/RL.NET.Lab`** — resumable long-running trainer: streams random configs through
+- **`tools/MintPlayer.AI.ReinforcementLearning.Lab`** — resumable long-running trainer: streams random configs through
   the oracle (stratified by distance), evals held-out official cards every 10 min,
   checkpoints to the model store, logs CSV (`data/logs/imitation.csv`).
 
@@ -300,7 +300,7 @@ of the Rush Hour policy (close the reactive level-1 gap; shrink search expansion
 **Build M9 (2048 page + training-on-demand + gallery)** — 2048 canvas editor, n-tuple
 playout trajectories (move + spawned tile per step), background training jobs with
 browser-visible progress, persisted public game gallery.
-Run the playground: `dotnet run --project src/RL.NET.Web` (Development spawns + proxies
+Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
-`dotnet run --project src/RL.NET.Demo -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour]
+`dotnet run --project src/RLDemo.Console -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour]
 [seed] [--load] [--save] [--data <dir>]`. Tests: `dotnet test` (`Category=Slow` for gates).

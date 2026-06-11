@@ -1,4 +1,4 @@
-# RL.NET
+# MintPlayer.AI.ReinforcementLearning
 
 A reinforcement-learning library written from scratch in C#/.NET — no Python, no libtorch,
 no native dependencies. See [docs/PRD.md](docs/PRD.md) for the why and what, and
@@ -8,23 +8,23 @@ no native dependencies. See [docs/PRD.md](docs/PRD.md) for the why and what, and
 
 | Project | Contents |
 |---|---|
-| `src/RL.NET.Core` | Environment API (Gymnasium-faithful), spaces, seeded RNG, agents, trainers, solvers, checkpoints + model store |
-| `src/RL.NET.Environments` | GridWorld, FrozenLake, CartPole, 2048, Rush Hour (incl. BFS solver + puzzle generator) |
-| `src/RL.NET.Demo` | Console demo — watch agents learn and play (`--save`/`--load` persist trained models) |
-| `src/RL.NET.Web` | **RL.NET Playground** — ASP.NET Core + Angular web app: draw a Rush Hour puzzle on a canvas, play it yourself, then watch the trained DQN solve it with back/forward playback |
-| `tests/RL.NET.Tests` | xUnit suite incl. solved-threshold gates, determinism tests and web API integration tests |
+| `src/MintPlayer.AI.ReinforcementLearning.Core` | Environment API (Gymnasium-faithful), spaces, seeded RNG, agents, trainers, solvers, checkpoints + model store |
+| `src/MintPlayer.AI.ReinforcementLearning.Environments` | GridWorld, FrozenLake, CartPole, 2048, Rush Hour (incl. BFS solver + puzzle generator) |
+| `src/RLDemo.Console` | Console demo — watch agents learn and play (`--save`/`--load` persist trained models) |
+| `src/RLDemo.Web` | **MintPlayer.AI.ReinforcementLearning Playground** — ASP.NET Core + Angular web app: draw a Rush Hour puzzle on a canvas, play it yourself, then watch the trained DQN solve it with back/forward playback |
+| `tests/MintPlayer.AI.ReinforcementLearning.Tests` | xUnit suite incl. solved-threshold gates, determinism tests and web API integration tests |
 
 ## Run the playground
 
 ```
-dotnet run --project src/RL.NET.Web
+dotnet run --project src/RLDemo.Web
 ```
 
 Open the printed URL (default `http://localhost:5210`). In Development the host spawns and
 proxies the Angular dev server itself — don't run `ng serve` separately. On first start it
 trains its models (2048 ≈ 3 min; Rush Hour DQN fallback ≈ 30 min — page banners show live
 progress) and saves them under `data/`; later starts load instantly. The strongest Rush
-Hour solver (the imitation policy net) is trained with `tools/RL.NET.Lab`.
+Hour solver (the imitation policy net) is trained with `tools/MintPlayer.AI.ReinforcementLearning.Lab`.
 
 ### Docker
 
@@ -35,15 +35,15 @@ docker compose up
 Open `http://localhost:8080`. Models and the public gallery persist on the `rlnet-data`
 volume across restarts and upgrades. A fresh volume trains its own models at startup;
 to start with pre-trained ones, seed the volume with the `*.ckpt` files from
-`src/RL.NET.Web/data`.
+`src/RLDemo.Web/data`.
 
 ## Run the demo
 
 ```
-dotnet run --project src/RL.NET.Demo -c Release                 # everything, seed 42
-dotnet run --project src/RL.NET.Demo -c Release -- cartpole     # just the DQN flagship
-dotnet run --project src/RL.NET.Demo -c Release -- 2048         # n-tuple TD plays 2048
-dotnet run --project src/RL.NET.Demo -c Release -- grid lake 7  # tabular envs, seed 7
+dotnet run --project src/RLDemo.Console -c Release                 # everything, seed 42
+dotnet run --project src/RLDemo.Console -c Release -- cartpole     # just the DQN flagship
+dotnet run --project src/RLDemo.Console -c Release -- 2048         # n-tuple TD plays 2048
+dotnet run --project src/RLDemo.Console -c Release -- grid lake 7  # tabular envs, seed 7
 ```
 
 Demos (each ends with animated console playback):
@@ -59,7 +59,7 @@ Demos (each ends with animated console playback):
   a BFS oracle; solves 100% within 2× optimal after ~1 minute of training.
 
 The playground's strongest Rush Hour solver goes further: **imitation learning from the
-BFS oracle + policy-guided A\*** (`tools/RL.NET.Lab`) — after an overnight self-supervised
+BFS oracle + policy-guided A\*** (`tools/MintPlayer.AI.ReinforcementLearning.Lab`) — after an overnight self-supervised
 run (224M labeled states, pure managed .NET) it solves every official ThinkFun card we
 tested **optimally**, including expert card 40 (81 moves) in ~2,500 node expansions:
 
