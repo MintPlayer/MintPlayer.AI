@@ -252,8 +252,10 @@ List<Sample> BuildSamples(RushHourPuzzle puzzle, List<RushHourOracle.LabeledStat
     // every mid-size graph even though random START generation can't produce them.
     var deep = labeled.OrderByDescending(s => s.DistanceToGoal)
         .Take(Math.Max(1, labeled.Count / 4)).ToArray();
+    // Eight rollouts per config: solved rollouts visit only ~distance states each, so
+    // fewer starts leave the on-policy pool nearly empty (~7% share observed with 4).
     var rolloutStarts = new List<int[]> { RushHourBoard.InitialPositions(puzzle) };
-    for (int i = 0; i < 3; i++) rolloutStarts.Add(deep[rng.NextInt(deep.Length)].Positions);
+    for (int i = 0; i < 7; i++) rolloutStarts.Add(deep[rng.NextInt(deep.Length)].Positions);
 
     var pool = new List<RushHourOracle.LabeledState>();
     foreach (var rolloutStart in rolloutStarts)
