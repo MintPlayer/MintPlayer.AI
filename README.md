@@ -22,8 +22,20 @@ dotnet run --project src/RL.NET.Web
 
 Open the printed URL (default `http://localhost:5210`). In Development the host spawns and
 proxies the Angular dev server itself — don't run `ng serve` separately. On first start it
-trains the Rush Hour model (~1 min, progress shown in the page banner) and saves it under
-`data/`; later starts load instantly.
+trains its models (2048 ≈ 3 min; Rush Hour DQN fallback ≈ 30 min — page banners show live
+progress) and saves them under `data/`; later starts load instantly. The strongest Rush
+Hour solver (the imitation policy net) is trained with `tools/RL.NET.Lab`.
+
+### Docker
+
+```
+docker compose up
+```
+
+Open `http://localhost:8080`. Models and the public gallery persist on the `rlnet-data`
+volume across restarts and upgrades. A fresh volume trains its own models at startup;
+to start with pre-trained ones, seed the volume with the `*.ckpt` files from
+`src/RL.NET.Web/data`.
 
 ## Run the demo
 

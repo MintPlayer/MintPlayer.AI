@@ -18,8 +18,9 @@
 		<ProjectReference Include="..\RL.NET.Environments\RL.NET.Environments.csproj" />
 	</ItemGroup>
 
-	<!-- Angular production build during publish (dev uses the SPA dev-server middleware) -->
-	<Target Name="PublishAngular" AfterTargets="ComputeFilesToPublish">
+	<!-- Angular production build during publish (dev uses the SPA dev-server middleware).
+	     The Dockerfile builds the SPA in a dedicated Node stage and sets SkipAngularPublish. -->
+	<Target Name="PublishAngular" AfterTargets="ComputeFilesToPublish" Condition="'$(SkipAngularPublish)' != 'true'">
 		<Exec WorkingDirectory="$(SpaRoot)" Command="npm ci" />
 		<Exec WorkingDirectory="$(SpaRoot)" Command="npm run build" />
 

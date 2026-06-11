@@ -4,10 +4,12 @@ Companion to [PRD.md](PRD.md). Each milestone ends in a **git commit on a passin
 revert-friendly by design. Order is chosen so each milestone adds at most 2–3 genuinely new
 components (the CleanRL/SB3 lesson: localize bugs by construction).
 
-> **Status (2026-06-10): M0–M8 complete, every pre-registered gate passed.**
-> The **interactive web playground** (PRD §7) is live for Rush Hour: draw on a canvas,
-> play it yourself, AI-solve with back/forward playback, persisted model. Next is
-> **M9** (2048 page + training-on-demand + gallery), then M10 (Docker). M11 = stretch.
+> **Status (2026-06-11): M0–M10 complete — every pre-registered gate passed.**
+> The playground (PRD §7) is fully delivered: Rush Hour + 2048 pages, training-on-demand,
+> public gallery, Docker with a persistent `/data` volume. M11 is underway with its
+> headline already landed: imitation learning + policy-guided A* solves every official
+> ThinkFun card tested **optimally**, including expert card 40 (81 moves, ~2.6k node
+> expansions) — drawn, solved and replayed in the browser.
 
 ## M0 — Skeleton + core contracts  *(part of the quick demo)* ✅
 
@@ -206,14 +208,18 @@ trajectory. The playout landed in the gallery; clicking the entry replays it.
   `/rushhour?replay=<id>` / `/2048?replay=<id>`, which load the entry straight into
   playback. Unit-tested across store re-instantiation (restart survival).
 
-## M10 — Docker
+## M10 — Docker ✅
+**Result: gate passed.** `docker build` → run with a seeded `rlnet-data` volume →
+instantly ready (no retraining), production SPA served, **card 40 solved 81/81 by the
+AI (lookahead)** through the containerized API; `docker restart` → model store and
+gallery intact. Cold volumes train their own models at startup (banners show progress).
 
-- Multi-stage Dockerfile: Node + .NET SDK build stage (Angular production build +
-  `dotnet publish`) → ASP.NET runtime image; data directory at `/data` (model store +
-  gallery) declared as a **volume**; configuration via environment variables.
-- docker-compose example with a named volume; README run instructions.
-- **Gate:** `docker build` + run, solve a drawn puzzle in the browser; `docker restart`
-  — model store and gallery still there (volume), no retraining needed.
+- Multi-stage Dockerfile: Node 22 stage builds the Angular bundle; SDK stage publishes
+  with `-p:SkipAngularPublish=true -p:EnableSpaBuilder=false` (both npm hooks disabled —
+  the Node stage already did that work); slim `aspnet:10.0` runtime image.
+  `DataDirectory=/data` env + `VOLUME /data`, port 8080.
+- `docker compose up` → http://localhost:8080 with a named volume; README documents
+  seeding the volume with existing `*.ckpt` files to skip first-run training.
 
 ## M11 — In progress: imitation learning + policy-guided search  *(overnight campaign 2026-06-10→11)*
 

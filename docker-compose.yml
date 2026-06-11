@@ -1,0 +1,15 @@
+# RL.NET Playground: `docker compose up` → http://localhost:8080
+# The named volume keeps trained models + the public gallery across restarts.
+# A fresh volume trains its own models at startup (2048 ≈ 3 min, Rush Hour DQN
+# fallback ≈ 30+ min — the page banners show live progress meanwhile); to skip
+# that, seed the volume with existing *.ckpt files from src/RL.NET.Web/data.
+services:
+  playground:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - rlnet-data:/data
+
+volumes:
+  rlnet-data:
