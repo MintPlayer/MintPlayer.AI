@@ -11,17 +11,19 @@ using Tensor = RLNet.Core.Numerics.Tensor;
 // net supervised, checkpoints to the model store every eval, and tracks held-out
 // official ThinkFun cards (1, 38, 39, 40) with both reactive play and policy-guided A*.
 //
-// Usage: RL.NET.Lab [--hours H] [--data DIR] [--seed S] [--eval-only]
+// Usage: RL.NET.Lab [--hours H] [--data DIR] [--seed S] [--lr LR] [--eval-only]
 
 double hours = 9;
 string dataDir = "data";
 ulong seed = 1;
+float learningRate = 3e-4f;
 bool evalOnly = false;
 for (int i = 0; i < args.Length; i++)
 {
     if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
     else if (args[i] == "--data" && i + 1 < args.Length) dataDir = args[++i];
     else if (args[i] == "--seed" && i + 1 < args.Length) seed = ulong.Parse(args[++i]);
+    else if (args[i] == "--lr" && i + 1 < args.Length) learningRate = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
     else if (args[i] == "--eval-only") evalOnly = true;
 }
 
@@ -54,7 +56,23 @@ using (var existing = store.TryOpenRead("rushhour", "policy"))
         Log("initialized a fresh policy net");
     }
 }
-var adam = new Adam(net.Parameters(), learningRate: 3e-4f);
+// Restore Adam's moment estimates when continuing a campaign — without them, resumed
+// training spends its first minutes re-estimating gradient statistics from zero.
+Adam adam;
+using (var adamState = store.TryOpenRead("rushhour", "policy-adam"))
+{
+    if (adamState is not null)
+    {
+        using var reader = new BinaryReader(adamState, System.Text.Encoding.UTF8, leaveOpen: true);
+        adam = AdamCheckpoint.Read(net.Parameters(), reader);
+        adam.LearningRate = learningRate; // CLI overrides the stored schedule position
+        Log($"resumed Adam state (lr set to {learningRate:E1})");
+    }
+    else
+    {
+        adam = new Adam(net.Parameters(), learningRate);
+    }
+}
 
 // Held-out official ThinkFun cards (never produced by the random generator).
 var cards = new (string Name, RushHourPuzzle Puzzle, int Optimal)[]
@@ -209,6 +227,11 @@ void Evaluate(int configs, long samples, double ce, double acc, double huber)
     Log(report.ToString());
     File.AppendAllText(csvPath, string.Join(',', cells) + "\n");
     store.Save("rushhour", "policy", s => net.Save(s));
+    store.Save("rushhour", "policy-adam", s =>
+    {
+        using var writer = new BinaryWriter(s, System.Text.Encoding.UTF8, leaveOpen: true);
+        AdamCheckpoint.Write(adam, writer);
+    });
 }
 
 static List<Sample> StratifiedSample(RushHourPuzzle puzzle, List<RushHourOracle.LabeledState> labeled, int budget, Xoshiro256StarStar rng)
