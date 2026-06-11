@@ -37,15 +37,15 @@ volume across restarts and upgrades; a fresh volume seeds itself from the shippe
 pre-trained checkpoints in `models/`, so the playground is instantly ready.
 
 The root `docker-compose.yml` is the **deployment** variant (Traefik VPS convention):
-it pulls the GHCR image and routes `rl.mintplayer.com` through the external `web`
+it pulls the GHCR image and routes `ai.mintplayer.com` through the external `web`
 network with Let's Encrypt TLS.
 
 Every push to `master` also publishes the image to GHCR
-(`ghcr.io/mintplayer/mintplayer.ai.reinforcementlearning/playground:master`), so running
+(`ghcr.io/mintplayer/mintplayer.ai/playground:master`), so running
 it without cloning is:
 
 ```
-docker run -p 8080:8080 -v rlnet-data:/data ghcr.io/mintplayer/mintplayer.ai.reinforcementlearning/playground:master
+docker run -p 8080:8080 -v rlnet-data:/data ghcr.io/mintplayer/mintplayer.ai/playground:master
 ```
 
 ## Run the demo

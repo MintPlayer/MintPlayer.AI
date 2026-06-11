@@ -8,10 +8,10 @@
 # checkpoints, so the playground is instantly ready.
 services:
   playground:
-    image: ghcr.io/mintplayer/mintplayer.ai.reinforcementlearning/playground:master
+    image: ghcr.io/mintplayer/mintplayer.ai/playground:master
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.rl-playground.rule=Host(`rl.mintplayer.com`)"
+      - "traefik.http.routers.rl-playground.rule=Host(`ai.mintplayer.com`)"
       - "traefik.http.routers.rl-playground.entrypoints=websecure"
       - "traefik.http.routers.rl-playground.tls.certresolver=letsencrypt"
       - "traefik.http.services.rl-playground.loadbalancer.server.port=8080"

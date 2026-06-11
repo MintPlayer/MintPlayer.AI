@@ -19,8 +19,8 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>reinforcement-learning;environments;cartpole;2048;rush-hour;gymnasium;imitation-learning</PackageTags>
-    <RepositoryUrl>https://github.com/MintPlayer/MintPlayer.AI.ReinforcementLearning</RepositoryUrl>
-    <PackageProjectUrl>https://github.com/MintPlayer/MintPlayer.AI.ReinforcementLearning</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/MintPlayer/MintPlayer.AI</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/MintPlayer/MintPlayer.AI</PackageProjectUrl>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
   </PropertyGroup>
