@@ -33,9 +33,16 @@ docker compose up
 ```
 
 Open `http://localhost:8080`. Models and the public gallery persist on the `rlnet-data`
-volume across restarts and upgrades. A fresh volume trains its own models at startup;
-to start with pre-trained ones, seed the volume with the `*.ckpt` files from
-`src/RLDemo.Web/data`.
+volume across restarts and upgrades; a fresh volume seeds itself from the shipped
+pre-trained checkpoints in `models/`, so the playground is instantly ready.
+
+Every push to `master` also publishes the image to GHCR
+(`ghcr.io/mintplayer/mintplayer.ai.reinforcementlearning/playground:master`), so running
+it without cloning is:
+
+```
+docker run -p 8080:8080 -v rlnet-data:/data ghcr.io/mintplayer/mintplayer.ai.reinforcementlearning/playground:master
+```
 
 ## Run the demo
 
