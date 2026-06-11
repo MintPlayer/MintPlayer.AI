@@ -215,15 +215,54 @@ trajectory. The playout landed in the gallery; clicking the entry replays it.
 - **Gate:** `docker build` + run, solve a drawn puzzle in the browser; `docker restart`
   — model store and gallery still there (volume), no retraining needed.
 
+## M11 — In progress: imitation learning + policy-guided search  *(overnight campaign 2026-06-10→11)*
+
+The "harder Rush Hour" stretch item turned out to be the headline result. A reactive
+DQN cannot crack expert cards (81-move solutions compound per-step error: 0.99⁸¹ ≈ 44%
+success even at 99% accuracy), so the night built the principled ladder instead:
+
+- **`RushHourOracle`** — for any config, enumerate the ENTIRE reachable state graph and
+  label every state with its exact distance-to-goal (multi-source backward BFS; sliding
+  moves are reversible) + one optimal action. Deep STATES are plentiful even though deep
+  START states can't be generated randomly — supervision for free, at any depth.
+- **`RushHourPolicyNet`** — shared trunk + 32-way policy head + distance-to-goal value
+  head, trained with masked cross-entropy + Huber on the from-scratch autograd.
+- **`RushHourPolicySearch`** — cycle-avoiding greedy rollout, and **A\* with the value
+  head as heuristic**: search turns a 91%-accurate policy into an exact solver.
+- **`tools/RL.NET.Lab`** — resumable long-running trainer: streams random configs through
+  the oracle (stratified by distance), evals held-out official cards every 10 min,
+  checkpoints to the model store, logs CSV (`data/logs/imitation.csv`).
+
+**Overnight run (~5.6 h, single thread, pure managed .NET): 412,913 configs,
+224.8 M labeled samples, policy accuracy 76% → 91.4%.** Held-out official ThinkFun
+cards, every 10-minute eval, via policy-guided A*:
+
+| Card | Optimal | AI result | Node expansions |
+|---|---|---|---|
+| Level 1 | 16 | **16 (optimal)** | ~0.7–1k |
+| Card 38 | 77 | **77 (optimal)** | ~3.1k |
+| Card 39 | 82 | **82 (optimal)** | ~3.7k |
+| Card 40 (hardest) | 81 | **81 (optimal)** | ~2.4–2.9k |
+
+(Blind BFS explores hundreds of thousands of states on card 40; the learned heuristic
+cuts that ~100×.) Random 30-puzzle eval: greedy 30/30, search 30/30. The playground
+prefers the policy net (5-min store TTL → improving checkpoints picked up live):
+reactive rollout first, A* fallback, honest `aiMode` labeling — card 40 drawn in the
+browser shows "AI (with lookahead) solved it in 81 moves (optimal 81)"
+(docs/screenshots/card40-ai-solved.png). The wide-band DQN (optimal 2–20 band,
+threshold 90 reached at 480k steps, eval 92.85) remains the fallback when no policy
+checkpoint exists. Known gap: the REACTIVE policy still fails level 1 specifically
+(search covers it at ~1k expansions) — a candidate for AlphaZero-style fine-tuning.
+
 ## M11 — Stretch (unordered, not started)
 
 MountainCar (exploration stress test) · Snake (demo gif) · TorchSharp `IComputeBackend`
 implementation · TensorBoard event writer · self-play scaffolding (TicTacToe + minimax oracle)
 · NuGet packaging · Dueling DQN head (deferred from M3) · tensor/tape pooling (deferred
-from M2) · Categorical/PPO action masking (deferred from M5) · harder Rush Hour sets with
-curriculum + imitation from BFS solutions · watch-only playground pages for CartPole/2048
-self-play · importing puzzles from `C:\Repos\Spelletjes\Rush Hour` as gallery data
-(ask for a clean checkout first).
+from M2) · Categorical/PPO action masking (deferred from M5) · AlphaZero-style fine-tuning
+of the Rush Hour policy (close the reactive level-1 gap; shrink search expansions)
+· watch-only playground pages for CartPole/2048 self-play · importing puzzles from
+`C:\Repos\Spelletjes\Rush Hour` as gallery data (ask for a clean checkout first).
 
 ## Testing strategy (cross-cutting, from research)
 

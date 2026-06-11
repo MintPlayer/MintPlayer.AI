@@ -46,6 +46,13 @@ Demos (each ends with animated console playback):
 - **Rush Hour** (`rushhour`) — masked Double DQN on a generated 30-puzzle easy set with
   a BFS oracle; solves 100% within 2× optimal after ~1 minute of training.
 
+The playground's strongest Rush Hour solver goes further: **imitation learning from the
+BFS oracle + policy-guided A\*** (`tools/RL.NET.Lab`) — after an overnight self-supervised
+run (224M labeled states, pure managed .NET) it solves every official ThinkFun card we
+tested **optimally**, including expert card 40 (81 moves) in ~2,500 node expansions:
+
+![Card 40 solved optimally by the AI](docs/screenshots/card40-ai-solved.png)
+
 ## Run the tests
 
 ```
