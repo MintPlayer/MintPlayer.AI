@@ -29,12 +29,16 @@ Hour solver (the imitation policy net) is trained with `tools/MintPlayer.AI.Rein
 ### Docker
 
 ```
-docker compose up
+docker compose -f docker-compose.local.yml up
 ```
 
 Open `http://localhost:8080`. Models and the public gallery persist on the `rlnet-data`
 volume across restarts and upgrades; a fresh volume seeds itself from the shipped
 pre-trained checkpoints in `models/`, so the playground is instantly ready.
+
+The root `docker-compose.yml` is the **deployment** variant (Traefik VPS convention):
+it pulls the GHCR image and routes `rl.mintplayer.com` through the external `web`
+network with Let's Encrypt TLS.
 
 Every push to `master` also publishes the image to GHCR
 (`ghcr.io/mintplayer/mintplayer.ai.reinforcementlearning/playground:master`), so running

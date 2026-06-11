@@ -1,0 +1,13 @@
+# Local development: builds the image from this checkout and serves it on
+# http://localhost:8080 (no Traefik needed). The deployment variant lives in
+# docker-compose.yml.
+services:
+  playground:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - rlnet-data:/data
+
+volumes:
+  rlnet-data:

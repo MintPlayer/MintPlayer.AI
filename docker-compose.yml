@@ -1,15 +1,29 @@
-# MintPlayer.AI.ReinforcementLearning Playground: `docker compose up` → http://localhost:8080
-# The named volume keeps trained models + the public gallery across restarts.
-# A fresh volume trains its own models at startup (2048 ≈ 3 min, Rush Hour DQN
-# fallback ≈ 30+ min — the page banners show live progress meanwhile); to skip
-# that, seed the volume with existing *.ckpt files from src/RLDemo.Web/data.
+# Deployment compose (Traefik VPS convention): pulls the GHCR image published by
+# .github/workflows/playground-docker.yml and routes it through the external
+# `web` network's Traefik instance. For a local build instead, use:
+#   docker compose -f docker-compose.local.yml up
+#
+# The named volume keeps trained models + the public gallery across restarts and
+# upgrades; a fresh volume seeds itself from the image's baked-in pre-trained
+# checkpoints, so the playground is instantly ready.
 services:
   playground:
-    build: .
-    ports:
-      - "8080:8080"
+    image: ghcr.io/mintplayer/mintplayer.ai.reinforcementlearning/playground:master
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rl-playground.rule=Host(`rl.mintplayer.com`)"
+      - "traefik.http.routers.rl-playground.entrypoints=websecure"
+      - "traefik.http.routers.rl-playground.tls.certresolver=letsencrypt"
+      - "traefik.http.services.rl-playground.loadbalancer.server.port=8080"
     volumes:
-      - rlnet-data:/data
+      - playground-data:/data
+    networks:
+      - web
+    restart: unless-stopped
+
+networks:
+  web:
+    external: true
 
 volumes:
-  rlnet-data:
+  playground-data:
