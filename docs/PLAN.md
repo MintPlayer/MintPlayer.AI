@@ -263,6 +263,40 @@ threshold 90 reached at 480k steps, eval 92.85) remains the fallback when no pol
 checkpoint exists. Known gap: the REACTIVE policy still fails level 1 specifically
 (search covers it at ~1k expansions) — a candidate for AlphaZero-style fine-tuning.
 
+## M12 — GPU/CUDA backend  *(planned 2026-06-11, deliberately parked)*
+
+Not scheduled — to be picked up **when the workload justifies it**: the imitation
+accuracy plateau demands a wider net, a new environment needs CNN-scale compute, or
+training campaigns become throughput-bound beyond what overnight CPU runs deliver.
+The assessment below was made with the dev machine's RTX 3060 Laptop GPU
+(6 GB, compute 8.6, driver current) so the plan is ready to execute.
+
+**The constraint that shapes the design:** the existing `IComputeBackend` seam passes
+host `float[]`s, so a naive CUDA backend would LOSE to the CPU at today's sizes — a
+256×384 batch-GEMM is ~75 MFLOPs ≈ 7 µs of GPU compute, less than one kernel launch,
+and PCIe transfer costs more than the math. The ~500× raw-compute headroom
+(~10 TFLOP/s FP32 vs our 20 GFLOP/s managed GEMM) is only reachable with
+**device-resident tensors** and bigger batches/nets. GPU work must therefore start
+with an honest benchmark and an API evolution, not a drop-in backend.
+
+**Library choice: ILGPU** (JIT-compiles C# kernels to PTX) over TorchSharp — MIT,
+megabytes not gigabytes, no native payload, keeps the from-scratch identity (we write
+our own tiled GEMM kernel; 1–3 TFLOP/s realistic ≈ 50–150× current CPU), and its CPU
+accelerator keeps CI and GPU-less machines green. TorchSharp remains the documented
+alternative if ILGPU ever falls short.
+
+- **M12a — benchmark first:** extend the Bench tool with an ILGPU GEMM sweep
+  (128²→4096² plus our real training shapes), measured **with and without transfer
+  costs**, and full training-step comparisons across batch/hidden sizes.
+  **Gate:** a CPU↔GPU crossover table committed to the docs.
+- **M12b — device-resident backend:** evolve `IComputeBackend` to a device-tensor API
+  (allocate/upload/download + ops on device handles); `ManagedBackend` stays trivial;
+  `IlgpuBackend` implements the real thing; port the training hot loop. First consumer:
+  the imitation Lab (infinite oracle data → batch 4096+, wider nets).
+  **Gate:** Lab samples/hour ≥ 5× the CPU baseline (~40 M/h) at equal model quality.
+- **M12c — the payoff campaign:** overnight GPU imitation run with a wider net, aiming
+  past the 92.3% accuracy plateau; results added to the M11 table.
+
 ## M11 — Stretch (unordered, not started)
 
 MountainCar (exploration stress test) · Snake (demo gif) · TorchSharp `IComputeBackend`
@@ -330,6 +364,9 @@ suggested order:
 3. **Stretch list (M11)**: MountainCar, Snake, TorchSharp backend, TensorBoard writer,
    self-play scaffolding, Dueling head, tensor pooling, PPO masking, importing puzzles
    from the owner's original Rush Hour app.
+4. **GPU/CUDA (M12)** — fully planned above, parked until the workload justifies it
+   (wider nets past the imitation plateau, CNN-scale envs, or throughput-bound
+   campaigns).
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:

@@ -50,7 +50,8 @@ out (vectorized environments) without rewrites.
 
 Explicitly out of scope to prevent the scope creep every research thread warned about:
 
-- GPU execution, CNNs / Atari-scale nets (the `IComputeBackend` seam exists, nothing more)
+- GPU execution, CNNs / Atari-scale nets (the `IComputeBackend` seam exists, nothing
+  more) — *now fully planned as M12, see [§10](#10-planned-gpucuda-backend-m12)*
 - TorchSharp backend (optional *later* package, never a core dependency)
 - Multi-agent / self-play frameworks (TicTacToe/Connect-4 deferred until single-agent API is stable)
 - Distributed training, ONNX export, model-based / offline RL
@@ -190,3 +191,24 @@ Angular CLI dev server in development; serves the built bundle in production).
 | Hyperparameter fragility across envs | Known-good per-env configs committed with the test suite |
 | User-drawn Rush Hour puzzles are out-of-distribution for a model trained on generated sets | BFS oracle always produces a reference solution; UI reports both AI and optimal move counts; failures shown honestly as findings; harder-curriculum/imitation items raise generality later |
 | Long training jobs inside a web request | Training always runs as a tracked background job with polled/streamed progress; solve requests queue behind it rather than time out |
+
+## 10. Planned: GPU/CUDA backend (M12)
+
+*Assessed 2026-06-11 against the dev machine (NVIDIA RTX 3060 Laptop, 6 GB, compute
+8.6); deliberately parked until the workload justifies it. Full phase plan in
+[PLAN.md](PLAN.md) §M12.*
+
+**Trigger conditions** (any one suffices): the imitation-learning accuracy plateau
+calls for substantially wider networks; a new environment needs CNN-scale compute;
+or training campaigns become throughput-bound beyond overnight CPU runs (~40 M
+oracle-labeled samples/hour today).
+
+**Key findings from the assessment:**
+
+| Question | Answer |
+|---|---|
+| Raw headroom | ~500× (GPU ~10 TFLOP/s FP32 vs 20 GFLOP/s managed GEMM) |
+| Why not a drop-in `IComputeBackend`? | The seam passes host `float[]`s; at today's sizes one batch-GEMM (~75 MFLOPs ≈ 7 µs) costs less than a kernel launch, and PCIe transfers cost more than the math — a naive CUDA backend would **lose** to the CPU. Device-resident tensors are required. |
+| Library | **ILGPU** (C# kernels JIT-compiled to PTX): MIT, megabytes not gigabytes, keeps the from-scratch identity (own tiled GEMM kernel, 1–3 TFLOP/s realistic), CPU accelerator keeps CI green without a GPU. TorchSharp stays the fallback option. |
+| First consumer | The imitation Lab — oracle data is infinite, so batch 4096+ and wider nets are pure wins; expected 5–20× campaign throughput. |
+| Order of work | Benchmark first (CPU↔GPU crossover table, with/without transfer costs), then evolve the backend seam to device tensors, then a payoff campaign past the 92.3% plateau. |
