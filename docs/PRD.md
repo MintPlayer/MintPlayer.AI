@@ -1,9 +1,12 @@
 # MintPlayer.AI.ReinforcementLearning — Product Requirements Document
 
-**Status:** v1 implemented · 2026-06-10 — all M0–M6 gates passed; see
-[PLAN.md](PLAN.md) for per-milestone results and the remaining stretch list.
+**Status:** shipped · 2026-06-11 — all M0–M10 gates passed; published to nuget.org
+(`MintPlayer.AI.ReinforcementLearning.Core` / `.Environments` 0.1.0) and **live at
+https://ai.mintplayer.com**. M11 (imitation learning + policy-guided search) underway —
+every official Rush Hour card tested is solved optimally. See [PLAN.md](PLAN.md) for
+per-milestone results.
 **Owner:** Pieterjan
-**Repo:** `C:\Repos\MintPlayer.AI.ReinforcementLearning` (net10.0, blank solution at start)
+**Repo:** https://github.com/MintPlayer/MintPlayer.AI (net10.0, blank solution at start)
 
 ## 1. Vision
 
@@ -41,7 +44,7 @@ out (vectorized environments) without rewrites.
 7. **Interactive web playground** *(added 2026-06-10, after the v1 gates passed)*: an
    ASP.NET Core + Angular web app where anyone can draw a game state, play it, submit it
    to a trained model, and step through the AI's solution — with persisted training
-   results and Docker deployment. Spec in [§7](#7-interactive-web-app-rlnet-playground).
+   results and Docker deployment. Spec in [§7](#7-interactive-web-app-mintplayerai-playground).
 
 ## 3. Non-goals (v1)
 
@@ -51,7 +54,8 @@ Explicitly out of scope to prevent the scope creep every research thread warned 
 - TorchSharp backend (optional *later* package, never a core dependency)
 - Multi-agent / self-play frameworks (TicTacToe/Connect-4 deferred until single-agent API is stable)
 - Distributed training, ONNX export, model-based / offline RL
-- NuGet publishing, Unity/Godot adapters, netstandard multi-targeting
+- Unity/Godot adapters, netstandard multi-targeting
+  *(NuGet publishing was originally out of scope here but shipped on 2026-06-11)*
 - LunarLander or anything needing a physics engine (Box2D port ≈ a project in itself)
 
 ## 4. Key decisions
@@ -125,7 +129,7 @@ than referencing `C:\Repos\Spelletjes\Rush Hour` (currently being modified by an
 session); the existing app can later consume MintPlayer.AI.ReinforcementLearning for visualization, and its puzzle
 definitions can be imported as data.
 
-## 7. Interactive web app ("MintPlayer.AI.ReinforcementLearning Playground")
+## 7. Interactive web app ("MintPlayer.AI Playground")
 
 *Requirement inserted 2026-06-10, after the library v1 (M0–M6) gates passed. Delivered as
 milestones M7–M10 in [PLAN.md](PLAN.md).*

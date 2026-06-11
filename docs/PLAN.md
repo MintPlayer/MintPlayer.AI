@@ -4,12 +4,13 @@ Companion to [PRD.md](PRD.md). Each milestone ends in a **git commit on a passin
 revert-friendly by design. Order is chosen so each milestone adds at most 2–3 genuinely new
 components (the CleanRL/SB3 lesson: localize bugs by construction).
 
-> **Status (2026-06-11): M0–M10 complete — every pre-registered gate passed.**
-> The playground (PRD §7) is fully delivered: Rush Hour + 2048 pages, training-on-demand,
-> public gallery, Docker with a persistent `/data` volume. M11 is underway with its
-> headline already landed: imitation learning + policy-guided A* solves every official
-> ThinkFun card tested **optimally**, including expert card 40 (81 moves, ~2.6k node
-> expansions) — drawn, solved and replayed in the browser.
+> **Status (2026-06-11): M0–M10 complete, every pre-registered gate passed — and the
+> project is published and LIVE.** Repo: github.com/MintPlayer/MintPlayer.AI · NuGet
+> packages 0.1.0 on nuget.org · Docker image on GHCR · playground deployed at
+> **https://ai.mintplayer.com** (see "Shipped" below). M11 is underway with its headline
+> already landed: imitation learning + policy-guided A* solves every official ThinkFun
+> card tested **optimally**, including expert card 40 (81 moves, ~2.6k node expansions)
+> — drawn, solved and replayed in the browser.
 
 ## M0 — Skeleton + core contracts  *(part of the quick demo)* ✅
 
@@ -240,8 +241,10 @@ success even at 99% accuracy), so the night built the principled ladder instead:
   checkpoints to the model store, logs CSV (`data/logs/imitation.csv`).
 
 **Overnight run (~5.6 h, single thread, pure managed .NET): 412,913 configs,
-224.8 M labeled samples, policy accuracy 76% → 91.4%.** Held-out official ThinkFun
-cards, every 10-minute eval, via policy-guided A*:
+224.8 M labeled samples, policy accuracy 76% → 91.4%.** A day-2 incremental
+continuation (the Lab resumes net + Adam state from the model store) added another
+180.7 M samples → **405 M total, accuracy 92.3%**. Held-out official ThinkFun cards,
+every 10-minute eval, via policy-guided A*:
 
 | Card | Optimal | AI result | Node expansions |
 |---|---|---|---|
@@ -294,13 +297,43 @@ of the Rush Hour policy (close the reactive level-1 gap; shrink search expansion
 | M6 Rush Hour | ≥ 90% of easy set within 2× optimal | **100%** (30/30) after 40k steps / ~1 min |
 | M7 checkpoints | resumed DQN bitwise == uninterrupted | passed (+ all round-trips bitwise/exact) |
 | M8 web playground | e2e draw→solve→playback; API trajectory ≤ 2× optimal | passed (AI solved the e2e puzzle optimally, 7/7) |
+| M9 2048 + gallery | train-first visible; warm solve instant; gallery survives restart | passed (n-tuple playout: 2,491 moves, 55,480 pts, reached 2048; gallery replay verified) |
+| M10 Docker | build → run → solve → restart keeps models + gallery | passed (cold volume self-seeds; card 40 solved 81/81 in the container) |
+| M11 imitation (in progress) | held-out official cards via policy-guided A* | **all optimal**: level 1 = 16, card 38 = 77, card 39 = 82, card 40 = 81 moves |
+
+## Shipped (2026-06-11) — release engineering
+
+Beyond the milestones, the project is published and deployed:
+
+- **Renamed** to `MintPlayer.AI.ReinforcementLearning` (libraries) / `RLDemo.*` (apps).
+- **Pre-trained models committed** in `models/` (with provenance README); empty model
+  stores self-seed from them — fresh clones, volumes and containers start trained.
+- **NuGet**: `MintPlayer.AI.ReinforcementLearning.Core` + `.Environments` 0.1.0 on
+  nuget.org (published by `build-master` on every master push, `--skip-duplicate`).
+- **GitHub**: https://github.com/MintPlayer/MintPlayer.AI — CI workflows for branches,
+  PRs and master (Slow-bucket tests excluded in CI; `EnableSpaBuilder=false`).
+- **Docker/GHCR**: `ghcr.io/mintplayer/mintplayer.ai/playground:master` with provenance
+  attestation, auto-flipped public.
+- **Deployed**: `playground-docker` SSH-deploys to the VPS (ng-bootstrap convention) —
+  **live at https://ai.mintplayer.com**, verified by solving card 40 (81/81, aiMode
+  search) over the public internet.
 
 ## Immediate next step
 
-**Build M9 (2048 page + training-on-demand + gallery)** — 2048 canvas editor, n-tuple
-playout trajectories (move + spawned tile per step), background training jobs with
-browser-visible progress, persisted public game gallery.
+All planned milestones are done and the playground is in production. Candidates, in
+suggested order:
+
+1. **AlphaZero-style fine-tune** (overnight Lab run): train the policy on
+   search-corrected play to close the reactive level-1 gap and shrink A* expansions.
+2. **Slide-optimal AI answers**: search/compaction that minimizes official piece-moves,
+   not just single-cell moves.
+3. **Stretch list (M11)**: MountainCar, Snake, TorchSharp backend, TensorBoard writer,
+   self-play scaffolding, Dueling head, tensor pooling, PPO masking, importing puzzles
+   from the owner's original Rush Hour app.
+
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
 `dotnet run --project src/RLDemo.Console -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour]
 [seed] [--load] [--save] [--data <dir>]`. Tests: `dotnet test` (`Category=Slow` for gates).
+Training campaigns: `dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab --
+--hours N --data src/RLDemo.Web/data` (resumes net + Adam from the model store).
