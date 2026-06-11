@@ -7,6 +7,21 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 string dataDirectory = builder.Configuration["DataDirectory"] ?? "data";
+
+// Seed an empty model store from the shipped pre-trained checkpoints (models/ in the
+// repo, /app/models in the Docker image): fresh clones and fresh volumes start with
+// the trained AI instead of training from scratch. Existing files are never touched.
+string? seedDirectory = builder.Configuration["SeedModelsDirectory"];
+if (!string.IsNullOrEmpty(seedDirectory) && Directory.Exists(seedDirectory))
+{
+    Directory.CreateDirectory(dataDirectory);
+    foreach (string seed in Directory.EnumerateFiles(seedDirectory, "*.ckpt"))
+    {
+        string target = Path.Combine(dataDirectory, Path.GetFileName(seed));
+        if (!File.Exists(target))
+            File.Copy(seed, target);
+    }
+}
 builder.Services.AddSingleton<IModelStore>(_ => new FileModelStore(dataDirectory));
 builder.Services.AddSingleton(new GalleryStore(Path.Combine(dataDirectory, "gallery")));
 builder.Services.AddSingleton<RushHourModelService>();

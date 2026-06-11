@@ -21,6 +21,7 @@ public class PlaygroundFactory : WebApplicationFactory<Program>
     {
         builder.UseEnvironment("Testing");
         builder.UseSetting("DataDirectory", DataDirectory);
+        builder.UseSetting("SeedModelsDirectory", ""); // tests control the store themselves
     }
 
     protected override void Dispose(bool disposing)

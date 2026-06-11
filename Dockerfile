@@ -30,7 +30,11 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /app/publish .
 COPY --from=client /client/dist/ClientApp/browser ./ClientApp/dist/ClientApp/browser
+# Shipped pre-trained checkpoints: a fresh /data volume seeds itself from these at
+# startup, so the container is instantly ready instead of training from scratch.
+COPY models/ ./models/
 ENV DataDirectory=/data
+ENV SeedModelsDirectory=/app/models
 VOLUME /data
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "RL.NET.Web.dll"]
