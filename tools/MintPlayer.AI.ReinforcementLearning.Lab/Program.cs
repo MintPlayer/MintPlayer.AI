@@ -113,6 +113,7 @@ long totalSamples = 0;
 int totalConfigs = 0;
 double windowCe = 0, windowHuber = 0, windowAcc = 0;
 long windowCount = 0;
+long windowOnPolicy = 0, windowDrawn = 0;
 
 Log($"training until {deadline:u} (~{hours:F1} h), data dir: {store.RootDirectory}");
 
@@ -124,7 +125,7 @@ while (DateTime.UtcNow < deadline)
     if (labeled is null || labeled.Count < 50) continue;
 
     totalConfigs++;
-    var samples = StratifiedSample(puzzle, labeled, SamplesPerConfig, rng);
+    var samples = BuildSamples(puzzle, labeled);
     Shuffle(samples, rng);
 
     for (int offset = 0; offset + BatchSize <= samples.Count; offset += BatchSize)
@@ -144,6 +145,9 @@ while (DateTime.UtcNow < deadline)
         double meanAcc = windowCount > 0 ? windowAcc / windowCount : 0;
         windowCe = windowHuber = windowAcc = 0;
         windowCount = 0;
+        if (windowDrawn > 0)
+            Log($"[mix] on-policy share this window: {windowOnPolicy / (double)windowDrawn:P1}");
+        windowOnPolicy = windowDrawn = 0;
         Evaluate(totalConfigs, totalSamples, meanCe, meanAcc, meanHuber);
         nextEval = DateTime.UtcNow + evalEvery;
     }
@@ -234,6 +238,47 @@ void Evaluate(int configs, long samples, double ce, double acc, double huber)
     });
 }
 
+// DAgger-style mix: up to half the budget is the ON-POLICY state distribution — the
+// states the current net actually visits when it plays this config. Its loops and
+// detours are exactly what stratified oracle sampling never shows it, and because the
+// oracle labeled the WHOLE reachable graph, relabeling a visited state is a dictionary
+// lookup. The remainder stays stratified-by-distance for coverage.
+List<Sample> BuildSamples(RushHourPuzzle puzzle, List<RushHourOracle.LabeledState> labeled)
+{
+    var byKey = new Dictionary<ulong, RushHourOracle.LabeledState>(labeled.Count);
+    foreach (var state in labeled) byKey[RushHourSolver.Encode(state.Positions)] = state;
+
+    // Roll out from the canonical start plus a few deep states — depths that exist in
+    // every mid-size graph even though random START generation can't produce them.
+    var deep = labeled.OrderByDescending(s => s.DistanceToGoal)
+        .Take(Math.Max(1, labeled.Count / 4)).ToArray();
+    var rolloutStarts = new List<int[]> { RushHourBoard.InitialPositions(puzzle) };
+    for (int i = 0; i < 3; i++) rolloutStarts.Add(deep[rng.NextInt(deep.Length)].Positions);
+
+    var pool = new List<RushHourOracle.LabeledState>();
+    foreach (var rolloutStart in rolloutStarts)
+    {
+        int d = byKey.TryGetValue(RushHourSolver.Encode(rolloutStart), out var s0) ? s0.DistanceToGoal : 20;
+        var visited = new List<int[]>();
+        var (solved, _) = RushHourPolicySearch.GreedyRolloutFrom(net, puzzle, rolloutStart, Math.Max(60, 2 * d), visited);
+        foreach (var position in visited)
+            if (byKey.TryGetValue(RushHourSolver.Encode(position), out var label))
+            {
+                pool.Add(label);
+                if (!solved) pool.Add(label); // failed rollouts ARE the distribution gap — double weight
+            }
+    }
+
+    Shuffle(pool, rng);
+    var samples = new List<Sample>(SamplesPerConfig);
+    foreach (var state in pool.Take(SamplesPerConfig / 2))
+        samples.Add(MakeSample(puzzle, state));
+    windowOnPolicy += samples.Count;
+    samples.AddRange(StratifiedSample(puzzle, labeled, SamplesPerConfig - samples.Count, rng));
+    windowDrawn += samples.Count;
+    return samples;
+}
+
 static List<Sample> StratifiedSample(RushHourPuzzle puzzle, List<RushHourOracle.LabeledState> labeled, int budget, Xoshiro256StarStar rng)
 {
     var byDistance = labeled.GroupBy(s => s.DistanceToGoal).ToList();
@@ -245,17 +290,20 @@ static List<Sample> StratifiedSample(RushHourPuzzle puzzle, List<RushHourOracle.
         var states = bucket.ToArray();
         Shuffle(states, rng);
         foreach (var state in states.Take(perBucket))
-        {
-            var obs = new float[RushHourBoard.ObservationSize];
-            RushHourBoard.WriteObservation(puzzle, state.Positions, obs);
-            var mask = RushHourBoard.ActionMask(puzzle, state.Positions);
-            var offsets = new float[RushHourBoard.ActionCount];
-            for (int a = 0; a < offsets.Length; a++)
-                if (!mask[a]) offsets[a] = -1e9f;
-            samples.Add(new Sample(obs, offsets, state.OptimalAction, state.DistanceToGoal));
-        }
+            samples.Add(MakeSample(puzzle, state));
     }
     return samples;
+}
+
+static Sample MakeSample(RushHourPuzzle puzzle, RushHourOracle.LabeledState state)
+{
+    var obs = new float[RushHourBoard.ObservationSize];
+    RushHourBoard.WriteObservation(puzzle, state.Positions, obs);
+    var mask = RushHourBoard.ActionMask(puzzle, state.Positions);
+    var offsets = new float[RushHourBoard.ActionCount];
+    for (int a = 0; a < offsets.Length; a++)
+        if (!mask[a]) offsets[a] = -1e9f;
+    return new Sample(obs, offsets, state.OptimalAction, state.DistanceToGoal);
 }
 
 static void Shuffle<T>(IList<T> list, Xoshiro256StarStar rng)

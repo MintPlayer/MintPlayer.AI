@@ -11,14 +11,24 @@ public static class RushHourPolicySearch
 {
     /// <summary>Reactive play: best legal logit leading to an unvisited state.</summary>
     public static (bool Solved, List<int> Actions) GreedyRollout(RushHourPolicyNet net, RushHourPuzzle puzzle, int maxMoves)
+        => GreedyRolloutFrom(net, puzzle, RushHourBoard.InitialPositions(puzzle), maxMoves);
+
+    /// <summary>
+    /// <see cref="GreedyRollout"/> from an arbitrary state. When <paramref name="visitedStates"/>
+    /// is given, every state the policy makes a decision in is appended — the on-policy state
+    /// distribution, which is what DAgger-style fine-tuning needs to relabel.
+    /// </summary>
+    public static (bool Solved, List<int> Actions) GreedyRolloutFrom(
+        RushHourPolicyNet net, RushHourPuzzle puzzle, int[] start, int maxMoves, List<int[]>? visitedStates = null)
     {
-        var positions = RushHourBoard.InitialPositions(puzzle);
+        var positions = (int[])start.Clone();
         var visited = new HashSet<ulong> { RushHourSolver.Encode(positions) };
         var actions = new List<int>();
 
         for (int move = 0; move < maxMoves; move++)
         {
             if (RushHourBoard.IsSolved(puzzle, positions)) return (true, actions);
+            visitedStates?.Add((int[])positions.Clone());
             var (logits, _) = net.Evaluate(puzzle, positions);
 
             int best = -1, fallback = -1;
