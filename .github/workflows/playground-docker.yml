@@ -20,6 +20,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}/playground
+  APP_NAME: mintplayer-ai
 
 jobs:
   build-and-push:
@@ -77,3 +78,67 @@ jobs:
         subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         subject-digest: ${{ steps.push-ghcr.outputs.digest }}
         push-to-registry: true
+
+    # GHCR packages default to private on first publish — the VPS `docker compose
+    # pull` would fail with 'denied'. PATCH is idempotent (already-public → 204);
+    # errors are swallowed so a missing scope doesn't fail the workflow. The '/'
+    # in the package name must be percent-encoded for the org-packages API.
+    - name: Make GHCR image public
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh api --method PATCH \
+          "/orgs/${{ github.repository_owner }}/packages/container/mintplayer.ai%2Fplayground" \
+          -f visibility=public 2>&1 || echo "(skipped — already public, missing, or insufficient scope)"
+
+  deploy:
+
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/master'
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+    - name: Deploy to VPS
+      uses: appleboy/ssh-action@v1.2.5
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USERNAME }}
+        key: ${{ secrets.VPS_SSH_KEY }}
+        port: ${{ secrets.VPS_PORT }}
+        passphrase: ${{ secrets.VPS_SSH_KEY_PASSPHRASE }}
+        envs: GITHUB_TOKEN
+        script: |
+          mkdir -p /var/www/${{ env.APP_NAME }}
+          cd /var/www/${{ env.APP_NAME }}
+
+          # Generate .env from GitHub Secrets (ready for future secrets)
+          cat > .env << EOF
+          # Future secrets go here, e.g.:
+          # SECRET_KEY=value
+          EOF
+
+          # Download latest docker-compose.yml from the repository
+          rm -f docker-compose.yml
+          curl -sf -H "Authorization: token $GITHUB_TOKEN" -o docker-compose.yml https://raw.githubusercontent.com/${{ github.repository }}/master/docker-compose.yml
+
+          # Log in to GHCR using the workflow's GITHUB_TOKEN
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+          # Pull latest image
+          docker compose --env-file .env pull
+
+          # Stop and remove old containers (including any orphans from prior service renames)
+          docker compose --env-file .env down --remove-orphans
+
+          # Start new containers
+          docker compose --env-file .env up -d --remove-orphans
+
+          # Clean up old images
+          docker image prune -f
