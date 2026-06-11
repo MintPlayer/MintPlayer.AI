@@ -263,6 +263,34 @@ threshold 90 reached at 480k steps, eval 92.85) remains the fallback when no pol
 checkpoint exists. Known gap: the REACTIVE policy still fails level 1 specifically
 (search covers it at ~1k expansions) — a candidate for AlphaZero-style fine-tuning.
 
+### Fine-tune round (2026-06-11 evening, paused — resumable)
+
+Two changes attacked the reactive level-1 gap:
+
+1. **DAgger-style on-policy mix** — per config, the Lab now rolls the CURRENT net out
+   from the start plus seven deep states, relabels every visited state via the oracle
+   dictionary (the whole reachable graph is labeled, so it's a lookup), double-weights
+   states from failed rollouts, and fills ~12% of the sample budget with them
+   (stratified sampling fills the rest).
+2. **Multi-label supervision** — a greedy-failure trace on level 1 showed near-tied
+   logits at every wrong move: most states have 3–4 equally-optimal actions, and
+   single-label CE actively penalized the rest of the optimal set, flattening the
+   policy. `RushHourOracle` now emits an `OptimalActionsMask`; the Lab trains CE
+   against a uniform soft target over the set, and accuracy counts any optimal argmax.
+
+After ~1 h on the new objective (+34 M samples, 439 M total): accuracy 91.4% *under the
+new any-optimal metric* and still climbing (CE near its new ~log k floor), **level-1
+greedy now flickers solved (44–60 mv) instead of always-fail**, search stays optimal
+(card 38 flickers 77/78). Paused mid-campaign on request; the Lab resumes net + Adam
+from the store, so continuing is just:
+
+```
+tools/.../MintPlayer.AI.ReinforcementLearning.Lab.exe --hours H --data src/RLDemo.Web/data --seed <new>
+```
+
+Ship criteria before copying checkpoints into `models/`: level-1 greedy solves
+consistently across evals, accuracy plateaus, official cards stay search-optimal.
+
 ## M12 — GPU/CUDA backend  *(planned 2026-06-11, deliberately parked)*
 
 Not scheduled — to be picked up **when the workload justifies it**: the imitation
@@ -357,8 +385,8 @@ Beyond the milestones, the project is published and deployed:
 All planned milestones are done and the playground is in production. Candidates, in
 suggested order:
 
-1. **AlphaZero-style fine-tune** (overnight Lab run): train the policy on
-   search-corrected play to close the reactive level-1 gap and shrink A* expansions.
+1. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
+   "Fine-tune round" section under M11 for results so far and the resume command.*
 2. **Slide-optimal AI answers**: search/compaction that minimizes official piece-moves,
    not just single-cell moves.
 3. **Stretch list (M11)**: MountainCar, Snake, TorchSharp backend, TensorBoard writer,
