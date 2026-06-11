@@ -5,12 +5,15 @@ on:
     branches:
       - master
     paths:
-      # Everything the image is built from (see Dockerfile + .dockerignore):
+      # Everything the image is built from (see Dockerfile + .dockerignore),
+      # plus the deployment inputs themselves:
       - 'src/**'
       - 'models/**'
       - 'Dockerfile'
       - '.dockerignore'
       - 'MintPlayer.AI.ReinforcementLearning.sln'
+      - 'docker-compose.yml'
+      - '.github/workflows/playground-docker.yml'
   workflow_dispatch:
 
 concurrency:
