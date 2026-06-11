@@ -7,6 +7,24 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup Label="Package">
+    <Version>0.1.0</Version>
+    <Authors>Pieterjan De Clippel</Authors>
+    <Company>MintPlayer</Company>
+    <Description>Reinforcement learning for .NET, from scratch in C# — tensors, SIMD matmul, tape-based autograd, Adam, Gymnasium-faithful environments (terminated/truncated split, spaces, action masking, bitwise-deterministic vectorized envs), and trainers from tabular Q-learning through Double DQN and PPO. No Python, no native dependencies.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>reinforcement-learning;machine-learning;ai;dqn;ppo;q-learning;autograd;gymnasium</PackageTags>
+    <RepositoryUrl>https://github.com/MintPlayer/MintPlayer.AI.ReinforcementLearning</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/MintPlayer/MintPlayer.AI.ReinforcementLearning</PackageProjectUrl>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="System.Numerics.Tensors" Version="10.0.9" />
   </ItemGroup>

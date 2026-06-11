@@ -7,7 +7,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Core.Training;
 /// The two masks are deliberately distinct (the classic off-by-one trap):
 /// inside δ, the next-state value is masked by TERMINATED only — a truncated episode
 /// still bootstraps, using the value of <c>final_observation</c> (passed via
-/// <paramref name="finalValues"/>) rather than the autoreset observation. The recursive
+/// <c>finalValues</c>) rather than the autoreset observation. The recursive
 /// advantage term is masked by DONE (terminated OR truncated) — advantages never leak
 /// across episode boundaries, even at time limits.
 /// </para>
