@@ -552,7 +552,9 @@ fallback), and 2048 plays like the original again. Next candidates, in suggested
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
-`dotnet run --project src/RLDemo.Console -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour]
+`dotnet run --project src/RLDemo.Console -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour|cube]
 [seed] [--load] [--save] [--data <dir>]`. Tests: `dotnet test` (`Category=Slow` for gates).
-Training campaigns: `dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab --
---hours N --data src/RLDemo.Web/data` (resumes net + Adam from the model store).
+Training campaigns (both resume net + Adam from the model store):
+`dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release --
+[--game rushhour|cube] --hours N --data src/RLDemo.Web/data` — `--game cube` also takes
+`--eval-only` for the per-depth gate report; use `--data models` to refresh the shipped seeds.

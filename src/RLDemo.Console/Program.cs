@@ -12,7 +12,7 @@ using MintPlayer.AI.ReinforcementLearning.Environments.Game2048;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 using MintPlayer.AI.ReinforcementLearning.Environments.RushHour;
 
-// Usage: RLDemo.Console [grid|lake|cartpole|ppo|2048|2048dqn ...] [seed] [--load] [--save] [--data <dir>]
+// Usage: RLDemo.Console [grid|lake|cartpole|ppo|2048|2048dqn|rushhour|cube ...] [seed] [--load] [--save] [--data <dir>]
 //        no env args = run everything except 2048dqn (DQN needs a long budget there).
 //        --load: skip training when the model store has a checkpoint; --save: checkpoint after training.
 string[] knownSections = ["grid", "lake", "cartpole", "ppo", "2048", "2048dqn", "rushhour", "cube"];
