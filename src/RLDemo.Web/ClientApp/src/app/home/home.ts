@@ -31,6 +31,15 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
+      <a class="card" routerLink="/cube">
+        <h2>Rubik's Cube</h2>
+        <p>
+          Scramble a 3D cube and watch Kociemba's two-phase algorithm solve it
+          in 22 moves or fewer, step by step.
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
       <a class="card" routerLink="/gallery">
         <h2>Gallery</h2>
         <p>
