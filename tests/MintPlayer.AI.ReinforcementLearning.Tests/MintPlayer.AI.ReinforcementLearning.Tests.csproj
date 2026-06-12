@@ -6,6 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- The RLDemo.Web reference pulls in NodeServices' buildTransitive targets, which
+         would try to npm-install a ClientApp\ that doesn't exist here. Tests host the
+         backend only (Program.cs skips the SPA under "Testing"), so disable the SPA
+         builder outright — CI does the same via -p:EnableSpaBuilder=false. -->
+    <EnableSpaBuilder>false</EnableSpaBuilder>
   </PropertyGroup>
 
   <ItemGroup>

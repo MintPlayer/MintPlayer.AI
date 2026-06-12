@@ -28,6 +28,7 @@ builder.Services.AddSingleton<RushHourModelService>();
 builder.Services.AddSingleton<Game2048ModelService>();
 builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<RushHourModelService>());
 builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<Game2048ModelService>());
+builder.Services.AddSingleton<ITrainableModelService, CubeSolverWarmupService>();
 
 // Integration tests control the model store themselves and host no SPA.
 bool isTesting = builder.Environment.IsEnvironment("Testing");
