@@ -212,3 +212,98 @@ oracle-labeled samples/hour today).
 | Library | **ILGPU** (C# kernels JIT-compiled to PTX): MIT, megabytes not gigabytes, keeps the from-scratch identity (own tiled GEMM kernel, 1–3 TFLOP/s realistic), CPU accelerator keeps CI green without a GPU. TorchSharp stays the fallback option. |
 | First consumer | The imitation Lab — oracle data is infinite, so batch 4096+ and wider nets are pure wins; expected 5–20× campaign throughput. |
 | Order of work | Benchmark first (CPU↔GPU crossover table, with/without transfer costs), then evolve the backend seam to device tensors, then a payoff campaign past the 92.3% plateau. |
+
+## 11. Rubik's Cube page — owner's game #3 (M13–M14)
+
+*Requirement inserted 2026-06-12. The owner's existing standalone app
+`C:\Repos\WebGames\Rubiksolver` (ASP.NET Core + Three.js + a C# port of Kociemba's
+two-phase solver) is **ported into** the playground; the WebGames repo is read-only
+source material and stays untouched.*
+
+A third game page at `/cube`, following the §7 playground contract (draw/scramble →
+solve → trajectory playback → gallery), with one deliberate twist: the cube keeps
+**two** solve buttons.
+
+1. **3D cube + manual play.** Three.js-rendered 3×3×3 cube (ported from
+   `Rubiksolver/Scripts/rubiksCube.ts` + `main.ts`, ~800 LOC): orbit camera, 18
+   face-move buttons (U U' U2 … B2) with animated 90°/180° rotations, move history,
+   animation-speed slider, scramble and reset. Three.js becomes a proper npm
+   dependency of the Angular workspace (the original loads it from a CDN import map).
+2. **Solve (algorithm) — kept as-is.** Posts the cube state to the backend, which runs
+   the ported Kociemba two-phase solver (`Rubiksolver/Kociemba/`, ~2,500 LOC, pure C#,
+   pruning tables generated in memory on first use) and returns a move list (≤ 22
+   moves, ~10 s timeout). This button always works on any valid cube — it is the
+   oracle, exactly as the BFS solver is for Rush Hour.
+3. **Solve (AI).** Posts the same state; the backend runs the trained RL agent
+   (greedy rollout) and returns its move trajectory plus the Kociemba reference move
+   count. Failures are reported honestly (`solved: false`), like Rush Hour's `aiMode`.
+4. **RL environment + training** per the §7.3 contract: a `RubiksCubeEnv` in
+   `MintPlayer.AI.ReinforcementLearning.Environments`, a model service that loads from
+   the model store or trains once at startup, a pre-trained checkpoint committed in
+   `models/`, console demo section, and Lab support for longer campaigns.
+5. **Honest scope for the AI (pre-registered).** Solving arbitrary 20-move scrambles
+   with RL is DeepCubeA-scale work and is **out of scope for v1**; the v1 agent is
+   trained on a shallow-scramble curriculum and gated on that band. The UI offers both
+   a full **Scramble** (~20 moves — where the algorithm button shines and the AI will
+   usually fail, shown honestly) and an **Easy scramble** (≤ 6 quarter-turns — the AI's
+   home turf). Deeper capability (imitation from Kociemba solutions + policy-guided
+   search, the M11 Rush Hour recipe) is the designated stretch.
+
+Environment spec (extends the §6 table):
+
+| Env | Spaces (obs / act) | Solved criterion | Role |
+|---|---|---|---|
+| **Rubik's Cube 3×3×3** (episode = invert a depth-*d* scramble, d ~ U[1..6]; reward −1/step, +100 solved; cap 20 moves) | Box(324): 54 stickers one-hot over 6 colors / Discrete(12): quarter-turns U U' D D' L L' R R' F F' B B' | Pre-registered: ≥ 90% of 100 eval scrambles (depths 1–6) solved within 20 moves | Owner's game #3; huge state space, curriculum learning, oracle-checked |
+
+Key decisions:
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Where the Kociemba port lives | `MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/Kociemba` (namespace adjusted, otherwise verbatim) | It is the cube's oracle — same role and home as `RushHourSolver`; also the future imitation-data source. Testable without the web host. |
+| Cube state encoding | One canonical facelet cube (54 stickers) in C# with move tables; converters to the 6×9-color DTO (wire format, ported validation incl. detailed edge/corner diagnostics) and the 54-char Kociemba string | One source of truth for move semantics; the DTO stays human-readable and matches the existing front-end state tracker. |
+| AI action space | 12 quarter-turns (no half-turn actions) | Smaller action space learns faster; half-turns are two actions. The algorithm button still plays Kociemba's half-turn notation directly. |
+| Pruning-table cost | Tables built in memory on first solve (2–5 s), `buildTables: false` (no disk writes) | Matches the source app's behavior; a startup warm-up keeps the first user request fast. No new Docker volume content. |
+| WeatherForecast template cruft | Not ported | Dead code in the source app. |
+
+Risks (extends §9): RL on the cube is famously hard — vanilla DQN may plateau below the
+gate even on depth ≤ 6. Mitigations: curriculum over scramble depth, action masking is
+not applicable (all 12 moves always legal) but the inverse-of-last-move can be masked to
+halve trivial cycles; the Kociemba oracle provides unlimited imitation data if DQN falls
+short (promote the M11 recipe from stretch to plan). Failure on the deep band is a
+documented finding, not a blocker — the algorithm button always answers.
+
+## 12. 2048 — restore the classic play feel (M15)
+
+*Requirement inserted 2026-06-12. The owner dislikes the playground's canvas-rendered
+2048 and prefers the original game feel of `C:\Repos\WebGames\Game2048` (a faithful
+TypeScript port of Gabriele Cirulli's 2048: DOM tiles, 100 ms slide transitions, pop-on-
+merge and appear-on-spawn keyframes, score-addition float). That repo is read-only
+source material.*
+
+Swap **only the "how tiles merge" experience** — rendering, animation and the in-browser
+move engine — for the historic code. Everything else is explicitly out of scope and must
+not change:
+
+- **Unchanged:** the n-tuple agent and its checkpoint, `Game2048Controller` and the
+  solve/status API contract (exponent cells, `PlayoutStepDto(action, spawnIndex,
+  spawnValue, scoreGained)`, `FinalCells` checksum), `Board2048`/`Env2048`, the gallery,
+  the edit-mode concept (set up an arbitrary board, then play or let the AI play).
+- **Replaced:** the canvas board in `ClientApp/src/app/game-2048` becomes the classic
+  DOM/CSS board (grid background + absolutely-positioned tiles with
+  `tile-position-x-y` transition classes, `tile-new`/`tile-merged` animations, SCSS
+  adapted from `Game2048/Styles/main.scss` to the playground's dark theme); manual play
+  runs the historic engine (Cirulli traversal order + `mergedFrom` double-merge
+  prevention — same merge *semantics* as the server, different *presentation*).
+- **AI playback animates through the same classic board**: each `PlayoutStepDto` is
+  applied via the classic engine with the server-provided spawn injected instead of a
+  random one, so the AI's playout gets the same slide/pop/appear feel; scrubber seeks
+  re-derive the board without animation, and the existing `FinalCells` checksum still
+  verifies reconstruction.
+
+Boundary mappings (the two implementations disagree on conventions; convert at the API
+seam only): server cells are **exponents** (0–15), classic tiles are **values**
+(2–32768+); server action ids are 0=left 1=down 2=right 3=up, classic directions are
+0=up 1=right 2=down 3=left. The classic engine's merge results must stay bit-identical
+to `Board2048.SlideLine`/`applyMove` (existing parity: both are standard 2048 rules with
+double-merge prevention); this parity is asserted by replaying AI trajectories against
+the `FinalCells` checksum and by the existing Playwright e2e.

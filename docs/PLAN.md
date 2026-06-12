@@ -335,6 +335,99 @@ of the Rush Hour policy (close the reactive level-1 gap; shrink search expansion
 · watch-only playground pages for CartPole/2048 self-play · importing puzzles from
 `C:\Repos\Spelletjes\Rush Hour` as gallery data (ask for a clean checkout first).
 
+## M13 — Rubik's Cube page + Kociemba solve  *(owner's game #3 — the port, PRD §11)*
+
+Port of `C:\Repos\WebGames\Rubiksolver` into the playground (source repo stays untouched).
+
+1. **Cube core** in `MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/`:
+   facelet cube (54 stickers, byte-encoded) with quarter/half-turn move application
+   (port the sticker-cycle tables from `rubiksCube.ts`/`K_CubieCube`), scramble
+   generation (seeded, no trivially-cancelling consecutive moves), `IsSolved`, and
+   converters: 6×9-color DTO ↔ facelets ↔ 54-char Kociemba string. Port the detailed
+   edge/corner validation from `Rubiksolver/Models/CubeState.cs` (missing/duplicate/
+   invalid piece diagnostics).
+2. **Kociemba two-phase solver**: copy `Rubiksolver/Kociemba/` (8 files, ~2,500 LOC,
+   pure C#) under the cube folder, adjust namespaces, keep runtime in-memory table
+   generation (`buildTables: false`). Keep the `SearchRunTime` path used by the source
+   app; drop the table-writing variant if unused.
+3. **Web API** (`CubeController`): `POST /api/cube/solve` (validate → Kociemba → move
+   list + move count + solve time, error mapping ported from `CubeSolver.cs`),
+   `GET /api/cube/status` (model/training status, M14-ready), gallery entries
+   (`gallery.Add("cube", …)`). Warm the pruning tables once in the background at
+   startup so the first solve isn't the one paying the 2–5 s build.
+4. **Front-end**: add `three` + `@types/three` to the Angular workspace (npm dep, not
+   the CDN import map); new lazy route `/cube` + home card. One Angular component
+   porting `rubiksCube.ts` (rendering + client-side state tracking) and `main.ts`
+   (orchestration): orbit controls, 18 move buttons, scramble / easy-scramble / reset,
+   speed slider, move history, solve → solution playback (prev/play/next), status
+   text. SCSS adapted from `Styles/style.scss` to the playground theme.
+5. **Tests**: move-semantics units (each face move ×4 = identity, F B' sequences against
+   known sticker layouts, scramble→inverse→solved); DTO/Kociemba conversion
+   round-trips; validation diagnostics; `[Slow]` gate: 20 random depth-20 scrambles →
+   Kociemba solution applied → solved, ≤ 22 moves each; `WebBackendTests`-style API
+   tests (invalid cube → 400 with diagnostic message).
+
+**Gate:** e2e (Playwright against the dev host): scramble → Solve (algorithm) →
+playback ends on a solved cube; API returns ≤ 22 moves for a full scramble.
+
+## M14 — Rubik's Cube RL  *(AI solve button + training, PRD §11)*
+
+1. **`RubiksCubeEnv : IEnvironment<float[], int>`**: obs Box(324) one-hot stickers;
+   Discrete(12) quarter-turns; `Reset` scrambles to depth d ~ U[1..MaxDepth] (constructor
+   parameter — curriculum = growing MaxDepth); reward −1/step +100 solved; cap 20 moves
+   (truncated, not terminated). Console renderer (`RenderString` = flattened net).
+2. **`CubeModelService : ITrainableModelService`** mirroring `RushHourModelService`:
+   load `cube.dqn.ckpt` from the store or train once at startup (masked DQN recipe,
+   depth band 1–6, target a few minutes' wall-clock like the others), thread-safe
+   progress snapshot for `/api/cube/status`.
+3. **`POST /api/cube/solve-ai`**: greedy rollout (≤ 20 moves), response = move list +
+   `solved` + the Kociemba reference move count for honest comparison; gallery entry
+   either way. UI: second button "Solve (AI)" with the training-status banner pattern.
+4. **Console + Lab**: `cube` section in RLDemo.Console (`--load/--save/--data`);
+   Lab campaign support for longer/deeper training runs.
+5. **Ship a pre-trained checkpoint** `models/cube.dqn.ckpt` (+ provenance in
+   `models/README.md`); the existing seed-on-startup copies it into fresh stores.
+
+**Gate (pre-registered, PRD §11):** ≥ 90% of 100 eval scrambles (depths 1–6) solved
+within 20 moves. Deep scrambles failing is expected and shown honestly.
+
+**Stretch (the M11 recipe, oracle = Kociemba):** imitation-learn a policy/value net on
+Kociemba solutions (unlimited labeled data; expand half-turns to two quarter-turns),
+greedy + policy-guided search fallback, `aiMode` reporting — lifts the AI toward full
+scrambles without pretending DQN got there.
+
+## M15 — 2048 classic play feel  *(swap the merge experience, PRD §12)*
+
+Source: `C:\Repos\WebGames\Game2048` (Cirulli-architecture TS port: GameManager/Grid/
+Tile/HTMLActuator, ~620 LOC TS + 616 LOC SCSS). Only the front-end game experience
+changes; API, n-tuple agent, `Board2048`, gallery and edit mode stay as they are.
+
+1. **Classic engine** (`game-2048-classic.ts`): port Grid/Tile/move from
+   `Scripts/game_manager.ts` — traversal-order processing, `mergedFrom` double-merge
+   prevention, farthest-position slide, 90/10 spawn — keeping tile *values* internally;
+   add the two boundary mappings (values ↔ server exponents; classic directions
+   0=up 1=right 2=down 3=left ↔ server actions 0=left 1=down 2=right 3=up) and a
+   deterministic-spawn entry point (`applyStep(action, spawnIndex, spawnValue)`) for
+   AI playback.
+2. **Classic board rendering**: replace the canvas in `game-2048.html`/`.ts` with the
+   DOM structure from `Game2048/wwwroot/index.html` (grid background + tile container);
+   SCSS adapted from `Styles/main.scss` (tile-position transition classes, `appear`/
+   `pop` keyframes, score-addition float, tile palette) restyled for the playground's
+   dark theme; Angular renders tiles from the engine state (the HTMLActuator role).
+3. **Manual play** drives the classic engine (keep the existing keyboard handling; add
+   the historic touch-swipe support); score + best-tile readouts as today.
+4. **Edit mode** renders through the same DOM tiles (click to cycle up, right-click
+   down — unchanged interaction, no animation classes while editing).
+5. **AI playback** applies each `PlayoutStepDto` through `applyStep` so playback gets
+   the classic slide/pop/appear animations; scrubber seeks rebuild the board
+   unanimated; keep verifying against `FinalCells`.
+6. **Out of scope:** `game-2048-api.ts`, `Game2048Controller`, `Game2048ModelService`,
+   `Env2048`/`Board2048`, gallery replay format.
+
+**Gate:** Playwright e2e — manual moves show sliding/merging tiles (DOM tiles with
+transition classes present, no canvas); AI playback completes with the playback board
+equal to `FinalCells`; existing 2048 API tests untouched and green.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -382,8 +475,12 @@ Beyond the milestones, the project is published and deployed:
 
 ## Immediate next step
 
-All planned milestones are done and the playground is in production. Candidates, in
-suggested order:
+**Current work (planned 2026-06-12, PRD §11–§12): M13 → M14 → M15.** Port the Rubik's
+Cube game (keeping the Kociemba solve button), add the AI solve button + training, then
+restore the classic 2048 play feel. M15 is independent of M13/M14 and can be pulled
+forward if desired.
+
+Afterwards, in suggested order:
 
 1. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*
