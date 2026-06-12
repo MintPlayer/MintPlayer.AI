@@ -94,17 +94,34 @@ internal static class CubeLab
 
         Log($"training until {deadline:u} (~{hours:F1} h), data dir: {store.RootDirectory}");
 
+        // Data generation runs on all cores: Kociemba solves are independent (instance
+        // scratch state, shared read-only tables), and the oracle — not the NN math — is
+        // what bounds campaign throughput on CPU.
+        int generators = Math.Max(1, Environment.ProcessorCount - 2);
+        long round = 0;
         var samples = new List<CubeOracle.LabeledState>(SamplesPerRound + 64);
         while (DateTime.UtcNow < deadline)
         {
             samples.Clear();
-            while (samples.Count < SamplesPerRound)
+            var perWorker = new List<CubeOracle.LabeledState>[generators];
+            ulong roundBase = unchecked(seed + (ulong)(++round) * 1_000_003UL);
+            long solvesThisRound = 0;
+            Parallel.For(0, generators, worker =>
             {
-                var path = CubeOracle.LabelScramblePath(rng);
-                if (path is null) continue;
-                samples.AddRange(path);
-                totalSolves++;
-            }
+                var workerRng = new Xoshiro256StarStar(unchecked(roundBase + 0x9E3779B97F4A7C15UL * (ulong)(worker + 1)));
+                var local = new List<CubeOracle.LabeledState>(SamplesPerRound / generators + 40);
+                while (local.Count < SamplesPerRound / generators)
+                {
+                    var path = CubeOracle.LabelScramblePath(workerRng);
+                    if (path is null) continue;
+                    local.AddRange(path);
+                    Interlocked.Increment(ref solvesThisRound);
+                }
+                perWorker[worker] = local;
+            });
+            foreach (var local in perWorker)
+                samples.AddRange(local);
+            totalSolves += solvesThisRound;
             Shuffle(samples, rng);
 
             for (int offset = 0; offset + BatchSize <= samples.Count; offset += BatchSize)

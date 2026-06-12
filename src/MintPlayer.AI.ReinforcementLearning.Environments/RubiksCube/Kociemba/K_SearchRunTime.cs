@@ -4,25 +4,25 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube.Kociemba
 {
     public class SearchRunTime
     {
-        internal static int[] ax = new int[31]; // The axis of the move
-        internal static int[] po = new int[31]; // The power of the move
+        internal readonly int[] ax = new int[31]; // The axis of the move
+        internal readonly int[] po = new int[31]; // The power of the move
 
-        internal static int[] flip = new int[31]; // phase1 coordinates
-        internal static int[] twist = new int[31];
-        internal static int[] slice = new int[31];
+        internal readonly int[] flip = new int[31]; // phase1 coordinates
+        internal readonly int[] twist = new int[31];
+        internal readonly int[] slice = new int[31];
 
-        internal static int[] parity = new int[31]; // phase2 coordinates
-        internal static int[] URFtoDLF = new int[31];
-        internal static int[] FRtoBR = new int[31];
-        internal static int[] URtoUL = new int[31];
-        internal static int[] UBtoDF = new int[31];
-        internal static int[] URtoDF = new int[31];
+        internal readonly int[] parity = new int[31]; // phase2 coordinates
+        internal readonly int[] URFtoDLF = new int[31];
+        internal readonly int[] FRtoBR = new int[31];
+        internal readonly int[] URtoUL = new int[31];
+        internal readonly int[] UBtoDF = new int[31];
+        internal readonly int[] URtoDF = new int[31];
 
-        internal static int[] minDistPhase1 = new int[31]; // IDA* distance do goal estimations
-        internal static int[] minDistPhase2 = new int[31];
+        internal readonly int[] minDistPhase1 = new int[31]; // IDA* distance do goal estimations
+        internal readonly int[] minDistPhase2 = new int[31];
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         // generate the solution string from the array data
-        internal static string solutionToString(int length)
+        internal string solutionToString(int length)
         {
             string s = "";
             for (int i = 0; i < length; i++)
@@ -67,7 +67,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube.Kociemba
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         // generate the solution string from the array data including a separator between phase1 and phase2 moves
-        internal static string solutionToString(int length, int depthPhase1)
+        internal string solutionToString(int length, int depthPhase1)
         {
             string s = "";
             for (int i = 0; i < length; i++)
@@ -142,7 +142,14 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube.Kociemba
          *         Error 7: No solution exists for the given maxDepth<br/>
          *         Error 8: Timeout, no solution within given time
          */
-        public static string solution(string facelets, out string info, int maxDepth= 22, long timeOut = 6000, bool useSeparator = false, bool buildTables = false )
+        // Per-search scratch state is INSTANCE state (parallel data generation, PLAN M16):
+        // the lookup/pruning tables in CoordCubeBuildTables are filled once by its static
+        // constructor (thread-safe per the CLR) and shared read-only; every concurrent
+        // solve runs on its own SearchRunTime instance.
+        public static string solution(string facelets, out string info, int maxDepth = 22, long timeOut = 6000, bool useSeparator = false, bool buildTables = false)
+            => new SearchRunTime().Run(facelets, out info, maxDepth, timeOut, useSeparator, buildTables);
+
+        internal string Run(string facelets, out string info, int maxDepth, long timeOut, bool useSeparator, bool buildTables)
         {
 
             info = "Warning, this solution builds tables at run time which is very slow. This will find a solution, however it is reccomended to use the K_SearchRunTime class only to create a local copy of the tables, then use the K_Search class to search for solutions instead.";
@@ -292,7 +299,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube.Kociemba
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         // Apply phase2 of algorithm and return the combined phase1 and phase2 depth. In phase2, only the moves
         // U,D,R2,F2,L2 and B2 are allowed.
-        internal static int totalDepth(int depthPhase1, int maxDepth)
+        internal int totalDepth(int depthPhase1, int maxDepth)
         {
             int mv = 0, d1 = 0, d2 = 0;
             int maxDepthPhase2 = Math.Min(10, maxDepth - depthPhase1); // Allow only max 10 moves in phase2

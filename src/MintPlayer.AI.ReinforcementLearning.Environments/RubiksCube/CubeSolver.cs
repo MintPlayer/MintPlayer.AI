@@ -8,17 +8,16 @@ public sealed record CubeSolveResult(bool Solved, string[] Moves, string? Error)
 /// The cube's algorithmic oracle: Herbert Kociemba's two-phase solver (the C# port under
 /// <c>Kociemba/</c>, taken verbatim from the owner's Rubiksolver app). Always answers on
 /// any valid cube in ≤ 22 moves — the same role the BFS solver plays for Rush Hour, and
-/// the future imitation-data source (PRD §11). Lookup/pruning tables are built in memory
-/// on first use (2–5 s, CLR static initialization); call <see cref="WarmUp"/> off the
-/// request path to pay that cost at startup. The underlying search keeps its scratch
-/// state in static arrays, so solves are serialized behind a lock.
+/// the imitation-data source (PRD §11 / PLAN M16). Lookup/pruning tables are built in
+/// memory on first use (CLR static initialization, thread-safe); call <see cref="WarmUp"/>
+/// off the request path to pay that cost at startup. Solves are fully concurrent — each
+/// runs on its own <c>SearchRunTime</c> instance over the shared read-only tables, which
+/// is what lets the Lab generate imitation data on all cores.
 /// </summary>
 public static class CubeSolver
 {
     public const int MaxDepth = 22;
     public const int TimeoutMilliseconds = 10_000;
-
-    private static readonly object SolveLock = new();
 
     /// <summary>Builds the lookup/pruning tables by solving a trivial cube; idempotent.</summary>
     public static void WarmUp()
@@ -38,12 +37,8 @@ public static class CubeSolver
         if (structural is not null)
             return new(false, [], $"Invalid cube: {structural}");
 
-        string solution;
-        lock (SolveLock)
-        {
-            solution = SearchRunTime.solution(cube.ToKociembaString(), out _,
-                maxDepth: MaxDepth, timeOut: TimeoutMilliseconds, useSeparator: false, buildTables: false);
-        }
+        string solution = SearchRunTime.solution(cube.ToKociembaString(), out _,
+            maxDepth: MaxDepth, timeOut: TimeoutMilliseconds, useSeparator: false, buildTables: false);
 
         if (solution.StartsWith("Error"))
             return new(false, [], ErrorMessage(solution));

@@ -389,6 +389,28 @@ public class CubeSolverTests
         }
     }
 
+    // Solves run concurrently since the parallel-data-generation change (instance scratch
+    // state per search, shared read-only tables): cross-talk between searches would
+    // corrupt solutions, so every parallel result must still apply back to solved.
+    [Fact]
+    public void ParallelSolves_AreIndependent()
+    {
+        CubeSolver.WarmUp();
+        var solvedBack = new bool[16];
+        Parallel.For(0, solvedBack.Length, i =>
+        {
+            var rng = new Xoshiro256StarStar((ulong)(50 + i));
+            var cube = new FaceletCube();
+            cube.Apply(FaceletCube.ScrambleMoves(rng, 14));
+
+            var result = CubeSolver.Solve(cube);
+            if (!result.Solved) return;
+            cube.Apply(result.Moves);
+            solvedBack[i] = cube.IsSolved;
+        });
+        Assert.All(solvedBack, ok => Assert.True(ok));
+    }
+
     // One fast non-trivial solve stays in the default bucket so the Kociemba port is
     // exercised on every test run (first solve pays the in-memory table build once).
     [Fact]
