@@ -11,7 +11,18 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 // net supervised, checkpoints to the model store every eval, and tracks held-out
 // official ThinkFun cards (1, 38, 39, 40) with both reactive play and policy-guided A*.
 //
-// Usage: MintPlayer.AI.ReinforcementLearning.Lab [--hours H] [--data DIR] [--seed S] [--lr LR] [--eval-only]
+// Usage: MintPlayer.AI.ReinforcementLearning.Lab [--game rushhour|cube] [--hours H] [--data DIR] [--seed S] [--lr LR] [--eval-only]
+// Default game: rushhour (the original campaign below). `--game cube` runs the
+// Kociemba-imitation campaign in CubeLab.cs (PLAN M16).
+
+for (int i = 0; i < args.Length; i++)
+{
+    if (args[i] == "--game" && i + 1 < args.Length && args[i + 1].Equals("cube", StringComparison.OrdinalIgnoreCase))
+    {
+        CubeLab.Run(args);
+        return;
+    }
+}
 
 double hours = 9;
 string dataDir = "data";

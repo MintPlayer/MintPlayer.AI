@@ -447,6 +447,38 @@ changes; API, n-tuple agent, `Board2048`, gallery and edit mode stay as they are
 transition classes present, no canvas); AI playback completes with the playback board
 equal to `FinalCells`; existing 2048 API tests untouched and green.
 
+## M16 — Cube imitation from Kociemba  *(the PRD §11 stretch, M11 recipe)* ✅
+**Result: gate passed — 96/100 (96%)** random scrambles across depths 1–10 solved
+within 40 quarter-turns after a 2 h campaign (two resumable 1 h runs, 7.7 M
+oracle-labeled states from ~370k Kociemba solves; action accuracy 73.5%, plateauing —
+the MLP's ceiling, as with Rush Hour). Greedy alone 54%; per-depth: 10/10 through
+depth 7, then 9, 10, 7 — `aiMode: search` does the heavy lifting from depth 6 on.
+Campaign finding: per-eval search budgets must stay small (2k expansions) — the first
+smoke run spent 40 of its 43 minutes inside failed full-budget eval searches.
+
+Lift the cube AI past the DQN's depth-6 band: imitation-learn a policy/value net on
+Kociemba solution paths (unlimited oracle-labeled data — every random scramble solved
+once yields ~25–35 labeled states), then greedy + policy-guided A* at inference.
+
+1. **`CubeOracle`**: scramble at a random depth (1–22), solve with Kociemba, expand
+   half-turns to quarter-turns, walk the solution path — each state labeled with the
+   next quarter-turn action and the quarter-turn distance-to-go (the value target).
+2. **`CubePolicyNet`** mirroring `RushHourPolicyNet`: shared ReLU trunk (324 → 512 →
+   512), 12-logit policy head, scalar distance head (`DistanceScale` 30); versioned
+   checkpoint `cube.policy.ckpt` (+ `cube.policy-adam.ckpt` for campaign resume).
+3. **`CubePolicySearch`**: greedy rollout (visited-set cycle avoidance, no-undo mask)
+   and A* with the value head as heuristic, solution cap 40 quarter-turns.
+4. **Lab `--game cube`**: streaming campaign — generate, solve, train (CE + Huber,
+   Adam), checkpoint every 10 min, CSV log, per-depth eval (greedy/search at depths
+   2–20). Resumable like the Rush Hour campaign.
+5. **Web**: `CubeModelService.PolicyNet` (refreshing, preferred over the DQN);
+   `/api/cube/solve-ai` tries policy greedy → policy search → DQN fallback, `aiMode`
+   reported as before.
+
+**Gate (pre-registered):** ≥ 90% of 100 random scrambles across depths 1–10 solved
+within 40 quarter-turns (greedy or search) after a ~1 h campaign; deeper-band rates
+reported honestly (longer campaigns keep improving it — the net is resumable).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -477,6 +509,7 @@ equal to `FinalCells`; existing 2048 API tests untouched and green.
 | M13 cube port | e2e scramble → Kociemba solve → playback solved; ≤ 22 moves | passed (20-move scramble solved in 21 moves / 116 ms; playback ends solved; gallery replays) |
 | M14 cube RL | ≥ 90% of depth-1–6 scrambles solved within 20 moves | **100%** (600/600; greedy alone 77.8%, rest via Q-guided lookahead) |
 | M15 classic 2048 | classic animations live; replay reconstruction == `FinalCells` | passed (2,491-move replay bit-exact; slide/pop/appear verified in-browser) |
+| M16 cube imitation | ≥ 90% of depth-1–10 scrambles within 40 quarter-turns | **96%** (96/100; greedy alone 54%) after a 2 h resumable campaign |
 
 ## Shipped (2026-06-11) — release engineering
 
@@ -497,12 +530,14 @@ Beyond the milestones, the project is published and deployed:
 
 ## Immediate next step
 
-**Current work (planned 2026-06-12, PRD §11–§12): M13 → M14 → M15.** Port the Rubik's
-Cube game (keeping the Kociemba solve button), add the AI solve button + training, then
-restore the classic 2048 play feel. M15 is independent of M13/M14 and can be pulled
-forward if desired.
+**M13–M16 are done** (2026-06-12): the Rubik's Cube game is in the playground with both
+the Kociemba button and a gate-passing AI (imitation policy net + lookahead, DQN
+fallback), and 2048 plays like the original again. Next candidates, in suggested order:
 
-Afterwards, in suggested order:
+0. **Deeper cube AI**: resume `Lab --game cube` (checkpoints in `models/`) — the MLP is
+   plateauing at ~73.5% action accuracy, so the bigger wins are a wider trunk and/or a
+   DAgger-style on-policy mix (relabel the states the net actually visits — the M11
+   lesson), and a weighted-A* variant to cut search latency at depth 10+.
 
 1. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*

@@ -134,4 +134,52 @@ public class CubeSolveAiTests(CubeModelPlaygroundFactory factory) : IClassFixtur
         var response = await _client.PostAsJsonAsync("/api/cube/solve-ai", request);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    [Fact]
+    public async Task SolveAi_WithoutPolicyNet_ReportsDqnOrSearchMode()
+    {
+        var cube = new FaceletCube();
+        cube.Apply("R");
+        var response = await _client.PostAsJsonAsync("/api/cube/solve-ai", RequestFor(cube));
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<CubeSolveAiResponse>();
+        Assert.NotNull(body);
+        Assert.Contains(body.AiMode, new[] { "dqn", "search" });
+    }
+}
+
+/// <summary>Host fixture with a (deliberately untrained) imitation policy net in the store.</summary>
+public class CubePolicyPlaygroundFactory : PlaygroundFactory
+{
+    public CubePolicyPlaygroundFactory()
+    {
+        var net = new CubePolicyNet(new Xoshiro256StarStar(9), hidden: 32);
+        new FileModelStore(DataDirectory).Save(
+            CubeModelService.EnvironmentId, CubeModelService.PolicyAlgorithmId, s => net.Save(s));
+    }
+}
+
+public class CubePolicySolveTests(CubePolicyPlaygroundFactory factory) : IClassFixture<CubePolicyPlaygroundFactory>
+{
+    private readonly HttpClient _client = factory.CreateClient();
+
+    /// <summary>The policy net is preferred over the (absent) DQN, and search rescues an untrained policy on depth 1.</summary>
+    [Fact]
+    public async Task SolveAi_PrefersPolicyNet_AndSearchSolvesShallowEvenUntrained()
+    {
+        var cube = new FaceletCube();
+        cube.Apply("R");
+        var faces = cube.ToColorFaces();
+        var request = new CubeSolveRequest(new CubeStateDto(faces[0], faces[1], faces[2], faces[3], faces[4], faces[5]));
+
+        var response = await _client.PostAsJsonAsync("/api/cube/solve-ai", request);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<CubeSolveAiResponse>();
+        Assert.NotNull(body);
+        Assert.Contains(body.AiMode, new[] { "greedy", "search" }); // policy path, not "dqn"
+        Assert.True(body.Solved);
+
+        cube.Apply(body.Solution);
+        Assert.True(cube.IsSolved);
+    }
 }

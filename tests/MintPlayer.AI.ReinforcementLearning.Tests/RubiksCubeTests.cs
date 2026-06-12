@@ -270,6 +270,81 @@ public class RubiksCubeEnvTests
     }
 }
 
+public class CubeImitationTests
+{
+    [Fact]
+    public void ExpandToQuarterTurnActions_HandlesAllNotations()
+    {
+        int[] actions = CubeOracle.ExpandToQuarterTurnActions(["R", "U'", "F2"]);
+        string[] moves = [.. actions.Select(a => FaceletCube.QuarterTurnMoves[a])];
+        Assert.Equal(["R", "U'", "F", "F"], moves);
+    }
+
+    // The oracle's labels must actually solve: walking each labeled state's action from
+    // the scrambled cube ends solved, and the distance-to-go counts down to 1.
+    [Fact]
+    public void LabelScramblePath_LabelsFormASolution()
+    {
+        var rng = new Xoshiro256StarStar(17);
+        var path = CubeOracle.LabelScramblePath(rng, maxScrambleDepth: 12);
+        Assert.NotNull(path);
+        Assert.NotEmpty(path);
+
+        var cube = FaceletCube.FromFacelets(path[0].Facelets);
+        for (int i = 0; i < path.Count; i++)
+        {
+            Assert.Equal(path.Count - i, path[i].DistanceToGo);
+            Assert.Equal(path[i].Facelets, cube.Facelets.ToArray());
+            cube.ApplyQuarterTurn(path[i].Action);
+        }
+        Assert.True(cube.IsSolved);
+    }
+
+    [Fact]
+    public void CubePolicyNet_SaveLoad_RoundTripsInference()
+    {
+        var net = new CubePolicyNet(new Xoshiro256StarStar(7), hidden: 32);
+        var cube = new FaceletCube();
+        cube.Apply(["R", "U", "F'"]);
+
+        using var buffer = new MemoryStream();
+        net.Save(buffer);
+        buffer.Position = 0;
+        var restored = CubePolicyNet.Load(buffer);
+
+        var (logits, distance) = net.Evaluate(cube);
+        var (logits2, distance2) = restored.Evaluate(cube);
+        Assert.Equal(logits, logits2);
+        Assert.Equal(distance, distance2);
+    }
+
+    [Fact]
+    public void PolicyEvaluate_MasksTheUndoMove()
+    {
+        var net = new CubePolicyNet(new Xoshiro256StarStar(7), hidden: 32);
+        int action = Array.IndexOf(FaceletCube.QuarterTurnMoves, "R");
+        var (logits, _) = net.Evaluate(new FaceletCube(), lastAction: action);
+        Assert.True(float.IsNegativeInfinity(logits[RubiksCubeEnv.InverseAction(action)]));
+        Assert.Equal(1, logits.Count(float.IsNegativeInfinity));
+    }
+
+    // Even an untrained net must solve depth 1-2 through the search (it enumerates the
+    // neighborhood) — the contract that lookahead never makes the policy worse.
+    [Fact]
+    public void PolicySearch_SolvesShallowScrambles_EvenUntrained()
+    {
+        var net = new CubePolicyNet(new Xoshiro256StarStar(3), hidden: 32);
+        var cube = new FaceletCube();
+        cube.Apply(["R", "U'"]);
+
+        var result = CubePolicySearch.Solve(net, cube, maxExpansions: 5_000);
+        Assert.True(result.Solved);
+
+        cube.Apply(result.Moves);
+        Assert.True(cube.IsSolved);
+    }
+}
+
 public class CubeSolverTests
 {
     [Fact]

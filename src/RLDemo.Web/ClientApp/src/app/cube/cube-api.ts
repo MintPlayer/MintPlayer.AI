@@ -14,8 +14,8 @@ export interface CubeSolveAiResponse {
   solution: string[];
   moveCount: number;
   algorithmMoveCount: number;
-  /** 'greedy' = reactive rollout, 'search' = Q-guided lookahead. */
-  aiMode: 'greedy' | 'search';
+  /** 'greedy' = reactive policy rollout, 'search' = net-guided lookahead, 'dqn' = legacy fallback. */
+  aiMode: 'greedy' | 'search' | 'dqn';
 }
 
 export interface CubeStatusResponse {

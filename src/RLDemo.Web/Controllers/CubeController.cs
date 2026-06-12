@@ -21,7 +21,8 @@ public sealed record CubeSolveResponse(string[] Solution, int MoveCount, long So
 /// The AI's attempt, reported honestly (PRD §11): <paramref name="Solved"/> is false when
 /// even the lookahead ran out of budget — expected on scrambles deeper than the trained
 /// band. <paramref name="AiMode"/> says which mode produced the answer ("greedy" =
-/// reactive rollout, "search" = Q-guided lookahead, the M11 pattern).
+/// reactive policy rollout, "search" = net-guided lookahead, "dqn" = legacy DQN
+/// fallback when no policy checkpoint exists — the M11 pattern).
 /// <paramref name="AlgorithmMoveCount"/> is the Kociemba reference for comparison.
 /// </summary>
 public sealed record CubeSolveAiResponse(bool Solved, string[] Solution, int MoveCount, int AlgorithmMoveCount, string AiMode);
@@ -38,15 +39,16 @@ public sealed class CubeController(CubeModelService model, GalleryStore gallery)
             model.TrainingStep, model.TrainingMaxSteps, model.LastEvalReturn, model.Error);
     }
 
-    /// <summary>Runs the trained DQN on the drawn cube (greedy, ≤ 20 quarter-turns); honest about failure.</summary>
+    /// <summary>Runs the trained AI on the drawn cube; honest about failure.</summary>
     [HttpPost("solve-ai")]
     public ActionResult<CubeSolveAiResponse> SolveAi(CubeSolveRequest request)
     {
         if (!TryBuildCube(request, out var cube, out string? error))
             return BadRequest(new CubeSolveResponse([], 0, 0, error));
 
+        var policy = model.PolicyNet;
         var agent = model.Agent;
-        if (agent is null)
+        if (policy is null && agent is null)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, Status());
 
         // The Kociemba reference also vets the cube (orientation/parity errors that the
@@ -55,17 +57,41 @@ public sealed class CubeController(CubeModelService model, GalleryStore gallery)
         if (!reference.Solved)
             return BadRequest(new CubeSolveResponse([], 0, 0, reference.Error));
 
-        // Reactive play first; when that fails, the same net guides a best-first search
-        // (its Q-values are the heuristic) — still "the AI", now with lookahead, and
-        // honest about which mode produced the answer (the Rush Hour M11 pattern).
-        var (solved, moves) = CubeModelService.Rollout(agent, cube);
-        string aiMode = "greedy";
-        if (!solved)
+        // Reactive play first; when that fails, the same net guides a best-first search —
+        // still "the AI", now with lookahead, and honest about which mode produced the
+        // answer (the Rush Hour M11 pattern). The imitation policy net is preferred;
+        // the masked DQN is the fallback when no policy checkpoint exists yet.
+        bool solved;
+        List<string> moves;
+        string aiMode;
+        if (policy is not null)
         {
-            var search = CubeQSearch.Solve(agent, cube);
-            aiMode = "search";
-            if (search.Solved)
-                (solved, moves) = (true, [.. search.Moves]);
+            var greedy = CubePolicySearch.GreedyRollout(policy, cube);
+            if (greedy.Solved)
+            {
+                (solved, aiMode) = (true, "greedy");
+                moves = [.. greedy.Actions.Select(a => FaceletCube.QuarterTurnMoves[a])];
+            }
+            else
+            {
+                var search = CubePolicySearch.Solve(policy, cube);
+                (solved, aiMode) = (search.Solved, "search");
+                moves = search.Solved
+                    ? [.. search.Moves]
+                    : [.. greedy.Actions.Select(a => FaceletCube.QuarterTurnMoves[a])];
+            }
+        }
+        else
+        {
+            (solved, moves) = CubeModelService.Rollout(agent!, cube);
+            aiMode = "dqn";
+            if (!solved)
+            {
+                var search = CubeQSearch.Solve(agent!, cube);
+                aiMode = "search";
+                if (search.Solved)
+                    (solved, moves) = (true, [.. search.Moves]);
+            }
         }
         var response = new CubeSolveAiResponse(solved, [.. moves], moves.Count, reference.Moves.Length, aiMode);
 

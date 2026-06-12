@@ -58,6 +58,44 @@ public sealed class CubeModelService(IModelStore store, ILogger<CubeModelService
         }
     }
 
+    public const string PolicyAlgorithmId = "policy";
+    private CubePolicyNet? _policyNet;
+    private DateTime _policyLoadedUtc = DateTime.MinValue;
+    private static readonly TimeSpan PolicyRefresh = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// The Kociemba-imitation policy/value net (preferred over the DQN when present, PLAN
+    /// M16), or null if the store has none. Re-read every few minutes so a long-running
+    /// Lab campaign's improving checkpoints are picked up without restarting the host.
+    /// </summary>
+    public CubePolicyNet? PolicyNet
+    {
+        get
+        {
+            if (DateTime.UtcNow - _policyLoadedUtc < PolicyRefresh) return _policyNet;
+            lock (_lock)
+            {
+                if (DateTime.UtcNow - _policyLoadedUtc < PolicyRefresh) return _policyNet;
+                try
+                {
+                    using var stream = store.TryOpenRead(EnvironmentId, PolicyAlgorithmId);
+                    if (stream is not null)
+                    {
+                        _policyNet = CubePolicyNet.Load(stream);
+                        logger.LogInformation("Loaded cube policy net from the store.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // A mid-write or corrupt checkpoint must not break solving; keep the previous net.
+                    logger.LogWarning(ex, "Failed to (re)load the cube policy net; keeping the previous one.");
+                }
+                _policyLoadedUtc = DateTime.UtcNow;
+                return _policyNet;
+            }
+        }
+    }
+
     public bool TryLoadFromStore()
     {
         lock (_lock)

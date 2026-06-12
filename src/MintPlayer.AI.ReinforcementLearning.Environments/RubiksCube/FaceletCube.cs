@@ -40,6 +40,17 @@ public sealed class FaceletCube
 
     private FaceletCube(byte[] facelets) => _facelets = facelets;
 
+    /// <summary>Rehydrates a cube from raw facelets (as exposed by <see cref="Facelets"/>).</summary>
+    public static FaceletCube FromFacelets(ReadOnlySpan<byte> facelets)
+    {
+        if (facelets.Length != FaceletCount)
+            throw new ArgumentException($"Expected {FaceletCount} facelets.");
+        foreach (byte facelet in facelets)
+            if (facelet >= FaceCount)
+                throw new ArgumentException($"Facelet value {facelet} is out of range.");
+        return new FaceletCube(facelets.ToArray());
+    }
+
     /// <summary>Sticker home-face value (0..5 = U R F D L B) at a flat facelet index.</summary>
     public byte this[int index] => _facelets[index];
 

@@ -12,7 +12,9 @@ shipped snapshots.
 | `rushhour.policy-adam.ckpt` | Adam optimizer state for the net above | Lets `RL.NET.Lab` resume the training campaign mid-stride. Not used for inference. |
 | `rushhour.dqn.ckpt` | Masked Double DQN (fallback solver) | Trained on 3,000 generated puzzles (optimal 2–20), eval return 92.85 at 480k steps. |
 | `2048.ntuple.ckpt` | Afterstate TD(0) n-tuple network | 100k self-play games (~3 min); reaches the 2048 tile in ~84% of games. |
-| `cube.dqn.ckpt` | Rubik's Cube masked Double DQN (M14) | Trained 2026-06-12: 600k steps (~65 min) on quarter-turn scrambles d ~ U[1..6] with the no-undo action mask, eval return ~70. Gate: **600/600** depth-1–6 scrambles solved within 20 moves (greedy alone 77.8%; the rest via Q-guided lookahead, `aiMode: search`). |
+| `cube.dqn.ckpt` | Rubik's Cube masked Double DQN (M14, fallback) | Trained 2026-06-12: 600k steps (~65 min) on quarter-turn scrambles d ~ U[1..6] with the no-undo action mask, eval return ~70. Gate: **600/600** depth-1–6 scrambles solved within 20 moves (greedy alone 77.8%; the rest via Q-guided lookahead, `aiMode: search`). |
+| `cube.policy.ckpt` | Kociemba-imitation policy/value net (M16 — the preferred cube AI) | Trained 2026-06-12 by `Lab --game cube`: 2 h (two resumed 1 h runs), 7.7 M states labeled by ~370k Kociemba solves, action accuracy 73.5%. Gate: **96/100** depth-1–10 scrambles solved within 40 quarter-turns (greedy alone 54%; rest via value-guided A*, `aiMode: search`). |
+| `cube.policy-adam.ckpt` | Adam optimizer state for the net above | Lets `Lab --game cube` resume the campaign mid-stride. Not used for inference. |
 
 To retrain or continue training Rush Hour:
 `dotnet run --project tools/RL.NET.Lab -c Release -- --hours N --data src/RL.NET.Web/data`
