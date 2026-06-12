@@ -1,3 +1,18 @@
+// Classic 2048 board styling, adapted from the owner's historic app
+// (C:\Repos\WebGames\Game2048\Styles\main.scss — Gabriele Cirulli's original look):
+// CSS-transition tile slides (100 ms), pop-on-merge and appear-on-spawn keyframes,
+// the original warm tile palette, on the playground's dark page.
+
+$field-width: 440px;
+$grid-spacing: 12px;
+$tile-size: ($field-width - 5 * $grid-spacing) * 0.25; // 95px
+$tile-offset: $tile-size + $grid-spacing;
+$tile-radius: 5px;
+$transition-speed: 100ms;
+$animation-speed: 200ms;
+$text-dark: #776e65;
+$text-light: #f9f6f2;
+
 .subtitle {
   color: #aab2c5;
   margin-top: -0.5rem;
@@ -27,16 +42,10 @@
 }
 
 .board-panel {
-  canvas {
-    border-radius: 12px;
-    touch-action: manipulation;
-    cursor: pointer;
-  }
-
   .board-caption {
     margin-top: 0.5rem;
     min-height: 1.5em;
-    max-width: 440px;
+    max-width: $field-width;
 
     .good {
       color: #4ade80;
@@ -47,6 +56,161 @@
     }
   }
 }
+
+// ------------------------------------------------------------------ classic board
+
+.game-container {
+  position: relative;
+  width: $field-width;
+  height: $field-width;
+  padding: $grid-spacing;
+  background: #bbada0;
+  border-radius: 8px;
+  box-sizing: border-box;
+  touch-action: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.grid-container {
+  display: grid;
+  grid-template-columns: repeat(4, $tile-size);
+  grid-template-rows: repeat(4, $tile-size);
+  gap: $grid-spacing;
+}
+
+.grid-cell {
+  background: rgba(238, 228, 218, 0.35);
+  border-radius: $tile-radius;
+}
+
+.tile-container {
+  position: absolute;
+  inset: $grid-spacing;
+  z-index: 2;
+}
+
+.tile {
+  position: absolute;
+  width: $tile-size;
+  height: $tile-size;
+  transition: transform $transition-speed ease-in-out;
+
+  .tile-inner {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: $tile-radius;
+    background: #eee4da;
+    color: $text-dark;
+    font-weight: 700;
+    font-size: 42px;
+    line-height: 1;
+  }
+}
+
+@for $x from 1 through 4 {
+  @for $y from 1 through 4 {
+    .tile.tile-position-#{$x}-#{$y} {
+      transform: translate(($x - 1) * $tile-offset, ($y - 1) * $tile-offset);
+    }
+  }
+}
+
+// The original tile palette.
+.tile-2 .tile-inner { background: #eee4da; }
+.tile-4 .tile-inner { background: #ede0c8; }
+.tile-8 .tile-inner { background: #f2b179; color: $text-light; }
+.tile-16 .tile-inner { background: #f59563; color: $text-light; }
+.tile-32 .tile-inner { background: #f67c5f; color: $text-light; }
+.tile-64 .tile-inner { background: #f65e3b; color: $text-light; }
+.tile-128 .tile-inner { background: #edcf72; color: $text-light; font-size: 36px; }
+.tile-256 .tile-inner { background: #edcc61; color: $text-light; font-size: 36px; }
+.tile-512 .tile-inner { background: #edc850; color: $text-light; font-size: 36px; }
+.tile-1024 .tile-inner { background: #edc53f; color: $text-light; font-size: 28px; }
+.tile-2048 .tile-inner { background: #edc22e; color: $text-light; font-size: 28px; box-shadow: 0 0 30px 10px rgba(243, 215, 116, 0.4); }
+.tile-super .tile-inner { background: #3c3a32; color: $text-light; font-size: 24px; }
+
+@keyframes appear {
+  0% { opacity: 0; transform: scale(0); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.tile-new .tile-inner {
+  animation: appear $animation-speed ease $transition-speed;
+  animation-fill-mode: backwards;
+}
+
+@keyframes pop {
+  0% { transform: scale(0); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+.tile-merged {
+  z-index: 20;
+
+  .tile-inner {
+    animation: pop $animation-speed ease $transition-speed;
+    animation-fill-mode: backwards;
+  }
+}
+
+// "Game over!" overlay, faded in like the original.
+@keyframes fade-in {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.game-message {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: rgba(238, 228, 218, 0.73);
+  border-radius: 8px;
+  animation: fade-in 800ms ease 400ms;
+  animation-fill-mode: both;
+
+  p {
+    margin: 0;
+    font-size: 48px;
+    font-weight: 700;
+    color: $text-dark;
+  }
+
+  button {
+    background: #8f7a66;
+    border: none;
+    color: $text-light;
+  }
+}
+
+// "+4" score float, drifting up from the board caption area.
+@keyframes move-up {
+  0% { top: 50%; opacity: 1; }
+  100% { top: 30%; opacity: 0; }
+}
+
+.score-addition {
+  position: absolute;
+  right: $grid-spacing;
+  z-index: 40;
+  font-weight: 700;
+  font-size: 26px;
+  color: rgba(119, 110, 101, 0.9);
+  animation: move-up 600ms ease-in;
+  animation-fill-mode: both;
+  pointer-events: none;
+}
+
+// ------------------------------------------------------------------ side panel
 
 .side-panel {
   flex: 1;

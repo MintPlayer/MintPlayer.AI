@@ -16,7 +16,33 @@
 
 <div class="layout">
   <div class="board-panel">
-    <canvas #board (pointerdown)="onCanvasClick($event)" (contextmenu)="onCanvasRightClick($event)"></canvas>
+    <div class="game-container" #board
+         (pointerdown)="onBoardClick($event)" (contextmenu)="onBoardRightClick($event)"
+         (touchstart)="onTouchStart($event)" (touchend)="onTouchEnd($event)">
+      <div class="grid-container">
+        @for (cell of gridCells; track $index) {
+          <div class="grid-cell"></div>
+        }
+      </div>
+      <div class="tile-container">
+        @for (tile of tiles(); track tile.id) {
+          <div [class]="tileClass(tile)">
+            <div class="tile-inner">{{ tile.value }}</div>
+          </div>
+        }
+      </div>
+      @if (mode() === 'play' && playOver()) {
+        <div class="game-message game-over">
+          <p>Game over!</p>
+          <div class="lower">
+            <button (click)="resetPlay()">Try again</button>
+          </div>
+        </div>
+      }
+      @for (addition of scoreAdditions(); track addition.id) {
+        <div class="score-addition">+{{ addition.amount | number }}</div>
+      }
+    </div>
 
     <div class="board-caption">
       @switch (mode()) {

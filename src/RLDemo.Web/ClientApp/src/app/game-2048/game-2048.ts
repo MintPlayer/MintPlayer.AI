@@ -1,20 +1,14 @@
 import { DecimalPipe } from '@angular/common';
-import { Component, DestroyRef, ElementRef, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, computed, inject, signal, viewChild } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { Game2048Api, SolveResponse2048, Status2048 } from './game-2048-api';
-import { Board, anyMoveAvailable, applyMove, exponentOf, maxTile, spawn } from './game-2048-logic';
+import { ClassicEngine, RenderTile } from './game-2048-classic';
+import { Board, exponentOf } from './game-2048-logic';
 
 type Mode = 'edit' | 'play' | 'playback';
 
-const CELL = 96;
-const PAD = 12;
-const GAP = 8;
-
-const TILE_COLORS: Record<number, string> = {
-  1: '#3a4154', 2: '#4a5168', 3: '#b8722d', 4: '#c4621a', 5: '#d35028', 6: '#d93a23',
-  7: '#c9a227', 8: '#c79a1d', 9: '#c59213', 10: '#c38a0a', 11: '#b07d1c', 12: '#7c5cd6',
-  13: '#6a4fc4', 14: '#5843b2', 15: '#4637a0',
-};
+/** Auto-play pacing: slightly above the 100 ms slide transition so every move reads. */
+const PLAYBACK_INTERVAL = 120;
 
 @Component({
   selector: 'app-game-2048',
@@ -26,22 +20,33 @@ const TILE_COLORS: Record<number, string> = {
 export class Game2048 {
   private readonly api = inject(Game2048Api);
   private readonly route = inject(ActivatedRoute);
-  private readonly canvasRef = viewChild<ElementRef<HTMLCanvasElement>>('board');
+  private readonly boardRef = viewChild<ElementRef<HTMLElement>>('board');
+
+  protected readonly gridCells = Array.from({ length: 16 });
 
   // Drawn board (exponents). Default: two starter tiles, like a fresh game.
   protected readonly drawn = signal<Board>(startingBoard());
   protected readonly mode = signal<Mode>('edit');
   protected readonly message = signal<string | null>(null);
 
+  // The classic DOM board: tiles with identities, previous positions and merge/spawn
+  // states so the original 2048 animations (slide / pop / appear) play.
+  protected readonly tiles = signal<RenderTile[]>([]);
+  private engine: ClassicEngine = new ClassicEngine();
+
   // Manual play.
-  protected readonly playBoard = signal<Board>([]);
   protected readonly playScore = signal(0);
   protected readonly playOver = signal(false);
+  protected readonly playMax = signal(0);
+  protected readonly scoreAdditions = signal<{ id: number; amount: number }[]>([]);
+  private nextAdditionId = 1;
 
-  // AI playback: board states reconstructed once, then scrubbed instantly.
+  // AI playback: exponent boards reconstructed once for instant scrubbing; forward
+  // steps replay through the classic engine so they animate like real moves.
   protected readonly solution = signal<SolveResponse2048 | null>(null);
   private playbackStates: Board[] = [];
   private playbackScores: number[] = [];
+  private engineIndex = 0;
   protected readonly playbackIndex = signal(0);
   protected readonly playing = signal(false);
   protected readonly busy = signal(false);
@@ -49,20 +54,13 @@ export class Game2048 {
   protected readonly modelStatus = signal<Status2048 | null>(null);
 
   private playbackTimer: ReturnType<typeof setInterval> | null = null;
-
-  protected readonly displayBoard = computed<Board>(() => {
-    switch (this.mode()) {
-      case 'edit': return this.drawn();
-      case 'play': return this.playBoard();
-      case 'playback': return this.playbackStates[this.playbackIndex()] ?? this.drawn();
-    }
-  });
+  private touchStart: { x: number; y: number } | null = null;
 
   protected readonly playbackScore = computed(() => this.playbackScores[this.playbackIndex()] ?? 0);
   protected readonly stepCount = computed(() => this.solution()?.steps.length ?? 0);
 
   constructor() {
-    effect(() => this.draw());
+    this.showStatic(this.drawn());
     this.pollStatus();
     inject(DestroyRef).onDestroy(() => this.stopPlayback());
 
@@ -80,45 +78,61 @@ export class Game2048 {
     this.startPlayback(solution);
   }
 
-  // ------------------------------------------------------------------ editing
+  // ------------------------------------------------------------------ rendering
 
-  protected onCanvasClick(event: PointerEvent): void {
-    const index = this.cellAt(event);
-    if (index < 0) return;
-
-    if (this.mode() === 'edit') {
-      const cells = [...this.drawn()];
-      cells[index] = (cells[index] + 1) % 16; // cycle empty → 2 → 4 → … → 32768 → empty
-      this.drawn.set(cells);
-      this.solution.set(null);
-      this.message.set(null);
-    }
+  /** Rebuilds the board without animation (editing, seeking, resets). */
+  private showStatic(board: Board): void {
+    this.engine = ClassicEngine.fromExponents(board);
+    this.tiles.set(this.engine.renderTiles());
   }
 
-  protected onCanvasRightClick(event: MouseEvent): void {
+  protected tileClass(tile: RenderTile): string {
+    const value = tile.value <= 2048 ? tile.value : 'super';
+    let classes = `tile tile-${value} tile-position-${tile.x + 1}-${tile.y + 1}`;
+    if (tile.state === 'new') classes += ' tile-new';
+    else if (tile.state === 'merged') classes += ' tile-merged';
+    return classes;
+  }
+
+  // ------------------------------------------------------------------ editing
+
+  protected onBoardClick(event: PointerEvent): void {
+    if (this.mode() !== 'edit') return;
+    const index = this.cellAt(event);
+    if (index < 0) return;
+    const cells = [...this.drawn()];
+    cells[index] = (cells[index] + 1) % 16; // cycle empty → 2 → 4 → … → 32768 → empty
+    this.applyDrawing(cells);
+  }
+
+  protected onBoardRightClick(event: MouseEvent): void {
     event.preventDefault();
     if (this.mode() !== 'edit') return;
     const index = this.cellAt(event);
     if (index < 0) return;
     const cells = [...this.drawn()];
     cells[index] = (cells[index] + 15) % 16; // cycle down
+    this.applyDrawing(cells);
+  }
+
+  private applyDrawing(cells: Board): void {
     this.drawn.set(cells);
     this.solution.set(null);
+    this.message.set(null);
+    this.showStatic(cells);
   }
 
   private cellAt(event: { clientX: number; clientY: number }): number {
-    const canvas = this.canvasRef()?.nativeElement;
-    if (!canvas) return -1;
-    const rect = canvas.getBoundingClientRect();
-    const col = Math.floor((event.clientX - rect.left - PAD) / (CELL + GAP));
-    const row = Math.floor((event.clientY - rect.top - PAD) / (CELL + GAP));
+    const board = this.boardRef()?.nativeElement;
+    if (!board) return -1;
+    const rect = board.getBoundingClientRect();
+    const col = Math.floor(((event.clientX - rect.left) / rect.width) * 4);
+    const row = Math.floor(((event.clientY - rect.top) / rect.height) * 4);
     return row >= 0 && row < 4 && col >= 0 && col < 4 ? row * 4 + col : -1;
   }
 
   protected clearBoard(): void {
-    this.drawn.set(startingBoard());
-    this.solution.set(null);
-    this.message.set(null);
+    this.applyDrawing(startingBoard());
   }
 
   // ------------------------------------------------------------------ manual play
@@ -134,14 +148,16 @@ export class Game2048 {
   }
 
   protected resetPlay(): void {
-    this.playBoard.set([...this.drawn()]);
+    this.showStatic(this.drawn());
     this.playScore.set(0);
     this.playOver.set(false);
+    this.playMax.set(this.engine.maxTile());
   }
 
   protected backToEdit(): void {
     this.stopPlayback();
     this.mode.set('edit');
+    this.showStatic(this.drawn());
   }
 
   protected onKey(event: KeyboardEvent): void {
@@ -151,17 +167,44 @@ export class Game2048 {
     const action = map[event.key];
     if (action === undefined) return;
     event.preventDefault();
-
-    const board = [...this.playBoard()];
-    const { moved, gained } = applyMove(board, action);
-    if (!moved) return;
-    spawn(board);
-    this.playBoard.set(board);
-    this.playScore.update(s => s + gained);
-    if (!anyMoveAvailable(board)) this.playOver.set(true);
+    this.playMove(action);
   }
 
-  protected playMaxTile = () => maxTile(this.playBoard());
+  // Touch swipes, like the original game.
+  protected onTouchStart(event: TouchEvent): void {
+    if (event.touches.length !== 1) return;
+    this.touchStart = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+  }
+
+  protected onTouchEnd(event: TouchEvent): void {
+    if (!this.touchStart || this.mode() !== 'play' || this.playOver()) return;
+    const dx = event.changedTouches[0].clientX - this.touchStart.x;
+    const dy = event.changedTouches[0].clientY - this.touchStart.y;
+    this.touchStart = null;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
+    event.preventDefault();
+    // Server action ids: 0=left 1=down 2=right 3=up.
+    const action = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 2 : 0) : (dy > 0 ? 1 : 3);
+    this.playMove(action);
+  }
+
+  private playMove(action: number): void {
+    const { moved, gained } = this.engine.move(action);
+    if (!moved) return;
+    this.engine.addRandomTile();
+    this.tiles.set(this.engine.renderTiles());
+    this.playScore.update(s => s + gained);
+    this.playMax.set(this.engine.maxTile());
+    if (gained > 0) this.floatScore(gained);
+    if (!this.engine.movesAvailable()) this.playOver.set(true);
+  }
+
+  /** The original's "+4" score float. */
+  private floatScore(amount: number): void {
+    const id = this.nextAdditionId++;
+    this.scoreAdditions.update(list => [...list, { id, amount }]);
+    setTimeout(() => this.scoreAdditions.update(list => list.filter(a => a.id !== id)), 600);
+  }
 
   // ------------------------------------------------------------------ AI playout
 
@@ -190,34 +233,60 @@ export class Game2048 {
   }
 
   private startPlayback(solution: SolveResponse2048): void {
-    // Reconstruct every board state once (actions + spawn events are deterministic).
+    // Reconstruct every board state once (actions + spawn events are deterministic),
+    // for instant scrubbing and as the replay checksum against finalCells.
     const states: Board[] = [];
     const scores: number[] = [];
-    const board = solution.initialCells.map(exponentOf);
+    const replay = ClassicEngine.fromExponents(solution.initialCells.map(exponentOf));
     let score = 0;
-    states.push([...board]);
+    states.push(replay.toExponents());
     scores.push(0);
     for (const step of solution.steps) {
-      applyMove(board, step.action);
-      board[step.spawnIndex] = exponentOf(step.spawnValue);
+      replay.move(step.action);
+      replay.addSpecificTile(step.spawnIndex, step.spawnValue);
       score += step.scoreGained;
-      states.push([...board]);
+      states.push(replay.toExponents());
       scores.push(score);
     }
+    const finalExponents = solution.finalCells.map(exponentOf);
+    if (states[states.length - 1].some((cell, i) => cell !== finalExponents[i])) {
+      console.warn('2048 playback reconstruction does not match finalCells — engine parity bug?');
+    }
+
     this.playbackStates = states;
     this.playbackScores = scores;
     this.solution.set(solution);
     this.playbackIndex.set(0);
     this.mode.set('playback');
+    this.seek(0);
   }
 
   protected seek(index: number): void {
-    this.playbackIndex.set(Math.max(0, Math.min(this.stepCount(), index)));
+    const clamped = Math.max(0, Math.min(this.stepCount(), index));
+    this.playbackIndex.set(clamped);
+    this.showStatic(this.playbackStates[clamped] ?? this.drawn());
+    this.engineIndex = clamped;
   }
 
   protected step(delta: number): void {
     this.stopPlayback();
-    this.seek(this.playbackIndex() + delta);
+    if (delta === 1) this.stepForwardAnimated();
+    else this.seek(this.playbackIndex() + delta);
+  }
+
+  /** Forward steps replay the server's (action, spawn) through the classic engine — animated. */
+  private stepForwardAnimated(): void {
+    const solution = this.solution();
+    const index = this.playbackIndex();
+    if (!solution || index >= this.stepCount()) return;
+    if (this.engineIndex !== index) this.seek(index);
+
+    const step = solution.steps[index];
+    this.engine.move(step.action);
+    this.engine.addSpecificTile(step.spawnIndex, step.spawnValue);
+    this.tiles.set(this.engine.renderTiles());
+    this.engineIndex = index + 1;
+    this.playbackIndex.set(index + 1);
   }
 
   protected togglePlay(): void {
@@ -225,13 +294,12 @@ export class Game2048 {
       this.stopPlayback();
       return;
     }
-    if (this.playbackIndex() >= this.stepCount()) this.playbackIndex.set(0);
+    if (this.playbackIndex() >= this.stepCount()) this.seek(0);
     this.playing.set(true);
     this.playbackTimer = setInterval(() => {
-      const next = this.playbackIndex() + 1;
-      this.playbackIndex.set(next);
-      if (next >= this.stepCount()) this.stopPlayback();
-    }, 70);
+      this.stepForwardAnimated();
+      if (this.playbackIndex() >= this.stepCount()) this.stopPlayback();
+    }, PLAYBACK_INTERVAL);
   }
 
   protected stopPlayback(): void {
@@ -242,7 +310,7 @@ export class Game2048 {
     this.playing.set(false);
   }
 
-  // ------------------------------------------------------------------ status + canvas
+  // ------------------------------------------------------------------ status
 
   private pollStatus(): void {
     void (async () => {
@@ -254,44 +322,7 @@ export class Game2048 {
     })();
   }
 
-  private draw(): void {
-    const canvas = this.canvasRef()?.nativeElement;
-    if (!canvas) return;
-
-    const board = this.displayBoard();
-    const size = PAD * 2 + 4 * CELL + 3 * GAP;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
-    canvas.style.width = `${size}px`;
-    canvas.style.height = `${size}px`;
-
-    const ctx = canvas.getContext('2d')!;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#1a1f2b';
-    ctx.fillRect(0, 0, size, size);
-
-    for (let i = 0; i < 16; i++) {
-      const x = PAD + (i % 4) * (CELL + GAP);
-      const y = PAD + Math.floor(i / 4) * (CELL + GAP);
-      const exponent = board[i];
-
-      ctx.fillStyle = exponent === 0 ? '#222938' : (TILE_COLORS[exponent] ?? '#4637a0');
-      ctx.beginPath();
-      ctx.roundRect(x, y, CELL, CELL, 10);
-      ctx.fill();
-
-      if (exponent > 0) {
-        const value = 1 << exponent;
-        ctx.fillStyle = '#ffffff';
-        ctx.font = `bold ${value < 1000 ? 30 : value < 10000 ? 24 : 20}px system-ui`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(String(value), x + CELL / 2, y + CELL / 2 + 1);
-      }
-    }
-    ctx.textAlign = 'start';
-  }
+  protected playMaxTile = () => this.playMax();
 }
 
 function startingBoard(): Board {
