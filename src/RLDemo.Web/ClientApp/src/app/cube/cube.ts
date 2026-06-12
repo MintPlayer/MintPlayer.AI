@@ -2,7 +2,7 @@ import { Component, DestroyRef, ElementRef, afterNextRender, computed, inject, s
 import { ActivatedRoute } from '@angular/router';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { CubeApi, CubeSolveResponse } from './cube-api';
+import { CubeApi, CubeSolveResponse, CubeStatusResponse } from './cube-api';
 import { RubiksCube } from './cube-renderer';
 
 const FACES = ['U', 'D', 'L', 'R', 'F', 'B'] as const;
@@ -15,6 +15,12 @@ const INVERSE: Record<string, string> = {
 
 /** All 18 face-move buttons, grouped per face for the 3-column grid. */
 const MOVE_BUTTONS = FACES.flatMap(f => [f, `${f}'`, `${f}2`]);
+
+/** A move list armed for playback, with a caption saying who produced it. */
+interface ArmedSolution {
+  moves: string[];
+  info: string;
+}
 
 @Component({
   selector: 'app-cube',
@@ -37,15 +43,18 @@ export class Cube {
   protected readonly moveHistory = signal<string[]>([]);
   protected readonly animationSpeed = signal(300);
 
-  // --- Kociemba solution playback (index = last executed move, -1 = at start) ---
-  protected readonly solution = signal<CubeSolveResponse | null>(null);
+  // --- solution playback, Kociemba or AI (index = last executed move, -1 = at start) ---
+  protected readonly solution = signal<ArmedSolution | null>(null);
   protected readonly solutionIndex = signal(-1);
   protected readonly playing = signal(false);
+
+  // --- model status (the AI button needs a trained DQN) ---
+  protected readonly modelStatus = signal<CubeStatusResponse | null>(null);
 
   protected readonly locked = computed(() => this.animating() || this.busy());
   protected readonly atSolutionEnd = computed(() => {
     const s = this.solution();
-    return s === null || this.solutionIndex() >= s.solution.length - 1;
+    return s === null || this.solutionIndex() >= s.moves.length - 1;
   });
 
   // --- three.js scene (browser only) ---
@@ -58,6 +67,7 @@ export class Cube {
 
   constructor() {
     const replayId = inject(ActivatedRoute).snapshot.queryParamMap.get('replay');
+    this.pollStatus();
     afterNextRender(() => {
       this.initScene();
       this.animate();
@@ -215,14 +225,74 @@ export class Cube {
         this.clearSolution();
         return;
       }
-      this.solution.set(result.value);
-      this.solutionIndex.set(-1);
+      this.armSolution(result.value.solution, `${result.value.moveCount} moves in ${result.value.solveTimeMs} ms (Kociemba)`);
       this.status.set(`Solution found: ${result.value.moveCount} moves (${result.value.solveTimeMs} ms)`);
     } catch {
       this.status.set('The solver is unreachable — is the backend running?');
     } finally {
       this.busy.set(false);
     }
+  }
+
+  // ------------------------------------------------------------------ solve (AI)
+
+  /** The trained DQN's greedy attempt — armed for playback when it solves, reported honestly when it doesn't. */
+  protected async solveAi(): Promise<void> {
+    if (this.locked() || !this.cube) return;
+    this.busy.set(true);
+    this.status.set('Asking the trained AI…');
+
+    try {
+      const result = await this.api.solveAi(this.cube.getState());
+      switch (result.kind) {
+        case 'done': {
+          const v = result.value;
+          const how = v.aiMode === 'search' ? 'AI (with lookahead)' : 'AI';
+          if (v.solved) {
+            this.armSolution(v.solution, `${how}: ${v.moveCount} quarter-turns (Kociemba reference: ${v.algorithmMoveCount})`);
+            this.status.set(`The ${how} solved it in ${v.moveCount} moves!`);
+          } else {
+            this.clearSolution();
+            this.status.set(`The AI gave up, even with lookahead (Kociemba needs ${v.algorithmMoveCount} moves) — ` +
+              'it is trained on shallow scrambles; try an easy scramble, or the algorithm.');
+          }
+          break;
+        }
+        case 'training':
+          this.modelStatus.set(result.status);
+          this.status.set('The AI model is still training — try again in a moment.');
+          this.pollStatus();
+          break;
+        case 'invalid':
+          this.status.set(result.error);
+          break;
+      }
+    } catch {
+      this.status.set('The solver is unreachable — is the backend running?');
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  private armSolution(moves: string[], info: string): void {
+    this.solution.set({ moves, info });
+    this.solutionIndex.set(-1);
+  }
+
+  // ------------------------------------------------------------------ model status
+
+  private pollStatus(): void {
+    void (async () => {
+      try {
+        const status = await this.api.status();
+        this.modelStatus.set(status);
+        if (status.status === 'loading' || status.status === 'training') {
+          setTimeout(() => this.pollStatus(), 2000);
+        }
+      } catch {
+        // Backend unreachable: leave the status unknown; the buttons stay usable.
+      }
+    })();
   }
 
   // ------------------------------------------------------------------ solution playback
@@ -232,15 +302,15 @@ export class Cube {
     if (!s || this.locked() || this.atSolutionEnd()) return;
 
     const index = this.solutionIndex() + 1;
-    const move = s.solution[index];
+    const move = s.moves[index];
     this.animating.set(true);
-    this.status.set(`Step ${index + 1}/${s.solution.length}: ${move}`);
+    this.status.set(`Step ${index + 1}/${s.moves.length}: ${move}`);
 
     await this.cube.rotate(move, this.animationSpeed());
 
     this.solutionIndex.set(index);
     this.animating.set(false);
-    if (index === s.solution.length - 1) {
+    if (index === s.moves.length - 1) {
       this.status.set('Solved!');
       this.moveHistory.set([]);
     }
@@ -250,7 +320,7 @@ export class Cube {
     const s = this.solution();
     if (!s || this.locked() || this.solutionIndex() < 0) return;
 
-    const move = s.solution[this.solutionIndex()];
+    const move = s.moves[this.solutionIndex()];
     this.animating.set(true);
     this.status.set(`Undoing step ${this.solutionIndex() + 1}: ${move}`);
 
@@ -258,7 +328,7 @@ export class Cube {
 
     this.solutionIndex.update(i => i - 1);
     this.animating.set(false);
-    this.status.set(this.solutionIndex() < 0 ? 'Back to start' : `At step ${this.solutionIndex() + 1}/${s.solution.length}`);
+    this.status.set(this.solutionIndex() < 0 ? 'Back to start' : `At step ${this.solutionIndex() + 1}/${s.moves.length}`);
   }
 
   protected async togglePlay(): Promise<void> {
@@ -308,8 +378,7 @@ export class Cube {
       await this.cube.rotate(INVERSE[move] ?? move, 30);
     }
     this.animating.set(false);
-    this.solution.set(value);
-    this.solutionIndex.set(-1);
-    this.status.set(`Replaying: ${value.moveCount} moves (Kociemba)`);
+    this.armSolution(value.solution, entry.summary ?? `${value.moveCount} moves`);
+    this.status.set(`Replaying: ${value.moveCount} moves`);
   }
 }

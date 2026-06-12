@@ -335,7 +335,12 @@ of the Rush Hour policy (close the reactive level-1 gap; shrink search expansion
 · watch-only playground pages for CartPole/2048 self-play · importing puzzles from
 `C:\Repos\Spelletjes\Rush Hour` as gallery data (ask for a clean checkout first).
 
-## M13 — Rubik's Cube page + Kociemba solve  *(owner's game #3 — the port, PRD §11)*
+## M13 — Rubik's Cube page + Kociemba solve  *(owner's game #3 — the port, PRD §11)* ✅
+**Result: gate passed** (browser-verified 2026-06-12): full scramble → Solve (algorithm)
+→ 21-move solution in 116 ms → playback ends on a solved cube; gallery entry replays.
+The Kociemba port's disk-table variant (K_Search/K_CoordCube — its deserialization
+already threw NotSupportedException upstream) was dropped; the runtime-table path
+(SearchRunTime + CoordCubeBuildTables) is warmed once at startup (~12 s, in-memory).
 
 Port of `C:\Repos\WebGames\Rubiksolver` into the playground (source repo stays untouched).
 
@@ -370,7 +375,16 @@ Port of `C:\Repos\WebGames\Rubiksolver` into the playground (source repo stays u
 **Gate:** e2e (Playwright against the dev host): scramble → Solve (algorithm) →
 playback ends on a solved cube; API returns ≤ 22 moves for a full scramble.
 
-## M14 — Rubik's Cube RL  *(AI solve button + training, PRD §11)*
+## M14 — Rubik's Cube RL  *(AI solve button + training, PRD §11)* ✅
+**Result: gate passed — 600/600 (100%)** depth-1–6 scrambles solved within 20 moves
+(greedy alone 77.8%: 100/100/99/86/58/24 per depth — the rest via Q-guided best-first
+lookahead, reported as `aiMode: search`). Two training findings: (1) a plain greedy DQN
+oscillates (A A′ A A′), so the env masks the inverse of the previous move
+(`IActionMaskProvider`, same machinery as Rush Hour) — undoing can never shorten a
+solution; (2) the first recipe (γ 0.98, 400k steps, ε→150k) was unstable early and
+plateaued ≈ 75%; the shipped one (γ 0.99, 600k steps, buffer 200k, ε→200k) trains in
+~65 min and plateaus ≈ 70 eval return, which lookahead converts to 100% on the band.
+`models/cube.dqn.ckpt` committed with provenance.
 
 1. **`RubiksCubeEnv : IEnvironment<float[], int>`**: obs Box(324) one-hot stickers;
    Discrete(12) quarter-turns; `Reset` scrambles to depth d ~ U[1..MaxDepth] (constructor
@@ -396,7 +410,12 @@ Kociemba solutions (unlimited labeled data; expand half-turns to two quarter-tur
 greedy + policy-guided search fallback, `aiMode` reporting — lifts the AI toward full
 scrambles without pretending DQN got there.
 
-## M15 — 2048 classic play feel  *(swap the merge experience, PRD §12)*
+## M15 — 2048 classic play feel  *(swap the merge experience, PRD §12)* ✅
+**Result: gate passed** (browser-verified 2026-06-12): DOM tiles with the original
+palette and animations (a merging move produced two sources sliding under a popping
+`tile-merged` 4 plus a `tile-new` spawn); the AI playout animates through the classic
+engine; the 2,491-move replay reconstruction matched `FinalCells` exactly (no parity
+warning) — the classic Cirulli engine and the server's `Board2048` agree move-for-move.
 
 Source: `C:\Repos\WebGames\Game2048` (Cirulli-architecture TS port: GameManager/Grid/
 Tile/HTMLActuator, ~620 LOC TS + 616 LOC SCSS). Only the front-end game experience
@@ -455,6 +474,9 @@ equal to `FinalCells`; existing 2048 API tests untouched and green.
 | M9 2048 + gallery | train-first visible; warm solve instant; gallery survives restart | passed (n-tuple playout: 2,491 moves, 55,480 pts, reached 2048; gallery replay verified) |
 | M10 Docker | build → run → solve → restart keeps models + gallery | passed (cold volume self-seeds; card 40 solved 81/81 in the container) |
 | M11 imitation (in progress) | held-out official cards via policy-guided A* | **all optimal**: level 1 = 16, card 38 = 77, card 39 = 82, card 40 = 81 moves |
+| M13 cube port | e2e scramble → Kociemba solve → playback solved; ≤ 22 moves | passed (20-move scramble solved in 21 moves / 116 ms; playback ends solved; gallery replays) |
+| M14 cube RL | ≥ 90% of depth-1–6 scrambles solved within 20 moves | **100%** (600/600; greedy alone 77.8%, rest via Q-guided lookahead) |
+| M15 classic 2048 | classic animations live; replay reconstruction == `FinalCells` | passed (2,491-move replay bit-exact; slide/pop/appear verified in-browser) |
 
 ## Shipped (2026-06-11) — release engineering
 

@@ -26,8 +26,10 @@ builder.Services.AddSingleton<IModelStore>(_ => new FileModelStore(dataDirectory
 builder.Services.AddSingleton(new GalleryStore(Path.Combine(dataDirectory, "gallery")));
 builder.Services.AddSingleton<RushHourModelService>();
 builder.Services.AddSingleton<Game2048ModelService>();
+builder.Services.AddSingleton<CubeModelService>();
 builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<RushHourModelService>());
 builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<Game2048ModelService>());
+builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<CubeModelService>());
 builder.Services.AddSingleton<ITrainableModelService, CubeSolverWarmupService>();
 
 // Integration tests control the model store themselves and host no SPA.

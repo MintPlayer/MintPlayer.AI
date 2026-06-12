@@ -234,9 +234,11 @@ solve → trajectory playback → gallery), with one deliberate twist: the cube 
    pruning tables generated in memory on first use) and returns a move list (≤ 22
    moves, ~10 s timeout). This button always works on any valid cube — it is the
    oracle, exactly as the BFS solver is for Rush Hour.
-3. **Solve (AI).** Posts the same state; the backend runs the trained RL agent
-   (greedy rollout) and returns its move trajectory plus the Kociemba reference move
-   count. Failures are reported honestly (`solved: false`), like Rush Hour's `aiMode`.
+3. **Solve (AI).** Posts the same state; the backend runs the trained RL agent —
+   greedy rollout first, falling back to a Q-guided best-first search by the same net
+   (the M11 Rush Hour pattern: still the AI, now with lookahead) — and returns its move
+   trajectory, the mode that produced it (`aiMode: greedy|search`) and the Kociemba
+   reference move count. Failures are reported honestly (`solved: false`).
 4. **RL environment + training** per the §7.3 contract: a `RubiksCubeEnv` in
    `MintPlayer.AI.ReinforcementLearning.Environments`, a model service that loads from
    the model store or trains once at startup, a pre-trained checkpoint committed in

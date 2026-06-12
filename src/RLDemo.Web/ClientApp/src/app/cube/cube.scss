@@ -3,6 +3,22 @@
   margin-top: -0.5rem;
 }
 
+.banner {
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+
+  &.training {
+    background: #1d2c4f;
+    border: 1px solid #2f4a8a;
+  }
+
+  &.error {
+    background: #4f1d2c;
+    border: 1px solid #8a2f4a;
+  }
+}
+
 .layout {
   display: flex;
   gap: 2rem;

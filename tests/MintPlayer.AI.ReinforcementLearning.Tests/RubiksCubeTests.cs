@@ -175,6 +175,101 @@ public class CubeValidationTests
     }
 }
 
+public class RubiksCubeEnvTests
+{
+    [Fact]
+    public void Reset_GivesOneHotObservation()
+    {
+        var env = new RubiksCubeEnv(maxScrambleDepth: 6);
+        var (obs, _) = env.Reset(7);
+
+        Assert.Equal(RubiksCubeEnv.ObservationSize, obs.Length);
+        for (int sticker = 0; sticker < FaceletCube.FaceletCount; sticker++)
+        {
+            var group = obs.AsSpan(sticker * FaceletCube.FaceCount, FaceletCube.FaceCount);
+            Assert.Equal(1f, group.ToArray().Sum());
+            Assert.All(group.ToArray(), v => Assert.True(v is 0f or 1f));
+        }
+    }
+
+    [Fact]
+    public void DepthOneScramble_IsSolvedByTheInverseMove()
+    {
+        var env = new RubiksCubeEnv { FixedScrambleDepth = 1 };
+        for (ulong seed = 0; seed < 10; seed++)
+        {
+            env.Reset(seed);
+            Assert.Single(env.ScrambleMoves);
+            string inverse = FaceletCube.InverseMove(env.ScrambleMoves[0]);
+            int action = Array.IndexOf(FaceletCube.QuarterTurnMoves, inverse);
+            Assert.True(action >= 0);
+
+            var step = env.Step(action);
+            Assert.True(step.Terminated);
+            Assert.False(step.Truncated);
+            Assert.Equal(100, step.Reward);
+        }
+    }
+
+    [Fact]
+    public void NonSolvingMoves_CostOne_AndEpisodeTruncatesAtMaxMoves()
+    {
+        var env = new RubiksCubeEnv(maxScrambleDepth: 1, maxMoves: 5) { FixedScrambleDepth = 1 };
+        env.Reset(3);
+        // Alternate quarter turns of two faces that are neither the scrambled face nor each
+        // other's inverse (mask-legal): no prefix of f1 g1 f1 g1 … can invert a one-move
+        // scramble on a third face, so the episode can only end by truncation.
+        char scrambledFace = env.ScrambleMoves[0][0];
+        string[] faces = [.. new[] { "U", "F", "R" }.Where(f => f[0] != scrambledFace).Take(2)];
+        int first = Array.IndexOf(FaceletCube.QuarterTurnMoves, faces[0]);
+        int second = Array.IndexOf(FaceletCube.QuarterTurnMoves, faces[1]);
+
+        for (int i = 0; i < 4; i++)
+        {
+            var step = env.Step(i % 2 == 0 ? first : second);
+            Assert.Equal(-1, step.Reward);
+            Assert.False(step.Terminated);
+            Assert.False(step.Truncated);
+        }
+        var last = env.Step(first);
+        Assert.False(last.Terminated);
+        Assert.True(last.Truncated);
+        Assert.Throws<InvalidOperationException>(() => env.Step(first));
+    }
+
+    [Fact]
+    public void ActionMask_ForbidsOnlyTheInverseOfTheLastMove()
+    {
+        Assert.All(RubiksCubeEnv.ActionMask(-1), legal => Assert.True(legal));
+
+        var env = new RubiksCubeEnv { FixedScrambleDepth = 3 };
+        env.Reset(5);
+        int action = Array.IndexOf(FaceletCube.QuarterTurnMoves, "F");
+        env.Step(action);
+
+        var mask = env.CurrentActionMask();
+        int inverse = Array.IndexOf(FaceletCube.QuarterTurnMoves, "F'");
+        for (int a = 0; a < RubiksCubeEnv.ActionCount; a++)
+            Assert.Equal(a != inverse, mask[a]);
+
+        Assert.Throws<InvalidOperationException>(() => env.Step(inverse));
+    }
+
+    [Fact]
+    public void ScrambleDepth_IsSampledWithinBand()
+    {
+        var env = new RubiksCubeEnv(maxScrambleDepth: 6);
+        var depths = new HashSet<int>();
+        for (ulong seed = 0; seed < 40; seed++)
+        {
+            env.Reset(seed);
+            Assert.InRange(env.ScrambleDepth, 1, 6);
+            depths.Add(env.ScrambleDepth);
+        }
+        Assert.True(depths.Count >= 4, "expected the curriculum to sample several depths");
+    }
+}
+
 public class CubeSolverTests
 {
     [Fact]

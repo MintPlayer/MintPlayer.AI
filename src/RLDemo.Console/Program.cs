@@ -9,12 +9,13 @@ using MintPlayer.AI.ReinforcementLearning.Core.Solvers;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments;
 using MintPlayer.AI.ReinforcementLearning.Environments.Game2048;
+using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 using MintPlayer.AI.ReinforcementLearning.Environments.RushHour;
 
 // Usage: RLDemo.Console [grid|lake|cartpole|ppo|2048|2048dqn ...] [seed] [--load] [--save] [--data <dir>]
 //        no env args = run everything except 2048dqn (DQN needs a long budget there).
 //        --load: skip training when the model store has a checkpoint; --save: checkpoint after training.
-string[] knownSections = ["grid", "lake", "cartpole", "ppo", "2048", "2048dqn", "rushhour"];
+string[] knownSections = ["grid", "lake", "cartpole", "ppo", "2048", "2048dqn", "rushhour", "cube"];
 var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 ulong masterSeed = 42;
 bool loadModels = false, saveModels = false;
@@ -325,6 +326,80 @@ if (ShouldRun("rushhour"))
                       $"({solvedInBudget / (double)puzzles.Count:P0}, target >= 90%); {solvedAtAll}/{puzzles.Count} solved within 60 moves");
     Console.WriteLine();
     if (animate) AnimateRushHour(env, agent, puzzleIndex: 0);
+    Console.WriteLine();
+}
+
+if (ShouldRun("cube"))
+{
+    Console.WriteLine("=== Rubik's Cube — Double DQN on shallow scrambles (quarter-turn depths 1-6) ===");
+    Console.WriteLine("    gate (PRD §11): >= 90% of 100 eval scrambles (depths 1-6) solved within 20 moves");
+
+    var seeds = new SeedSequence(masterSeed);
+    var env = new RubiksCubeEnv(maxScrambleDepth: 6, maxMoves: 20);
+
+    GreedyQAgent agent;
+    if (TryLoadMlp("cube", "dqn") is { } cubeNetwork)
+    {
+        agent = new GreedyQAgent(cubeNetwork, RubiksCubeEnv.ActionCount);
+    }
+    else
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        // Same recipe as the web playground's CubeModelService.
+        var result = DqnTrainer.Train(env, new DqnOptions
+        {
+            Hidden = [256, 256],
+            Gamma = 0.99,
+            LearningRate = 5e-4f,
+            MaxSteps = 600_000,
+            BufferCapacity = 200_000,
+            Epsilon = new LinearSchedule(1.0, 0.05, 200_000),
+            EvalEvery = 10_000,
+            EvalEpisodes = 100,
+            SolveThreshold = 88, // ~90% solved on the 1-6 band (return = 101 - moves)
+            OnProgress = p => Console.WriteLine(
+                $"  step {p.Step,7}/{p.MaxSteps}  eval mean return: {p.EvalMeanReturn,6:F1}  epsilon: {p.Epsilon:F3}  loss: {p.LastLoss:F4}"),
+        }, seeds);
+        sw.Stop();
+        Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalMinutes:F1} min");
+        agent = result.Agent;
+        SaveMlp("cube", "dqn", result.Network);
+    }
+
+    // Greedy rollouts first; failures retried with the Q-guided lookahead, mirroring the
+    // solve API (aiMode greedy/search — the Rush Hour M11 pattern, honest either way).
+    int totalSolved = 0, totalEpisodes = 0, totalGreedy = 0;
+    for (int depth = 1; depth <= 6; depth++)
+    {
+        env.FixedScrambleDepth = depth;
+        int greedySolved = 0, searchSolved = 0;
+        const int episodes = 100;
+        for (int episode = 0; episode < episodes; episode++)
+        {
+            env.Reset((ulong)(1000 * depth + episode));
+            var obs = env.CurrentObservation();
+            bool solved = false;
+            while (true)
+            {
+                var step = env.Step(agent.Act(obs, env.CurrentActionMask(), greedy: true));
+                obs = step.Observation;
+                if (step.Terminated) { solved = true; greedySolved++; break; }
+                if (step.Truncated) break;
+            }
+            if (!solved)
+            {
+                var start = new FaceletCube();
+                start.Apply(env.ScrambleMoves);
+                if (CubeQSearch.Solve(agent, start).Solved) searchSolved++;
+            }
+        }
+        env.FixedScrambleDepth = null;
+        totalGreedy += greedySolved;
+        totalSolved += greedySolved + searchSolved;
+        totalEpisodes += episodes;
+        Console.WriteLine($"  depth {depth}: {greedySolved}/{episodes} greedy, +{searchSolved} with lookahead = {greedySolved + searchSolved}/{episodes} within 20 moves");
+    }
+    Console.WriteLine($"gate: {totalSolved}/{totalEpisodes} solved ({totalSolved / (double)totalEpisodes:P1}, target >= 90%); greedy alone {totalGreedy / (double)totalEpisodes:P1}");
     Console.WriteLine();
 }
 

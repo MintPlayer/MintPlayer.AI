@@ -17,10 +17,69 @@ public sealed record CubeSolveRequest(CubeStateDto? State);
 
 public sealed record CubeSolveResponse(string[] Solution, int MoveCount, long SolveTimeMs, string? Error);
 
+/// <summary>
+/// The AI's attempt, reported honestly (PRD §11): <paramref name="Solved"/> is false when
+/// even the lookahead ran out of budget — expected on scrambles deeper than the trained
+/// band. <paramref name="AiMode"/> says which mode produced the answer ("greedy" =
+/// reactive rollout, "search" = Q-guided lookahead, the M11 pattern).
+/// <paramref name="AlgorithmMoveCount"/> is the Kociemba reference for comparison.
+/// </summary>
+public sealed record CubeSolveAiResponse(bool Solved, string[] Solution, int MoveCount, int AlgorithmMoveCount, string AiMode);
+
 [ApiController]
 [Route("api/cube")]
-public sealed class CubeController(GalleryStore gallery) : ControllerBase
+public sealed class CubeController(CubeModelService model, GalleryStore gallery) : ControllerBase
 {
+    [HttpGet("status")]
+    public StatusResponse Status()
+    {
+        _ = model.Agent; // touch: lazily loads a stored checkpoint so status reflects it
+        return new(model.Status.ToString().ToLowerInvariant(),
+            model.TrainingStep, model.TrainingMaxSteps, model.LastEvalReturn, model.Error);
+    }
+
+    /// <summary>Runs the trained DQN on the drawn cube (greedy, ≤ 20 quarter-turns); honest about failure.</summary>
+    [HttpPost("solve-ai")]
+    public ActionResult<CubeSolveAiResponse> SolveAi(CubeSolveRequest request)
+    {
+        if (!TryBuildCube(request, out var cube, out string? error))
+            return BadRequest(new CubeSolveResponse([], 0, 0, error));
+
+        var agent = model.Agent;
+        if (agent is null)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, Status());
+
+        // The Kociemba reference also vets the cube (orientation/parity errors that the
+        // structural check cannot see) — never let the AI loose on an unsolvable cube.
+        var reference = CubeSolver.Solve(cube);
+        if (!reference.Solved)
+            return BadRequest(new CubeSolveResponse([], 0, 0, reference.Error));
+
+        // Reactive play first; when that fails, the same net guides a best-first search
+        // (its Q-values are the heuristic) — still "the AI", now with lookahead, and
+        // honest about which mode produced the answer (the Rush Hour M11 pattern).
+        var (solved, moves) = CubeModelService.Rollout(agent, cube);
+        string aiMode = "greedy";
+        if (!solved)
+        {
+            var search = CubeQSearch.Solve(agent, cube);
+            aiMode = "search";
+            if (search.Solved)
+                (solved, moves) = (true, [.. search.Moves]);
+        }
+        var response = new CubeSolveAiResponse(solved, [.. moves], moves.Count, reference.Moves.Length, aiMode);
+
+        // Only solved attempts are replayable from the gallery (replay reconstructs the
+        // submitted cube by inverting the solution), so failures are not persisted.
+        if (solved && moves.Count > 0)
+        {
+            string how = aiMode == "search" ? "AI (with lookahead)" : "AI";
+            gallery.Add("cube", $"{how} solved it in {moves.Count} moves (Kociemba reference {reference.Moves.Length})",
+                request, new CubeSolveResponse([.. moves], moves.Count, 0, null));
+        }
+        return response;
+    }
+
     /// <summary>Solves the cube with the Kociemba two-phase algorithm (the oracle, PRD §11).</summary>
     [HttpPost("solve")]
     public ActionResult<CubeSolveResponse> Solve(CubeSolveRequest request)
