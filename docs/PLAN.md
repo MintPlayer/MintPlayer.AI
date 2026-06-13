@@ -494,29 +494,53 @@ longer buys capability — the wall is **network capacity**, the same lesson M11
 Rush Hour's 92.3%. (Read the **greedy %**, not the gate total: A* already mops up greedy
 misses near the ceiling, so the 100-scramble total is a poor discriminator above ~96.)
 
-1. **Width as a parameter** — trunk `324 → 1024 → 1024` (≈ 3.2× the matmul cost/step).
-   Hidden size is baked into the checkpoint, so this is a **fresh net under a new id**
-   (e.g. `cube.policy-wide`) — it cannot resume the 512-wide weights. Keep the shipped
-   512 net in place until the wide one beats it on the same gate seeds.
+**Approach — a width *ladder*, not a single guess.** Width is the obvious capacity
+lever, but it may not be the binding constraint (the depth-≥8 greedy stall smells more
+like distribution coverage than capacity — see step 2). So make trunk width a config
+parameter and climb the ladder, reading the signal off each rung before paying for the
+next. Hidden size is baked into the checkpoint, so each width is a **fresh net under its
+own id** (e.g. `cube.policy-w1024`) — it cannot resume a narrower net's weights; the
+shipped 512 net stays in place until a wider one beats it on the same gate seeds.
+
+| Trunk | Params | MACs/sample | vs 512 | Samples in an 8 h CPU overnight | Verdict |
+|---|---|---|---|---|---|
+| 512→512 (shipped) | ~0.44 M | ~435 k | 1× | ~134 M (last night) | plateaued |
+| **1024→1024** | ~1.40 M | ~1.39 M | 3.2× | ~59 M | **rung 1 — CPU-trainable** |
+| 2048→2048 | ~4.89 M | ~4.88 M | 11.2× | ~19 M (under-trained) | rung 2 — **GPU-gated** |
+
+1. **Rung 1 — `324 → 1024 → 1024`.** The largest net that still trains to convergence on
+   CPU overnight. This is the experiment that tells us whether width is even the right
+   lever, *before* committing to the GPU work a bigger net needs.
 2. **DAgger-style on-policy mix** (the M11 lesson): relabel the states the net actually
    visits during greedy rollout with the Kociemba oracle, not only random scrambles —
-   targets the distribution mismatch that caps greedy from depth ≥ 8.
+   targets the distribution mismatch that likely caps greedy from depth ≥ 8. Apply at
+   rung 1; if it lifts greedy sharply, the wall was coverage, not capacity.
 3. **Weighted A\*** at inference (`h ← w·h`, `w > 1`): no retraining, cuts depth-10+
    search latency; report any move-count inflation honestly.
-4. Re-run the gate; **ship the wide net only on a clean win**.
+4. **Decide rung 2 from rung-1 evidence — don't pre-commit to 2048:**
+   - *Greedy jumps **and** rung-1 loss is still falling at the deadline* → width is paying
+     and the net is data-limited → `2048→2048` is justified. But at 11× the cost it's
+     **under-trained on CPU (~19 M samples/night) and double-buffering can't save a
+     train-bound loop** — so rung 2 ships only on the M12 GPU path, very possibly paired
+     with a value-iteration (DAVI-style) objective rather than pure supervised imitation
+     (how the serious cube solvers use nets this size).
+   - *Greedy plateaus like 512 did* → the wall is the imitation **algorithm**, not width →
+     **skip 2048**; pivot to DAgger-heavy / value-iteration training instead of paying 11×
+     for little gain.
 
 **Gate (pre-registered):** ≥ 98/100 across depths 1–10 within 40 quarter-turns **and**
 greedy alone ≥ 70% (the metric that actually moves), evaluated on the same fixed gate
-seeds as M16; the wide net replaces the 512 net only if it beats it on both.
+seeds as M16; a wider net replaces the shipped one only if it beats it on both.
 
-**Performance coupling — this milestone fires the M12 trigger.** The 3.2× wider trunk,
-on the serial generate-then-train loop (`CubeLab.cs` alternates `Parallel.For` data-gen
-with a single-threaded train pass — neither saturates its resource), makes the training
-GEMM the campaign bottleneck for the first time, and that GEMM runs at ~1.4 of ~20
-GFLOP/s. Cheapest-first order: **(a)** double-buffer generation against training (fills
-the idle halves of the current loop, pure-CPU, ~up-to-2× wall-clock), **(b)** multithread
-the managed GEMM, **(c)** the full GPU path (M12) if an overnight wide-net campaign still
-won't converge. (a)/(b) precede (c) because they're days, not weeks, and may suffice.
+**Performance coupling — this milestone fires the M12 trigger.** Even rung 1's 3.2×
+wider trunk, on the serial generate-then-train loop (`CubeLab.cs` alternates
+`Parallel.For` data-gen with a single-threaded train pass — neither saturates its
+resource), makes the training GEMM the campaign bottleneck for the first time, and that
+GEMM runs at ~1.4 of ~20 GFLOP/s. Cheapest-first order: **(a)** double-buffer generation
+against training (fills the idle halves of the current loop, pure-CPU, ~up-to-2×
+wall-clock — helps rung 1, but *not* a train-bound rung-2 net), **(b)** multithread the
+managed GEMM, **(c)** the full GPU path (M12), which rung 2 (2048) requires outright.
+(a)/(b) precede (c) because they're days, not weeks, and may suffice for rung 1.
 
 ## Testing strategy (cross-cutting, from research)
 
@@ -576,12 +600,16 @@ pushed the cube net to **97/100** (greedy 54% → 64%) and **confirmed the 512-w
 has plateaued** — capacity, not data, is now the wall. Next candidates, in suggested
 order:
 
-0. **M17 — wider cube policy net** *(active next milestone, spec'd above)*: a fresh
-   1024-wide trunk (can't resume the 512 ckpt), DAgger-style on-policy relabeling, and
-   weighted A*. This is the agreed next step; it also **fires the M12 trigger** — the
-   3.2×-wider trunk makes the training GEMM the bottleneck, so M17 carries the cheaper
-   pre-GPU levers (double-buffer the serial gen/train loop, multithread the CPU GEMM)
-   and hands off to M12 only if an overnight CPU campaign still won't converge.
+0. **M17 — wider cube policy net** *(active next milestone, spec'd above)*: a **width
+   ladder**, not a single size — rung 1 is a fresh 1024-wide trunk (the largest that
+   still trains to convergence on CPU overnight; can't resume the 512 ckpt), plus
+   DAgger-style on-policy relabeling and weighted A*. Rung 2 (2048-wide, ~11× the cost)
+   is decided *from rung-1 evidence* — justified only if greedy jumps and the net is
+   still data-limited, and then GPU-gated (M12), very possibly with a value-iteration
+   objective. M17 **fires the M12 trigger** either way: even rung 1's 3.2×-wider trunk
+   makes the training GEMM the bottleneck, so M17 carries the cheaper pre-GPU levers
+   (double-buffer the serial gen/train loop, multithread the CPU GEMM); 2048 needs the
+   full GPU path outright.
 
 1. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*

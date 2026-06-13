@@ -204,11 +204,12 @@ or training campaigns become throughput-bound beyond overnight CPU runs (~40 M
 oracle-labeled samples/hour today).
 
 > **Update 2026-06-13 — first trigger met.** The cube imitation net plateaued (greedy
-> 54% → 64% over a ~236 M-sample overnight run), so PLAN §M17 calls for a 3.2×-wider
-> trunk. That tips the campaign from data-bound to compute-bound. Two cheaper CPU-side
-> levers come first (double-buffer the serial generate/train loop; multithread the
-> managed GEMM); the GPU path here is justified only if a wide-net overnight CPU
-> campaign still won't converge.
+> 54% → 64% over a ~236 M-sample overnight run), so PLAN §M17 opens a **width ladder**.
+> Rung 1 (1024-wide, 3.2×) still trains on CPU and comes first behind two cheaper levers
+> (double-buffer the serial generate/train loop; multithread the managed GEMM). **Rung 2
+> (2048-wide, ~11×) is GPU-gated — it can't be trained to convergence on CPU overnight
+> (~19 M samples), and a train-bound loop defeats double-buffering — so it's the concrete
+> first GPU consumer**, decided only if rung 1 shows width is the binding lever.
 
 **Key findings from the assessment:**
 
