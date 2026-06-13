@@ -1,5 +1,6 @@
 using ILGPU;
 using ILGPU.Runtime;
+using ILGPU.Runtime.Cuda;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 
 namespace MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -50,12 +51,27 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     public IlgpuBackend(bool preferCpu = false)
     {
         _context = Context.CreateDefault();
-        var device = _context.GetPreferredDevice(preferCPU: preferCpu);
-        _accelerator = device.CreateAccelerator(_context);
+        _accelerator = SelectDevice(_context, preferCpu).CreateAccelerator(_context);
 
         _gemm = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int>(Gemm_Kernel);
         _gemmTransposeA = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int>(GemmTransposeA_Kernel);
         _gemmTransposeB = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int>(GemmTransposeB_Kernel);
+    }
+
+    /// <summary>
+    /// Picks the device. Default: prefer a discrete CUDA GPU specifically — on laptops with
+    /// both an integrated Intel iGPU (OpenCL) and a discrete NVIDIA card, ILGPU's
+    /// <c>GetPreferredDevice</c> picks the weaker iGPU, so we select CUDA first, then any
+    /// other non-CPU device, then the CPU accelerator. <paramref name="preferCpu"/> forces
+    /// the CPU accelerator (tests, GPU-less machines).
+    /// </summary>
+    private static Device SelectDevice(Context context, bool preferCpu)
+    {
+        if (preferCpu)
+            return context.GetPreferredDevice(preferCPU: true);
+        return context.Devices.OfType<CudaDevice>().Cast<Device>().FirstOrDefault()
+            ?? context.Devices.FirstOrDefault(d => d.AcceleratorType != AcceleratorType.CPU)
+            ?? context.GetPreferredDevice(preferCPU: true);
     }
 
     /// <summary>The selected device's name (e.g. "NVIDIA GeForce RTX 3060 Laptop GPU" or a CPU).</summary>

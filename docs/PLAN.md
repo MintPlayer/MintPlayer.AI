@@ -364,6 +364,33 @@ alternative if ILGPU ever falls short.
   plateau. These are *showcases of the SDK's GPU path*, run because they're now cheap,
   not because the demo quality is the goal; results added to the M11/M17 tables.
 
+### Measured 2026-06-13 (dev machine: 8 logical cores, RTX 3060 Laptop + Intel Iris Xe)
+
+**CPU thread-scaling (M12a) — near-linear on the GEMM, Amdahl-limited end-to-end:**
+
+| Shape | dop 1 | dop 8 | speedup |
+|---|---|---|---|
+| GEMM 256×324×1024 (trunk1) | 31 GFLOP/s | **123** | 3.95× |
+| GEMM 256×1024×1024 (trunk2) | 23 | 79 | 3.41× |
+| Full cube-1024 Adam step | 14 steps/s | **36** (9,240 samples/s) | 2.52× |
+
+**CPU↔GPU crossover (M12b) — host-span ILGPU, *includes* host↔device transfer:**
+
+| Shape | CPU 8-thread | RTX 3060 (host-span) | winner |
+|---|---|---|---|
+| 256×324×1024 | 123 GFLOP/s | 49 | **CPU** (transfer-bound) |
+| 256×1024×1024 | 79 | 91 | GPU (1.15×) |
+| 1024×1024×1024 | ~80 | **146** | GPU (~1.8×) |
+
+**Finding — the host-span GPU path leaves ~98% of the 3060 on the table** (146 of ~10,000
+GFLOP/s): per-call transfer + allocation dominate, exactly as PRD §10 predicted. So:
+- For the **current 1024-wide imitation net, 8-thread CPU (9,240 samples/s) wins or ties** —
+  do NOT switch the default to GPU; the device-selection picks CUDA over the iGPU now.
+- The GPU only pulls ahead at **large square GEMMs** (1024²+), and even then modestly *until*
+  device-resident tensors remove the per-call transfer. **So M12c-perf pays off specifically
+  in the big-net regime (the 2048-wide / value-iteration showcase), and should be built
+  *with* M12d — not retrofitted onto the small imitation net, where it would regress.**
+
 ## M11 — Stretch (unordered, not started)
 
 MountainCar (exploration stress test) · Snake (demo gif) · TorchSharp `IComputeBackend`
@@ -606,6 +633,7 @@ managed GEMM, **(c)** the full GPU path (M12), which rung 2 (2048) requires outr
 | M14 cube RL | ≥ 90% of depth-1–6 scrambles solved within 20 moves | **100%** (600/600; greedy alone 77.8%, rest via Q-guided lookahead) |
 | M15 classic 2048 | classic animations live; replay reconstruction == `FinalCells` | passed (2,491-move replay bit-exact; slide/pop/appear verified in-browser) |
 | M16 cube imitation | ≥ 90% of depth-1–10 scrambles within 40 quarter-turns | **96%** (96/100; greedy alone 54%) after a 2 h resumable campaign |
+| M17 wider net (1024, rung 1) | beat the 512 net on the same gate seeds | **96/100, greedy 69%** (vs 512's 97/100, greedy 64%) at *half* the samples — modest greedy gain, accuracy plateaued ~79% like 512: width is diminishing, the algorithm is the lever |
 
 ## Shipped (2026-06-11) — release engineering
 
