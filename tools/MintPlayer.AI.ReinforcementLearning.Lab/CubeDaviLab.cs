@@ -1,0 +1,141 @@
+using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
+using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
+using MintPlayer.AI.ReinforcementLearning.Core.Planning;
+using MintPlayer.AI.ReinforcementLearning.Core.Random;
+using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
+using MintPlayer.AI.ReinforcementLearning.Ilgpu;
+
+/// <summary>
+/// Teacher-free cube campaign (`--game cube-davi`): trains a value net by deep approximate
+/// value iteration (<see cref="ValueIterationTrainer{TState}"/>) over <see cref="CubeModel"/> —
+/// no Kociemba, no oracle, just the goal and a cost objective. A solve-rate curriculum grows the
+/// scramble depth as the net masters each level. Runs on the <see cref="AdaptiveBackend"/>: DAVI's
+/// one-step lookahead evaluates ActionCount× successors per state, so the value-net forwards are
+/// large enough to land on the GPU (the small per-step train pass stays on the CPU). Resumable:
+/// the value net reloads from the model store (`cube`/`value-davi`).
+/// </summary>
+internal static class CubeDaviLab
+{
+    private const int Hidden = 1024;
+
+    public static void Run(string[] args)
+    {
+        double hours = 9;
+        string dataDir = "data";
+        ulong seed = 1;
+        int width = Hidden;
+        int maxDepthCap = 8;
+        bool evalOnly = false;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--data" && i + 1 < args.Length) dataDir = args[++i];
+            else if (args[i] == "--seed" && i + 1 < args.Length) seed = ulong.Parse(args[++i]);
+            else if (args[i] == "--width" && i + 1 < args.Length) width = int.Parse(args[++i]);
+            else if (args[i] == "--max-depth" && i + 1 < args.Length) maxDepthCap = int.Parse(args[++i]);
+            else if (args[i] == "--eval-only") evalOnly = true;
+        }
+
+        Backend.Current = new AdaptiveBackend();
+        Log($"compute backend: {((AdaptiveBackend)Backend.Current).Describe()}");
+
+        var store = new FileModelStore(dataDir);
+        string logPath = Path.Combine(store.RootDirectory, "logs");
+        Directory.CreateDirectory(logPath);
+        string csvPath = Path.Combine(logPath, "cube-davi.csv");
+        if (!File.Exists(csvPath))
+            File.AppendAllText(csvPath, "utc,iterations,curriculumDepth,loss," + string.Join(',', Enumerable.Range(1, maxDepthCap).Select(d => $"d{d}")) + "\n");
+
+        Mlp net;
+        using (var existing = store.TryOpenRead(CubeIds.Environment, "value-davi"))
+        {
+            if (existing is not null) { net = MlpCheckpoint.Load(existing); Log($"resumed DAVI value net (width {net.Sizes[1]})"); }
+            else { net = new Mlp([RubiksCubeEnv.ObservationSize, width, width, 1], new Xoshiro256StarStar(seed ^ 0xDA71), Activation.Relu); Log($"fresh DAVI value net (width {width})"); }
+        }
+
+        var model = new CubeModel();
+        var options = new ValueIterationOptions { BatchSize = 128, LearningRate = 1e-3f, DistanceScale = 1f, TargetUpdateInterval = 200 };
+        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, options);
+
+        if (evalOnly)
+        {
+            ReportEval(trainer, csvPath, iterations: 0, curriculumDepth: maxDepthCap, loss: 0, maxDepthCap);
+            return;
+        }
+
+        // Solve-rate curriculum: start shallow, deepen once the current level is ~mastered. The
+        // value-iteration signal propagates outward from the goal, so easy depths must land first.
+        int curriculumDepth = 2;
+        var sampleRng = new Xoshiro256StarStar(seed);
+        FaceletCube Sample()
+        {
+            var cube = new FaceletCube();
+            cube.Apply(FaceletCube.ScrambleMoves(sampleRng, 1 + sampleRng.NextInt(curriculumDepth), quarterTurnsOnly: true));
+            return cube;
+        }
+
+        var deadline = DateTime.UtcNow.AddHours(hours);
+        long totalIterations = 0;
+        float lastLoss = 0;
+        Log($"training until {deadline:u} (~{hours:F1} h), data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
+
+        while (DateTime.UtcNow < deadline)
+        {
+            trainer.Train(Sample, iterations: 500, onIteration: (_, loss) => lastLoss = loss);
+            totalIterations += 500;
+
+            var rates = ReportEval(trainer, csvPath, totalIterations, curriculumDepth, lastLoss, maxDepthCap);
+            store.Save(CubeIds.Environment, "value-davi", s => MlpCheckpoint.Save(net, s));
+
+            // Advance the curriculum once the deepest trained level is essentially solved.
+            if (curriculumDepth < maxDepthCap && rates[curriculumDepth] >= 0.95)
+            {
+                curriculumDepth++;
+                Log($"curriculum advanced → scramble depth {curriculumDepth}");
+            }
+        }
+
+        Log("time budget reached — final checkpoint saved.");
+    }
+
+    /// <summary>Per-depth greedy solve rate (20 fixed-seed scrambles each), logged to CSV; returns depth→rate.</summary>
+    private static Dictionary<int, double> ReportEval(
+        ValueIterationTrainer<FaceletCube> trainer, string csvPath, long iterations, int curriculumDepth, float loss, int maxDepthCap)
+    {
+        var rates = new Dictionary<int, double>();
+        var report = new System.Text.StringBuilder();
+        report.Append($"[eval] iters {iterations:N0}, curr.depth {curriculumDepth}, loss {loss:F4} | ");
+        var cells = new List<string> { $"{DateTime.UtcNow:u}", $"{iterations}", $"{curriculumDepth}", $"{loss:F5}" };
+
+        for (int depth = 1; depth <= maxDepthCap; depth++)
+        {
+            int solved = 0;
+            const int episodes = 20;
+            for (int episode = 0; episode < episodes; episode++)
+            {
+                var evalRng = new Xoshiro256StarStar((ulong)(700_000 + 1_000 * depth + episode));
+                var cube = new FaceletCube();
+                cube.Apply(FaceletCube.ScrambleMoves(evalRng, depth, quarterTurnsOnly: true));
+                if (cube.IsSolved || trainer.Solve(cube, maxSteps: 2 * depth + 8) is not null) solved++;
+            }
+            double rate = solved / (double)episodes;
+            rates[depth] = rate;
+            cells.Add($"{rate:F3}");
+            report.Append($"d{depth} {solved}/{episodes} | ");
+        }
+
+        Log(report.ToString());
+        File.AppendAllText(csvPath, string.Join(',', cells) + "\n");
+        return rates;
+    }
+
+    private static float[] Featurize(FaceletCube cube)
+    {
+        var obs = new float[RubiksCubeEnv.ObservationSize];
+        RubiksCubeEnv.WriteObservation(cube, obs);
+        return obs;
+    }
+
+    private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+}

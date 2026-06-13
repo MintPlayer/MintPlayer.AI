@@ -17,10 +17,11 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 
 for (int i = 0; i < args.Length; i++)
 {
-    if (args[i] == "--game" && i + 1 < args.Length && args[i + 1].Equals("cube", StringComparison.OrdinalIgnoreCase))
+    if (args[i] == "--game" && i + 1 < args.Length)
     {
-        CubeLab.Run(args);
-        return;
+        string game = args[i + 1];
+        if (game.Equals("cube-davi", StringComparison.OrdinalIgnoreCase)) { CubeDaviLab.Run(args); return; }
+        if (game.Equals("cube", StringComparison.OrdinalIgnoreCase)) { CubeLab.Run(args); return; }
     }
 }
 
