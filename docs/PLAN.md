@@ -299,6 +299,12 @@ training campaigns become throughput-bound beyond what overnight CPU runs delive
 The assessment below was made with the dev machine's RTX 3060 Laptop GPU
 (6 GB, compute 8.6, driver current) so the plan is ready to execute.
 
+**Trigger fired 2026-06-13:** the cube imitation net plateaued (M16 → overnight run,
+greedy 54% → 64% over ~236 M samples), so M17 calls for a 3.2×-wider trunk — the first
+"plateau demands a wider net" condition met. Note the cheaper pre-GPU levers in M17
+(double-buffer the serial gen/train loop, then multithread the CPU GEMM); reach for the
+GPU path here only if a wide-net overnight campaign still won't converge on CPU.
+
 **The constraint that shapes the design:** the existing `IComputeBackend` seam passes
 host `float[]`s, so a naive CUDA backend would LOSE to the CPU at today's sizes — a
 256×384 batch-GEMM is ~75 MFLOPs ≈ 7 µs of GPU compute, less than one kernel launch,
@@ -479,6 +485,39 @@ once yields ~25–35 labeled states), then greedy + policy-guided A* at inferenc
 within 40 quarter-turns (greedy or search) after a ~1 h campaign; deeper-band rates
 reported honestly (longer campaigns keep improving it — the net is resumable).
 
+## M17 — Wider cube policy net  *(lift the imitation ceiling; triggers M12)*
+
+The overnight campaign (2026-06-12→13, two resumed stints, ~236 M cumulative
+oracle-labeled states) confirmed the 512-wide MLP has **plateaued**: greedy action
+accuracy moved only 54% → 64% and the gate sat at 96→97/100. More of the same data no
+longer buys capability — the wall is **network capacity**, the same lesson M11 hit at
+Rush Hour's 92.3%. (Read the **greedy %**, not the gate total: A* already mops up greedy
+misses near the ceiling, so the 100-scramble total is a poor discriminator above ~96.)
+
+1. **Width as a parameter** — trunk `324 → 1024 → 1024` (≈ 3.2× the matmul cost/step).
+   Hidden size is baked into the checkpoint, so this is a **fresh net under a new id**
+   (e.g. `cube.policy-wide`) — it cannot resume the 512-wide weights. Keep the shipped
+   512 net in place until the wide one beats it on the same gate seeds.
+2. **DAgger-style on-policy mix** (the M11 lesson): relabel the states the net actually
+   visits during greedy rollout with the Kociemba oracle, not only random scrambles —
+   targets the distribution mismatch that caps greedy from depth ≥ 8.
+3. **Weighted A\*** at inference (`h ← w·h`, `w > 1`): no retraining, cuts depth-10+
+   search latency; report any move-count inflation honestly.
+4. Re-run the gate; **ship the wide net only on a clean win**.
+
+**Gate (pre-registered):** ≥ 98/100 across depths 1–10 within 40 quarter-turns **and**
+greedy alone ≥ 70% (the metric that actually moves), evaluated on the same fixed gate
+seeds as M16; the wide net replaces the 512 net only if it beats it on both.
+
+**Performance coupling — this milestone fires the M12 trigger.** The 3.2× wider trunk,
+on the serial generate-then-train loop (`CubeLab.cs` alternates `Parallel.For` data-gen
+with a single-threaded train pass — neither saturates its resource), makes the training
+GEMM the campaign bottleneck for the first time, and that GEMM runs at ~1.4 of ~20
+GFLOP/s. Cheapest-first order: **(a)** double-buffer generation against training (fills
+the idle halves of the current loop, pure-CPU, ~up-to-2× wall-clock), **(b)** multithread
+the managed GEMM, **(c)** the full GPU path (M12) if an overnight wide-net campaign still
+won't converge. (a)/(b) precede (c) because they're days, not weeks, and may suffice.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -532,12 +571,17 @@ Beyond the milestones, the project is published and deployed:
 
 **M13–M16 are done** (2026-06-12): the Rubik's Cube game is in the playground with both
 the Kociemba button and a gate-passing AI (imitation policy net + lookahead, DQN
-fallback), and 2048 plays like the original again. Next candidates, in suggested order:
+fallback), and 2048 plays like the original again. An overnight run (2026-06-12→13)
+pushed the cube net to **97/100** (greedy 54% → 64%) and **confirmed the 512-wide MLP
+has plateaued** — capacity, not data, is now the wall. Next candidates, in suggested
+order:
 
-0. **Deeper cube AI**: resume `Lab --game cube` (checkpoints in `models/`) — the MLP is
-   plateauing at ~73.5% action accuracy, so the bigger wins are a wider trunk and/or a
-   DAgger-style on-policy mix (relabel the states the net actually visits — the M11
-   lesson), and a weighted-A* variant to cut search latency at depth 10+.
+0. **M17 — wider cube policy net** *(active next milestone, spec'd above)*: a fresh
+   1024-wide trunk (can't resume the 512 ckpt), DAgger-style on-policy relabeling, and
+   weighted A*. This is the agreed next step; it also **fires the M12 trigger** — the
+   3.2×-wider trunk makes the training GEMM the bottleneck, so M17 carries the cheaper
+   pre-GPU levers (double-buffer the serial gen/train loop, multithread the CPU GEMM)
+   and hands off to M12 only if an overnight CPU campaign still won't converge.
 
 1. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*
