@@ -87,6 +87,14 @@ public sealed class ValueIterationTrainer<TState>
         => GreedyValuePlanner.Solve(_model, Value, start, maxSteps);
 
     /// <summary>
+    /// A weighted-A* solver bound to this trainer's value net — reaches states the greedy policy
+    /// gets stuck on, at the cost of expanding a frontier. <paramref name="weight"/> &gt; 1 trades
+    /// optimality for depth/speed.
+    /// </summary>
+    public IReadOnlyList<int>? SolveWithSearch(TState start, int maxExpansions, float weight = 1f)
+        => ValueGuidedSearch.Solve(_model, Value, start, maxExpansions, weight);
+
+    /// <summary>
     /// Run <paramref name="iterations"/> DAVI updates. <paramref name="sampleState"/> draws a
     /// training state each call (typically a random scramble from the goal). <paramref name="onIteration"/>
     /// receives (iteration, batch-mean Huber loss) for progress logging.
