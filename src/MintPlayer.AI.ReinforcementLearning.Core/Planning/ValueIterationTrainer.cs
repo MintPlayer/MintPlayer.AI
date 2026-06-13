@@ -98,9 +98,30 @@ public sealed class ValueIterationTrainer<TState>
         }
     }
 
-    /// <summary>A greedy solver bound to this trainer's current value net.</summary>
+    /// <summary>
+    /// A greedy solver bound to this trainer's value net. Evaluates each step's successors in a
+    /// single batched forward (the eval hot path — far cheaper than one tiny forward per action).
+    /// </summary>
     public IReadOnlyList<int>? Solve(TState start, int maxSteps)
-        => GreedyValuePlanner.Solve(_model, Value, start, maxSteps);
+        => GreedyValuePlanner.Solve(_model, BatchValue, start, maxSteps);
+
+    /// <summary>Cost-to-go (MOVES, ≥ 0) for a batch of states in ONE forward — used by the greedy solver.</summary>
+    private float[] BatchValue(IReadOnlyList<TState> states)
+    {
+        int n = states.Count;
+        var features = new float[n * _featureSize];
+        for (int i = 0; i < n; i++)
+            _featurize(states[i]).CopyTo(features.AsSpan(i * _featureSize, _featureSize));
+
+        using (GradMode.NoGrad())
+        {
+            var values = _net.Forward(new Tensor(features, n, _featureSize));
+            var result = new float[n];
+            for (int i = 0; i < n; i++)
+                result[i] = MathF.Max(0f, values.Data[i]) * _options.DistanceScale;
+            return result;
+        }
+    }
 
     /// <summary>
     /// A weighted-A* solver bound to this trainer's value net — reaches states the greedy policy

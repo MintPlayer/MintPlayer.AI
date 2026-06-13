@@ -57,6 +57,64 @@ public class DaviTrainerTests
     }
 
     [Fact]
+    public void BatchedGreedySolve_MatchesPerSuccessorSolve()
+    {
+        // trainer.Solve now batches each step's successors into one forward; it must produce the
+        // exact same path as evaluating successors one at a time (independent rows ⇒ same values).
+        var model = new CubeModel();
+        var net = new Mlp([RubiksCubeEnv.ObservationSize, 64, 1], new Xoshiro256StarStar(5), Activation.Relu);
+        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, new Adam(net.Parameters(), 1e-3f),
+            new ValueIterationOptions { DistanceScale = 1f });
+
+        for (int depth = 1; depth <= 4; depth++)
+        {
+            var rng = new Xoshiro256StarStar((ulong)(4000 + depth));
+            var cube = new FaceletCube();
+            cube.Apply(FaceletCube.ScrambleMoves(rng, depth, quarterTurnsOnly: true));
+
+            var batched = trainer.Solve(cube, maxSteps: depth + 4);
+            var perSuccessor = GreedyValuePlanner.Solve(model, trainer.Value, cube, maxSteps: depth + 4);
+
+            Assert.Equal(perSuccessor is null, batched is null);
+            if (perSuccessor is not null) Assert.Equal(perSuccessor, batched);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public void BatchedGreedySolve_IsFasterThanPerSuccessor()
+    {
+        // Quantify the eval optimization on the campaign's net shape (1024×3).
+        var model = new CubeModel();
+        var net = new Mlp([RubiksCubeEnv.ObservationSize, 1024, 1024, 1024, 1], new Xoshiro256StarStar(9), Activation.Relu);
+        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, new Adam(net.Parameters(), 1e-3f),
+            new ValueIterationOptions { DistanceScale = 1f });
+
+        var cubes = new List<FaceletCube>();
+        for (int i = 0; i < 40; i++)
+        {
+            var c = new FaceletCube();
+            c.Apply(FaceletCube.ScrambleMoves(new Xoshiro256StarStar((ulong)(6000 + i)), 6, quarterTurnsOnly: true));
+            cubes.Add(c);
+        }
+
+        foreach (var c in cubes) { trainer.Solve(c, 14); GreedyValuePlanner.Solve(model, trainer.Value, c, 14); } // warm up
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        foreach (var c in cubes) GreedyValuePlanner.Solve(model, trainer.Value, c, maxSteps: 14);
+        sw.Stop();
+        double perSuccessorMs = sw.Elapsed.TotalMilliseconds;
+
+        sw.Restart();
+        foreach (var c in cubes) trainer.Solve(c, maxSteps: 14);
+        sw.Stop();
+        double batchedMs = sw.Elapsed.TotalMilliseconds;
+
+        System.Console.WriteLine($"[eval perf] per-successor {perSuccessorMs:F0} ms, batched {batchedMs:F0} ms, speedup {perSuccessorMs / batchedMs:F2}×");
+        Assert.True(batchedMs < perSuccessorMs, $"batched ({batchedMs:F0} ms) should beat per-successor ({perSuccessorMs:F0} ms)");
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public void Davi_LearnsToSolveShallowCubes_TeacherFree()
     {
