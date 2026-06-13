@@ -217,14 +217,21 @@ Angular CLI dev server in development; serves the built bundle in production).
 > trains on CPU now; rung 2 (2048-wide) is a natural **GPU showcase** once the perf path
 > lands, since it can't converge on CPU.
 >
-> **Status 2026-06-13:** shipped the **multithreaded CPU GEMM** (M12a — bitwise-identical,
-> the baseline every GPU-less user gets) and an **ILGPU GPU backend** (M12c — a separate
-> `…Ilgpu` package implementing `IComputeBackend`; CUDA when a GPU is present, else ILGPU's
-> CPU accelerator; correctness validated against `ManagedBackend`). The remaining,
-> highest-value piece is **device-resident tensors** (M12c-perf): the current host-span
-> backend transfers every call so it only wins for large GEMMs — the transfer-free
-> evolution is a public-API change that must be driven by the M12b crossover **measured on
-> real GPU hardware**, so it is deliberately deferred until those numbers exist.
+> **Status 2026-06-13 — the pillar landed (PLAN §M12, gate table):**
+> - **M12a multithreaded CPU GEMM** — bitwise-identical, ~3.95× on 8 cores; the baseline every
+>   GPU-less user gets.
+> - **M12b benchmarks** — CPU thread-scaling + CPU↔GPU crossover tables measured & committed.
+> - **M12c ILGPU backend** — separate `…Ilgpu` package implementing `IComputeBackend` (CUDA, else
+>   CPU accelerator); plus **`AdaptiveBackend`** that auto-routes each GEMM CPU-vs-GPU by size, no
+>   knobs. Correctness validated vs `ManagedBackend`.
+> - **M12c-perf (scoped) device-resident forward** — `IlgpuBackend.MlpForwardScalar` keeps an MLP
+>   forward resident on the GPU (no per-layer transfer); **~2× DAVI throughput**, used by the
+>   value-iteration campaign (§13).
+>
+> **Still future:** the FULL device-resident port — evolve `IComputeBackend` to a device-handle API
+> and move the *entire* numerics core (every autograd op + `Tensor`) onto the GPU. The scoped forward
+> proved the win; the full port (a public-API redesign, driven by measured need) unlocks big-net
+> training and is the next big GPU effort.
 
 **Key findings from the assessment:**
 
@@ -332,3 +339,31 @@ seam only): server cells are **exponents** (0–15), classic tiles are **values*
 to `Board2048.SlideLine`/`applyMove` (existing parity: both are standard 2048 rules with
 double-merge prevention); this parity is asserted by replaying AI trajectories against
 the `FinalCells` checksum and by the existing Playwright e2e.
+
+## 13. Teacher-free value iteration — DAVI (M18)
+
+*Added 2026-06-13. Imitation (M16/M17) is capped by its teacher (Kociemba — itself not
+quarter-turn optimal), so the SDK needs a paradigm that can **exceed** a teacher. This is
+that paradigm: deep approximate value iteration (DAVI, à la DeepCubeA), bounded only by the
+cost objective (fewest moves), not a demonstrator. It's a general, reusable trainer — a third
+kind alongside RL (DQN/PPO) and imitation — and the SDK's "beat the teacher" capability.*
+
+Distinct from the exact tabular `Solvers.ValueIteration` (FrozenLake-scale, enumerated states):
+this is the **function-approximation** counterpart for state spaces too large to enumerate
+(the cube has ~4.3×10¹⁹ states), where a net generalizes a cost-to-go it never tabulates.
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Model seam | `IDeterministicModel<TState>` (actions / apply / goal-test / state-key) in `Core.Planning` | The pure forward model classical search and model-based learning share — distinct from the RL `IEnvironment` Reset/Step loop. Minimal, general; the cube implements it as `CubeModel`. |
+| Learning rule | DAVI: `target(s) = min_a [1 + (IsGoal(s′) ? 0 : V_target(s′))]`, anchored `V(goal)=0`, with a periodically-synced target net | The value-iteration update under function approximation; the signal propagates outward from the goal. No oracle/teacher — bounded by the move-cost objective. |
+| Value target scaling | Predict **raw** cost-to-go (`DistanceScale = 1`) | Squashing targets to ~0.1 starves the gradients so the greedy `argmin` can't separate distances (a real finding — it then only solves the depth-1 freebies). |
+| Inference | Greedy descent (`GreedyValuePlanner`) for speed; **weighted A\*** (`ValueGuidedSearch`, `f = g + w·h`) to reach deeper than greedy with no retraining | Greedy is the fast path; the search is the inference-time ceiling-raiser (mirrors the policy-guided A* used for the imitation nets). |
+| Generality | Trainer is generic over `TState`; env-specifics (featurize, state sampler) are injected | The DAVI algorithm is reusable across goal-directed envs (cube, Rush Hour, future), not cube-specific. |
+| Campaign / compute | `Lab --game cube-davi`: solve-rate curriculum (deepen at ≥95%), runs on the `AdaptiveBackend` with the device-resident GPU forward (§10), configurable net (`--width`/`--layers`), persists the full training state (Adam + curriculum + iterations + RNG) for lossless resume | DAVI evaluates ActionCount× successors per state, so the value-net forwards are large enough to win on the GPU; the campaign is the M12d GPU showcase. |
+
+**Validation / gate:** a fast deterministic test proves the greedy policy descends *optimally*
+under an exact (BFS) value; a `[Slow]` test proves the full DAVI loop learns to solve ≥ 80% of
+shallow (depth ≤ 3) cubes **teacher-free**, checked against the `BreadthFirstPlanner` optimum.
+Pre-registered campaign gate: push the curriculum past the imitation net's reach with no oracle.
+The result is a self-taught cube solver — a candidate third solver ("self-taught AI") on the
+web cube page, alongside the Kociemba button and the imitation AI.

@@ -333,36 +333,36 @@ alternative if ILGPU ever falls short.
   Pinning needs `AllowUnsafeBlocks` but stays pure managed (no P/Invoke). *Bitwise-parity
   half of the gate met; the throughput-scaling bench row is captured by M12b on an
   uncontended machine.* (Lab gen/train double-buffering is still open — a follow-up.)
-- **M12b — benchmark (harness built 2026-06-13):** the Bench tool now has a **CPU
-  thread-scaling sweep** (GEMM GFLOP/s and end-to-end training-step speedup vs worker
-  count, on the real M17 cube shapes) **plus a GPU column** that runs `IlgpuBackend` on the
-  same shapes (host-span, so the number includes host↔device transfer) — skipped with a
-  message on a GPU-less machine. *Pending: run uncontended to commit the CPU scaling table
-  (the machine is busy with the M17 cube campaign); run on the RTX 3060 to commit the
-  CPU↔GPU crossover.*
-  **Gate:** a CPU↔GPU crossover table + a CPU thread-scaling table committed to the docs.
-- **M12c — ILGPU backend ✅ *(host-span done 2026-06-13)*:** a separate
+- **M12b — benchmark ✅ *(done 2026-06-13)*:** the Bench tool has a **CPU thread-scaling
+  sweep** (GEMM GFLOP/s + end-to-end training-step speedup vs worker count, on the real cube
+  shapes) **plus a GPU column** running `IlgpuBackend` on the same shapes (host-span, incl.
+  host↔device transfer; skipped on a GPU-less machine, and prefers the discrete CUDA card
+  over an integrated iGPU). Both tables measured + committed below.
+  **Gate (met):** CPU↔GPU crossover + CPU thread-scaling tables committed (see "Measured 2026-06-13").
+- **M12c — ILGPU backend ✅ *(host-span done 2026-06-13, `de362c3`)*:** a separate
   `MintPlayer.AI.ReinforcementLearning.Ilgpu` package (Core stays dependency-free)
   implements `IlgpuBackend : IComputeBackend` with three JIT-compiled GEMM kernels (one
   output element per thread, accumulating per the interface contract). Selects the CUDA
   GPU when present, else ILGPU's CPU accelerator (keeps CI/GPU-less machines green).
   Correctness validated against `ManagedBackend` via the CPU accelerator (`IlgpuBackendTests`,
   relative tolerance — cross-backend equality is approximate, FMA vs separate mul+add).
-  Swap in with `Backend.Current = new IlgpuBackend()`; no autograd/algorithm change.
-  *Real-GPU/CUDA validation is the owner's (no GPU reachable from the build session).*
-  - **M12c-perf (next) — device-resident tensors:** the host-span backend transfers every
-    call, so it LOSES at small sizes and only wins for large GEMMs (PRD §10). The
-    transfer-free evolution — operands resident on the device across a training step — is
-    the real perf win and a public-API change (`IComputeBackend` → device handles). It must
-    be driven by the **M12b crossover measured on real hardware**, not designed blind, so
-    it's deliberately deferred until those numbers exist.
+  **`AdaptiveBackend` ✅ (`74a77e5`)** wraps CPU+GPU and auto-routes each GEMM by MAC count
+  (small → multithreaded CPU, large → CUDA), pure CPU when no GPU — `Backend.Current = new
+  AdaptiveBackend()`, no knobs.
+  - **M12c-perf — device-resident tensors:** the host-span backend transfers every call, so
+    it LOSES at small sizes and only wins for large GEMMs (PRD §10). **Scoped version ✅
+    (`a30d7a0`):** `IlgpuBackend.MlpForwardScalar` runs a whole scalar-MLP forward resident on
+    the GPU (upload input once, GEMM→bias→ReLU on-device, download only the scalars) — used
+    for DAVI's ActionCount× successor evaluation via an injected `batchForward`; **measured
+    ~2× DAVI throughput** (500 iters 20s vs 40s), identical learning. The FULL port (every
+    autograd op + `Tensor` device-resident, an `IComputeBackend` → device-handle redesign)
+    remains future — driven by measured need.
   **Gate (met):** `IlgpuBackend` computes all three GEMMs correctly with `ManagedBackend`
-  parity tests. **Gate (M12c-perf, open):** Lab samples/hour ≥ 5× the CPU baseline at equal
-  model quality via device-resident tensors.
-- **M12d — showcase campaigns:** GPU unlocks the demos that CPU can't reach — the M17
-  2048-wide (or residual/value-iteration) cube net, bigger Rush Hour nets past the 92.3%
-  plateau. These are *showcases of the SDK's GPU path*, run because they're now cheap,
-  not because the demo quality is the goal; results added to the M11/M17 tables.
+  parity tests; scoped resident forward matches the autograd forward.
+- **M12d — showcase campaigns *(in progress)*:** GPU unlocks the demos CPU can't reach. The
+  teacher-free **value-iteration (DAVI) cube campaign (M18)** runs on the GPU device-resident
+  forward — `Lab --game cube-davi` on the RTX 3060. Bigger Rush Hour nets past the 92.3%
+  plateau and the 2048-wide cube remain candidates. Showcases of the SDK's GPU path.
 
 ### Measured 2026-06-13 (dev machine: 8 logical cores, RTX 3060 Laptop + Intel Iris Xe)
 
@@ -602,6 +602,41 @@ wall-clock — helps rung 1, but *not* a train-bound rung-2 net), **(b)** multit
 managed GEMM, **(c)** the full GPU path (M12), which rung 2 (2048) requires outright.
 (a)/(b) precede (c) because they're days, not weeks, and may suffice for rung 1.
 
+## M18 — Value iteration (DAVI)  *(teacher-free self-improvement — the SDK's "beat the teacher" path)*
+
+M16/M17 imitate Kociemba, so they are **capped by the teacher** (and Kociemba isn't even
+quarter-turn optimal). M18 adds the paradigm that can *exceed* a teacher: deep approximate
+value iteration (DAVI, à la DeepCubeA), bounded only by the cost objective (fewest moves),
+not a demonstrator. It's a general, reusable trainer — a third paradigm alongside RL
+(DQN/PPO) and imitation — distinct from the exact tabular `Solvers.ValueIteration` (this is
+the function-approximation counterpart for non-enumerable state spaces).
+
+- **Planning foundation ✅ (`25fe036`):** `IDeterministicModel<TState>` (Core.Planning — the
+  pure forward model: actions / apply / goal-test / state-key, distinct from the RL
+  `IEnvironment` loop) + `BreadthFirstPlanner` (provably-optimal, the validation oracle) +
+  `CubeModel`. Tests: BFS solves shallow cubes optimally, teacher-free.
+- **DAVI trainer ✅ (`db2027e`):** `ValueIterationTrainer<TState>` learns a cost-to-go value
+  net by bootstrapping each target from a one-step lookahead over the model
+  (`target = min_a [1 + (IsGoal(s′) ? 0 : V_target(s′))]`, anchored `V(goal)=0`), with a
+  periodically-synced target net; generic (inject featurize + state sampler). `GreedyValuePlanner`
+  is the greedy inference policy. **Finding: predict RAW cost-to-go (`DistanceScale=1`)** —
+  squashing targets to ~0.1 starved the gradients and the argmin couldn't separate distances.
+- **Value-guided A\* ✅ (`15f8fa3`):** `ValueGuidedSearch` (weighted A*, `f = g + w·h`) +
+  `trainer.SolveWithSearch` — reaches states greedy gets stuck on; the inference-time
+  ceiling-raiser (use for post-run eval + the web demo).
+- **GPU campaign ✅ (`c41fc39`, resume-hardened `9b79ba6`):** `Lab --game cube-davi` — resumable
+  teacher-free campaign on the `AdaptiveBackend`, solve-rate curriculum (deepen at ≥95%),
+  the GPU device-resident successor forward (M12c-perf, ~2× throughput), configurable net
+  depth (`--layers`). Persists the FULL training state (Adam + curriculum + iterations + RNG)
+  so a restart continues losslessly.
+
+**Validated:** fast deterministic test — greedy descends *optimally* under an exact (BFS)
+value; `[Slow]` test — the full DAVI loop learns to solve ≥ 80% of shallow (depth ≤ 3) cubes
+**teacher-free**, checked against the BFS optimum. A 3-min smoke auto-advanced the curriculum
+2→3→4 (d4 19/20). **Gate (pre-registered):** a longer run pushes the curriculum past the
+imitation net's reach (depth ≥ 8 region) with no oracle; deeper still pairs with bigger nets +
+the GPU. Inference uses value-guided A* (`SolveWithSearch`).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -634,6 +669,9 @@ managed GEMM, **(c)** the full GPU path (M12), which rung 2 (2048) requires outr
 | M15 classic 2048 | classic animations live; replay reconstruction == `FinalCells` | passed (2,491-move replay bit-exact; slide/pop/appear verified in-browser) |
 | M16 cube imitation | ≥ 90% of depth-1–10 scrambles within 40 quarter-turns | **96%** (96/100; greedy alone 54%) after a 2 h resumable campaign |
 | M17 wider net (1024, rung 1) | beat the 512 net on the same gate seeds | **96/100, greedy 69%** (vs 512's 97/100, greedy 64%) at *half* the samples — modest greedy gain, accuracy plateaued ~79% like 512: width is diminishing, the algorithm is the lever |
+| M12a CPU GEMM scaling | ~linear to core count; bitwise-identical | GEMM **3.95×** on 8 cores; full step 2.52× (Amdahl); byte-identical dop-1-vs-8 |
+| M12c/perf device-resident forward | match autograd forward; speed up DAVI | matches within tol; **~2× DAVI throughput** (500 iters 20s vs 40s) |
+| M18 DAVI (teacher-free) | learn to solve shallow cubes with no oracle | greedy-optimal under exact value; **≥80%** of depth ≤3 solved teacher-free; smoke curriculum 2→3→4, d4 19/20 |
 
 ## Shipped (2026-06-11) — release engineering
 
@@ -654,26 +692,27 @@ Beyond the milestones, the project is published and deployed:
 
 ## Immediate next step
 
-**M13–M16 are done** (2026-06-12): the Rubik's Cube game is in the playground with both
-the Kociemba button and a gate-passing AI (imitation policy net + lookahead, DQN
-fallback), and 2048 plays like the original again. An overnight run (2026-06-12→13)
-pushed the cube net to **97/100** (greedy 54% → 64%) and **confirmed the 512-wide MLP
-has plateaued** — capacity, not data, is now the wall. Next candidates, in suggested
-order:
+**M13–M18 are done** (2026-06-12→13). The Rubik's Cube game ships with the Kociemba button +
+a gate-passing imitation AI; 2048 plays like the original. Then, with the SDK named as the
+north star: the **GPU pillar (M12)** landed — multithreaded CPU GEMM, the ILGPU/CUDA backend,
+the auto-routing `AdaptiveBackend`, and a scoped device-resident forward (~2× DAVI throughput),
+all measured + committed. **M17** showed width is diminishing (1024 net: greedy 64%→69%, accuracy
+plateaued ~79% — the *algorithm* is the lever). So **M18** added the lever: a teacher-free
+**value-iteration (DAVI) trainer** + value-guided A* + a GPU campaign that learns to solve cubes
+with no Kociemba.
 
 *The north star is the **SDK**, not any demo's score (owner, 2026-06-13). Order favors
 SDK capability over squeezing a showcase.*
 
-0. **M12 — GPU/CUDA backend** *(now a first-class SDK pillar — see above)*: built on its
-   own merits, no longer gated on a demo. Sub-order: **M12a** multithreaded CPU GEMM
-   (ships for its own sake — the baseline every GPU-less user gets) → **M12b** benchmark
-   → **M12c** the device-tensor public API (the crown jewel) → **M12d** showcase
-   campaigns. The owner is taking on the CUDA work directly.
-1. **M17 — wider cube policy net** *(in progress, spec'd above)*: a **width ladder**.
-   Rung 1 (fresh 1024-wide trunk) is *training now* and is a fine CPU-scale showcase +
-   benchmark workload. Rung 2 (2048-wide) is **a GPU showcase under M12d**, not a CPU
-   decision gate — rung 1's converged result informs *which* showcase to build (raw width
-   vs DAgger/value-iteration), but no longer blocks anything.
+0. **Deepen DAVI (M18) — active.** A 13h GPU `cube-davi` run (1024×3 net, device-resident
+   forward, resumable) is pushing the curriculum past the imitation net's reach, teacher-free.
+   Then: re-eval with value-guided A* (`SolveWithSearch`, beats greedy), and **wire `value-davi`
+   into the web cube page as a third "self-taught AI" solver**. Deeper still → bigger nets + the
+   full device-resident port.
+1. **Full device-resident GPU port (M12c-perf, the big one):** evolve `IComputeBackend` to a
+   device-tensor/handle API and move the whole numerics core (all autograd ops + `Tensor`) onto
+   the GPU — the scoped inference forward proved the win; the full port unlocks big-net training.
+   A focused effort, driven by the measured crossover.
 2. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*
 3. **SDK breadth** (the demos exist to show range): algorithm coverage (PPO action
@@ -708,7 +747,10 @@ Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + 
 the Angular dev server itself — do not run `ng serve`). Console demos:
 `dotnet run --project src/RLDemo.Console -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour|cube]
 [seed] [--load] [--save] [--data <dir>]`. Tests: `dotnet test` (`Category=Slow` for gates).
-Training campaigns (both resume net + Adam from the model store):
+Training campaigns (resume net + Adam + full training state from the model store):
 `dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release --
-[--game rushhour|cube] --hours N --data src/RLDemo.Web/data` — `--game cube` also takes
-`--eval-only` for the per-depth gate report; use `--data models` to refresh the shipped seeds.
+[--game rushhour|cube|cube-davi] --hours N --data src/RLDemo.Web/data` — `--game cube`
+(Kociemba imitation) and `cube-davi` (teacher-free value iteration) take `--eval-only` for
+the gate report; `cube-davi` also takes `--width`, `--layers` and `--max-depth`, runs on the
+`AdaptiveBackend` (GPU device-resident forward), and logs `models/logs/cube-davi.csv`. Use
+`--data models` to refresh the shipped seeds.
