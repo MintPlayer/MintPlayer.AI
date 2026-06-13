@@ -213,13 +213,18 @@ Angular CLI dev server in development; serves the built bundle in production).
 > **SDK**; the games are showcases. A serious RL SDK that can't use the GPU isn't
 > competitive, so M12 is **core capability built on its own merits — not parked until a
 > demo needs it** (the earlier "trigger conditions" framing was demo-quality logic). The
-> owner is taking on the CUDA work directly. The deliverable that matters most is the
-> **public device-tensor API**, which must stay general across every env/algorithm and
-> ship with `ManagedBackend` correctness parity — not any one trained model. The cube
-> width ladder (PLAN §M17) becomes a *beneficiary and benchmark*: rung 1 (1024-wide)
-> trains on CPU now; rung 2 (2048-wide) is a natural **GPU showcase** once the backend
-> lands, since it can't converge on CPU. A standalone SDK-quality win lands first
-> regardless of GPU: a **multithreaded CPU GEMM** (the baseline every GPU-less user gets).
+> cube width ladder (PLAN §M17) becomes a *beneficiary and benchmark*: rung 1 (1024-wide)
+> trains on CPU now; rung 2 (2048-wide) is a natural **GPU showcase** once the perf path
+> lands, since it can't converge on CPU.
+>
+> **Status 2026-06-13:** shipped the **multithreaded CPU GEMM** (M12a — bitwise-identical,
+> the baseline every GPU-less user gets) and an **ILGPU GPU backend** (M12c — a separate
+> `…Ilgpu` package implementing `IComputeBackend`; CUDA when a GPU is present, else ILGPU's
+> CPU accelerator; correctness validated against `ManagedBackend`). The remaining,
+> highest-value piece is **device-resident tensors** (M12c-perf): the current host-span
+> backend transfers every call so it only wins for large GEMMs — the transfer-free
+> evolution is a public-API change that must be driven by the M12b crossover **measured on
+> real GPU hardware**, so it is deliberately deferred until those numbers exist.
 
 **Key findings from the assessment:**
 

@@ -335,18 +335,30 @@ alternative if ILGPU ever falls short.
   uncontended machine.* (Lab gen/train double-buffering is still open — a follow-up.)
 - **M12b — benchmark (harness built 2026-06-13):** the Bench tool now has a **CPU
   thread-scaling sweep** (GEMM GFLOP/s and end-to-end training-step speedup vs worker
-  count, on the real M17 cube shapes) and a backend-agnostic seam for the GPU column —
-  add `IlgpuBackend` rows measuring the same shapes **with and without** host↔device
-  transfer to complete the CPU↔GPU crossover. *Pending: run uncontended to commit the
-  CPU scaling table (the machine is busy with the M17 cube campaign); GPU rows wait on
-  M12c.*
+  count, on the real M17 cube shapes) **plus a GPU column** that runs `IlgpuBackend` on the
+  same shapes (host-span, so the number includes host↔device transfer) — skipped with a
+  message on a GPU-less machine. *Pending: run uncontended to commit the CPU scaling table
+  (the machine is busy with the M17 cube campaign); run on the RTX 3060 to commit the
+  CPU↔GPU crossover.*
   **Gate:** a CPU↔GPU crossover table + a CPU thread-scaling table committed to the docs.
-- **M12c — device-resident backend (the crown jewel):** evolve `IComputeBackend` to a
-  general device-tensor API (allocate/upload/download + ops on device handles);
-  `ManagedBackend` stays trivial; `IlgpuBackend` implements the real thing; port the
-  training hot loop. Designed for any env/algorithm, not just the Lab.
-  **Gate:** Lab samples/hour ≥ 5× the CPU baseline at equal model quality **and** a
-  documented, stable public device-tensor surface with `ManagedBackend` parity tests.
+- **M12c — ILGPU backend ✅ *(host-span done 2026-06-13)*:** a separate
+  `MintPlayer.AI.ReinforcementLearning.Ilgpu` package (Core stays dependency-free)
+  implements `IlgpuBackend : IComputeBackend` with three JIT-compiled GEMM kernels (one
+  output element per thread, accumulating per the interface contract). Selects the CUDA
+  GPU when present, else ILGPU's CPU accelerator (keeps CI/GPU-less machines green).
+  Correctness validated against `ManagedBackend` via the CPU accelerator (`IlgpuBackendTests`,
+  relative tolerance — cross-backend equality is approximate, FMA vs separate mul+add).
+  Swap in with `Backend.Current = new IlgpuBackend()`; no autograd/algorithm change.
+  *Real-GPU/CUDA validation is the owner's (no GPU reachable from the build session).*
+  - **M12c-perf (next) — device-resident tensors:** the host-span backend transfers every
+    call, so it LOSES at small sizes and only wins for large GEMMs (PRD §10). The
+    transfer-free evolution — operands resident on the device across a training step — is
+    the real perf win and a public-API change (`IComputeBackend` → device handles). It must
+    be driven by the **M12b crossover measured on real hardware**, not designed blind, so
+    it's deliberately deferred until those numbers exist.
+  **Gate (met):** `IlgpuBackend` computes all three GEMMs correctly with `ManagedBackend`
+  parity tests. **Gate (M12c-perf, open):** Lab samples/hour ≥ 5× the CPU baseline at equal
+  model quality via device-resident tensors.
 - **M12d — showcase campaigns:** GPU unlocks the demos that CPU can't reach — the M17
   2048-wide (or residual/value-iteration) cube net, bigger Rush Hour nets past the 92.3%
   plateau. These are *showcases of the SDK's GPU path*, run because they're now cheap,

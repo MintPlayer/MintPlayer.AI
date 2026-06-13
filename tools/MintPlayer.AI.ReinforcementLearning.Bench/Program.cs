@@ -33,12 +33,9 @@ GemmScaling(256, 1024, 1024, "trunk2 fwd  (B·H→H)");
 Console.WriteLine();
 TrainStepScaling(batch: 256, inDim: 324, hidden: 1024, outDim: 12, label: "cube 1024-wide step");
 
-// ── GPU column (M12c, owner's CUDA lane) ─────────────────────────────────────────
-// When an IlgpuBackend exists, add its rows here by swapping Backend.Current and
-// measuring the SAME shapes WITH and WITHOUT host↔device transfer, to produce the
-// CPU↔GPU crossover table. The harness above is backend-agnostic (it only touches
-// IComputeBackend / Backend.Current), so no further plumbing is needed — just the
-// backend.
+// ── GPU column (M12c): ILGPU backend, host-span (includes host↔device transfer) ──
+Console.WriteLine();
+BenchGpu();
 
 static void BenchGemm(int m, int k, int n)
 {
@@ -92,6 +89,42 @@ static void BenchTrainingStep(int batch, int hidden, int? targetStepsPerSec)
         loss.Backward();
         adam.ClipGradNorm(10f);
         adam.Step();
+    }
+}
+
+// ILGPU backend on the same wide-net GEMM shapes. The host-span backend includes
+// host↔device transfer every call, so this is the HONEST end-to-end GPU number for the
+// current (pre-device-tensor) design — small shapes lose to the CPU, large ones win.
+// On a GPU-less machine ILGPU selects its CPU accelerator and this is skipped.
+static void BenchGpu()
+{
+    Console.WriteLine("GPU (ILGPU) backend");
+    Console.WriteLine($"  devices: {MintPlayer.AI.ReinforcementLearning.Ilgpu.IlgpuBackend.DescribeDevices()}");
+
+    using var gpu = new MintPlayer.AI.ReinforcementLearning.Ilgpu.IlgpuBackend();
+    Console.WriteLine($"  selected: {gpu.AcceleratorName} ({(gpu.IsGpu ? "GPU" : "CPU accelerator")})");
+    if (!gpu.IsGpu)
+    {
+        Console.WriteLine("  no GPU present — skipping the GPU GEMM sweep (CPU accelerator would just re-measure the CPU).");
+        return;
+    }
+
+    foreach (var (m, k, n) in new[] { (256, 324, 1024), (256, 1024, 1024), (1024, 1024, 1024) })
+    {
+        var rng = new Xoshiro256StarStar(1);
+        var a = Tensor.RandomNormal(rng, 0f, 1f, m, k);
+        var b = Tensor.RandomNormal(rng, 0f, 1f, k, n);
+        var c = new float[m * n];
+        double flopsPerIter = 2.0 * m * k * n;
+
+        for (int i = 0; i < 50; i++) { Array.Clear(c); gpu.Gemm(a.Data, b.Data, c, m, k, n); }
+        const int iterations = 500;
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < iterations; i++) { Array.Clear(c); gpu.Gemm(a.Data, b.Data, c, m, k, n); }
+        sw.Stop();
+
+        double gflops = flopsPerIter * iterations / sw.Elapsed.TotalSeconds / 1e9;
+        Console.WriteLine($"  GEMM [{m},{k}]x[{k},{n}]: {gflops,7:F1} GFLOP/s (incl. transfer)");
     }
 }
 
