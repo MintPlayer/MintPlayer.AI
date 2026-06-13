@@ -192,24 +192,22 @@ Angular CLI dev server in development; serves the built bundle in production).
 | User-drawn Rush Hour puzzles are out-of-distribution for a model trained on generated sets | BFS oracle always produces a reference solution; UI reports both AI and optimal move counts; failures shown honestly as findings; harder-curriculum/imitation items raise generality later |
 | Long training jobs inside a web request | Training always runs as a tracked background job with polled/streamed progress; solve requests queue behind it rather than time out |
 
-## 10. Planned: GPU/CUDA backend (M12)
+## 10. GPU/CUDA backend (M12) — a first-class SDK capability
 
 *Assessed 2026-06-11 against the dev machine (NVIDIA RTX 3060 Laptop, 6 GB, compute
-8.6); deliberately parked until the workload justifies it. Full phase plan in
-[PLAN.md](PLAN.md) §M12.*
+8.6). Full phase plan in [PLAN.md](PLAN.md) §M12.*
 
-**Trigger conditions** (any one suffices): the imitation-learning accuracy plateau
-calls for substantially wider networks; a new environment needs CNN-scale compute;
-or training campaigns become throughput-bound beyond overnight CPU runs (~40 M
-oracle-labeled samples/hour today).
-
-> **Update 2026-06-13 — first trigger met.** The cube imitation net plateaued (greedy
-> 54% → 64% over a ~236 M-sample overnight run), so PLAN §M17 opens a **width ladder**.
-> Rung 1 (1024-wide, 3.2×) still trains on CPU and comes first behind two cheaper levers
-> (double-buffer the serial generate/train loop; multithread the managed GEMM). **Rung 2
-> (2048-wide, ~11×) is GPU-gated — it can't be trained to convergence on CPU overnight
-> (~19 M samples), and a train-bound loop defeats double-buffering — so it's the concrete
-> first GPU consumer**, decided only if rung 1 shows width is the binding lever.
+> **Reframed 2026-06-13.** The project's deliverable is a high-end, open-source .NET RL
+> **SDK**; the games are showcases. A serious RL SDK that can't use the GPU isn't
+> competitive, so M12 is **core capability built on its own merits — not parked until a
+> demo needs it** (the earlier "trigger conditions" framing was demo-quality logic). The
+> owner is taking on the CUDA work directly. The deliverable that matters most is the
+> **public device-tensor API**, which must stay general across every env/algorithm and
+> ship with `ManagedBackend` correctness parity — not any one trained model. The cube
+> width ladder (PLAN §M17) becomes a *beneficiary and benchmark*: rung 1 (1024-wide)
+> trains on CPU now; rung 2 (2048-wide) is a natural **GPU showcase** once the backend
+> lands, since it can't converge on CPU. A standalone SDK-quality win lands first
+> regardless of GPU: a **multithreaded CPU GEMM** (the baseline every GPU-less user gets).
 
 **Key findings from the assessment:**
 

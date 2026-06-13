@@ -291,19 +291,24 @@ tools/.../MintPlayer.AI.ReinforcementLearning.Lab.exe --hours H --data src/RLDem
 Ship criteria before copying checkpoints into `models/`: level-1 greedy solves
 consistently across evals, accuracy plateaus, official cards stay search-optimal.
 
-## M12 — GPU/CUDA backend  *(planned 2026-06-11, deliberately parked)*
+## M12 — GPU/CUDA backend  *(first-class SDK pillar, planned 2026-06-11)*
 
-Not scheduled — to be picked up **when the workload justifies it**: the imitation
-accuracy plateau demands a wider net, a new environment needs CNN-scale compute, or
-training campaigns become throughput-bound beyond what overnight CPU runs deliver.
-The assessment below was made with the dev machine's RTX 3060 Laptop GPU
-(6 GB, compute 8.6, driver current) so the plan is ready to execute.
+**This is core SDK capability, not a demo accelerator.** The project's goal is a
+high-end, open-source, .NET RL SDK; the games are showcases. A serious RL SDK that
+can't use the GPU isn't competitive, so M12 is built **on its own merits**, not gated on
+any demo needing it. (Earlier drafts parked it "until the workload justifies it" — that
+was demo-quality logic, superseded 2026-06-13 once the SDK was named as the deliverable.
+The cube plateau is now just one *beneficiary*, not the justification.) The assessment
+below was made with the dev machine's RTX 3060 Laptop GPU (6 GB, compute 8.6, driver
+current) so the plan is ready to execute.
 
-**Trigger fired 2026-06-13:** the cube imitation net plateaued (M16 → overnight run,
-greedy 54% → 64% over ~236 M samples), so M17 calls for a 3.2×-wider trunk — the first
-"plateau demands a wider net" condition met. Note the cheaper pre-GPU levers in M17
-(double-buffer the serial gen/train loop, then multithread the CPU GEMM); reach for the
-GPU path here only if a wide-net overnight campaign still won't converge on CPU.
+**SDK lens — the deliverable is the *API*, not any one trained model.** The compute
+backend is public surface: users build on it and it's expensive to change post-release.
+So the device-tensor abstraction must hide all device internals (PTX, kernel launches,
+host↔device transfers), stay **general** across every env/algorithm (don't over-fit it
+to the cube's `324×1024` shapes), and ship with GPU↔`ManagedBackend` correctness parity
+(finite-diff grad checks on device) and documented extension points. This is the
+"design it twice" interface where the discipline actually pays off.
 
 **The constraint that shapes the design:** the existing `IComputeBackend` seam passes
 host `float[]`s, so a naive CUDA backend would LOSE to the CPU at today's sizes — a
@@ -319,17 +324,27 @@ our own tiled GEMM kernel; 1–3 TFLOP/s realistic ≈ 50–150× current CPU), 
 accelerator keeps CI and GPU-less machines green. TorchSharp remains the documented
 alternative if ILGPU ever falls short.
 
-- **M12a — benchmark first:** extend the Bench tool with an ILGPU GEMM sweep
+- **M12a — multithreaded CPU GEMM (ships for its own sake):** the managed GEMM runs
+  single-threaded at ~20 GFLOP/s — a weak default for an "advanced SDK", and the baseline
+  *every GPU-less user gets*. Parallelize it across cores (and double-buffer the Lab's
+  serial gen/train loop). This is **not** a pre-CUDA stopgap; it's a standalone SDK
+  quality bar that stands whether or not a given machine ever runs CUDA.
+  **Gate:** CPU training-step throughput scales ~linearly to core count (committed bench
+  row); bitwise-equivalent results to the single-threaded path.
+- **M12b — benchmark first:** extend the Bench tool with an ILGPU GEMM sweep
   (128²→4096² plus our real training shapes), measured **with and without transfer
   costs**, and full training-step comparisons across batch/hidden sizes.
   **Gate:** a CPU↔GPU crossover table committed to the docs.
-- **M12b — device-resident backend:** evolve `IComputeBackend` to a device-tensor API
-  (allocate/upload/download + ops on device handles); `ManagedBackend` stays trivial;
-  `IlgpuBackend` implements the real thing; port the training hot loop. First consumer:
-  the imitation Lab (infinite oracle data → batch 4096+, wider nets).
-  **Gate:** Lab samples/hour ≥ 5× the CPU baseline (~40 M/h) at equal model quality.
-- **M12c — the payoff campaign:** overnight GPU imitation run with a wider net, aiming
-  past the 92.3% accuracy plateau; results added to the M11 table.
+- **M12c — device-resident backend (the crown jewel):** evolve `IComputeBackend` to a
+  general device-tensor API (allocate/upload/download + ops on device handles);
+  `ManagedBackend` stays trivial; `IlgpuBackend` implements the real thing; port the
+  training hot loop. Designed for any env/algorithm, not just the Lab.
+  **Gate:** Lab samples/hour ≥ 5× the CPU baseline at equal model quality **and** a
+  documented, stable public device-tensor surface with `ManagedBackend` parity tests.
+- **M12d — showcase campaigns:** GPU unlocks the demos that CPU can't reach — the M17
+  2048-wide (or residual/value-iteration) cube net, bigger Rush Hour nets past the 92.3%
+  plateau. These are *showcases of the SDK's GPU path*, run because they're now cheap,
+  not because the demo quality is the goal; results added to the M11/M17 tables.
 
 ## M11 — Stretch (unordered, not started)
 
@@ -517,16 +532,16 @@ shipped 512 net stays in place until a wider one beats it on the same gate seeds
    rung 1; if it lifts greedy sharply, the wall was coverage, not capacity.
 3. **Weighted A\*** at inference (`h ← w·h`, `w > 1`): no retraining, cuts depth-10+
    search latency; report any move-count inflation honestly.
-4. **Decide rung 2 from rung-1 evidence — don't pre-commit to 2048:**
-   - *Greedy jumps **and** rung-1 loss is still falling at the deadline* → width is paying
-     and the net is data-limited → `2048→2048` is justified. But at 11× the cost it's
-     **under-trained on CPU (~19 M samples/night) and double-buffering can't save a
-     train-bound loop** — so rung 2 ships only on the M12 GPU path, very possibly paired
-     with a value-iteration (DAVI-style) objective rather than pure supervised imitation
-     (how the serious cube solvers use nets this size).
-   - *Greedy plateaus like 512 did* → the wall is the imitation **algorithm**, not width →
-     **skip 2048**; pivot to DAgger-heavy / value-iteration training instead of paying 11×
-     for little gain.
+4. **Rung 2 (2048-wide) is a GPU showcase, no longer a CPU decision gate.** Since M12
+   (the GPU backend) is now built on its own merits as an SDK pillar — not gated on the
+   cube needing it — 2048-wide becomes a natural *demo of the GPU path* once M12d lands:
+   it can't be trained to convergence on CPU (~19 M samples/night, and a train-bound loop
+   defeats double-buffering), but on GPU it's cheap, very possibly paired with a
+   value-iteration (DAVI-style) objective (how the serious cube solvers use nets this
+   size). Rung 1's converged result still *informs* it — if greedy plateaus near the 512's
+   ceiling, the wall is the imitation **algorithm** not capacity, so the GPU showcase
+   should lead with DAgger/value-iteration rather than raw width — but rung 1 is no longer
+   a blocking gate, just evidence for which showcase to build.
 
 **Gate (pre-registered):** ≥ 98/100 across depths 1–10 within 40 quarter-turns **and**
 greedy alone ≥ 70% (the metric that actually moves), evaluated on the same fixed gate
@@ -600,27 +615,26 @@ pushed the cube net to **97/100** (greedy 54% → 64%) and **confirmed the 512-w
 has plateaued** — capacity, not data, is now the wall. Next candidates, in suggested
 order:
 
-0. **M17 — wider cube policy net** *(active next milestone, spec'd above)*: a **width
-   ladder**, not a single size — rung 1 is a fresh 1024-wide trunk (the largest that
-   still trains to convergence on CPU overnight; can't resume the 512 ckpt), plus
-   DAgger-style on-policy relabeling and weighted A*. Rung 2 (2048-wide, ~11× the cost)
-   is decided *from rung-1 evidence* — justified only if greedy jumps and the net is
-   still data-limited, and then GPU-gated (M12), very possibly with a value-iteration
-   objective. M17 **fires the M12 trigger** either way: even rung 1's 3.2×-wider trunk
-   makes the training GEMM the bottleneck, so M17 carries the cheaper pre-GPU levers
-   (double-buffer the serial gen/train loop, multithread the CPU GEMM); 2048 needs the
-   full GPU path outright.
+*The north star is the **SDK**, not any demo's score (owner, 2026-06-13). Order favors
+SDK capability over squeezing a showcase.*
 
-1. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
+0. **M12 — GPU/CUDA backend** *(now a first-class SDK pillar — see above)*: built on its
+   own merits, no longer gated on a demo. Sub-order: **M12a** multithreaded CPU GEMM
+   (ships for its own sake — the baseline every GPU-less user gets) → **M12b** benchmark
+   → **M12c** the device-tensor public API (the crown jewel) → **M12d** showcase
+   campaigns. The owner is taking on the CUDA work directly.
+1. **M17 — wider cube policy net** *(in progress, spec'd above)*: a **width ladder**.
+   Rung 1 (fresh 1024-wide trunk) is *training now* and is a fine CPU-scale showcase +
+   benchmark workload. Rung 2 (2048-wide) is **a GPU showcase under M12d**, not a CPU
+   decision gate — rung 1's converged result informs *which* showcase to build (raw width
+   vs DAgger/value-iteration), but no longer blocks anything.
+2. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*
-2. **Slide-optimal AI answers**: search/compaction that minimizes official piece-moves,
+3. **SDK breadth** (the demos exist to show range): algorithm coverage (PPO action
+   masking, dueling head, maybe SAC), more envs (MountainCar, Snake), a TensorBoard
+   writer, public-API stability/semver discipline, reproducibility guarantees.
+4. **Slide-optimal AI answers**: search/compaction that minimizes official piece-moves,
    not just single-cell moves.
-3. **Stretch list (M11)**: MountainCar, Snake, TorchSharp backend, TensorBoard writer,
-   self-play scaffolding, Dueling head, tensor pooling, PPO masking, importing puzzles
-   from the owner's original Rush Hour app.
-4. **GPU/CUDA (M12)** — fully planned above, parked until the workload justifies it
-   (wider nets past the imitation plateau, CNN-scale envs, or throughput-bound
-   campaigns).
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
