@@ -26,14 +26,21 @@ internal static class CubeLab
         ulong seed = 1;
         float learningRate = 3e-4f;
         bool evalOnly = false;
+        int width = 512;
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--data" && i + 1 < args.Length) dataDir = args[++i];
             else if (args[i] == "--seed" && i + 1 < args.Length) seed = ulong.Parse(args[++i]);
             else if (args[i] == "--lr" && i + 1 < args.Length) learningRate = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--width" && i + 1 < args.Length) width = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
         }
+
+        // M17 width ladder: each trunk width is a separate fresh net under its own id, so a
+        // wider rung never clobbers the shipped 512 net (`cube.policy`). Resume reads the
+        // stored width from the checkpoint, so --width only sizes a brand-new net.
+        var ids = CubeIds.ForWidth(width);
 
         var evalEvery = TimeSpan.FromMinutes(10);
         var store = new FileModelStore(dataDir);
@@ -46,22 +53,22 @@ internal static class CubeLab
 
         var rng = new Xoshiro256StarStar(seed);
         CubePolicyNet net;
-        using (var existing = store.TryOpenRead(CubeIds.Environment, CubeIds.Policy))
+        using (var existing = store.TryOpenRead(CubeIds.Environment, ids.Policy))
         {
             if (existing is not null)
             {
                 net = CubePolicyNet.Load(existing);
-                Log("resumed cube policy net from the model store");
+                Log($"resumed cube policy net '{ids.Policy}' from the model store");
             }
             else
             {
-                net = new CubePolicyNet(new Xoshiro256StarStar(seed ^ 0xDEADBEEF));
-                Log("initialized a fresh cube policy net");
+                net = new CubePolicyNet(new Xoshiro256StarStar(seed ^ 0xDEADBEEF), hidden: width);
+                Log($"initialized a fresh cube policy net '{ids.Policy}' (trunk width {width})");
             }
         }
 
         Adam adam;
-        using (var adamState = store.TryOpenRead(CubeIds.Environment, CubeIds.PolicyAdam))
+        using (var adamState = store.TryOpenRead(CubeIds.Environment, ids.PolicyAdam))
         {
             if (adamState is not null)
             {
@@ -81,7 +88,7 @@ internal static class CubeLab
 
         if (evalOnly)
         {
-            Evaluate(net, adam: null, store, csvPath, 0, 0, 0, 0, 0);
+            Evaluate(net, adam: null, ids, store, csvPath, 0, 0, 0, 0, 0);
             EvaluateGate(net);
             return;
         }
@@ -136,7 +143,7 @@ internal static class CubeLab
 
             if (DateTime.UtcNow >= nextEval)
             {
-                Evaluate(net, adam, store, csvPath, totalSolves, totalSamples,
+                Evaluate(net, adam, ids, store, csvPath, totalSolves, totalSamples,
                     windowCount > 0 ? windowCe / windowCount : 0,
                     windowCount > 0 ? windowAcc / windowCount : 0,
                     windowCount > 0 ? windowHuber / windowCount : 0);
@@ -146,7 +153,7 @@ internal static class CubeLab
             }
         }
 
-        Evaluate(net, adam, store, csvPath, totalSolves, totalSamples,
+        Evaluate(net, adam, ids, store, csvPath, totalSolves, totalSamples,
             windowCount > 0 ? windowCe / windowCount : 0,
             windowCount > 0 ? windowAcc / windowCount : 0,
             windowCount > 0 ? windowHuber / windowCount : 0);
@@ -192,7 +199,7 @@ internal static class CubeLab
     }
 
     /// <summary>Per-depth greedy/search eval; checkpoints net + Adam when <paramref name="adam"/> is given.</summary>
-    private static void Evaluate(CubePolicyNet net, Adam? adam, FileModelStore store, string csvPath,
+    private static void Evaluate(CubePolicyNet net, Adam? adam, CubeIds.NetIds ids, FileModelStore store, string csvPath,
         long solves, long samples, double ce, double acc, double huber)
     {
         var cells = new List<string> { $"{DateTime.UtcNow:u}", $"{solves}", $"{samples}", $"{ce:F4}", $"{acc:F4}", $"{huber:F5}" };
@@ -227,8 +234,8 @@ internal static class CubeLab
         File.AppendAllText(csvPath, string.Join(',', cells) + "\n");
         if (adam is not null)
         {
-            store.Save(CubeIds.Environment, CubeIds.Policy, s => net.Save(s));
-            store.Save(CubeIds.Environment, CubeIds.PolicyAdam, s =>
+            store.Save(CubeIds.Environment, ids.Policy, s => net.Save(s));
+            store.Save(CubeIds.Environment, ids.PolicyAdam, s =>
             {
                 using var writer = new BinaryWriter(s, System.Text.Encoding.UTF8, leaveOpen: true);
                 AdamCheckpoint.Write(adam, writer);
@@ -282,4 +289,16 @@ internal static class CubeIds
     public const string Environment = "cube";
     public const string Policy = "policy";
     public const string PolicyAdam = "policy-adam";
+
+    /// <summary>The (net, Adam) id pair for a given trunk width.</summary>
+    internal readonly record struct NetIds(string Policy, string PolicyAdam);
+
+    /// <summary>
+    /// The shipped 512 net keeps the bare `policy` id; every other width (the M17 ladder)
+    /// gets a width-tagged id so rungs never overwrite each other or the shipped net.
+    /// </summary>
+    public static NetIds ForWidth(int width)
+        => width == 512
+            ? new NetIds(Policy, PolicyAdam)
+            : new NetIds($"policy-w{width}", $"policy-w{width}-adam");
 }
