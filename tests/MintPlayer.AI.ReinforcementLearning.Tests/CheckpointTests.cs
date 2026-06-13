@@ -218,6 +218,43 @@ public class CheckpointTests
         Assert.Equal(resultA.State.EnvState, resultB2.State.EnvState);
     }
 
+    // ---------- Replay buffer (algorithm-agnostic transition store) ----------
+
+    [Fact]
+    public void ReplayBuffer_StandaloneRoundTrip_PreservesTransitions()
+    {
+        const int capacity = 8, obsDim = 3, actionCount = 2;
+        var original = new ReplayBuffer(capacity, obsDim, actionCount);
+
+        // Overfill past capacity so the circular NextIndex/wrap is part of the round-trip.
+        var rng = new Xoshiro256StarStar(7);
+        for (int t = 0; t < 11; t++)
+        {
+            float[] obs = [t, t + 0.5f, t - 0.5f];
+            float[] next = [t + 1, t + 1.5f, t + 0.5f];
+            bool[] mask = [t % 2 == 0, t % 3 == 0];
+            original.Add(obs, t % actionCount, t * 0.1, next, terminated: t % 4 == 0, mask);
+        }
+
+        var stream = new MemoryStream();
+        ReplayBufferCheckpoint.Save(original, stream);
+        stream.Position = 0;
+        var restored = ReplayBufferCheckpoint.Load(stream);
+
+        Assert.Equal(original.Capacity, restored.Capacity);
+        Assert.Equal(original.Count, restored.Count);
+
+        // Identical contents + Count ⇒ sampling with the same seed yields identical batches.
+        var a = original.Sample(32, new Xoshiro256StarStar(99));
+        var b = restored.Sample(32, new Xoshiro256StarStar(99));
+        Assert.Equal(a.Obs, b.Obs);
+        Assert.Equal(a.NextObs, b.NextObs);
+        Assert.Equal(a.Actions, b.Actions);
+        Assert.Equal(a.Rewards, b.Rewards);
+        Assert.Equal(a.Terminated, b.Terminated);
+        Assert.Equal(a.NextMasks, b.NextMasks);
+    }
+
     // ---------- File model store ----------
 
     [Fact]

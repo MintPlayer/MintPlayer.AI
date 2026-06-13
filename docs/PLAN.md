@@ -644,10 +644,13 @@ SDK capability over squeezing a showcase.*
    When an algorithm plateaus, what carries over is the env (already portable via
    `IEnvironment`), the data, and the learned representation. Today the data/weights
    transfer is ad-hoc; these three features make it a clean SDK capability:
-   - **Algorithm-agnostic transition store** — serialize a replay buffer of
-     `(s, a, r, s′, done)` so off-policy → off-policy switches (DQN ↔ SAC ↔ DDPG) survive
-     a restart, not just within one process. (On-policy methods still need fresh
-     rollouts; such a buffer feeds them only as *demonstrations*, not drop-in data.)
+   - **Algorithm-agnostic transition store** ✅ *(done 2026-06-13)* — `ReplayBufferCheckpoint`
+     serializes a replay buffer of `(s, a, r, s′, terminated, next-mask)` to a
+     self-describing file, factored out of `DqnTrainingState` (which now delegates to it,
+     byte-identically — shipped DQN checkpoints still load). Off-policy → off-policy
+     switches (DQN ↔ SAC ↔ DDPG) can now reload the same buffer across a restart, not just
+     within one process. (On-policy methods still need fresh rollouts; such a buffer feeds
+     them only as *demonstrations*, not drop-in data.)
    - **Trunk/head-separated checkpoints** — a format that lets you load a trained trunk
      and reinitialize heads, so transferring a feature extractor across algorithms (whose
      heads differ in meaning — Q vs policy-logits vs V) is a one-liner, not manual surgery.
