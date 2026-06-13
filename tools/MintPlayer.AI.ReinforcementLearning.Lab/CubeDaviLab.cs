@@ -39,7 +39,7 @@ internal static class CubeDaviLab
             else if (args[i] == "--eval-only") evalOnly = true;
         }
 
-        var adaptive = new AdaptiveBackend();
+        using var adaptive = new AdaptiveBackend();
         Backend.Current = adaptive;
         Log($"compute backend: {adaptive.Describe()}");
 
@@ -98,14 +98,14 @@ internal static class CubeDaviLab
             }
         }
 
-        // #2 scoped: route DAVI's ActionCount× successor evaluation through the GPU device-resident
-        // MLP forward (no per-layer host↔device transfer) — the dominant cost. The small autograd
-        // train pass stays on the AdaptiveBackend (CPU at this size). CPU-only machines pass null.
-        Func<Mlp, float[], int, float[]>? batchForward =
-            adaptive.Gpu is { } gpu ? (n, features, rows) => gpu.MlpForwardScalar(n, features, rows) : null;
-        Log(batchForward is not null ? "successor evaluation: device-resident GPU forward" : "successor evaluation: CPU autograd forward");
+        // M20 Stage 1: route DAVI's ActionCount× successor evaluation through a device-resident MLP
+        // whose weights stay on the GPU across steps and re-upload only on the trainer's target sync
+        // (the dominant cost is this successor batch; the small autograd train pass stays on the
+        // AdaptiveBackend — CPU at this size). CPU-only machines pass null → autograd forward.
+        using DeviceMlp? resident = adaptive.Gpu is { } gpu ? gpu.CreateResidentForward(net) : null;
+        Log(resident is not null ? "successor evaluation: device-resident GPU forward (resident weights)" : "successor evaluation: CPU autograd forward");
 
-        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options, batchForward);
+        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options, resident);
 
         if (evalOnly)
         {

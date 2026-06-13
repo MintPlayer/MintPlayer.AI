@@ -48,7 +48,7 @@ public sealed class ValueIterationTrainer<TState>
     private readonly Adam _adam;
     private readonly ValueIterationOptions _options;
     private readonly int _featureSize;
-    private readonly Func<Mlp, float[], int, float[]> _batchForward;
+    private readonly ITargetForward _targetForward;
 
     /// <param name="valueNet">Scalar-output MLP (… → 1) predicting scaled cost-to-go.</param>
     /// <param name="optimizer">
@@ -56,15 +56,16 @@ public sealed class ValueIterationTrainer<TState>
     /// internally) so a campaign can persist and restore its moment estimates across a resume —
     /// without them, a resumed run spends its first steps re-estimating gradient statistics.
     /// </param>
-    /// <param name="batchForward">
-    /// Optional no-grad batch forward for the bootstrapping target — <c>(net, features, rows) → raw
-    /// scalar outputs[rows]</c> — used only for the ActionCount× successor evaluation, the dominant
-    /// cost. Lets a campaign inject a device-resident GPU forward without coupling this (Core) layer
-    /// to any GPU backend. Null → the default autograd forward via <c>Backend.Current</c>.
+    /// <param name="targetForward">
+    /// Optional no-grad forward for the bootstrapping target's ActionCount× successor evaluation —
+    /// the dominant cost. Lets a campaign inject a device-resident GPU forward (the Ilgpu
+    /// <c>DeviceMlp</c>) that keeps weights resident across steps, without coupling this (Core) layer
+    /// to any GPU backend. Null → <see cref="AutogradTargetForward"/> (autograd via Backend.Current).
+    /// The trainer drives its <see cref="ITargetForward.OnTargetSynced"/> on every target-net sync.
     /// </param>
     public ValueIterationTrainer(
         IDeterministicModel<TState> model, Func<TState, float[]> featurize, Mlp valueNet, Adam optimizer, ValueIterationOptions options,
-        Func<Mlp, float[], int, float[]>? batchForward = null)
+        ITargetForward? targetForward = null)
     {
         _model = model;
         _featurize = featurize;
@@ -72,19 +73,14 @@ public sealed class ValueIterationTrainer<TState>
         _adam = optimizer;
         _options = options;
         _featureSize = valueNet.Sizes[0];
-        _batchForward = batchForward ?? DefaultBatchForward;
 
         // Independent bootstrapping target, kept structurally identical and periodically synced.
         // On resume it starts equal to the loaded net (as if just synced) — harmless.
         _target = new Mlp(valueNet.Sizes, new Xoshiro256StarStar(0), valueNet.HiddenActivation);
         _target.CopyFrom(valueNet);
-    }
 
-    /// <summary>Default no-grad batch forward: the backend-agnostic autograd path via Backend.Current.</summary>
-    private float[] DefaultBatchForward(Mlp net, float[] features, int rows)
-    {
-        using (GradMode.NoGrad())
-            return net.Forward(new Tensor(features, rows, _featureSize)).Data.ToArray();
+        _targetForward = targetForward ?? new AutogradTargetForward(_featureSize);
+        _targetForward.OnTargetSynced(_target); // initial sync — _target now holds the eval weights
     }
 
     /// <summary>Estimated cost-to-go from <paramref name="state"/> to the goal, in MOVES (≥ 0).</summary>
@@ -160,7 +156,7 @@ public sealed class ValueIterationTrainer<TState>
             // Bootstrapped targets from the (frozen) target net: target = min_a [1 + cost(s')].
             // This ActionCount× batch is the dominant cost — routed through the injected forward
             // (a device-resident GPU path when provided, else the default autograd forward).
-            float[] successorValues = _batchForward(_target, successorFeatures, batch * actions);
+            float[] successorValues = _targetForward.Forward(successorFeatures, batch * actions);
 
             var targets = new float[batch];
             for (int b = 0; b < batch; b++)
@@ -186,7 +182,11 @@ public sealed class ValueIterationTrainer<TState>
             _adam.ClipGradNorm(_options.GradClipNorm);
             _adam.Step();
 
-            if ((it + 1) % _options.TargetUpdateInterval == 0) _target.CopyFrom(_net);
+            if ((it + 1) % _options.TargetUpdateInterval == 0)
+            {
+                _target.CopyFrom(_net);
+                _targetForward.OnTargetSynced(_target); // re-sync resident weights (per-sync, not per-step)
+            }
             onIteration?.Invoke(it, loss.Data[0]);
         }
     }

@@ -50,6 +50,29 @@ public class IlgpuBackendTests
         AssertClose(cpu, gpu);
     }
 
+    [Theory]
+    // The tiled kernel (16×16) must be correct for exact-tile multiples AND ragged tails on every
+    // dimension (the cube's k=324 is not a multiple of 16), plus skinny/rectangular shapes.
+    [InlineData(16, 16, 16)]    // single exact tile
+    [InlineData(32, 32, 32)]    // multiple exact tiles
+    [InlineData(17, 16, 16)]    // row tail
+    [InlineData(16, 16, 17)]    // col tail
+    [InlineData(16, 17, 16)]    // reduction (k) tail
+    [InlineData(31, 47, 19)]    // tails on all three dims
+    [InlineData(8, 324, 12)]    // the cube successor-eval shape (k=324, ragged)
+    [InlineData(128, 256, 64)]  // larger rectangular
+    public void Gemm_Tiled_MatchesManagedBackend_AcrossShapes(int m, int k, int n)
+    {
+        var a = Random(m * k, (ulong)(100 + m)); var b = Random(k * n, (ulong)(200 + n));
+        var cpu = new float[m * n]; var gpu = new float[m * n];
+
+        new ManagedBackend(1).Gemm(a, b, cpu, m, k, n);
+        using var backend = new IlgpuBackend(preferCpu: true);
+        backend.Gemm(a, b, gpu, m, k, n);
+
+        AssertClose(cpu, gpu);
+    }
+
     [Fact]
     public void GemmTransposeA_MatchesManagedBackend()
     {
@@ -95,6 +118,50 @@ public class IlgpuBackendTests
         var got = backend.MlpForwardScalar(net, input, batch);
 
         AssertClose(reference, got);
+    }
+
+    [Fact]
+    public void DeviceMlp_MatchesAutogradForward()
+    {
+        // The resident-weight forward (M20) must match the autograd Mlp.Forward for a scalar-output
+        // ReLU net — same chain as MlpForwardScalar, but with weights uploaded once and held resident.
+        var rng = new MintPlayer.AI.ReinforcementLearning.Core.Random.Xoshiro256StarStar(33);
+        var net = new MintPlayer.AI.ReinforcementLearning.Core.Nn.Mlp(
+            [12, 32, 16, 1], rng, MintPlayer.AI.ReinforcementLearning.Core.Nn.Activation.Relu);
+
+        const int batch = 20, inDim = 12;
+        var input = Random(batch * inDim, 44);
+        var reference = net.Forward(new MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor(input, batch, inDim)).Data;
+
+        using var backend = new IlgpuBackend(preferCpu: true);
+        using var resident = backend.CreateResidentForward(net);
+        var got = resident.Forward(input, batch);
+
+        AssertClose(reference, got);
+    }
+
+    [Fact]
+    public void DeviceMlp_OnTargetSynced_AdoptsNewWeights()
+    {
+        // OnTargetSynced must re-upload weights: after syncing to a different net, Forward returns
+        // that net's outputs — this is what lets the trainer refresh resident weights per target sync.
+        var rng = new MintPlayer.AI.ReinforcementLearning.Core.Random.Xoshiro256StarStar(55);
+        var first = new MintPlayer.AI.ReinforcementLearning.Core.Nn.Mlp(
+            [12, 24, 1], rng, MintPlayer.AI.ReinforcementLearning.Core.Nn.Activation.Relu);
+        var second = new MintPlayer.AI.ReinforcementLearning.Core.Nn.Mlp(
+            [12, 24, 1], new MintPlayer.AI.ReinforcementLearning.Core.Random.Xoshiro256StarStar(56),
+            MintPlayer.AI.ReinforcementLearning.Core.Nn.Activation.Relu);
+
+        const int batch = 16, inDim = 12;
+        var input = Random(batch * inDim, 66);
+        var secondRef = second.Forward(new MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor(input, batch, inDim)).Data;
+
+        using var backend = new IlgpuBackend(preferCpu: true);
+        using var resident = backend.CreateResidentForward(first); // resident on `first`
+        resident.OnTargetSynced(second);                           // …then re-synced to `second`
+        var got = resident.Forward(input, batch);
+
+        AssertClose(secondRef, got);
     }
 
     [Fact]

@@ -641,31 +641,46 @@ rate degrades with depth** (70→55→30% at d7→9) — the myopic-greedy + 102
 This is the evidence base for M19–M21: going deeper/optimal needs a **residual net** and the
 **GPU bottlenecks removed** to train it.
 
-## M19 — GPU compute: tiled GEMM kernel  *(bottleneck #1)*
+## M19 — GPU compute: tiled GEMM kernel  *(bottleneck #1)*  — ✅ DONE 2026-06-13
 
-The ILGPU GEMM kernels are naive (one thread per output element, no reuse) → memory-bound at
-~146 GFLOP/s vs the 3060's ~10 TFLOP/s (PLAN "Measured 2026-06-13"). Replace with **shared-memory
-tiled GEMM** (16×16 tiles: load-tile → `Group.Barrier` → multiply-accumulate → barrier), via
-explicitly-grouped kernels (`LoadStreamKernel` + `KernelConfig(grid, group)`, `SharedMemory.Allocate2D`).
-One generic tiled core parameterized for the three layouts (A·B, Aᵀ·B, A·Bᵀ) and accumulate-vs-write;
-boundary guards handle non-multiples of the tile (the cube's k=324). Expected **~5–10× the naive
-kernel (1–3 TFLOP/s realistic)** — the compute half of the wide-net story (M20 is the transfer half).
-Keep cuBLAS/ILGPU.Algorithms documented as an escape hatch (native dependency) but stay from-scratch.
-**Files:** `Ilgpu/IlgpuBackend.cs` (kernels + launch sites), `Bench/Program.cs` (larger shapes +
-transfer-excluded timing), `IlgpuBackendTests` (exact-tile / k-tail / rectangular shapes, CPU
-accelerator). **Gate:** correctness vs `ManagedBackend` within tolerance; committed naive-vs-tiled
-GFLOP/s table; recalibrate `AdaptiveBackend` threshold. **Effort ~3–5 d.**
+The naive ILGPU kernel (one thread per output, no reuse) was replaced with a **shared-memory tiled
+GEMM**: each thread group cooperatively stages a tile of each operand into shared memory (load →
+`Group.Barrier` → multiply-accumulate → barrier), via an explicitly-grouped kernel (`LoadStreamKernel`
++ `KernelConfig(grid, group)`, `SharedMemory.Allocate`). **One generic tiled core** parameterized by a
+`GemmDims` struct (rows/cols/reduction + per-operand row/col strides + accumulate-vs-write) serves all
+three layouts (A·B, Aᵀ·B, A·Bᵀ) and the resident-inference write — the inner multiply loop is
+layout-agnostic. Boundary guards write 0 for out-of-range tile loads so the tail (the cube's k=324,
+not a multiple of 16) stays correct and divergence-free. The **tile edge is adaptive**: 16 on a GPU
+(256 threads/group), capped to ≤ logical-core-count on ILGPU's CPU accelerator (whose group limit is
+the core count) — shared memory is allocated at the compile-time max (16²) and only a tile² sub-region
+is used, so one compiled kernel serves every device.
+
+**Measured (RTX 3060, operands resident, transfer excluded — isolates kernel compute):** naive→tiled
+256³-class **562→669** (1.2×), 1024³ **444→626** (1.4×), **2048³ 268→620 GFLOP/s (2.3×)**. The gain
+**grows with GEMM size** (exactly where wide nets live) because the naive kernel falls off the memory
+wall as the working set grows while the tiled kernel reuses staged tiles. **Honest shortfall** vs the
+5–10× / 1–3 TFLOP/s estimate: this is shared-memory tiling *only*. The remaining lever — **M19b:
+register-blocked micro-tiles (each thread computes a 4×4/8×8 output block) + vectorized loads** — is
+what pushes from ~0.6 to multi-TFLOP, and is the documented next step. cuBLAS/ILGPU.Algorithms remain
+a documented escape hatch (native dependency) but the SDK stays from-scratch.
+**Files:** `Ilgpu/IlgpuBackend.cs` (tiled kernel + `GemmDims` + launch sites; naive kept bench-only via
+`BenchGemmGflops`), `Bench/Program.cs` (larger shapes + transfer-excluded naive-vs-tiled table),
+`IlgpuBackendTests` (exact-tile / row/col/k-tail / rectangular / cube-shape, CPU accelerator).
+**Gate:** ✅ correctness vs `ManagedBackend` within tolerance (212/212); committed naive-vs-tiled table.
 
 ## M20 — GPU residency: device-resident tensors  *(bottleneck #2 — realizes "M12c-perf")*
 
 The scoped `MlpForwardScalar` keeps activations resident but **re-uploads weights every call** (~67 MB/
 layer at 8192-wide → ~570 MB/step). Fix: weights resident, re-synced only when they change. **Staged:**
-- **Stage 1 — resident-weight inference (unblocks wide-net DAVI):** a `DeviceMlp` handle (upload an
-  `Mlp`'s weights once via `IlgpuBackend.UploadModel`, `Sync` on target-net update, `Forward` against
-  resident weights — reuses today's kernels + lock). Broaden the trainer's `batchForward` injection to a
-  small Core-side `ITargetForward` interface (`Forward` + `OnTargetSynced`) so the trainer can signal the
-  ~200-step target sync without Core knowing about the GPU. Drops weight upload from per-step to
-  per-sync. **~1.5–2 d.**
+- **Stage 1 — resident-weight inference (unblocks wide-net DAVI):** ✅ **DONE 2026-06-13.** `DeviceMlp`
+  (`IlgpuBackend.CreateResidentForward`) holds each layer's weights/biases resident on the device,
+  uploaded once on construction and re-uploaded only on `OnTargetSynced`; `Forward` chains the tiled
+  GEMM + bias/ReLU on-device, transferring only the input batch up and the scalar outputs down. The
+  trainer's `batchForward` Func was replaced by a Core-side **`ITargetForward`** interface (`Forward` +
+  `OnTargetSynced`); the trainer calls `OnTargetSynced` exactly when it refreshes the target net (start
+  + every `TargetUpdateInterval` steps), so weight upload drops from **per-step to per-sync (~200×
+  fewer)**. Default `AutogradTargetForward` keeps CPU-only machines on the autograd path. Lock-shared
+  (a sync racing a forward would read half-updated weights). Wired into `cube-davi`.
 - **Stage 2 — device-resident training fwd/bwd + on-device Adam** (scoped MLP path): the full DAVI step
   resident, not just inference. **~4–6 d.**
 - **Stage 3 — full port:** evolve `IComputeBackend` to a device-handle API (allocate/upload/download/free
@@ -733,6 +748,8 @@ Kociemba (which isn't QTM-optimal). Depends on M19+M20 (a residual net at depth 
 | M12a CPU GEMM scaling | ~linear to core count; bitwise-identical | GEMM **3.95×** on 8 cores; full step 2.52× (Amdahl); byte-identical dop-1-vs-8 |
 | M12c/perf device-resident forward | match autograd forward; speed up DAVI | matches within tol; **~2× DAVI throughput** (500 iters 20s vs 40s) |
 | M18 DAVI (teacher-free) | learn to solve shallow cubes with no oracle | greedy-optimal under exact value; **≥80%** of depth ≤3 teacher-free; campaign reached **curriculum depth 9** (greedy d7 70%, d9 30%) — stall-fallback curriculum unstuck the 0.95 gate; plateau ⇒ need residual net + GPU port (M19–M21) |
+| M19 tiled GEMM (bottleneck #1) | correctness vs ManagedBackend; naive→tiled GFLOP/s table | 212/212 green incl. exact-tile/k-tail/rectangular; on RTX 3060 (resident operands, transfer excluded): 256³-ish **562→669** (1.2×), 1024³ **444→626** (1.4×), **2048³ 268→620 GFLOP/s (2.3×)** — gain grows with size; adaptive tile (16 on GPU, ≤cores on CPU accel). Honest: short of the 5–10× estimate — shared-memory tiling only; **register-blocking is the next lever** toward multi-TFLOP (M19b) |
+| M20 Stage 1 resident weights (bottleneck #2) | DeviceMlp matches autograd; weights upload per-sync not per-step | DeviceMlp + `ITargetForward` green (forward matches within tol; OnTargetSynced re-uploads); weight transfer dropped from per-step to per-target-sync (~200×); wired into `cube-davi` |
 
 ## Shipped (2026-06-11) — release engineering
 
@@ -768,10 +785,14 @@ SDK capability over squeezing a showcase.*
 *Owner's focus (2026-06-13): remove the two GPU bottlenecks, toward a shortest-move
 (quarter-turn-optimal) cube solver. M19+M20 are the priority; M21 is the capability they unlock.*
 
-0. **M19 — tiled GEMM kernel** (bottleneck #1, compute). Shared-memory tiled ILGPU GEMM →
-   ~5–10× the naive kernel. ~3–5 d. Spec'd above.
+0. **M19 — tiled GEMM kernel** (bottleneck #1, compute). ✅ **DONE 2026-06-13.** Shared-memory
+   tiled ILGPU GEMM (one generic `GemmDims`-parameterized core for A·B / Aᵀ·B / A·Bᵀ + write,
+   adaptive tile). Measured **1.2–2.3× the naive kernel** (up to 620 GFLOP/s resident, gain grows
+   with size) — honest shortfall vs the 5–10× estimate: tiling-only, no register-blocking. **M19b
+   (register-blocked micro-tiles + vectorized loads)** is the open lever toward multi-TFLOP.
 1. **M20 — device-resident tensors** (bottleneck #2, transfer), staged: Stage 1 resident-weight
-   inference (`DeviceMlp` + `ITargetForward`, ~2 d, unblocks wide-net DAVI) → Stage 2 device-resident
+   inference (`DeviceMlp` + `ITargetForward`) ✅ **DONE 2026-06-13** (weights upload per-target-sync,
+   not per-step — wired into `cube-davi`) → Stage 2 device-resident
    training → Stage 3 full `IComputeBackend` device-handle port. Spec'd above.
 2. **M21 — shortest-move solver** (the capability): residual value net + deepening curriculum +
    batched weighted A*, two-tier optimality gate (provably-optimal to depth ~7, beats Kociemba

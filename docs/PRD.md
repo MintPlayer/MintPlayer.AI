@@ -228,18 +228,21 @@ Angular CLI dev server in development; serves the built bundle in production).
 >   forward resident on the GPU (no per-layer transfer); **~2× DAVI throughput**, used by the
 >   value-iteration campaign (§13).
 >
-> **The two remaining GPU bottlenecks (investigated 2026-06-13; PLAN §M19–M20 — the owner's focus):**
-> 1. **Compute — the GEMM kernel is naive** (one thread per output element, no reuse) → memory-bound
->    at ~146 GFLOP/s vs ~10 TFLOP/s. Fix: a **shared-memory tiled GEMM** (16×16 tiles, group-barrier
->    load/accumulate) → ~5–10× (1–3 TFLOP/s realistic). Stay from-scratch; cuBLAS documented as a
->    native-dependency escape hatch only. (**M19**, ~3–5 d.)
-> 2. **Transfer — weights re-upload every call.** The scoped resident forward keeps activations on the
->    GPU but re-uploads the net's weights each call (~570 MB/step at 8192-wide). Fix: **device-resident
->    tensors** — weights resident, re-synced only when they change. Staged: (1) a `DeviceMlp` resident-
->    weight handle + an `ITargetForward` seam so the trainer signals the target-net sync (unblocks wide-net
->    DAVI, ~2 d); (2) device-resident training fwd/bwd + on-device Adam; (3) the full `IComputeBackend`
->    device-handle redesign with `Tensor` device-backed (the general SDK-wide GPU capability). Memory fits
->    a 6 GB 3060 (~2.2 GB for an 8192×3 net); throughput, not memory, is the constraint. (**M20**.)
+> **The two GPU bottlenecks (investigated 2026-06-13; PLAN §M19–M20 — the owner's focus):**
+> 1. **Compute — the GEMM kernel was naive** (one thread per output element, no reuse). ✅ **M19 done
+>    (2026-06-13):** replaced with a **shared-memory tiled GEMM** (adaptive tile, one `GemmDims`-generic
+>    core for all three layouts + write). Measured **1.2–2.3× the naive kernel** (RTX 3060, resident
+>    operands: up to **620 GFLOP/s** at 2048³, gain grows with size). Honest shortfall vs the 5–10×
+>    estimate — tiling only; **register-blocked micro-tiles (M19b)** is the open lever toward multi-TFLOP.
+>    From-scratch; cuBLAS documented as a native-dependency escape hatch only.
+> 2. **Transfer — weights re-uploaded every call.** The scoped resident forward kept activations on the
+>    GPU but re-uploaded weights each call (~570 MB/step at 8192-wide). ✅ **M20 Stage 1 done
+>    (2026-06-13):** a **`DeviceMlp`** holds weights resident and re-uploads only on the trainer's
+>    target-net sync, via a Core-side **`ITargetForward`** seam (`Forward` + `OnTargetSynced`) — weight
+>    upload drops **per-step → per-sync (~200×)**, wired into `cube-davi`. Remaining stages: (2) device-
+>    resident training fwd/bwd + on-device Adam; (3) the full `IComputeBackend` device-handle redesign
+>    with `Tensor` device-backed (the general SDK-wide GPU capability). Memory fits a 6 GB 3060 (~2.2 GB
+>    for an 8192×3 net); throughput, not memory, is the constraint.
 >
 > Together these unlock training the residual nets the **shortest-move solver (§13.1, PLAN §M21)** needs.
 

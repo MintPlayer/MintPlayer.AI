@@ -109,7 +109,8 @@ static void BenchGpu()
         return;
     }
 
-    foreach (var (m, k, n) in new[] { (256, 324, 1024), (256, 1024, 1024), (1024, 1024, 1024) })
+    Console.WriteLine("  host-span (incl. transfer) vs. resident-operand kernel throughput (M19 naive→tiled):");
+    foreach (var (m, k, n) in new[] { (256, 324, 1024), (256, 1024, 1024), (1024, 1024, 1024), (2048, 2048, 2048) })
     {
         var rng = new Xoshiro256StarStar(1);
         var a = Tensor.RandomNormal(rng, 0f, 1f, m, k);
@@ -122,9 +123,12 @@ static void BenchGpu()
         var sw = Stopwatch.StartNew();
         for (int i = 0; i < iterations; i++) { Array.Clear(c); gpu.Gemm(a.Data, b.Data, c, m, k, n); }
         sw.Stop();
+        double hostSpanGflops = flopsPerIter * iterations / sw.Elapsed.TotalSeconds / 1e9;
 
-        double gflops = flopsPerIter * iterations / sw.Elapsed.TotalSeconds / 1e9;
-        Console.WriteLine($"  GEMM [{m},{k}]x[{k},{n}]: {gflops,7:F1} GFLOP/s (incl. transfer)");
+        // Operands resident (no per-iter transfer) — isolates kernel compute. naive vs. tiled.
+        double naive = gpu.BenchGemmGflops(m, k, n, iterations, tiled: false);
+        double tiled = gpu.BenchGemmGflops(m, k, n, iterations, tiled: true);
+        Console.WriteLine($"  GEMM [{m},{k}]x[{k},{n}]: host-span {hostSpanGflops,7:F1} | resident naive {naive,7:F1} → tiled {tiled,7:F1} GFLOP/s  ({tiled / naive:F1}×)");
     }
 }
 
