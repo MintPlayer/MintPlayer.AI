@@ -8,8 +8,8 @@ namespace MintPlayer.AI.ReinforcementLearning.Core.Planning;
 /// Distinct from <see cref="Environments.IEnvironment{TObs,TAct}"/>, which is the RL
 /// Reset/Step interaction loop with rewards. This is the pure forward model — no reward, no
 /// episode state — that a planner queries to look ahead. An environment that knows its own
-/// dynamics can expose both. <see cref="Apply"/> MUST return a fresh successor and leave
-/// <paramref name="state"/> untouched (planners reuse a state across all its actions).
+/// dynamics can expose both. <see cref="Apply"/> MUST return a fresh successor and leave its
+/// input state untouched (planners reuse a state across all its actions).
 /// </para>
 /// </summary>
 public interface IDeterministicModel<TState>
