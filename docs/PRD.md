@@ -228,10 +228,20 @@ Angular CLI dev server in development; serves the built bundle in production).
 >   forward resident on the GPU (no per-layer transfer); **~2× DAVI throughput**, used by the
 >   value-iteration campaign (§13).
 >
-> **Still future:** the FULL device-resident port — evolve `IComputeBackend` to a device-handle API
-> and move the *entire* numerics core (every autograd op + `Tensor`) onto the GPU. The scoped forward
-> proved the win; the full port (a public-API redesign, driven by measured need) unlocks big-net
-> training and is the next big GPU effort.
+> **The two remaining GPU bottlenecks (investigated 2026-06-13; PLAN §M19–M20 — the owner's focus):**
+> 1. **Compute — the GEMM kernel is naive** (one thread per output element, no reuse) → memory-bound
+>    at ~146 GFLOP/s vs ~10 TFLOP/s. Fix: a **shared-memory tiled GEMM** (16×16 tiles, group-barrier
+>    load/accumulate) → ~5–10× (1–3 TFLOP/s realistic). Stay from-scratch; cuBLAS documented as a
+>    native-dependency escape hatch only. (**M19**, ~3–5 d.)
+> 2. **Transfer — weights re-upload every call.** The scoped resident forward keeps activations on the
+>    GPU but re-uploads the net's weights each call (~570 MB/step at 8192-wide). Fix: **device-resident
+>    tensors** — weights resident, re-synced only when they change. Staged: (1) a `DeviceMlp` resident-
+>    weight handle + an `ITargetForward` seam so the trainer signals the target-net sync (unblocks wide-net
+>    DAVI, ~2 d); (2) device-resident training fwd/bwd + on-device Adam; (3) the full `IComputeBackend`
+>    device-handle redesign with `Tensor` device-backed (the general SDK-wide GPU capability). Memory fits
+>    a 6 GB 3060 (~2.2 GB for an 8192×3 net); throughput, not memory, is the constraint. (**M20**.)
+>
+> Together these unlock training the residual nets the **shortest-move solver (§13.1, PLAN §M21)** needs.
 
 **Key findings from the assessment:**
 
@@ -364,6 +374,25 @@ this is the **function-approximation** counterpart for state spaces too large to
 **Validation / gate:** a fast deterministic test proves the greedy policy descends *optimally*
 under an exact (BFS) value; a `[Slow]` test proves the full DAVI loop learns to solve ≥ 80% of
 shallow (depth ≤ 3) cubes **teacher-free**, checked against the `BreadthFirstPlanner` optimum.
-Pre-registered campaign gate: push the curriculum past the imitation net's reach with no oracle.
-The result is a self-taught cube solver — a candidate third solver ("self-taught AI") on the
-web cube page, alongside the Kociemba button and the imitation AI.
+**First campaign result (2026-06-13):** reached **curriculum depth 9 teacher-free** (greedy d7 70%,
+d9 30%); the stall-fallback curriculum unstuck the old 0.95 gate; the per-depth greedy fall-off is
+the 1024×3-MLP capacity wall — evidence for §13.1.
+
+### 13.1 Shortest-move (quarter-turn-optimal) solver — the flagship goal (PLAN §M21)
+
+*Owner's goal (2026-06-13): solve the cube in the **fewest quarter-turns** (god's number 26 QTM),
+teacher-free, beating Kociemba (which is fast but not QTM-optimal). Investigated 2026-06-13; depends
+on the GPU bottleneck removal (§10 / PLAN §M19–M20) — a residual net at depth can't train in tolerable
+wall-clock until then.*
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Net | **Residual MLP** (`Core.Nn` `ResidualMlp`): 324→4096→2048 + 3–4 residual blocks (width 2048, **LayerNorm** not BatchNorm), scalar out, ~8–14M params | Depth-with-residuals is the untried lever (M17: width alone is diminishing); the identity path makes 6–10 effective layers trainable for the non-smooth cost surface. LayerNorm avoids the BatchNorm-vs-target-net-bootstrap interaction. Reuses the scalar-output/checkpoint contract. |
+| Curriculum | Deepen toward depth 26; past the greedy-stall depth, advance on **loss convergence / time-per-rung** (not greedy solve-rate); optional **ε-loss target sync** (sync only when online loss < ε) | Greedy solve-rate never hits a mastery threshold at deep levels, but the value still learns from exposure; ε-sync is DeepCubeA's stability trick. |
+| Shortest-path inference | **Batch-weighted A\* (BWAS)** — batched `ValueGuidedSearch` (expand top-N frontier, score all successors in one forward); λ knob | IDA* re-evaluates the net per node (kills throughput); BWAS amortizes the GPU forward. λ=1 optimal iff the value is admissible; λ>1 faster but suboptimal — **near-optimal is the honest claim**. |
+| Optimality gate (two-tier) | **Tier 1:** depths 1–7 (BFS-tractable), ≥95% solved **provably QTM-optimal** (vs `BreadthFirstPlanner`). **Tier 2:** depths 8–20, ≥90% solved with **mean QTM length ≤ Kociemba's** | Tier 1 is the rigorous, falsifiable core ("optimal where we can prove it"); Tier 2 is the honest "beats the teacher" claim where proof is intractable. |
+| Honest non-goal | Full god's-number coverage (~60% optimal everywhere, à la DeepCubeA) is **NOT** reachable on a single RTX 3060 | DeepCubeA used ~billions of states on multi-GPU for days. State the laptop-GPU ceiling plainly. |
+
+**Realistic target on one 3060 (after M19+M20):** "Solves any cube; provably QTM-optimal to depth ~7,
+near-optimal and shorter than Kociemba to ~depth 15–20, teacher-free." Then it becomes the third
+**"self-taught AI"** solver on the web cube page, beside the Kociemba button and the imitation AI.

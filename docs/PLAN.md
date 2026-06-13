@@ -352,11 +352,9 @@ alternative if ILGPU ever falls short.
   - **M12c-perf — device-resident tensors:** the host-span backend transfers every call, so
     it LOSES at small sizes and only wins for large GEMMs (PRD §10). **Scoped version ✅
     (`a30d7a0`):** `IlgpuBackend.MlpForwardScalar` runs a whole scalar-MLP forward resident on
-    the GPU (upload input once, GEMM→bias→ReLU on-device, download only the scalars) — used
-    for DAVI's ActionCount× successor evaluation via an injected `batchForward`; **measured
-    ~2× DAVI throughput** (500 iters 20s vs 40s), identical learning. The FULL port (every
-    autograd op + `Tensor` device-resident, an `IComputeBackend` → device-handle redesign)
-    remains future — driven by measured need.
+    the GPU — ~2× DAVI throughput. **But it re-uploads weights every call** (the 8192-wide wall).
+    The full removal of both GPU bottlenecks is now planned concretely as **M19 (tiled GEMM) +
+    M20 (device-resident tensors, staged)** below — investigated 2026-06-13.
   **Gate (met):** `IlgpuBackend` computes all three GEMMs correctly with `ManagedBackend`
   parity tests; scoped resident forward matches the autograd forward.
 - **M12d — showcase campaigns *(in progress)*:** GPU unlocks the demos CPU can't reach. The
@@ -632,10 +630,73 @@ the function-approximation counterpart for non-enumerable state spaces).
 
 **Validated:** fast deterministic test — greedy descends *optimally* under an exact (BFS)
 value; `[Slow]` test — the full DAVI loop learns to solve ≥ 80% of shallow (depth ≤ 3) cubes
-**teacher-free**, checked against the BFS optimum. A 3-min smoke auto-advanced the curriculum
-2→3→4 (d4 19/20). **Gate (pre-registered):** a longer run pushes the curriculum past the
-imitation net's reach (depth ≥ 8 region) with no oracle; deeper still pairs with bigger nets +
-the GPU. Inference uses value-guided A* (`SolveWithSearch`).
+**teacher-free**, checked against the BFS optimum.
+
+**Campaign result (2026-06-13, 1024×3 net, ~30.5k iters, stopped early):** reached **curriculum
+depth 9 teacher-free** — greedy d1–4 100%, d5–6 ~95%, d7 70%, d8 55%, d9 30%. Two findings:
+(1) the original **0.95 advance gate was the limiter** — the run parked at depth 5 (~9k iters)
+then depth 7 (~13.5k iters); the **stall-fallback curriculum** (`22ee724`: advance at ≥0.6 OR
+force-advance every 3k iters) immediately unstuck it (7→8→9 in ~4k iters). (2) **Greedy solve
+rate degrades with depth** (70→55→30% at d7→9) — the myopic-greedy + 1024×3-MLP capacity wall.
+This is the evidence base for M19–M21: going deeper/optimal needs a **residual net** and the
+**GPU bottlenecks removed** to train it.
+
+## M19 — GPU compute: tiled GEMM kernel  *(bottleneck #1)*
+
+The ILGPU GEMM kernels are naive (one thread per output element, no reuse) → memory-bound at
+~146 GFLOP/s vs the 3060's ~10 TFLOP/s (PLAN "Measured 2026-06-13"). Replace with **shared-memory
+tiled GEMM** (16×16 tiles: load-tile → `Group.Barrier` → multiply-accumulate → barrier), via
+explicitly-grouped kernels (`LoadStreamKernel` + `KernelConfig(grid, group)`, `SharedMemory.Allocate2D`).
+One generic tiled core parameterized for the three layouts (A·B, Aᵀ·B, A·Bᵀ) and accumulate-vs-write;
+boundary guards handle non-multiples of the tile (the cube's k=324). Expected **~5–10× the naive
+kernel (1–3 TFLOP/s realistic)** — the compute half of the wide-net story (M20 is the transfer half).
+Keep cuBLAS/ILGPU.Algorithms documented as an escape hatch (native dependency) but stay from-scratch.
+**Files:** `Ilgpu/IlgpuBackend.cs` (kernels + launch sites), `Bench/Program.cs` (larger shapes +
+transfer-excluded timing), `IlgpuBackendTests` (exact-tile / k-tail / rectangular shapes, CPU
+accelerator). **Gate:** correctness vs `ManagedBackend` within tolerance; committed naive-vs-tiled
+GFLOP/s table; recalibrate `AdaptiveBackend` threshold. **Effort ~3–5 d.**
+
+## M20 — GPU residency: device-resident tensors  *(bottleneck #2 — realizes "M12c-perf")*
+
+The scoped `MlpForwardScalar` keeps activations resident but **re-uploads weights every call** (~67 MB/
+layer at 8192-wide → ~570 MB/step). Fix: weights resident, re-synced only when they change. **Staged:**
+- **Stage 1 — resident-weight inference (unblocks wide-net DAVI):** a `DeviceMlp` handle (upload an
+  `Mlp`'s weights once via `IlgpuBackend.UploadModel`, `Sync` on target-net update, `Forward` against
+  resident weights — reuses today's kernels + lock). Broaden the trainer's `batchForward` injection to a
+  small Core-side `ITargetForward` interface (`Forward` + `OnTargetSynced`) so the trainer can signal the
+  ~200-step target sync without Core knowing about the GPU. Drops weight upload from per-step to
+  per-sync. **~1.5–2 d.**
+- **Stage 2 — device-resident training fwd/bwd + on-device Adam** (scoped MLP path): the full DAVI step
+  resident, not just inference. **~4–6 d.**
+- **Stage 3 — full port:** evolve `IComputeBackend` to a device-handle API (allocate/upload/download/free
+  + ops on opaque handles); `Tensor.Data/Grad` become device-backed; port the ~20 autograd ops (11 trivial
+  elementwise, 5 reductions/softmax need real kernels, Gather=scatter-add) + Adam; `ManagedBackend` wraps
+  `float[]` so CPU/CI stay green. The general SDK-wide GPU capability. **~10–15 d.**
+  **Memory (8192×3 on 6 GB 3060):** weights ~0.55 GB/net, Adam ~1.1 GB, activations ~0.15 GB → Stage 1
+  ~0.7 GB, full ~2.2 GB — **fits**; throughput (M19), not memory, is the constraint. **Lock-shared sync
+  is mandatory** (a `Sync` racing a `Forward` reads half-updated weights).
+
+## M21 — Shortest-move cube solver  *(the capability M19+M20 unlock; QTM-optimal showcase)*
+
+Make the SDK solve a cube in the **fewest quarter-turns** (god's number 26 QTM), teacher-free, beating
+Kociemba (which isn't QTM-optimal). Depends on M19+M20 (a residual net at depth needs the GPU port to train).
+- **Residual value net** (`Core.Nn` `ResidualMlp`): 324→4096→2048 + 3–4 residual blocks (width 2048,
+  LayerNorm — *not* BatchNorm, which fights the target-net bootstrap), scalar out, ~8–14M params. Reuses the
+  scalar-output/checkpoint contract so the trainer/forward are untouched. Depth-with-residuals is the untried
+  lever (M17 showed width alone is diminishing).
+- **Deepening curriculum + loss-threshold target sync:** raise the cap toward 26; past the greedy-stall
+  depth, advance on **loss convergence / time-per-rung** (greedy never hits 0.6 at depth 15, but the value
+  still learns from exposure); optional ε-loss target sync (sync only when online-net loss < ε — DeepCubeA's
+  stability trick).
+- **Batched weighted A\* (BWAS):** batched overload of `ValueGuidedSearch` (expand top-N frontier, score all
+  successors in ONE forward — IDA* is wrong here, per-node forwards kill it). λ knob: λ=1 optimal iff the
+  value is admissible, λ>1 faster/suboptimal; near-optimal is the honest claim.
+- **Two-tier gate (honest):** **Tier 1** — depths 1–7 (BFS-tractable), ≥95% solved **provably QTM-optimal**
+  (verified vs `BreadthFirstPlanner`). **Tier 2** — depths 8–20, ≥90% solved with **mean QTM length ≤
+  Kociemba's** (beats the teacher). Full god's-number / ~60%-optimal-everywhere is **NOT** reachable on one
+  3060 (DeepCubeA used billions of states on multi-GPU for days) — stated plainly.
+- Then wire `value-davi` into the web cube page as the third **"self-taught AI"** solver. **Effort:** net
+  ~2–4 d, curriculum ~2 d, BWAS ~2–3 d, then the multi-day GPU campaign (gated on M19+M20).
 
 ## Testing strategy (cross-cutting, from research)
 
@@ -671,7 +732,7 @@ the GPU. Inference uses value-guided A* (`SolveWithSearch`).
 | M17 wider net (1024, rung 1) | beat the 512 net on the same gate seeds | **96/100, greedy 69%** (vs 512's 97/100, greedy 64%) at *half* the samples — modest greedy gain, accuracy plateaued ~79% like 512: width is diminishing, the algorithm is the lever |
 | M12a CPU GEMM scaling | ~linear to core count; bitwise-identical | GEMM **3.95×** on 8 cores; full step 2.52× (Amdahl); byte-identical dop-1-vs-8 |
 | M12c/perf device-resident forward | match autograd forward; speed up DAVI | matches within tol; **~2× DAVI throughput** (500 iters 20s vs 40s) |
-| M18 DAVI (teacher-free) | learn to solve shallow cubes with no oracle | greedy-optimal under exact value; **≥80%** of depth ≤3 solved teacher-free; smoke curriculum 2→3→4, d4 19/20 |
+| M18 DAVI (teacher-free) | learn to solve shallow cubes with no oracle | greedy-optimal under exact value; **≥80%** of depth ≤3 teacher-free; campaign reached **curriculum depth 9** (greedy d7 70%, d9 30%) — stall-fallback curriculum unstuck the 0.95 gate; plateau ⇒ need residual net + GPU port (M19–M21) |
 
 ## Shipped (2026-06-11) — release engineering
 
@@ -704,16 +765,18 @@ with no Kociemba.
 *The north star is the **SDK**, not any demo's score (owner, 2026-06-13). Order favors
 SDK capability over squeezing a showcase.*
 
-0. **Deepen DAVI (M18) — active.** A 13h GPU `cube-davi` run (1024×3 net, device-resident
-   forward, resumable) is pushing the curriculum past the imitation net's reach, teacher-free.
-   Then: re-eval with value-guided A* (`SolveWithSearch`, beats greedy), and **wire `value-davi`
-   into the web cube page as a third "self-taught AI" solver**. Deeper still → bigger nets + the
-   full device-resident port.
-1. **Full device-resident GPU port (M12c-perf, the big one):** evolve `IComputeBackend` to a
-   device-tensor/handle API and move the whole numerics core (all autograd ops + `Tensor`) onto
-   the GPU — the scoped inference forward proved the win; the full port unlocks big-net training.
-   A focused effort, driven by the measured crossover.
-2. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
+*Owner's focus (2026-06-13): remove the two GPU bottlenecks, toward a shortest-move
+(quarter-turn-optimal) cube solver. M19+M20 are the priority; M21 is the capability they unlock.*
+
+0. **M19 — tiled GEMM kernel** (bottleneck #1, compute). Shared-memory tiled ILGPU GEMM →
+   ~5–10× the naive kernel. ~3–5 d. Spec'd above.
+1. **M20 — device-resident tensors** (bottleneck #2, transfer), staged: Stage 1 resident-weight
+   inference (`DeviceMlp` + `ITargetForward`, ~2 d, unblocks wide-net DAVI) → Stage 2 device-resident
+   training → Stage 3 full `IComputeBackend` device-handle port. Spec'd above.
+2. **M21 — shortest-move solver** (the capability): residual value net + deepening curriculum +
+   batched weighted A*, two-tier optimality gate (provably-optimal to depth ~7, beats Kociemba
+   to ~15–20). Depends on M19+M20. Then wire `value-davi` into the web page as the third solver.
+3. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*
 3. **SDK breadth** (the demos exist to show range): algorithm coverage (PPO action
    masking, dueling head, maybe SAC), more envs (MountainCar, Snake), a TensorBoard
