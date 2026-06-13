@@ -56,18 +56,45 @@ internal static class CubeDaviLab
 
         var model = new CubeModel();
         var options = new ValueIterationOptions { BatchSize = 128, LearningRate = 1e-3f, DistanceScale = 1f, TargetUpdateInterval = 200 };
-        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, options);
+
+        // Resume the FULL training state so a restart continues seamlessly. DAVI regenerates its
+        // states from scrambles (nothing to store there — regeneration is free); what a resume must
+        // reuse is the LEARNED state: Adam's moments, the curriculum depth, the iteration count and
+        // the sampler RNG position. Without these a restart re-warms the optimizer and re-climbs the
+        // curriculum from scratch.
+        Adam adam;
+        int curriculumDepth = 2;
+        long totalIterations = 0;
+        var sampleRng = new Xoshiro256StarStar(seed);
+        using (var state = store.TryOpenRead(CubeIds.Environment, "value-davi-state"))
+        {
+            if (state is not null)
+            {
+                using var reader = new BinaryReader(state, System.Text.Encoding.UTF8, leaveOpen: true);
+                CheckpointFormat.ReadHeader(reader, "cube-davi-state", 1);
+                curriculumDepth = reader.ReadInt32();
+                totalIterations = reader.ReadInt64();
+                sampleRng = CheckpointFormat.ReadRngState(reader);
+                adam = AdamCheckpoint.Read(net.Parameters(), reader);
+                adam.LearningRate = options.LearningRate;
+                Log($"resumed training state: curriculum depth {curriculumDepth}, {totalIterations:N0} iterations done");
+            }
+            else
+            {
+                adam = new Adam(net.Parameters(), options.LearningRate);
+            }
+        }
+
+        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options);
 
         if (evalOnly)
         {
-            ReportEval(trainer, csvPath, iterations: 0, curriculumDepth: maxDepthCap, loss: 0, maxDepthCap);
+            ReportEval(trainer, csvPath, totalIterations, curriculumDepth, loss: 0, maxDepthCap);
             return;
         }
 
         // Solve-rate curriculum: start shallow, deepen once the current level is ~mastered. The
         // value-iteration signal propagates outward from the goal, so easy depths must land first.
-        int curriculumDepth = 2;
-        var sampleRng = new Xoshiro256StarStar(seed);
         FaceletCube Sample()
         {
             var cube = new FaceletCube();
@@ -75,8 +102,21 @@ internal static class CubeDaviLab
             return cube;
         }
 
+        void SaveCheckpoint()
+        {
+            store.Save(CubeIds.Environment, "value-davi", s => MlpCheckpoint.Save(net, s));
+            store.Save(CubeIds.Environment, "value-davi-state", s =>
+            {
+                using var writer = new BinaryWriter(s, System.Text.Encoding.UTF8, leaveOpen: true);
+                CheckpointFormat.WriteHeader(writer, "cube-davi-state", 1);
+                writer.Write(curriculumDepth);
+                writer.Write(totalIterations);
+                CheckpointFormat.WriteRngState(writer, sampleRng);
+                AdamCheckpoint.Write(adam, writer);
+            });
+        }
+
         var deadline = DateTime.UtcNow.AddHours(hours);
-        long totalIterations = 0;
         float lastLoss = 0;
         Log($"training until {deadline:u} (~{hours:F1} h), data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
 
@@ -86,7 +126,7 @@ internal static class CubeDaviLab
             totalIterations += 500;
 
             var rates = ReportEval(trainer, csvPath, totalIterations, curriculumDepth, lastLoss, maxDepthCap);
-            store.Save(CubeIds.Environment, "value-davi", s => MlpCheckpoint.Save(net, s));
+            SaveCheckpoint();
 
             // Advance the curriculum once the deepest trained level is essentially solved.
             if (curriculumDepth < maxDepthCap && rates[curriculumDepth] >= 0.95)

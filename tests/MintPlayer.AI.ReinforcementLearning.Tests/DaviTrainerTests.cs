@@ -65,13 +65,14 @@ public class DaviTrainerTests
         const int maxScramble = 3;
 
         var net = new Mlp([RubiksCubeEnv.ObservationSize, 256, 256, 1], new Xoshiro256StarStar(7), Activation.Relu);
-        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, new ValueIterationOptions
+        var options = new ValueIterationOptions
         {
             BatchSize = 128,
             LearningRate = 1e-3f,
             DistanceScale = 1f,  // predict raw cost-to-go: well-separated targets (1,2,3) → robust argmin
             TargetUpdateInterval = 100,
-        });
+        };
+        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, new Adam(net.Parameters(), options.LearningRate), options);
 
         FaceletCube Sample()
         {

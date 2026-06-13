@@ -50,19 +50,25 @@ public sealed class ValueIterationTrainer<TState>
     private readonly int _featureSize;
 
     /// <param name="valueNet">Scalar-output MLP (… → 1) predicting scaled cost-to-go.</param>
+    /// <param name="optimizer">
+    /// The Adam optimizer over <paramref name="valueNet"/>'s parameters. Passed in (not created
+    /// internally) so a campaign can persist and restore its moment estimates across a resume —
+    /// without them, a resumed run spends its first steps re-estimating gradient statistics.
+    /// </param>
     public ValueIterationTrainer(
-        IDeterministicModel<TState> model, Func<TState, float[]> featurize, Mlp valueNet, ValueIterationOptions options)
+        IDeterministicModel<TState> model, Func<TState, float[]> featurize, Mlp valueNet, Adam optimizer, ValueIterationOptions options)
     {
         _model = model;
         _featurize = featurize;
         _net = valueNet;
+        _adam = optimizer;
         _options = options;
         _featureSize = valueNet.Sizes[0];
 
         // Independent bootstrapping target, kept structurally identical and periodically synced.
+        // On resume it starts equal to the loaded net (as if just synced) — harmless.
         _target = new Mlp(valueNet.Sizes, new Xoshiro256StarStar(0), valueNet.HiddenActivation);
         _target.CopyFrom(valueNet);
-        _adam = new Adam(valueNet.Parameters(), options.LearningRate);
     }
 
     /// <summary>Estimated cost-to-go from <paramref name="state"/> to the goal, in MOVES (≥ 0).</summary>
