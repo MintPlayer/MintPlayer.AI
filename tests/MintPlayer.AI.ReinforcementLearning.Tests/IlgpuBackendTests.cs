@@ -77,6 +77,27 @@ public class IlgpuBackendTests
     }
 
     [Fact]
+    public void MlpForwardScalar_MatchesAutogradForward()
+    {
+        // The device-resident forward (GEMM→bias→ReLU chained on-device) must match the
+        // backend-agnostic autograd Mlp.Forward for a scalar-output ReLU net.
+        var rng = new MintPlayer.AI.ReinforcementLearning.Core.Random.Xoshiro256StarStar(11);
+        var net = new MintPlayer.AI.ReinforcementLearning.Core.Nn.Mlp(
+            [12, 32, 16, 1], rng, MintPlayer.AI.ReinforcementLearning.Core.Nn.Activation.Relu);
+
+        const int batch = 20, inDim = 12;
+        var input = Random(batch * inDim, 22);
+
+        // Reference: autograd forward on the default ManagedBackend.
+        var reference = net.Forward(new MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor(input, batch, inDim)).Data;
+
+        using var backend = new IlgpuBackend(preferCpu: true);
+        var got = backend.MlpForwardScalar(net, input, batch);
+
+        AssertClose(reference, got);
+    }
+
+    [Fact]
     public void Gemm_Accumulates_LikeTheContract()
     {
         // The interface contract is c += a·b; running twice must double the result.

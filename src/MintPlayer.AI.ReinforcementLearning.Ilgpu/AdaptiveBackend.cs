@@ -43,6 +43,13 @@ public sealed class AdaptiveBackend : IComputeBackend, IDisposable
     /// <summary>True when a GPU was found and large GEMMs will be offloaded to it.</summary>
     public bool GpuAvailable => _gpu is not null;
 
+    /// <summary>
+    /// The GPU backend, or null when CPU-only. Exposed so a caller can reuse this single GPU
+    /// context for device-resident inference (e.g. <see cref="IlgpuBackend.MlpForwardScalar"/>)
+    /// instead of spinning up a second one.
+    /// </summary>
+    public IlgpuBackend? Gpu => _gpu;
+
     /// <summary>One-line description of the routing for diagnostics/logging.</summary>
     public string Describe() => _gpu is null
         ? "CPU only (no GPU found)"

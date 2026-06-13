@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 
 namespace MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -41,6 +42,10 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int> _gemm;
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int> _gemmTransposeA;
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int> _gemmTransposeB;
+    // Device-resident inference path (M12c-perf): forward GEMM that WRITES (not accumulates) +
+    // a fused bias+activation kernel, so a whole MLP forward chains on-device without per-layer transfer.
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int> _gemmWrite;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int> _biasActivation;
     private readonly object _lock = new();
 
     /// <param name="preferCpu">
@@ -56,6 +61,8 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
         _gemm = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int>(Gemm_Kernel);
         _gemmTransposeA = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int>(GemmTransposeA_Kernel);
         _gemmTransposeB = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int>(GemmTransposeB_Kernel);
+        _gemmWrite = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int>(GemmWrite_Kernel);
+        _biasActivation = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int>(BiasActivation_Kernel);
     }
 
     /// <summary>
@@ -149,6 +156,88 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
         float acc = 0f;
         for (int j = 0; j < n; j++) acc += a[i * n + j] * b[p * n + j];
         c[gid] += acc;
+    }
+
+    /// <summary>
+    /// Device-resident forward pass of a scalar-output MLP (M12c-perf): uploads the input batch
+    /// ONCE, then chains GEMM → (bias + activation) layer by layer with activations staying on the
+    /// device, and downloads only the final <paramref name="batch"/> scalars. This eliminates the
+    /// per-layer host↔device round-trips that make the per-GEMM host-span path transfer-bound — the
+    /// win that lets the GPU pay off for DAVI's successor evaluation. Weights are uploaded per call
+    /// (they change during training); the saving is the resident intermediate activations.
+    /// Supports None/ReLU hidden activations (the value nets use ReLU); Tanh would need XMath.
+    /// </summary>
+    public float[] MlpForwardScalar(Mlp net, ReadOnlySpan<float> input, int batch)
+    {
+        var sizes = net.Sizes;
+        if (sizes[^1] != 1)
+            throw new ArgumentException($"MlpForwardScalar expects a scalar-output net, got output size {sizes[^1]}.");
+        int activation = net.HiddenActivation switch
+        {
+            Activation.None => 0,
+            Activation.Relu => 1,
+            _ => throw new NotSupportedException($"Resident forward supports None/ReLU, not {net.HiddenActivation}."),
+        };
+
+        var layers = net.Layers;
+        float[] inputHost = input.ToArray();
+        var buffers = new List<IDisposable>();
+        lock (_lock)
+        {
+            try
+            {
+                var current = _accelerator.Allocate1D<float>(inputHost.Length);
+                current.CopyFromCPU(inputHost);
+                buffers.Add(current);
+                ArrayView1D<float, Stride1D.Dense> activations = current.View;
+                int inDim = sizes[0];
+
+                MemoryBuffer1D<float, Stride1D.Dense> output = current;
+                for (int i = 0; i < layers.Count; i++)
+                {
+                    int outDim = layers[i].Weight.Cols;
+                    var w = _accelerator.Allocate1D<float>(layers[i].Weight.Data.Length); w.CopyFromCPU(layers[i].Weight.Data); buffers.Add(w);
+                    var b = _accelerator.Allocate1D<float>(layers[i].Bias.Data.Length); b.CopyFromCPU(layers[i].Bias.Data); buffers.Add(b);
+                    output = _accelerator.Allocate1D<float>(batch * outDim); buffers.Add(output);
+
+                    _gemmWrite(new Index1D(batch * outDim), activations, w.View, output.View, batch, inDim, outDim);
+                    bool isOutputLayer = i == layers.Count - 1;
+                    _biasActivation(new Index1D(batch * outDim), output.View, b.View, outDim, isOutputLayer ? 0 : activation);
+
+                    activations = output.View;
+                    inDim = outDim;
+                }
+
+                _accelerator.Synchronize();
+                var result = new float[batch];
+                output.CopyToCPU(result);
+                return result;
+            }
+            finally
+            {
+                foreach (var buffer in buffers) buffer.Dispose();
+            }
+        }
+    }
+
+    /// <summary>Forward GEMM that WRITES c = a·b (no accumulate) — for the resident inference chain.</summary>
+    private static void GemmWrite_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> a, ArrayView1D<float, Stride1D.Dense> b, ArrayView1D<float, Stride1D.Dense> c, int m, int k, int n)
+    {
+        int gid = index;
+        if (gid >= m * n) return;
+        int row = gid / n, col = gid % n;
+        float acc = 0f;
+        for (int p = 0; p < k; p++) acc += a[row * k + p] * b[p * n + col];
+        c[gid] = acc;
+    }
+
+    /// <summary>In-place bias add + activation (0 = none, 1 = ReLU) over a [rows, dim] buffer.</summary>
+    private static void BiasActivation_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> data, ArrayView1D<float, Stride1D.Dense> bias, int dim, int activation)
+    {
+        int gid = index;
+        float v = data[gid] + bias[gid % dim];
+        if (activation == 1 && v < 0f) v = 0f;
+        data[gid] = v;
     }
 
     public void Dispose()

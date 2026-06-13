@@ -25,6 +25,7 @@ internal static class CubeDaviLab
         string dataDir = "data";
         ulong seed = 1;
         int width = Hidden;
+        int hiddenLayers = 2;
         int maxDepthCap = 8;
         bool evalOnly = false;
         for (int i = 0; i < args.Length; i++)
@@ -33,12 +34,14 @@ internal static class CubeDaviLab
             else if (args[i] == "--data" && i + 1 < args.Length) dataDir = args[++i];
             else if (args[i] == "--seed" && i + 1 < args.Length) seed = ulong.Parse(args[++i]);
             else if (args[i] == "--width" && i + 1 < args.Length) width = int.Parse(args[++i]);
+            else if (args[i] == "--layers" && i + 1 < args.Length) hiddenLayers = int.Parse(args[++i]); // #3: net depth
             else if (args[i] == "--max-depth" && i + 1 < args.Length) maxDepthCap = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
         }
 
-        Backend.Current = new AdaptiveBackend();
-        Log($"compute backend: {((AdaptiveBackend)Backend.Current).Describe()}");
+        var adaptive = new AdaptiveBackend();
+        Backend.Current = adaptive;
+        Log($"compute backend: {adaptive.Describe()}");
 
         var store = new FileModelStore(dataDir);
         string logPath = Path.Combine(store.RootDirectory, "logs");
@@ -50,8 +53,18 @@ internal static class CubeDaviLab
         Mlp net;
         using (var existing = store.TryOpenRead(CubeIds.Environment, "value-davi"))
         {
-            if (existing is not null) { net = MlpCheckpoint.Load(existing); Log($"resumed DAVI value net (width {net.Sizes[1]})"); }
-            else { net = new Mlp([RubiksCubeEnv.ObservationSize, width, width, 1], new Xoshiro256StarStar(seed ^ 0xDA71), Activation.Relu); Log($"fresh DAVI value net (width {width})"); }
+            if (existing is not null) { net = MlpCheckpoint.Load(existing); Log($"resumed DAVI value net ({string.Join('→', net.Sizes)})"); }
+            else
+            {
+                // #3: net shape is configurable — hiddenLayers × width. Deeper/wider raises the
+                // representational ceiling (resumed nets keep their stored shape regardless).
+                var sizes = new int[hiddenLayers + 2];
+                sizes[0] = RubiksCubeEnv.ObservationSize;
+                for (int i = 1; i <= hiddenLayers; i++) sizes[i] = width;
+                sizes[^1] = 1;
+                net = new Mlp(sizes, new Xoshiro256StarStar(seed ^ 0xDA71), Activation.Relu);
+                Log($"fresh DAVI value net ({string.Join('→', sizes)})");
+            }
         }
 
         var model = new CubeModel();
@@ -85,7 +98,14 @@ internal static class CubeDaviLab
             }
         }
 
-        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options);
+        // #2 scoped: route DAVI's ActionCount× successor evaluation through the GPU device-resident
+        // MLP forward (no per-layer host↔device transfer) — the dominant cost. The small autograd
+        // train pass stays on the AdaptiveBackend (CPU at this size). CPU-only machines pass null.
+        Func<Mlp, float[], int, float[]>? batchForward =
+            adaptive.Gpu is { } gpu ? (n, features, rows) => gpu.MlpForwardScalar(n, features, rows) : null;
+        Log(batchForward is not null ? "successor evaluation: device-resident GPU forward" : "successor evaluation: CPU autograd forward");
+
+        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options, batchForward);
 
         if (evalOnly)
         {

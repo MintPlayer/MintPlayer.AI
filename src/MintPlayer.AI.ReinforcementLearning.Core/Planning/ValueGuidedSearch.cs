@@ -9,10 +9,10 @@ namespace MintPlayer.AI.ReinforcementLearning.Core.Planning;
 /// (<see cref="ValueIterationTrainer{TState}"/>). Mirrors the policy-guided A* used for the
 /// imitation nets.
 /// <para>
-/// <paramref name="weight"/> = 1 is ordinary A* (optimal when the value never over-estimates the
-/// true cost); weight &gt; 1 is greedier — it expands far fewer nodes and reaches deeper, at the
-/// cost of possibly non-optimal solutions. A learned value is rarely admissible, so a weight &gt; 1
-/// is usually the practical choice.
+/// <c>weight</c> = 1 is ordinary A* (optimal when the value never over-estimates the true cost);
+/// weight &gt; 1 is greedier — it expands far fewer nodes and reaches deeper, at the cost of possibly
+/// non-optimal solutions. A learned value is rarely admissible, so a weight &gt; 1 is usually the
+/// practical choice.
 /// </para>
 /// </summary>
 public static class ValueGuidedSearch
