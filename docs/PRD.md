@@ -45,6 +45,18 @@ out (vectorized environments) without rewrites.
    ASP.NET Core + Angular web app where anyone can draw a game state, play it, submit it
    to a trained model, and step through the AI's solution — with persisted training
    results and Docker deployment. Spec in [§7](#7-interactive-web-app-mintplayerai-playground).
+8. **Asset portability — "switch algorithm, keep the work"** *(added 2026-06-13, SDK
+   capability)*: when an algorithm plateaus, the reusable assets — the environment, the
+   collected data, the learned representation — should carry over to a different
+   algorithm as first-class SDK features rather than ad-hoc glue. Three deliverables make
+   this real: (a) an **algorithm-agnostic transition store** (serialized
+   `(s, a, r, s′, done)` replay reusable across off-policy algorithms, or as
+   demonstrations for on-policy ones); (b) **trunk/head-separated checkpoints** so a
+   trained feature extractor transfers across algorithms whose heads differ in meaning
+   (Q vs policy-logits vs V); (c) a **demonstration-dataset abstraction** so any algorithm
+   can be warm-started from oracle/expert data (DQfD-style) — making the Kociemba/BFS
+   oracles reusable seeds, not per-demo code. Roadmap detail in [PLAN.md](PLAN.md)
+   "Immediate next step" §3.
 
 ## 3. Non-goals (v1)
 

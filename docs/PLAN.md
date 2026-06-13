@@ -633,8 +633,27 @@ SDK capability over squeezing a showcase.*
 3. **SDK breadth** (the demos exist to show range): algorithm coverage (PPO action
    masking, dueling head, maybe SAC), more envs (MountainCar, Snake), a TensorBoard
    writer, public-API stability/semver discipline, reproducibility guarantees.
+
+   **"Switch algorithm, keep the work" — make the three reusable assets first-class.**
+   When an algorithm plateaus, what carries over is the env (already portable via
+   `IEnvironment`), the data, and the learned representation. Today the data/weights
+   transfer is ad-hoc; these three features make it a clean SDK capability:
+   - **Algorithm-agnostic transition store** — serialize a replay buffer of
+     `(s, a, r, s′, done)` so off-policy → off-policy switches (DQN ↔ SAC ↔ DDPG) survive
+     a restart, not just within one process. (On-policy methods still need fresh
+     rollouts; such a buffer feeds them only as *demonstrations*, not drop-in data.)
+   - **Trunk/head-separated checkpoints** — a format that lets you load a trained trunk
+     and reinitialize heads, so transferring a feature extractor across algorithms (whose
+     heads differ in meaning — Q vs policy-logits vs V) is a one-liner, not manual surgery.
+   - **Demonstration-dataset abstraction** — a uniform way for any algorithm to be seeded
+     from oracle/expert data (DQfD-style), so the Kociemba/BFS oracles become reusable
+     warm-start sources, not per-demo glue.
 4. **Slide-optimal AI answers**: search/compaction that minimizes official piece-moves,
    not just single-cell moves.
+5. **Stretch list (M11), once everything above is complete** — extras, not on the
+   critical path: MountainCar, Snake, TorchSharp backend, TensorBoard writer, self-play
+   scaffolding, Dueling head, tensor pooling, PPO masking, importing puzzles from the
+   owner's original Rush Hour app.
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
