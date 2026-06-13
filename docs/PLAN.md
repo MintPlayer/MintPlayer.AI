@@ -324,17 +324,23 @@ our own tiled GEMM kernel; 1–3 TFLOP/s realistic ≈ 50–150× current CPU), 
 accelerator keeps CI and GPU-less machines green. TorchSharp remains the documented
 alternative if ILGPU ever falls short.
 
-- **M12a — multithreaded CPU GEMM (ships for its own sake):** the managed GEMM runs
-  single-threaded at ~20 GFLOP/s — a weak default for an "advanced SDK", and the baseline
-  *every GPU-less user gets*. Parallelize it across cores (and double-buffer the Lab's
-  serial gen/train loop). This is **not** a pre-CUDA stopgap; it's a standalone SDK
-  quality bar that stands whether or not a given machine ever runs CUDA.
-  **Gate:** CPU training-step throughput scales ~linearly to core count (committed bench
-  row); bitwise-equivalent results to the single-threaded path.
-- **M12b — benchmark first:** extend the Bench tool with an ILGPU GEMM sweep
-  (128²→4096² plus our real training shapes), measured **with and without transfer
-  costs**, and full training-step comparisons across batch/hidden sizes.
-  **Gate:** a CPU↔GPU crossover table committed to the docs.
+- **M12a — multithreaded CPU GEMM (ships for its own sake)** ✅ *(kernel done
+  2026-06-13, `dafebc4`)*: the managed GEMM now parallelizes large products across cores
+  by partitioning disjoint output rows — **bitwise-identical** to the sequential path at
+  any worker count (determinism preserved), threshold-gated so small classic-control nets
+  keep the thin sequential path. `BackendTests` assert dop-1-vs-8 byte parity for all
+  three kernels + correctness vs a naive reference; GradCheck/NN/DeepRl stay green.
+  Pinning needs `AllowUnsafeBlocks` but stays pure managed (no P/Invoke). *Bitwise-parity
+  half of the gate met; the throughput-scaling bench row is captured by M12b on an
+  uncontended machine.* (Lab gen/train double-buffering is still open — a follow-up.)
+- **M12b — benchmark (harness built 2026-06-13):** the Bench tool now has a **CPU
+  thread-scaling sweep** (GEMM GFLOP/s and end-to-end training-step speedup vs worker
+  count, on the real M17 cube shapes) and a backend-agnostic seam for the GPU column —
+  add `IlgpuBackend` rows measuring the same shapes **with and without** host↔device
+  transfer to complete the CPU↔GPU crossover. *Pending: run uncontended to commit the
+  CPU scaling table (the machine is busy with the M17 cube campaign); GPU rows wait on
+  M12c.*
+  **Gate:** a CPU↔GPU crossover table + a CPU thread-scaling table committed to the docs.
 - **M12c — device-resident backend (the crown jewel):** evolve `IComputeBackend` to a
   general device-tensor API (allocate/upload/download + ops on device handles);
   `ManagedBackend` stays trivial; `IlgpuBackend` implements the real thing; port the
