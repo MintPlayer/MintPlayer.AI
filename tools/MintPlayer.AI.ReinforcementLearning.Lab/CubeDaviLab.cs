@@ -136,6 +136,15 @@ internal static class CubeDaviLab
             });
         }
 
+        // Curriculum advancement: greedy solve-rate falls off with depth (greedy is myopic), so a
+        // pure mastery gate caps the curriculum where greedy stalls. Advance when the frontier is
+        // mostly solved OR force-advance after a stall — exposure to deeper states is what lets the
+        // VALUE function (and thus value-guided search at inference) reach deep, even where greedy
+        // never hits 95%.
+        const double advanceThreshold = 0.6;
+        const long forceAdvanceIters = 3000;
+        long itersSinceAdvance = 0;
+
         var deadline = DateTime.UtcNow.AddHours(hours);
         float lastLoss = 0;
         Log($"training until {deadline:u} (~{hours:F1} h), data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
@@ -144,6 +153,7 @@ internal static class CubeDaviLab
         {
             trainer.Train(Sample, iterations: 500, onIteration: (_, loss) => lastLoss = loss);
             totalIterations += 500;
+            itersSinceAdvance += 500;
 
             // Evaluate only up to one level beyond the current curriculum — enough to decide
             // advancement, without burning time on deep failed solves the net can't reach yet.
@@ -151,11 +161,13 @@ internal static class CubeDaviLab
             var rates = ReportEval(trainer, csvPath, totalIterations, curriculumDepth, lastLoss, evalUpTo, maxDepthCap);
             SaveCheckpoint();
 
-            // Advance the curriculum once the deepest trained level is essentially solved.
-            if (curriculumDepth < maxDepthCap && rates[curriculumDepth] >= 0.95)
+            bool mastered = rates[curriculumDepth] >= advanceThreshold;
+            bool stalled = itersSinceAdvance >= forceAdvanceIters;
+            if (curriculumDepth < maxDepthCap && (mastered || stalled))
             {
                 curriculumDepth++;
-                Log($"curriculum advanced → scramble depth {curriculumDepth}");
+                itersSinceAdvance = 0;
+                Log($"curriculum advanced → scramble depth {curriculumDepth}{(mastered ? "" : " (forced after stall)")}");
             }
         }
 
