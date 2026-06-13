@@ -89,7 +89,7 @@ internal static class CubeDaviLab
 
         if (evalOnly)
         {
-            ReportEval(trainer, csvPath, totalIterations, curriculumDepth, loss: 0, maxDepthCap);
+            ReportEval(trainer, csvPath, totalIterations, curriculumDepth, loss: 0, evalUpTo: maxDepthCap, maxDepthCap);
             return;
         }
 
@@ -125,7 +125,10 @@ internal static class CubeDaviLab
             trainer.Train(Sample, iterations: 500, onIteration: (_, loss) => lastLoss = loss);
             totalIterations += 500;
 
-            var rates = ReportEval(trainer, csvPath, totalIterations, curriculumDepth, lastLoss, maxDepthCap);
+            // Evaluate only up to one level beyond the current curriculum — enough to decide
+            // advancement, without burning time on deep failed solves the net can't reach yet.
+            int evalUpTo = Math.Min(curriculumDepth + 1, maxDepthCap);
+            var rates = ReportEval(trainer, csvPath, totalIterations, curriculumDepth, lastLoss, evalUpTo, maxDepthCap);
             SaveCheckpoint();
 
             // Advance the curriculum once the deepest trained level is essentially solved.
@@ -139,9 +142,12 @@ internal static class CubeDaviLab
         Log("time budget reached — final checkpoint saved.");
     }
 
-    /// <summary>Per-depth greedy solve rate (20 fixed-seed scrambles each), logged to CSV; returns depth→rate.</summary>
+    /// <summary>
+    /// Per-depth greedy solve rate (20 fixed-seed scrambles each) for depths 1..<paramref name="evalUpTo"/>,
+    /// logged to CSV (columns 1..<paramref name="maxDepthCap"/>, unevaluated depths left blank); returns depth→rate.
+    /// </summary>
     private static Dictionary<int, double> ReportEval(
-        ValueIterationTrainer<FaceletCube> trainer, string csvPath, long iterations, int curriculumDepth, float loss, int maxDepthCap)
+        ValueIterationTrainer<FaceletCube> trainer, string csvPath, long iterations, int curriculumDepth, float loss, int evalUpTo, int maxDepthCap)
     {
         var rates = new Dictionary<int, double>();
         var report = new System.Text.StringBuilder();
@@ -150,6 +156,7 @@ internal static class CubeDaviLab
 
         for (int depth = 1; depth <= maxDepthCap; depth++)
         {
+            if (depth > evalUpTo) { cells.Add(""); continue; } // beyond the curriculum frontier — skip
             int solved = 0;
             const int episodes = 20;
             for (int episode = 0; episode < episodes; episode++)
