@@ -4,6 +4,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
+using MintPlayer.AI.ReinforcementLearning.Ilgpu;
 
 namespace RLDemo.Web.Services;
 
@@ -13,7 +14,7 @@ namespace RLDemo.Web.Services;
 /// 20-move scrambles are deliberately out of scope for v1 RL) and saves it. Same
 /// lifecycle as <see cref="RushHourModelService"/>.
 /// </summary>
-public sealed class CubeModelService(IModelStore store, ILogger<CubeModelService> logger) : ITrainableModelService
+public sealed class CubeModelService(IModelStore store, AdaptiveBackend backend, ILogger<CubeModelService> logger) : ITrainableModelService, IDisposable
 {
     public const string EnvironmentId = "cube";
     public const string AlgorithmId = "dqn";
@@ -98,12 +99,14 @@ public sealed class CubeModelService(IModelStore store, ILogger<CubeModelService
 
     public const string ValueDaviAlgorithmId = "value-davi-res";
     private ResidualMlp? _valueNet;
+    private DeviceResidualMlp? _residentValue;
     private DateTime _valueLoadedUtc = DateTime.MinValue;
 
     /// <summary>
     /// The teacher-free DAVI value net (the "self-taught AI" shortest-move solver, PLAN M21), or null
     /// if the store has none. Re-read on the same cadence as <see cref="PolicyNet"/> so an improving
-    /// Lab campaign's checkpoints are picked up without restarting the host.
+    /// Lab campaign's checkpoints are picked up without restarting the host. Accessing this also keeps
+    /// <see cref="ResidentValueForward"/> in sync (rebuilt on the GPU whenever the net reloads).
     /// </summary>
     public ResidualMlp? ValueNet
     {
@@ -119,7 +122,13 @@ public sealed class CubeModelService(IModelStore store, ILogger<CubeModelService
                     if (stream is not null)
                     {
                         _valueNet = ResidualMlpCheckpoint.Load(stream);
-                        logger.LogInformation("Loaded cube DAVI value net from the store.");
+                        // Mirror the freshly-loaded weights onto the GPU as a resident forward when a CUDA
+                        // device is present — the host-span path is transfer-bound and barely beats CPU, so
+                        // the resident forward (weights on device) is what makes the deep solver fast.
+                        _residentValue?.Dispose();
+                        _residentValue = backend.Gpu is { } gpu ? gpu.CreateResidentForward(_valueNet) : null;
+                        logger.LogInformation("Loaded cube DAVI value net from the store ({Mode}).",
+                            _residentValue is not null ? "resident GPU forward" : "CPU forward");
                     }
                 }
                 catch (Exception ex)
@@ -132,6 +141,13 @@ public sealed class CubeModelService(IModelStore store, ILogger<CubeModelService
             }
         }
     }
+
+    /// <summary>
+    /// A device-resident GPU forward over the current value net, or null when no CUDA device is present
+    /// (the solver then scores on the CPU). Kept in sync by the <see cref="ValueNet"/> getter — read that
+    /// first. Thread-safe: the underlying forward serializes GPU access internally.
+    /// </summary>
+    public CubeValueSearch.BatchForward? ResidentValueForward => _residentValue is { } dev ? dev.Forward : null;
 
     public bool TryLoadFromStore()
     {
@@ -211,5 +227,14 @@ public sealed class CubeModelService(IModelStore store, ILogger<CubeModelService
         }
 
         return (cube.IsSolved, moves);
+    }
+
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            _residentValue?.Dispose();
+            _residentValue = null;
+        }
     }
 }

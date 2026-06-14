@@ -16,6 +16,9 @@
 	<ItemGroup>
 		<ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
 		<ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Environments\MintPlayer.AI.ReinforcementLearning.Environments.csproj" />
+		<!-- GPU backend: the self-taught cube solver uses a resident GPU forward when a CUDA device is
+		     present (local dev); ILGPU falls back cleanly to CPU when there is none (e.g. Hetzner). -->
+		<ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj" />
 	</ItemGroup>
 
 	<!-- Angular production build during publish (dev uses the SPA dev-server middleware).

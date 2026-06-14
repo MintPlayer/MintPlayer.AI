@@ -33,41 +33,61 @@ public static class CubeValueSearch
     public sealed record SearchResult(bool Solved, string[] Moves);
 
     /// <summary>
-    /// Solve <paramref name="start"/> in the fewest quarter-turns the net can find within
-    /// <paramref name="maxExpansions"/> expansions. Empty move list ⇒ already solved; not-solved ⇒
-    /// the search exhausted its budget (honest failure on a scramble past the net's reach).
+    /// Scores a batch of <paramref name="rows"/> cube observations (row-major,
+    /// <see cref="RubiksCubeEnv.ObservationSize"/> floats each) in ONE forward, returning the net's raw
+    /// scalar cost-to-go per row. A device-resident forward (<c>DeviceResidualMlp.Forward</c>) matches
+    /// this shape directly, so the GPU path injects it without Environments depending on the GPU backend.
+    /// </summary>
+    public delegate float[] BatchForward(float[] features, int rows);
+
+    /// <summary>
+    /// Solve <paramref name="start"/> in the fewest quarter-turns the value net can find within
+    /// <paramref name="maxExpansions"/> expansions, scoring the frontier through <paramref name="forward"/>
+    /// (CPU autograd or a resident GPU forward). Empty move list ⇒ already solved; not-solved ⇒ the search
+    /// exhausted its budget (honest failure on a scramble past the net's reach).
     /// </summary>
     public static SearchResult Solve(
-        ResidualMlp valueNet, FaceletCube start,
+        BatchForward forward, FaceletCube start,
         int maxExpansions = DefaultMaxExpansions, float weight = DefaultWeight)
     {
         var model = new CubeModel();
         var solution = ValueGuidedSearch.SolveBatched(
-            model, states => CostToGo(valueNet, states), start, maxExpansions, weight, ExpandBatch);
+            model, states => CostToGo(forward, states), start, maxExpansions, weight, ExpandBatch);
 
         if (solution is null) return new(false, []);
         return new(true, [.. solution.Select(a => FaceletCube.QuarterTurnMoves[a])]);
     }
 
+    /// <summary>Convenience overload that scores on the CPU autograd backend (the no-GPU path).</summary>
+    public static SearchResult Solve(
+        ResidualMlp valueNet, FaceletCube start,
+        int maxExpansions = DefaultMaxExpansions, float weight = DefaultWeight)
+        => Solve((features, rows) => CpuForward(valueNet, features, rows), start, maxExpansions, weight);
+
+    private static float[] CpuForward(ResidualMlp valueNet, float[] features, int rows)
+    {
+        using (GradMode.NoGrad())
+        {
+            var values = valueNet.Forward(new Tensor(features, rows, RubiksCubeEnv.ObservationSize));
+            return values.Data[..rows];
+        }
+    }
+
     /// <summary>
-    /// Cost-to-go (in moves, ≥ 0) for a batch of cubes in ONE forward — the BWAS hot path. The net was
-    /// trained with <c>DistanceScale = 1</c>, so the raw scalar output IS the move estimate; clamp at 0
-    /// (a negative cost-to-go is meaningless). No autograd tape during inference.
+    /// Cost-to-go (in moves, ≥ 0) for a batch of cubes — the BWAS hot path. The net was trained with
+    /// <c>DistanceScale = 1</c>, so the raw scalar output IS the move estimate; clamp at 0 (a negative
+    /// cost-to-go is meaningless).
     /// </summary>
-    private static float[] CostToGo(ResidualMlp valueNet, IReadOnlyList<FaceletCube> states)
+    private static float[] CostToGo(BatchForward forward, IReadOnlyList<FaceletCube> states)
     {
         int n = states.Count;
         var features = new float[n * RubiksCubeEnv.ObservationSize];
         for (int i = 0; i < n; i++)
             RubiksCubeEnv.WriteObservation(states[i], features.AsSpan(i * RubiksCubeEnv.ObservationSize));
 
-        using (GradMode.NoGrad())
-        {
-            var values = valueNet.Forward(new Tensor(features, n, RubiksCubeEnv.ObservationSize));
-            var result = new float[n];
-            for (int i = 0; i < n; i++)
-                result[i] = MathF.Max(0f, values.Data[i]);
-            return result;
-        }
+        var result = forward(features, n);
+        for (int i = 0; i < n; i++)
+            result[i] = MathF.Max(0f, result[i]);
+        return result;
     }
 }
