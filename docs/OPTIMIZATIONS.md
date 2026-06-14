@@ -132,6 +132,10 @@ the value net. Measured the three backends for one solve on the trained 1024×4 
   case), and falls back to the CPU autograd forward otherwise (e.g. a GPU-less Hetzner container → 6k
   budget, a few seconds, shallower reach). `CubeValueSearch` takes the forward as an injected delegate so
   `Environments` stays free of any GPU dependency.
+- **Shipping:** the 35 MB trained net (`models/cube.value-davi-res.ckpt`) is stored via **Git LFS**
+  (`.gitattributes`: `*.ckpt`) and seeded into `/data` at container startup. The Dockerfile copies the
+  Ilgpu csproj before restore; the GHCR build workflow checks out with `lfs: true` (the build context has
+  no `.git`, so LFS must be materialized first — otherwise `COPY models/` ships pointer files).
 
 ## Planned
 

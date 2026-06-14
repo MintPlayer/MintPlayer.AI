@@ -40,6 +40,11 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v5
+      # Fetch the actual model checkpoints (Git LFS), not pointer files — the Dockerfile COPYs
+      # models/ into the image as the seed, and .dockerignore excludes .git so LFS cannot be
+      # resolved inside the build. Without this the self-taught net would ship as a 130-byte pointer.
+      with:
+        lfs: true
 
     # No host .NET/Node setup needed: the Dockerfile's stages run `npm ci`,
     # `npm run build`, `dotnet restore` and `dotnet publish` inside the
