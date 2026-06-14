@@ -245,6 +245,14 @@ Angular CLI dev server in development; serves the built bundle in production).
 >    for an 8192×3 net); throughput, not memory, is the constraint.
 >
 > Together these unlock training the residual nets the **shortest-move solver (§13.1, PLAN §M21)** needs.
+>
+> **Measured 2026-06-14 (after Stages 1–3 + parallel successor gen):** the residual DAVI campaign is now
+> **GPU-bound at ~620 GFLOP/s** (3060 at 95–100%). Two consequences for the *learning curve*: (1) **batch
+> size and net width are NOT levers** — batch is throughput-neutral (just moves the bottleneck CPU→GPU; an
+> iter-paced curriculum then climbs ~3.4× slower), width is diminishing (M17) + quadratically more GFLOP on
+> a slow kernel; (2) **the throughput lever is the GEMM kernel — register-blocked micro-tiles (P.1/M19b),
+> targeting ~3–5×.** Cheap per-update/pacing wins (LR scaling, ε-loss target sync, sample-paced curriculum,
+> lighter eval) stack on top. Full analysis: `docs/OPTIMIZATIONS.md` ("Learning-curve levers").
 
 **Key findings from the assessment:**
 

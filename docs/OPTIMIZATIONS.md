@@ -61,11 +61,34 @@ nets transfer dominates and ~98% of the 3060 sits idle. These remove the transfe
 
 ---
 
+## Learning-curve levers — what actually speeds time-to-solve-depth (findings 2026-06-14)
+
+After Stages 1–3 + P.7, the residual DAVI campaign is **GPU-bound at ~620 GFLOP/s** (nvidia-smi
+95–100% at batch 512). Measured comparison on the 1024×4 residual net:
+
+| batch | it/s | samples/s | GPU |
+|---|---|---|---|
+| 128 | 11 | ~1,410 | idle (0%) — CPU-bound on successor gen |
+| 512 | 3.2 | ~1,630 | saturated (95–100%) |
+
+**Key conclusions:**
+- **Batch size is ~throughput-neutral** (+16% samples/s 128→512) — it just moves the bottleneck from
+  CPU/idle-GPU to GPU-saturated. **Not a learning-curve lever.** Worse, with an *iteration-paced*
+  curriculum a bigger batch advances ~3.4× slower in wall-clock (fewer iters/s). Fix the pacing, don't
+  chase batch.
+- **Net width is not a lever either** (M17: diminishing; and wider = quadratically more GFLOP on a slow
+  kernel). See F.1.
+- **The throughput lever is the GEMM kernel itself (P.1)** — we're GPU-bound, so ~3–5× faster GEMM ≈
+  ~3–5× the learning curve. Everything else is second-order.
+- **Cheap per-update / pacing wins (P.8, P.9)** cost almost nothing and stack on top.
+
 ## Planned
 
 | # | Optimization | Milestone | Why / expected |
 |---|---|---|---|
-| P.1 | **Register-blocked GEMM micro-tiles** — each thread computes a 4×4/8×8 output block from registers + vectorized loads, on top of the shared-memory tiling. | M19b | the lever from ~0.6 → **multi-TFLOP**; M19 (tiling only) left this on the table |
+| P.1 | **Register-blocked GEMM micro-tiles** — each thread computes a TM×TN (e.g. 4×4/8×8) output block from registers on top of the shared-memory tiling, raising arithmetic intensity. | M19b | **THE throughput lever** — campaign is GPU-bound at ~620 GFLOP/s; target ~3–5× → ~3–5× the learning curve (and makes bigger batch/wider nets "free") |
+| P.8 | **Sample/time-paced curriculum + lighter eval** — advance the scramble-depth curriculum on samples (or wall-clock), not iteration count, so batch size stops distorting pacing; and run the in-loop eval less often / fewer episodes (it's pure overhead at depth). | cube-davi | removes a real wall-clock distortion + reclaims training time |
+| P.9 | **Per-update efficiency: LR scaling + ε-loss target sync** — LR was tuned for batch 128; the bigger batch supports a higher LR (linear-scaling rule). Enable `TargetUpdateLossThreshold` (DeepCubeA ε-sync — already built) so the bootstrap target only advances once loss converges. | cube-davi | faster, more stable convergence per update — near-free |
 | P.2 | **Resident Adam-state checkpointing** — `DeviceResidualTrainer` keeps Adam moments on-device; they aren't yet downloaded into the campaign's Adam checkpoint, so a resumed resident run re-warms the optimizer (net weights resume fine). Add m/v download/upload to make the resident path's resume lossless. | M20 Stage 3 follow-up | lossless resume for the resident residual campaign |
 | P.5 | **Recalibrate `AdaptiveBackend` threshold** — the 256M-MAC crossover was measured against the *naive* host-span kernel; re-measure now that the tiled kernel + residency change the crossover. | M19/M20 follow-up | route more work to the GPU correctly |
 | P.6 | **Lab gen/train double-buffering** — overlap oracle data generation with training instead of competing for cores. | backlog | modest end-to-end gen+train speedup |

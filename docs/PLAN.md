@@ -785,6 +785,16 @@ SDK capability over squeezing a showcase.*
 *Owner's focus (2026-06-13): remove the two GPU bottlenecks, toward a shortest-move
 (quarter-turn-optimal) cube solver. M19+M20 are the priority; M21 is the capability they unlock.*
 
+**Learning-curve levers — measured 2026-06-14 (after M19, M20 Stages 1–3, P.7).** The residual DAVI
+campaign is now **GPU-bound at ~620 GFLOP/s** (nvidia-smi 95–100% at batch 512). Findings (full table in
+`docs/OPTIMIZATIONS.md`): **batch size is throughput-neutral** (+16% samples/s 128→512 — it only moves the
+bottleneck CPU→GPU, and an iter-paced curriculum then advances ~3.4× slower in wall-clock); **net width is
+not a lever** (M17 diminishing + quadratic GFLOP on a slow kernel). The real levers, in order:
+**(P.1) register-blocked GEMM** (~3–5× → ~3–5× the learning curve — *the* throughput lever now we're
+GPU-bound), **(P.8) sample/time-paced curriculum + lighter eval** (stop batch distorting pacing; reclaim
+eval time), **(P.9) LR scaling + ε-loss target sync** (near-free per-update efficiency; ε-sync already
+built). Batch/width are NOT the levers.
+
 0. **M19 — tiled GEMM kernel** (bottleneck #1, compute). ✅ **DONE 2026-06-13.** Shared-memory
    tiled ILGPU GEMM (one generic `GemmDims`-parameterized core for A·B / Aᵀ·B / A·Bᵀ + write,
    adaptive tile). Measured **1.2–2.3× the naive kernel** (up to 620 GFLOP/s resident, gain grows
