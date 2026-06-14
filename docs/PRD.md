@@ -407,8 +407,11 @@ wall-clock until then.*
 > d14-partial) all **undersold** the net — the apparent plateau was a *search-budget* artifact, not a
 > capacity ceiling. The net heuristic is accurate to ~d15 and degrades gradually past it. **So the next
 > capability lever is eval-time search (more expansions / weight→1 / wider frontier), not a wider net.**
-> **Still open:** the eval-time-search lever (P.10); web cube-page wiring; heavier in-loop eval readout;
-> depth-16+ (more capacity/training; full god's-number 26 QTM remains out of reach on one 3060).
+> **✅ Wired into the web cube page** (2026-06-14): the "Solve (self-taught AI)" button runs BWAS via a
+> resident GPU forward where a CUDA device is present, CPU fallback otherwise (the host-span GPU path is
+> transfer-bound and barely beats CPU — resident is 7–10×; see `OPTIMIZATIONS.md`). **Still open:** the
+> eval-time-search lever (P.10); heavier in-loop eval readout; depth-16+ (more capacity/training; full
+> god's-number 26 QTM remains out of reach on one 3060).
 
 | Decision | Choice | Rationale |
 |---|---|---|

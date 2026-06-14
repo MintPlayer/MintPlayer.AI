@@ -111,6 +111,28 @@ told a completely different story:
 - **A wider/deeper net is *not* the next lever.** It isn't the bottleneck through d15; it would only help
   push the d16+ frontier, and even there more search buys depth first. Reframed in the Planned table.
 
+## Web solver backend — resident forward, not host-span (measured 2026-06-14)
+
+The self-taught DAVI solver is wired into the web cube page (`/api/cube/solve-davi`, "Solve
+(self-taught AI)" button) as a third solver beside Kociemba and the imitation DQN. It runs BWAS over
+the value net. Measured the three backends for one solve on the trained 1024×4 net (weight 1.5,
+≤20k expansions):
+
+| depth | CPU (managed) | adaptive (host-span GPU) | **resident GPU** |
+|---|---|---|---|
+| 10 | 2558 ms | 1784 ms | **274 ms** |
+| 14 | 3094 ms | 3019 ms | **468 ms** |
+| 18 | 39366 ms | 40691 ms | **5267 ms** |
+
+- **A naive `Backend.Current = AdaptiveBackend` barely helps — and is *slower* at depth 18.** The
+  residual forward interleaves GPU GEMMs with CPU-delegated LayerNorm/elementwise ops, so the host-span
+  path thrashes the PCIe bus. (Same lesson as the campaign: the win was never host-span.)
+- **The resident forward (`DeviceResidualMlp`, weights on device) is 7–10×.** So the web solver uses the
+  resident forward when a CUDA device is present (local dev → ~depth-15 reach, 50k budget, ~13 s worst
+  case), and falls back to the CPU autograd forward otherwise (e.g. a GPU-less Hetzner container → 6k
+  budget, a few seconds, shallower reach). `CubeValueSearch` takes the forward as an injected delegate so
+  `Environments` stays free of any GPU dependency.
+
 ## Planned
 
 | # | Optimization | Milestone | Why / expected |

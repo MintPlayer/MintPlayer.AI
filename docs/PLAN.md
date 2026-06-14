@@ -701,10 +701,10 @@ capability after the 236k-iter campaign** (residual 1024×4, BWAS **w=1.5, ≤10
 eval (collapses ~d10) and the light in-loop probe (8k exp — looked plateaued at d14-partial) both badly
 **undersold** the net; only a real search budget reveals the true reach. The "plateau" was a *search-budget*
 artifact, **not** a network-capacity ceiling (full analysis: `OPTIMIZATIONS.md` → Capability findings).
-**Still open:** wire `value-davi` into the web cube page as the third "self-taught AI" solver; a
-provably-optimal Tier-1 claim (weight=1 + BFS verification); **P.10 — eval-time search as the capability
-lever** (the next step, no retraining); pushing past d15 (where the net finally softens — god's-number
-26 QTM remains out of reach on one 3060, as stated).
+**Still open:** a provably-optimal Tier-1 claim (weight=1 + BFS verification); pushing past d15 (where the
+net finally softens — god's-number 26 QTM remains out of reach on one 3060, as stated). **✅ Wired into the
+web cube page** (2026-06-14): "Solve (self-taught AI)" runs BWAS via a resident GPU forward (CPU fallback for
+GPU-less hosts) — see `OPTIMIZATIONS.md` → web solver backend.
 
 Make the SDK solve a cube in the **fewest quarter-turns** (god's number 26 QTM), teacher-free, beating
 Kociemba (which isn't QTM-optimal). Depends on M19+M20 (a residual net at depth needs the GPU port to train).
@@ -814,8 +814,8 @@ plateau was a **search-budget artifact** — the greedy live eval (~d10) and the
 ~d14-partial) both grossly understated the net; the net heuristic is accurate to ~d15 and degrades
 *gradually* past it. **The net is not the bottleneck through d15 — eval-time search is. → The next step is
 P.10 (tune BWAS expansions / weight / frontier), not a wider net** (deferred: `OPTIMIZATIONS.md` F.2).
-**What remains:** P.10 eval-time search lever; wire `value-davi` into the web cube page (the "self-taught AI"
-solver); heavier in-loop eval so the live curve reflects real capability; resident Adam-state checkpointing
+**What remains:** P.10 eval-time search lever; heavier in-loop eval so the live curve reflects real capability;
+resident Adam-state checkpointing
 (P.2, lossless resume); deeper-than-15 reach (more capacity/training; full god's-number 26 QTM out of reach
 on one 3060).
 
