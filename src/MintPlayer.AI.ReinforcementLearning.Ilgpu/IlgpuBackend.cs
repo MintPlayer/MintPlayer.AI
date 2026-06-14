@@ -64,6 +64,10 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     private readonly int _tile; // ≤ MaxTile; tile² ≤ device max threads/group
     private readonly Action<KernelConfig, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims, int> _gemmTiled;
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int> _biasActivation;
+    // Resident residual-net forward (M20 Stage 2): row-wise LayerNorm(+optional ReLU) and an
+    // elementwise add (the residual skip), so a ResidualMlp forward chains fully on-device.
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, float> _layerNorm;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>> _addInto;
     // The original one-thread-per-output kernel, retained ONLY for the M19 naive-vs-tiled bench
     // comparison (see BenchGemmGflops); never on the production routing path.
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims> _gemmNaive;
@@ -88,6 +92,8 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
         _gemmTiled = _accelerator.LoadStreamKernel<ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims, int>(GemmTiled_Kernel);
         _biasActivation = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int>(BiasActivation_Kernel);
         _gemmNaive = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims>(GemmNaive_Kernel);
+        _layerNorm = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, float>(LayerNorm_Kernel);
+        _addInto = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>>(AddInto_Kernel);
     }
 
     /// <summary>
@@ -170,6 +176,14 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     internal void LaunchBiasActivation(ArrayView1D<float, Stride1D.Dense> data, ArrayView1D<float, Stride1D.Dense> bias, int dim, int activation)
         => _biasActivation(new Index1D((int)data.Length), data, bias, dim, activation);
 
+    /// <summary>In-place row-wise LayerNorm with scale γ/shift β and optional ReLU, over a [rows·dim] buffer (one thread per row).</summary>
+    internal void LaunchLayerNorm(ArrayView1D<float, Stride1D.Dense> data, ArrayView1D<float, Stride1D.Dense> gamma, ArrayView1D<float, Stride1D.Dense> beta, int rows, int dim, bool relu)
+        => _layerNorm(new Index1D(rows), data, gamma, beta, dim, relu ? 1 : 0, 1e-5f);
+
+    /// <summary>Elementwise <c>a += b</c> over two equal-length resident buffers (the residual skip).</summary>
+    internal void LaunchAddInto(ArrayView1D<float, Stride1D.Dense> a, ArrayView1D<float, Stride1D.Dense> b)
+        => _addInto(new Index1D((int)a.Length), a, b);
+
     // ── tiled GEMM kernel: one 16×16 group computes a 16×16 output tile, staging operand tiles
     //    through shared memory and accumulating across the reduction in tile-sized steps. ──
 
@@ -215,6 +229,34 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
         if (activation == 1 && v < 0f) v = 0f;
         data[gid] = v;
     }
+
+    /// <summary>
+    /// In-place row-wise LayerNorm with learned scale/shift and optional ReLU: one thread owns a row,
+    /// computes the row mean and variance, then writes γ·(x−μ)/√(σ²+ε)+β (then ReLU if requested).
+    /// Inference-only (the successor eval is no-grad) — the autograd LayerNorm carries the backward.
+    /// </summary>
+    private static void LayerNorm_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> data, ArrayView1D<float, Stride1D.Dense> gamma, ArrayView1D<float, Stride1D.Dense> beta, int dim, int relu, float eps)
+    {
+        int row = index;
+        int baseIdx = row * dim;
+        float mean = 0f;
+        for (int c = 0; c < dim; c++) mean += data[baseIdx + c];
+        mean /= dim;
+        float var = 0f;
+        for (int c = 0; c < dim; c++) { float dd = data[baseIdx + c] - mean; var += dd * dd; }
+        var /= dim;
+        float inv = 1f / MathF.Sqrt(var + eps);
+        for (int c = 0; c < dim; c++)
+        {
+            float v = gamma[c] * (data[baseIdx + c] - mean) * inv + beta[c];
+            if (relu == 1 && v < 0f) v = 0f;
+            data[baseIdx + c] = v;
+        }
+    }
+
+    /// <summary>Elementwise <c>a[i] += b[i]</c> — the residual skip connection.</summary>
+    private static void AddInto_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> a, ArrayView1D<float, Stride1D.Dense> b)
+        => a[index] += b[index];
 
     /// <summary>The original naive kernel (one thread per output, no reuse) — bench baseline only.</summary>
     private static void GemmNaive_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> a, ArrayView1D<float, Stride1D.Dense> b, ArrayView1D<float, Stride1D.Dense> c, GemmDims d)
@@ -286,6 +328,14 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     /// per-call weight upload that <see cref="MlpForwardScalar"/> still pays.
     /// </summary>
     public DeviceMlp CreateResidentForward(Mlp net) => new(this, net);
+
+    /// <summary>
+    /// Creates a <see cref="DeviceResidualMlp"/> bound to this backend: a deep residual value net whose
+    /// weights live resident on the device, with the full forward (GEMM + bias + LayerNorm/ReLU +
+    /// residual add + head) chained on-device (M20 Stage 2). This removes the per-call host↔device
+    /// transfer that makes a residual net's host-span successor evaluation transfer-bound.
+    /// </summary>
+    public DeviceResidualMlp CreateResidentForward(ResidualMlp net) => new(this, net);
 
     /// <summary>Maps an MLP's hidden activation to the kernel's activation code (0 none, 1 ReLU).</summary>
     internal static int ResolveActivation(Mlp net)

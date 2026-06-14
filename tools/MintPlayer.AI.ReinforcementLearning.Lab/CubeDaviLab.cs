@@ -126,20 +126,24 @@ internal static class CubeDaviLab
             }
         }
 
-        // M20 Stage 1: route DAVI's ActionCount× successor evaluation through a device-resident MLP
-        // whose weights stay on the GPU across steps and re-upload only on the trainer's target sync.
-        // The resident path is MLP-specific (dense Linear weights); a residual net evaluates via the
-        // autograd path, whose large GEMMs still route to the GPU through the adaptive backend — only
-        // the LayerNorm/ReLU run on the CPU. CPU-only machines also use the autograd path.
-        using DeviceMlp? resident = !residual && adaptive.Gpu is { } gpu && net is Mlp mlpNet
-            ? gpu.CreateResidentForward(mlpNet) : null;
-        Log(resident is not null
+        // Route DAVI's ActionCount× successor evaluation through a device-resident forward whose
+        // weights stay on the GPU across steps and re-upload only on the trainer's target sync — the
+        // MLP path (M20 Stage 1) or the residual path (M20 Stage 2), both fully on-device. CPU-only
+        // machines fall back to the autograd forward (null).
+        ITargetForward? targetForward = adaptive.Gpu is { } gpu
+            ? net switch
+            {
+                Mlp m => gpu.CreateResidentForward(m),
+                ResidualMlp r => gpu.CreateResidentForward(r),
+                _ => (ITargetForward?)null,
+            }
+            : null;
+        using var residentDisposable = targetForward as IDisposable;
+        Log(targetForward is not null
             ? "successor evaluation: device-resident GPU forward (resident weights)"
-            : residual
-                ? "successor evaluation: autograd forward (GEMMs route to GPU via adaptive backend)"
-                : "successor evaluation: CPU autograd forward");
+            : "successor evaluation: CPU autograd forward");
 
-        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options, resident);
+        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options, targetForward);
 
         if (evalOnly)
         {

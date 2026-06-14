@@ -165,6 +165,53 @@ public class IlgpuBackendTests
     }
 
     [Fact]
+    public void DeviceResidualMlp_MatchesAutogradForward()
+    {
+        // The resident residual forward (M20 Stage 2 — GEMM + bias + LayerNorm/ReLU + skip-add + head,
+        // all on-device) must match the autograd ResidualMlp.Forward within tolerance.
+        var rng = new MintPlayer.AI.ReinforcementLearning.Core.Random.Xoshiro256StarStar(77);
+        var net = new MintPlayer.AI.ReinforcementLearning.Core.Nn.ResidualMlp(inputSize: 12, width: 16, blocks: 3, rng);
+
+        const int batch = 8, inDim = 12;
+        var input = Random(batch * inDim, 88);
+        var reference = net.Forward(new MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor(input, batch, inDim)).Data;
+
+        using var backend = new IlgpuBackend(preferCpu: true);
+        using var resident = backend.CreateResidentForward(net);
+        var got = resident.Forward(input, batch);
+
+        // Deeper net (LayerNorm + 3 blocks) accumulates more cross-backend rounding → a touch looser.
+        Assert.Equal(reference.Length, got.Length);
+        for (int i = 0; i < reference.Length; i++)
+        {
+            float tol = 3e-3f * (1f + MathF.Abs(reference[i]));
+            Assert.True(MathF.Abs(reference[i] - got[i]) <= tol, $"index {i}: expected {reference[i]}, got {got[i]} (tol {tol})");
+        }
+    }
+
+    [Fact]
+    public void DeviceResidualMlp_OnTargetSynced_AdoptsNewWeights()
+    {
+        var first = new MintPlayer.AI.ReinforcementLearning.Core.Nn.ResidualMlp(12, 16, 2, new MintPlayer.AI.ReinforcementLearning.Core.Random.Xoshiro256StarStar(91));
+        var second = new MintPlayer.AI.ReinforcementLearning.Core.Nn.ResidualMlp(12, 16, 2, new MintPlayer.AI.ReinforcementLearning.Core.Random.Xoshiro256StarStar(92));
+
+        const int batch = 6, inDim = 12;
+        var input = Random(batch * inDim, 93);
+        var secondRef = second.Forward(new MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor(input, batch, inDim)).Data;
+
+        using var backend = new IlgpuBackend(preferCpu: true);
+        using var resident = backend.CreateResidentForward(first);
+        ((MintPlayer.AI.ReinforcementLearning.Core.Planning.ITargetForward)resident).OnTargetSynced(second);
+        var got = resident.Forward(input, batch);
+
+        for (int i = 0; i < secondRef.Length; i++)
+        {
+            float tol = 3e-3f * (1f + MathF.Abs(secondRef[i]));
+            Assert.True(MathF.Abs(secondRef[i] - got[i]) <= tol, $"index {i}: expected {secondRef[i]}, got {got[i]} (tol {tol})");
+        }
+    }
+
+    [Fact]
     public void Gemm_Accumulates_LikeTheContract()
     {
         // The interface contract is c += a·b; running twice must double the result.
