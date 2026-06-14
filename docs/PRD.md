@@ -396,6 +396,17 @@ teacher-free, beating Kociemba (which is fast but not QTM-optimal). Investigated
 on the GPU bottleneck removal (§10 / PLAN §M19–M20) — a residual net at depth can't train in tolerable
 wall-clock until then.*
 
+> **✅ BUILT + MEASURED 2026-06-14.** All pieces shipped; the GPU port (M19/M20 + register-blocked GEMM)
+> made the residual net trainable. **BWAS result** (residual 1024×4, ~44k iters, weight 2.5, ≤40k
+> expansions, 12 cubes/depth): **QTM-optimal through depth 10** (12/12, exactly *depth* quarter-turns),
+> **100% solved through depth 12**, 83% at d13, 75% at d14; **every solved cube beats Kociemba's QTM,
+> typically ~2×** (d10 10 vs 19, d12 12.2 vs 29.3 — Kociemba minimizes half-turns, so its QTM balloons).
+> Tier 1 (≤ depth 7) met empirically (weight 2.5 found optimal; a *provable* claim needs weight=1 + BFS
+> verification — open). Tier 2 (beat Kociemba's QTM, depths 8–20) met through ~depth 14. Greedy (the live
+> training eval) collapses ~depth 10–11 — search reads the net far deeper, so the live curve understates it.
+> **Still open:** web cube-page wiring; A*-based in-loop eval readout; depth-15+ (more capacity/training;
+> full god's-number 26 QTM remains out of reach on one 3060).
+
 | Decision | Choice | Rationale |
 |---|---|---|
 | Net | **Residual MLP** (`Core.Nn` `ResidualMlp`): 324→4096→2048 + 3–4 residual blocks (width 2048, **LayerNorm** not BatchNorm), scalar out, ~8–14M params | Depth-with-residuals is the untried lever (M17: width alone is diminishing); the identity path makes 6–10 effective layers trainable for the non-smooth cost surface. LayerNorm avoids the BatchNorm-vs-target-net-bootstrap interaction. Reuses the scalar-output/checkpoint contract. |

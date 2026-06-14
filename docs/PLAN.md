@@ -693,6 +693,14 @@ layer at 8192-wide → ~570 MB/step). Fix: weights resident, re-synced only when
 
 ## M21 — Shortest-move cube solver  *(the capability M19+M20 unlock; QTM-optimal showcase)*
 
+**✅ BUILT + MEASURED 2026-06-14.** All four pieces shipped (`c381389`): `ResidualMlp` + LayerNorm autograd
+op, `IValueNet` abstraction, **BWAS** (batched weighted A*), and the Kociemba-QTM gate eval. **Measured
+capability** (residual 1024×4, ~44k iters, BWAS w=2.5 ≤40k exp): **QTM-optimal through depth 10, 100%
+solved through depth 12, beats Kociemba's QTM on every solve (~2×)** — see the gate table. **Still open:**
+wire `value-davi` into the web cube page as the third "self-taught AI" solver; a provably-optimal Tier-1
+claim (weight=1 + BFS verification); pushing depth past ~14 (needs more capacity/training — god's-number
+26 QTM remains out of reach on one 3060, as stated).
+
 Make the SDK solve a cube in the **fewest quarter-turns** (god's number 26 QTM), teacher-free, beating
 Kociemba (which isn't QTM-optimal). Depends on M19+M20 (a residual net at depth needs the GPU port to train).
 - **Residual value net** (`Core.Nn` `ResidualMlp`): 324→4096→2048 + 3–4 residual blocks (width 2048,
@@ -750,6 +758,12 @@ Kociemba (which isn't QTM-optimal). Depends on M19+M20 (a residual net at depth 
 | M18 DAVI (teacher-free) | learn to solve shallow cubes with no oracle | greedy-optimal under exact value; **≥80%** of depth ≤3 teacher-free; campaign reached **curriculum depth 9** (greedy d7 70%, d9 30%) — stall-fallback curriculum unstuck the 0.95 gate; plateau ⇒ need residual net + GPU port (M19–M21) |
 | M19 tiled GEMM (bottleneck #1) | correctness vs ManagedBackend; naive→tiled GFLOP/s table | 212/212 green incl. exact-tile/k-tail/rectangular; on RTX 3060 (resident operands, transfer excluded): 256³-ish **562→669** (1.2×), 1024³ **444→626** (1.4×), **2048³ 268→620 GFLOP/s (2.3×)** — gain grows with size; adaptive tile (16 on GPU, ≤cores on CPU accel). Honest: short of the 5–10× estimate — shared-memory tiling only; **register-blocking is the next lever** toward multi-TFLOP (M19b) |
 | M20 Stage 1 resident weights (bottleneck #2) | DeviceMlp matches autograd; weights upload per-sync not per-step | DeviceMlp + `ITargetForward` green (forward matches within tol; OnTargetSynced re-uploads); weight transfer dropped from per-step to per-target-sync (~200×); wired into `cube-davi` |
+| M20 Stage 2 resident residual fwd (2026-06-14) | DeviceResidualMlp matches autograd | GPU LayerNorm + add kernels; residual successor-eval resident → **~2× iters/s** (4.5 vs 2.3, residual 1024×4) |
+| M20 Stage 3 resident training (2026-06-14) | gradients match autograd; full step on-device | `DeviceResidualTrainer` (fwd-cache + backward + clip + on-device Adam), `IResidentTrainStep` seam; gradient parity verified; **~11 iters/s (4.8× host-span)** |
+| M19b register-blocked GEMM (2026-06-14) | correctness vs ManagedBackend; faster than tiled | 4×4 micro-tile in explicit registers; **2.2× @256-class, 3.2× @1024³/2048³ → ~2.0 TFLOP/s** (7.4× naive @2048³); production path routes through it |
+| Learning-curve levers P.7/P.8/P.9 (2026-06-14) | feed GPU, decouple pacing, per-update efficiency | parallel successor gen (GPU 0→95-100% util) + `--batch`; sample-paced curriculum + lighter eval; ε-loss target sync (freeze-proof) + `--lr`. Net: **~3,050 samples/s (~2× prior)**, GPU-bound at ~2 TFLOP/s |
+| General `IComputeBackend` port Phase 1 (2026-06-14) | every autograd op behind the seam; CPU bitwise-identical | all ops (Map/Zip/reductions/LogSoftmax/Gather/Huber/LayerNorm) routed through the backend; 224/224 green. Phase 2 (device-backed Tensor) parked far-future (no measured win at our scale) |
+| **M21 shortest-move solver — BWAS capability (2026-06-14, residual 1024×4, ~44k iters)** | **provably-optimal shallow; beat Kociemba's QTM mid-range** | batched A* (w=2.5, ≤40k exp, 12/depth): **12/12 & QTM-optimal through depth 10** (exactly d·qt), **100% solved through depth 12**, 83% d13, 75% d14; **every solve beats Kociemba's QTM, often ~2×** (d10 10 vs 19, d12 12.2 vs 29.3). Greedy (live curve) collapses ~d10-11 — search reads the net far deeper. Beats the earlier 1024×3 MLP at every deep level (d12 100% vs 80%). Full god's-number (26 QTM) NOT reached — honest two-tier story |
 
 ## Shipped (2026-06-11) — release engineering
 
@@ -785,15 +799,22 @@ SDK capability over squeezing a showcase.*
 *Owner's focus (2026-06-13): remove the two GPU bottlenecks, toward a shortest-move
 (quarter-turn-optimal) cube solver. M19+M20 are the priority; M21 is the capability they unlock.*
 
-**Learning-curve levers — measured 2026-06-14 (after M19, M20 Stages 1–3, P.7).** The residual DAVI
-campaign is now **GPU-bound at ~620 GFLOP/s** (nvidia-smi 95–100% at batch 512). Findings (full table in
-`docs/OPTIMIZATIONS.md`): **batch size is throughput-neutral** (+16% samples/s 128→512 — it only moves the
-bottleneck CPU→GPU, and an iter-paced curriculum then advances ~3.4× slower in wall-clock); **net width is
-not a lever** (M17 diminishing + quadratic GFLOP on a slow kernel). The real levers, in order:
-**(P.1) register-blocked GEMM** (~3–5× → ~3–5× the learning curve — *the* throughput lever now we're
-GPU-bound), **(P.8) sample/time-paced curriculum + lighter eval** (stop batch distorting pacing; reclaim
-eval time), **(P.9) LR scaling + ε-loss target sync** (near-free per-update efficiency; ε-sync already
-built). Batch/width are NOT the levers.
+**CURRENT STATUS (2026-06-14): M19, M20 (Stages 1–3), M21, the general-port Phase 1, and all
+learning-curve levers (P.1/P.7/P.8/P.9) are DONE** — see the gate table. The residual DAVI campaign runs
+fully device-resident at **~3,050 samples/s** (GPU-bound at ~2 TFLOP/s via the register-blocked GEMM),
+curriculum at the depth-20 cap. **Measured solver capability (BWAS): QTM-optimal through depth 10, 100%
+through depth 12, beating Kociemba's QTM ~2×.** The greedy *live* eval curve has plateaued (it understates
+the net — search reads it far deeper). **What remains:** wire `value-davi` into the web cube page (the
+"self-taught AI" solver); A*-based in-loop eval readout so the live curve reflects capability; resident
+Adam-state checkpointing (P.2, lossless resume); deeper-than-14 reach (more capacity/training; full
+god's-number 26 QTM is out of reach on one 3060).
+
+**Learning-curve findings (measured 2026-06-14).** The campaign is **GPU-bound** after the resident
+stages. **Batch size is throughput-neutral** (+16% samples/s 128→512 — it only moves the bottleneck
+CPU→GPU; an iter-paced curriculum then advanced ~3.4× slower, since fixed by sample-pacing); **net width is
+not a lever** (M17 diminishing + quadratic GFLOP). The throughput lever was the GEMM kernel itself —
+**✅ P.1 register-blocked GEMM (2.2–3.2× → ~2 TFLOP/s)** — plus the cheap **✅ P.8** (sample-paced
+curriculum + lighter eval) and **✅ P.9** (LR scaling + ε-loss target sync). Full analysis: `OPTIMIZATIONS.md`.
 
 0. **M19 — tiled GEMM kernel** (bottleneck #1, compute). ✅ **DONE 2026-06-13.** Shared-memory
    tiled ILGPU GEMM (one generic `GemmDims`-parameterized core for A·B / Aᵀ·B / A·Bᵀ + write,
