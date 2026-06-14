@@ -34,6 +34,8 @@ internal static class CubeDaviLab
         string netKind = "mlp";       // "mlp" (plain) or "residual" (M21 deep residual value net)
         int blocks = 4;               // residual block count (--net residual)
         int batchSize = 128;          // DAVI training batch
+        float learningRate = 1e-3f;   // --lr (linear-scaling rule: raise with batch)
+        float epsSync = 0.06f;        // ε-loss target sync threshold (P.9); 0 disables
         bool batchedSearch = false;   // use batched A* (BWAS) for --search eval
         bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
         for (int i = 0; i < args.Length; i++)
@@ -45,6 +47,8 @@ internal static class CubeDaviLab
             else if (args[i] == "--layers" && i + 1 < args.Length) hiddenLayers = int.Parse(args[++i]); // #3: net depth
             else if (args[i] == "--blocks" && i + 1 < args.Length) blocks = int.Parse(args[++i]);
             else if (args[i] == "--batch" && i + 1 < args.Length) batchSize = int.Parse(args[++i]);
+            else if (args[i] == "--lr" && i + 1 < args.Length) learningRate = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--eps-sync" && i + 1 < args.Length) epsSync = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--net" && i + 1 < args.Length) netKind = args[++i].ToLowerInvariant();
             else if (args[i] == "--max-depth" && i + 1 < args.Length) maxDepthCap = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
@@ -98,7 +102,17 @@ internal static class CubeDaviLab
         }
 
         var model = new CubeModel();
-        var options = new ValueIterationOptions { BatchSize = batchSize, LearningRate = 1e-3f, DistanceScale = 1f, TargetUpdateInterval = 200 };
+        // P.9 — ε-loss target sync (only advance the bootstrap target once the net has converged on it,
+        // with the trainer's max-interval fallback) + a CLI-tunable LR (the bigger batch supports a higher
+        // one via the linear-scaling rule).
+        var options = new ValueIterationOptions
+        {
+            BatchSize = batchSize,
+            LearningRate = learningRate,
+            DistanceScale = 1f,
+            TargetUpdateInterval = 200,
+            TargetUpdateLossThreshold = epsSync,
+        };
 
         // Resume the FULL training state so a restart continues seamlessly. DAVI regenerates its
         // states from scrambles (nothing to store there — regeneration is free); what a resume must
@@ -191,24 +205,30 @@ internal static class CubeDaviLab
             });
         }
 
-        // Curriculum advancement: greedy solve-rate falls off with depth (greedy is myopic), so a
-        // pure mastery gate caps the curriculum where greedy stalls. Advance when the frontier is
-        // mostly solved OR force-advance after a stall — exposure to deeper states is what lets the
-        // VALUE function (and thus value-guided search at inference) reach deep, even where greedy
-        // never hits 95%.
+        // Curriculum advancement (P.8): greedy solve-rate falls off with depth (greedy is myopic), so a
+        // pure mastery gate caps the curriculum where greedy stalls. Advance when the frontier is mostly
+        // solved OR force-advance after a stall — exposure to deeper states is what lets the VALUE function
+        // (and thus value-guided search at inference) reach deep, even where greedy never hits the gate.
+        // The stall gate is measured in SAMPLES, not iterations, so batch size no longer distorts pacing
+        // (~384k samples ≈ the old 3000 iters at batch 128).
         const double advanceThreshold = 0.6;
-        const long forceAdvanceIters = 3000;
-        long itersSinceAdvance = 0;
+        const long forceAdvanceSamples = 384_000;
+        long samplesSinceAdvance = 0;
+
+        // P.8: train in larger chunks so the (CPU, GPU-idle) eval runs less often — it's pure overhead
+        // that grows with curriculum depth. Eval every 1000 iters instead of 500.
+        const int trainChunk = 1000;
 
         var deadline = DateTime.UtcNow.AddHours(hours);
         float lastLoss = 0;
         Log($"training until {deadline:u} (~{hours:F1} h), data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
+        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, eval every {trainChunk} iters");
 
         while (DateTime.UtcNow < deadline)
         {
-            trainer.Train(Sample, iterations: 500, onIteration: (_, loss) => lastLoss = loss);
-            totalIterations += 500;
-            itersSinceAdvance += 500;
+            trainer.Train(Sample, iterations: trainChunk, onIteration: (_, loss) => lastLoss = loss);
+            totalIterations += trainChunk;
+            samplesSinceAdvance += (long)trainChunk * batchSize;
 
             // Evaluate only up to one level beyond the current curriculum — enough to decide
             // advancement, without burning time on deep failed solves the net can't reach yet.
@@ -217,11 +237,11 @@ internal static class CubeDaviLab
             SaveCheckpoint();
 
             bool mastered = rates[curriculumDepth] >= advanceThreshold;
-            bool stalled = itersSinceAdvance >= forceAdvanceIters;
+            bool stalled = samplesSinceAdvance >= forceAdvanceSamples;
             if (curriculumDepth < maxDepthCap && (mastered || stalled))
             {
                 curriculumDepth++;
-                itersSinceAdvance = 0;
+                samplesSinceAdvance = 0;
                 Log($"curriculum advanced → scramble depth {curriculumDepth}{(mastered ? "" : " (forced after stall)")}");
             }
         }
@@ -249,7 +269,7 @@ internal static class CubeDaviLab
             long totalLen = 0;          // Σ net solution QTM over cubes the net solved
             long kociembaLen = 0;       // Σ Kociemba QTM over the SAME solved cubes (Tier-2 baseline)
             int beatsKociemba = 0;      // #cubes where the net's QTM ≤ Kociemba's
-            const int episodes = 20;
+            const int episodes = 12;    // P.8: lighter in-loop eval (was 20) — eval is pure overhead
             for (int episode = 0; episode < episodes; episode++)
             {
                 var evalRng = new Xoshiro256StarStar((ulong)(700_000 + 1_000 * depth + episode));

@@ -160,9 +160,14 @@ public sealed class ValueIterationTrainer<TState>
     public void Train(Func<TState> sampleState, int iterations, Action<int, float>? onIteration = null)
     {
         int batch = _options.BatchSize, actions = _model.ActionCount;
+        // ε-loss target sync: when a loss threshold is set, the target only advances once the online net
+        // has converged on it — but with a max-interval fallback so it can never freeze (DeepCubeA-style).
+        int itersSinceSync = 0;
+        int maxSyncInterval = 5 * _options.TargetUpdateInterval;
 
         for (int it = 0; it < iterations; it++)
         {
+            itersSinceSync++;
             // Sampling stays sequential to keep the RNG draw order deterministic.
             var states = new TState[batch];
             for (int b = 0; b < batch; b++) states[b] = sampleState();
@@ -223,11 +228,14 @@ public sealed class ValueIterationTrainer<TState>
                 stepLoss = loss.Data[0];
             }
 
-            // Sync the bootstrap target on schedule — and, when an ε-loss threshold is set, only once
-            // the online net has converged on the current target (DeepCubeA stability trick).
+            // Sync the bootstrap target on schedule — and, when an ε-loss threshold is set, only once the
+            // online net has converged on it (loss < ε), with a max-interval fallback so it can't freeze.
             if ((it + 1) % _options.TargetUpdateInterval == 0 &&
-                (_options.TargetUpdateLossThreshold <= 0f || stepLoss < _options.TargetUpdateLossThreshold))
+                (_options.TargetUpdateLossThreshold <= 0f
+                 || stepLoss < _options.TargetUpdateLossThreshold
+                 || itersSinceSync >= maxSyncInterval))
             {
+                itersSinceSync = 0;
                 _residentTrain?.SyncToHost();        // resident weights → CPU net before copying to the target
                 _target.CopyFrom(_net);
                 _targetForward.OnTargetSynced(_target); // re-sync resident target weights (per-sync, not per-step)
