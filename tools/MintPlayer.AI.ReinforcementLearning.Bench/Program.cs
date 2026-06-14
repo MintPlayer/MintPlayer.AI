@@ -125,10 +125,11 @@ static void BenchGpu()
         sw.Stop();
         double hostSpanGflops = flopsPerIter * iterations / sw.Elapsed.TotalSeconds / 1e9;
 
-        // Operands resident (no per-iter transfer) — isolates kernel compute. naive vs. tiled.
-        double naive = gpu.BenchGemmGflops(m, k, n, iterations, tiled: false);
-        double tiled = gpu.BenchGemmGflops(m, k, n, iterations, tiled: true);
-        Console.WriteLine($"  GEMM [{m},{k}]x[{k},{n}]: host-span {hostSpanGflops,7:F1} | resident naive {naive,7:F1} → tiled {tiled,7:F1} GFLOP/s  ({tiled / naive:F1}×)");
+        // Operands resident (no per-iter transfer) — isolates kernel compute: naive → tiled → register-blocked.
+        double naive = gpu.BenchGemmGflops(m, k, n, iterations, MintPlayer.AI.ReinforcementLearning.Ilgpu.GemmKind.Naive);
+        double tiled = gpu.BenchGemmGflops(m, k, n, iterations, MintPlayer.AI.ReinforcementLearning.Ilgpu.GemmKind.Tiled);
+        double reg = gpu.BenchGemmGflops(m, k, n, iterations, MintPlayer.AI.ReinforcementLearning.Ilgpu.GemmKind.RegBlocked);
+        Console.WriteLine($"  GEMM [{m},{k}]x[{k},{n}]: host-span {hostSpanGflops,7:F1} | resident naive {naive,7:F1} → tiled {tiled,7:F1} → reg-blocked {reg,7:F1} GFLOP/s  (reg {reg / tiled:F1}× tiled, {reg / naive:F1}× naive)");
     }
 }
 

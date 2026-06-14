@@ -39,6 +39,9 @@ public readonly struct GemmDims(
     public static GemmDims ABt(int m, int k, int n, int accumulate) => new(m, k, n, n, 1, 1, n, accumulate);
 }
 
+/// <summary>Which GEMM kernel to benchmark (see <see cref="IlgpuBackend.BenchGemmGflops"/>).</summary>
+public enum GemmKind { Naive, Tiled, RegBlocked }
+
 /// <summary>
 /// Adam hyper-parameters + per-step bias-correction for the on-device update kernel (M20 Stage 3):
 /// learning rate, the two decay rates, ε, and the precomputed bias-correction denominators
@@ -85,11 +88,20 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     /// </summary>
     internal const int MaxTile = 16;
 
+    // Register-blocked GEMM (P.1/M19b): each thread computes a RegTM×RegTN micro-tile in registers,
+    // reading RegBK-deep shared-memory tiles — far higher arithmetic intensity than one-thread-per-output.
+    // A group is groupEdge×groupEdge threads computing a (groupEdge·RegTM)×(groupEdge·RegTN) output block;
+    // groupEdge adapts to the device's group-size limit (16²=256 threads on a GPU, smaller on the CPU
+    // accelerator). Shared tiles are sized to the compile-time max block (RegBMax) and a sub-region used.
+    private const int RegTM = 4, RegTN = 4, RegBK = 8, RegBMax = 64;
+
     private readonly Context _context;
     private readonly Accelerator _accelerator;
-    private readonly int _tile; // ≤ MaxTile; tile² ≤ device max threads/group
+    private readonly int _tile;       // ≤ MaxTile; tile² ≤ device max threads/group (simple tiled kernel)
+    private readonly int _regEdge;    // groupEdge for the register-blocked kernel; edge² ≤ device limit
     private readonly ManagedBackend _cpuOps = new(); // elementwise/reduction fallback (see Map)
     private readonly Action<KernelConfig, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims, int> _gemmTiled;
+    private readonly Action<KernelConfig, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims, int> _gemmReg;
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int> _biasActivation;
     // Resident residual-net forward (M20 Stage 2): row-wise LayerNorm(+optional ReLU) and an
     // elementwise add (the residual skip), so a ResidualMlp forward chains fully on-device.
@@ -128,7 +140,14 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
         while (t > 1 && t * t > _accelerator.MaxNumThreadsPerGroup) t--;
         _tile = t;
 
+        // Register-blocked group edge: largest g with g² ≤ device limit and g ≤ RegBMax/RegTM (so the
+        // block fits the shared tiles). GPU: 16 (256 threads, 64×64 block). CPU accelerator: ~4.
+        int e = RegBMax / RegTM;
+        while (e > 1 && e * e > _accelerator.MaxNumThreadsPerGroup) e--;
+        _regEdge = e;
+
         _gemmTiled = _accelerator.LoadStreamKernel<ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims, int>(GemmTiled_Kernel);
+        _gemmReg = _accelerator.LoadStreamKernel<ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims, int>(GemmRegBlocked_Kernel);
         _biasActivation = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int>(BiasActivation_Kernel);
         _gemmNaive = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims>(GemmNaive_Kernel);
         _layerNorm = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, float>(LayerNorm_Kernel);
@@ -245,12 +264,17 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     internal Accelerator Accelerator => _accelerator;
     internal object DeviceLock => _lock;
 
-    /// <summary>Launch the tiled GEMM over resident views with a grid sized to cover Rows×Cols.</summary>
+    /// <summary>
+    /// Launch the production GEMM over resident views (the register-blocked kernel, P.1) with a grid
+    /// sized to cover Rows×Cols in (groupEdge·RegTM)×(groupEdge·RegTN) blocks. This is the path every
+    /// caller uses (host-span GEMMs, DeviceMlp, DeviceResidualMlp/Trainer).
+    /// </summary>
     internal void LaunchGemmTiled(ArrayView1D<float, Stride1D.Dense> a, ArrayView1D<float, Stride1D.Dense> b, ArrayView1D<float, Stride1D.Dense> c, GemmDims d)
     {
-        var grid = new Index2D((d.Cols + _tile - 1) / _tile, (d.Rows + _tile - 1) / _tile); // X = columns, Y = rows
-        var group = new Index2D(_tile, _tile);
-        _gemmTiled(new KernelConfig(grid, group), a, b, c, d, _tile);
+        int blockM = _regEdge * RegTM, blockN = _regEdge * RegTN;
+        var grid = new Index2D((d.Cols + blockN - 1) / blockN, (d.Rows + blockM - 1) / blockM); // X = columns, Y = rows
+        var group = new Index2D(_regEdge, _regEdge);
+        _gemmReg(new KernelConfig(grid, group), a, b, c, d, _regEdge);
     }
 
     /// <summary>Launch the in-place bias+activation over a resident [rows·dim] buffer.</summary>
@@ -346,6 +370,86 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
             int idx = row * d.Cols + col;
             if (d.Accumulate == 1) c[idx] += acc; else c[idx] = acc;
         }
+    }
+
+    /// <summary>
+    /// Register-blocked GEMM (P.1): a groupEdge×groupEdge group computes a (groupEdge·RegTM)×(groupEdge·RegTN)
+    /// output block; each thread holds a RegTM×RegTN accumulator micro-tile in registers and streams
+    /// RegBK-deep tiles of A and B through shared memory. Each shared value is reused RegTM/RegTN times from
+    /// registers, so far fewer shared-memory reads per output than the one-thread-per-output tiled kernel.
+    /// Generic over layout via <see cref="GemmDims"/> strides; boundary guards zero-fill loads and guard stores.
+    /// </summary>
+    private static void GemmRegBlocked_Kernel(
+        ArrayView1D<float, Stride1D.Dense> a, ArrayView1D<float, Stride1D.Dense> b, ArrayView1D<float, Stride1D.Dense> c, GemmDims d, int groupEdge)
+    {
+        var As = SharedMemory.Allocate<float>(RegBMax * RegBK); // [blockM, RegBK]
+        var Bs = SharedMemory.Allocate<float>(RegBK * RegBMax); // [RegBK, blockN]
+
+        int blockM = groupEdge * RegTM, blockN = groupEdge * RegTN;
+        int tx = Group.IdxX, ty = Group.IdxY;
+        int threadId = ty * groupEdge + tx;
+        int nThreads = groupEdge * groupEdge;
+
+        int blockRow = Grid.IdxY * blockM;
+        int blockCol = Grid.IdxX * blockN;
+        int rowStart = blockRow + ty * RegTM;
+        int colStart = blockCol + tx * RegTN;
+
+        // 4×4 accumulators as explicit registers (an array lands in slow local memory under ILGPU, killing
+        // the point of register-blocking — named scalars stay in registers).
+        float c00 = 0, c01 = 0, c02 = 0, c03 = 0, c10 = 0, c11 = 0, c12 = 0, c13 = 0,
+              c20 = 0, c21 = 0, c22 = 0, c23 = 0, c30 = 0, c31 = 0, c32 = 0, c33 = 0;
+
+        int numKTiles = (d.Red + RegBK - 1) / RegBK;
+        for (int kt = 0; kt < numKTiles; kt++)
+        {
+            int kBase = kt * RegBK;
+            // Cooperatively stage A's blockM×RegBK tile and B's RegBK×blockN tile (strided over threads).
+            for (int idx = threadId; idx < blockM * RegBK; idx += nThreads)
+            {
+                int r = idx / RegBK, k = idx % RegBK;
+                int gRow = blockRow + r, gK = kBase + k;
+                As[r * RegBK + k] = (gRow < d.Rows && gK < d.Red) ? a[gRow * d.ARowStride + gK * d.AColStride] : 0f;
+            }
+            for (int idx = threadId; idx < RegBK * blockN; idx += nThreads)
+            {
+                int k = idx / blockN, col = idx % blockN;
+                int gK = kBase + k, gCol = blockCol + col;
+                Bs[k * blockN + col] = (gK < d.Red && gCol < d.Cols) ? b[gK * d.BRowStride + gCol * d.BColStride] : 0f;
+            }
+            Group.Barrier();
+
+            int aBase = ty * RegTM, bBase = tx * RegTN;
+            for (int k = 0; k < RegBK; k++)
+            {
+                float a0 = As[(aBase + 0) * RegBK + k], a1 = As[(aBase + 1) * RegBK + k],
+                      a2 = As[(aBase + 2) * RegBK + k], a3 = As[(aBase + 3) * RegBK + k];
+                int bRow = k * blockN + bBase;
+                float b0 = Bs[bRow + 0], b1 = Bs[bRow + 1], b2 = Bs[bRow + 2], b3 = Bs[bRow + 3];
+                c00 += a0 * b0; c01 += a0 * b1; c02 += a0 * b2; c03 += a0 * b3;
+                c10 += a1 * b0; c11 += a1 * b1; c12 += a1 * b2; c13 += a1 * b3;
+                c20 += a2 * b0; c21 += a2 * b1; c22 += a2 * b2; c23 += a2 * b3;
+                c30 += a3 * b0; c31 += a3 * b1; c32 += a3 * b2; c33 += a3 * b3;
+            }
+            Group.Barrier();
+        }
+
+        StoreReg(c, d, rowStart + 0, colStart + 0, c00); StoreReg(c, d, rowStart + 0, colStart + 1, c01);
+        StoreReg(c, d, rowStart + 0, colStart + 2, c02); StoreReg(c, d, rowStart + 0, colStart + 3, c03);
+        StoreReg(c, d, rowStart + 1, colStart + 0, c10); StoreReg(c, d, rowStart + 1, colStart + 1, c11);
+        StoreReg(c, d, rowStart + 1, colStart + 2, c12); StoreReg(c, d, rowStart + 1, colStart + 3, c13);
+        StoreReg(c, d, rowStart + 2, colStart + 0, c20); StoreReg(c, d, rowStart + 2, colStart + 1, c21);
+        StoreReg(c, d, rowStart + 2, colStart + 2, c22); StoreReg(c, d, rowStart + 2, colStart + 3, c23);
+        StoreReg(c, d, rowStart + 3, colStart + 0, c30); StoreReg(c, d, rowStart + 3, colStart + 1, c31);
+        StoreReg(c, d, rowStart + 3, colStart + 2, c32); StoreReg(c, d, rowStart + 3, colStart + 3, c33);
+    }
+
+    /// <summary>One guarded micro-tile store for the register-blocked kernel (accumulate or write).</summary>
+    private static void StoreReg(ArrayView1D<float, Stride1D.Dense> c, GemmDims d, int gRow, int gCol, float val)
+    {
+        if (gRow >= d.Rows || gCol >= d.Cols) return;
+        int idx = gRow * d.Cols + gCol;
+        if (d.Accumulate == 1) c[idx] += val; else c[idx] = val;
     }
 
     /// <summary>In-place bias add + activation (0 = none, 1 = ReLU) over a [rows, dim] buffer.</summary>
@@ -592,11 +696,11 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     }
 
     /// <summary>
-    /// Bench-only (PLAN M19): GFLOP/s of a square GEMM with operands held resident (no per-iteration
-    /// transfer), so it isolates kernel throughput. <paramref name="tiled"/> false selects the legacy
-    /// naive kernel — the baseline for the committed naive-vs-tiled table.
+    /// Bench-only (PLAN M19/M19b): GFLOP/s of a square GEMM with operands held resident (no per-iteration
+    /// transfer), so it isolates kernel throughput. Compares the naive, simple-tiled, and register-blocked
+    /// kernels — the evidence for the optimization table.
     /// </summary>
-    public double BenchGemmGflops(int m, int k, int n, int iterations, bool tiled)
+    public double BenchGemmGflops(int m, int k, int n, int iterations, GemmKind kind)
     {
         var dims = new GemmDims(m, n, k, k, 1, n, 1, accumulate: 0);
         lock (_lock)
@@ -607,8 +711,15 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
 
             void Run()
             {
-                if (tiled) LaunchGemmTiled(bufA.View, bufB.View, bufC.View, dims);
-                else _gemmNaive(new Index1D(m * n), bufA.View, bufB.View, bufC.View, dims);
+                switch (kind)
+                {
+                    case GemmKind.Naive: _gemmNaive(new Index1D(m * n), bufA.View, bufB.View, bufC.View, dims); break;
+                    case GemmKind.Tiled:
+                        _gemmTiled(new KernelConfig(new Index2D((n + _tile - 1) / _tile, (m + _tile - 1) / _tile), new Index2D(_tile, _tile)),
+                            bufA.View, bufB.View, bufC.View, dims, _tile);
+                        break;
+                    default: LaunchGemmTiled(bufA.View, bufB.View, bufC.View, dims); break; // register-blocked (production)
+                }
             }
 
             for (int i = 0; i < 10; i++) Run();

@@ -25,6 +25,7 @@ Legend: ✅ done · 🔜 planned · ⏳ in progress
 | 2.3 | **`AdaptiveBackend`** — routes each GEMM to CPU (small/medium) vs discrete GPU (large) by a MAC-count threshold; pure CPU when no GPU. No knobs for the caller. | ✅ (`74a77e5`) | best-of-both automatically; CPU still wins < ~256M MACs (host-span transfer) |
 | 2.5 | **Complete compute seam** — every autograd op (not just GEMM) now routes through `IComputeBackend` (opcode `Map`/`Zip` + reductions/LogSoftmax/Gather/Huber/LayerNorm), `ManagedBackend` the bitwise-identical reference. The general-port "Phase 1"; a backend can now run the whole fwd+bwd+Adam graph. | ✅ general port Phase 1 | architectural — no speed change; CPU stays the deterministic default |
 | 2.4 | **Tiled GEMM kernel** — replaced the naive one-thread-per-output kernel with a **shared-memory tiled** kernel (load tile → `Group.Barrier` → multiply-accumulate → barrier). One generic `GemmDims`-parameterized core (rows/cols/reduction + per-operand strides + accumulate-vs-write) serves all three layouts (A·B, Aᵀ·B, A·Bᵀ) + the resident write. **Adaptive tile**: 16 on GPU, capped to the CPU accelerator's group limit, shared mem sized at compile-time max so one kernel serves every device. | ✅ M19 (`5295576`) | naive→tiled (resident operands): **1.2× @256³, 1.4× @1024³, 2.3× @2048³ → up to 620 GFLOP/s**; gain grows with size |
+| 2.6 | **Register-blocked GEMM** — each thread computes a **4×4 micro-tile in explicit registers** (a `LocalMemory`/array accumulator lands in slow off-chip local memory under ILGPU and *loses* — named scalars stay in registers) over `RegBK`-deep shared tiles; a groupEdge×groupEdge group covers a (groupEdge·4)² block, groupEdge adapting to the device limit (16 on GPU). The production GEMM path (host-span + all resident paths) routes through it. | ✅ P.1/M19b | tiled→reg-blocked: **2.2× @256³, 3.2× @1024³/2048³ → ~2.0 TFLOP/s** (7.4× the naive kernel at 2048³); the throughput multiplier for the GPU-bound campaign |
 
 ## 3. GPU residency (cut host↔device transfer)
 
@@ -78,15 +79,15 @@ After Stages 1–3 + P.7, the residual DAVI campaign is **GPU-bound at ~620 GFLO
   chase batch.
 - **Net width is not a lever either** (M17: diminishing; and wider = quadratically more GFLOP on a slow
   kernel). See F.1.
-- **The throughput lever is the GEMM kernel itself (P.1)** — we're GPU-bound, so ~3–5× faster GEMM ≈
-  ~3–5× the learning curve. Everything else is second-order.
-- **Cheap per-update / pacing wins (P.8, P.9)** cost almost nothing and stack on top.
+- **The throughput lever is the GEMM kernel itself** — we're GPU-bound. ✅ **Done (P.1/§2.6,
+  register-blocked GEMM): 2.2–3.2× the tiled kernel → ~2.0 TFLOP/s.** Directly multiplies the learning
+  curve for the GPU-bound campaign.
+- **Cheap per-update / pacing wins (P.8, P.9)** cost almost nothing and stack on top. ✅ Done.
 
 ## Planned
 
 | # | Optimization | Milestone | Why / expected |
 |---|---|---|---|
-| P.1 | **Register-blocked GEMM micro-tiles** — each thread computes a TM×TN (e.g. 4×4/8×8) output block from registers on top of the shared-memory tiling, raising arithmetic intensity. | M19b | **THE throughput lever** — campaign is GPU-bound at ~620 GFLOP/s; target ~3–5× → ~3–5× the learning curve (and makes bigger batch/wider nets "free") |
 | P.8 | **Sample/time-paced curriculum + lighter eval** — advance the scramble-depth curriculum on samples (or wall-clock), not iteration count, so batch size stops distorting pacing; and run the in-loop eval less often / fewer episodes (it's pure overhead at depth). | cube-davi | removes a real wall-clock distortion + reclaims training time |
 | P.9 | **Per-update efficiency: LR scaling + ε-loss target sync** — LR was tuned for batch 128; the bigger batch supports a higher LR (linear-scaling rule). Enable `TargetUpdateLossThreshold` (DeepCubeA ε-sync — already built) so the bootstrap target only advances once loss converges. | cube-davi | faster, more stable convergence per update — near-free |
 | P.2 | **Resident Adam-state checkpointing** — `DeviceResidualTrainer` keeps Adam moments on-device; they aren't yet downloaded into the campaign's Adam checkpoint, so a resumed resident run re-warms the optimizer (net weights resume fine). Add m/v download/upload to make the resident path's resume lossless. | M20 Stage 3 follow-up | lossless resume for the resident residual campaign |
