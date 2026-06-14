@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using MintPlayer.AspNetCore.SpaServices.Extensions;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.AI.ReinforcementLearning.Ilgpu;
 using RLDemo.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -24,10 +25,17 @@ if (!string.IsNullOrEmpty(seedDirectory) && Directory.Exists(seedDirectory))
 }
 builder.Services.AddSingleton<IModelStore>(_ => new FileModelStore(dataDirectory));
 builder.Services.AddSingleton(new GalleryStore(Path.Combine(dataDirectory, "gallery")));
+// One process-wide compute backend. It selects a discrete CUDA GPU when present (local dev) and
+// falls back to the multithreaded CPU otherwise (e.g. a GPU-less Hetzner container) — so the
+// self-taught cube solver gets a resident GPU forward where available, CPU everywhere else.
+builder.Services.AddSingleton<AdaptiveBackend>();
 builder.Services.AddSingleton<RushHourModelService>();
 builder.Services.AddSingleton<Game2048ModelService>();
+builder.Services.AddSingleton<CubeModelService>();
 builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<RushHourModelService>());
 builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<Game2048ModelService>());
+builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<CubeModelService>());
+builder.Services.AddSingleton<ITrainableModelService, CubeSolverWarmupService>();
 
 // Integration tests control the model store themselves and host no SPA.
 bool isTesting = builder.Environment.IsEnvironment("Testing");

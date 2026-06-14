@@ -16,6 +16,10 @@ WORKDIR /src
 COPY MintPlayer.AI.ReinforcementLearning.sln Directory.Build.props* nuget.config* ./
 COPY src/MintPlayer.AI.ReinforcementLearning.Core/MintPlayer.AI.ReinforcementLearning.Core.csproj src/MintPlayer.AI.ReinforcementLearning.Core/
 COPY src/MintPlayer.AI.ReinforcementLearning.Environments/MintPlayer.AI.ReinforcementLearning.Environments.csproj src/MintPlayer.AI.ReinforcementLearning.Environments/
+# RLDemo.Web references Ilgpu (resident GPU forward for the self-taught cube solver; ILGPU is pure
+# managed and falls back to CPU when the runtime image has no CUDA device) — its csproj must be present
+# for restore to resolve the project reference.
+COPY src/MintPlayer.AI.ReinforcementLearning.Ilgpu/MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj src/MintPlayer.AI.ReinforcementLearning.Ilgpu/
 COPY src/RLDemo.Web/RLDemo.Web.csproj src/RLDemo.Web/
 RUN dotnet restore src/RLDemo.Web/RLDemo.Web.csproj
 COPY src/ src/

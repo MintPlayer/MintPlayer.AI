@@ -6,6 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- The RLDemo.Web reference pulls in NodeServices' buildTransitive targets, which
+         would try to npm-install a ClientApp\ that doesn't exist here. Tests host the
+         backend only (Program.cs skips the SPA under "Testing"), so disable the SPA
+         builder outright — CI does the same via -p:EnableSpaBuilder=false. -->
+    <EnableSpaBuilder>false</EnableSpaBuilder>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,6 +28,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Environments\MintPlayer.AI.ReinforcementLearning.Environments.csproj" />
+    <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj" />
     <ProjectReference Include="..\..\src\RLDemo.Web\RLDemo.Web.csproj" />
   </ItemGroup>
 

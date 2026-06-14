@@ -24,10 +24,10 @@ interface GalleryItem {
 
     <div class="entries">
       @for (item of items(); track item.id) {
-        <a class="entry" [routerLink]="['/', item.game === 'rushhour' ? 'rushhour' : '2048']"
+        <a class="entry" [routerLink]="['/', item.game]"
            [queryParams]="{ replay: item.id }">
-          <span class="game" [class.rushhour]="item.game === 'rushhour'">
-            {{ item.game === 'rushhour' ? '🚗 Rush Hour' : '🔢 2048' }}
+          <span class="game" [class.rushhour]="item.game === 'rushhour'" [class.cube]="item.game === 'cube'">
+            {{ gameLabel(item.game) }}
           </span>
           <span class="summary">{{ item.summary }}</span>
           <span class="date">{{ item.createdUtc | date: 'medium' }}</span>
@@ -77,6 +77,10 @@ interface GalleryItem {
         &.rushhour {
           color: #f87171;
         }
+
+        &.cube {
+          color: #60a5fa;
+        }
       }
 
       .summary {
@@ -94,6 +98,14 @@ interface GalleryItem {
 export class Gallery {
   protected readonly items = signal<GalleryItem[]>([]);
   protected readonly loaded = signal(false);
+
+  protected gameLabel(game: string): string {
+    switch (game) {
+      case 'rushhour': return '🚗 Rush Hour';
+      case 'cube': return "🧊 Rubik's Cube";
+      default: return '🔢 2048';
+    }
+  }
 
   constructor() {
     void (async () => {

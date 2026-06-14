@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Environments\MintPlayer.AI.ReinforcementLearning.Environments.csproj" />
+    <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj" />
   </ItemGroup>
 
 </Project>

@@ -5,6 +5,8 @@
     <RootNamespace>MintPlayer.AI.ReinforcementLearning.Core</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Pointer pinning in ManagedBackend's parallel GEMM only; still pure managed (no P/Invoke, no native dependency). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <PropertyGroup Label="Package">

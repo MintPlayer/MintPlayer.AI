@@ -41,19 +41,8 @@ public sealed class DqnTrainingState
         MlpCheckpoint.Write(Target, writer);
         AdamCheckpoint.Write(Optimizer, writer);
 
-        // Replay buffer: only the filled prefix (entries 0..Count-1 are the live ones;
-        // NextIndex preserves the circular write position).
-        writer.Write(Buffer.Capacity);
-        writer.Write(Buffer.ObsDim);
-        writer.Write(Buffer.ActionCount);
-        writer.Write(Buffer.Count);
-        writer.Write(Buffer.NextIndex);
-        CheckpointFormat.WriteFloats(writer, Buffer.ObsData.AsSpan(0, Buffer.Count * Buffer.ObsDim));
-        CheckpointFormat.WriteFloats(writer, Buffer.NextObsData.AsSpan(0, Buffer.Count * Buffer.ObsDim));
-        CheckpointFormat.WriteInts(writer, Buffer.ActionsData.AsSpan(0, Buffer.Count));
-        CheckpointFormat.WriteFloats(writer, Buffer.RewardsData.AsSpan(0, Buffer.Count));
-        CheckpointFormat.WriteBools(writer, Buffer.TerminatedData.AsSpan(0, Buffer.Count));
-        CheckpointFormat.WriteBools(writer, Buffer.NextMaskData.AsSpan(0, Buffer.Count * Buffer.ActionCount));
+        // Algorithm-agnostic transition payload (same bytes as the former inline block).
+        ReplayBufferCheckpoint.Write(Buffer, writer);
 
         CheckpointFormat.WriteRngState(writer, PolicyRng);
         CheckpointFormat.WriteRngState(writer, BufferRng);
@@ -75,19 +64,7 @@ public sealed class DqnTrainingState
         var online = MlpCheckpoint.Read(reader);
         var target = MlpCheckpoint.Read(reader);
         var optimizer = AdamCheckpoint.Read(online.Parameters(), reader);
-
-        int capacity = reader.ReadInt32();
-        int obsDim = reader.ReadInt32();
-        int actionCount = reader.ReadInt32();
-        int count = reader.ReadInt32();
-        int nextIndex = reader.ReadInt32();
-        var buffer = new ReplayBuffer(capacity, obsDim, actionCount) { Count = count, NextIndex = nextIndex };
-        ReadInto(CheckpointFormat.ReadFloats(reader), buffer.ObsData);
-        ReadInto(CheckpointFormat.ReadFloats(reader), buffer.NextObsData);
-        CheckpointFormat.ReadInts(reader).CopyTo(buffer.ActionsData.AsSpan(0, count));
-        ReadInto(CheckpointFormat.ReadFloats(reader), buffer.RewardsData);
-        CheckpointFormat.ReadBools(reader).CopyTo(buffer.TerminatedData.AsSpan(0, count));
-        CheckpointFormat.ReadBools(reader).CopyTo(buffer.NextMaskData.AsSpan(0, count * actionCount));
+        var buffer = ReplayBufferCheckpoint.Read(reader);
 
         var state = new DqnTrainingState
         {
@@ -106,7 +83,5 @@ public sealed class DqnTrainingState
         int envStateLength = reader.ReadInt32();
         if (envStateLength >= 0) state.EnvState = reader.ReadBytes(envStateLength);
         return state;
-
-        static void ReadInto(float[] stored, float[] target) => stored.CopyTo(target.AsSpan(0, stored.Length));
     }
 }

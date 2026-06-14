@@ -45,6 +45,18 @@ out (vectorized environments) without rewrites.
    ASP.NET Core + Angular web app where anyone can draw a game state, play it, submit it
    to a trained model, and step through the AI's solution — with persisted training
    results and Docker deployment. Spec in [§7](#7-interactive-web-app-mintplayerai-playground).
+8. **Asset portability — "switch algorithm, keep the work"** *(added 2026-06-13, SDK
+   capability)*: when an algorithm plateaus, the reusable assets — the environment, the
+   collected data, the learned representation — should carry over to a different
+   algorithm as first-class SDK features rather than ad-hoc glue. Three deliverables make
+   this real: (a) an **algorithm-agnostic transition store** (serialized
+   `(s, a, r, s′, done)` replay reusable across off-policy algorithms, or as
+   demonstrations for on-policy ones); (b) **trunk/head-separated checkpoints** so a
+   trained feature extractor transfers across algorithms whose heads differ in meaning
+   (Q vs policy-logits vs V); (c) a **demonstration-dataset abstraction** so any algorithm
+   can be warm-started from oracle/expert data (DQfD-style) — making the Kociemba/BFS
+   oracles reusable seeds, not per-demo code. Roadmap detail in [PLAN.md](PLAN.md)
+   "Immediate next step" §3.
 
 ## 3. Non-goals (v1)
 
@@ -78,7 +90,7 @@ Explicitly out of scope to prevent the scope creep every research thread warned 
 | Web stack | ASP.NET Core host + Angular SPA via **MintPlayer.AspNetCore.SpaServices** (`UseAngularCliServer` in dev — the host spawns and proxies the Angular dev server; built static assets in production) | Owner's standard hosting model; one process to run in dev, one container in prod. |
 | Model store | One *current* checkpoint per (environment, algorithm) in a configurable data directory (env var / appsettings), using the PRD checkpoint formats (JSON tabular / versioned binary NN, n-tuple tables as versioned binary too) | Training results survive restarts; the web app never trains from scratch unless the store is empty. |
 | Solve API contract | Solve endpoint returns a **trajectory** — per step: action + resulting board state (+ any stochastic event, e.g. the 2048 tile spawn) | 2048 is stochastic, so a bare move list is not replayable; returning states makes browser playback trivial and game-agnostic. |
-| Deployment | Multi-stage Dockerfile (Node + .NET SDK build stage → ASP.NET runtime); volume `/data` for the model store + submitted games | Anyone can pull/run it and see persisted models and the public game gallery. |
+| Deployment | Multi-stage Dockerfile (Node + .NET SDK build stage → ASP.NET runtime); volume `/data` for the model store + submitted games. Pre-trained checkpoints ship in `models/` (seeded into `/data` at startup) and are stored via **Git LFS** (`*.ckpt`) — the CI build checks out with `lfs: true` so the image gets real nets, not pointers. The host is **CPU-only** (e.g. Hetzner): ILGPU degrades to CPU, so the self-taught cube solver runs its bounded CPU path there. | Anyone can pull/run it and see persisted models and the public game gallery; the 35 MB self-taught net stays out of the regular git history. |
 | Reference fixtures | One-time Python/Gymnasium script generates golden trajectories (CartPole, FrozenLake) committed as test fixtures | A physics transcription error is indistinguishable from an algorithm bug. |
 
 ## 5. Public API sketch
@@ -192,16 +204,55 @@ Angular CLI dev server in development; serves the built bundle in production).
 | User-drawn Rush Hour puzzles are out-of-distribution for a model trained on generated sets | BFS oracle always produces a reference solution; UI reports both AI and optimal move counts; failures shown honestly as findings; harder-curriculum/imitation items raise generality later |
 | Long training jobs inside a web request | Training always runs as a tracked background job with polled/streamed progress; solve requests queue behind it rather than time out |
 
-## 10. Planned: GPU/CUDA backend (M12)
+## 10. GPU/CUDA backend (M12) — a first-class SDK capability
 
 *Assessed 2026-06-11 against the dev machine (NVIDIA RTX 3060 Laptop, 6 GB, compute
-8.6); deliberately parked until the workload justifies it. Full phase plan in
-[PLAN.md](PLAN.md) §M12.*
+8.6). Full phase plan in [PLAN.md](PLAN.md) §M12.*
 
-**Trigger conditions** (any one suffices): the imitation-learning accuracy plateau
-calls for substantially wider networks; a new environment needs CNN-scale compute;
-or training campaigns become throughput-bound beyond overnight CPU runs (~40 M
-oracle-labeled samples/hour today).
+> **Reframed 2026-06-13.** The project's deliverable is a high-end, open-source .NET RL
+> **SDK**; the games are showcases. A serious RL SDK that can't use the GPU isn't
+> competitive, so M12 is **core capability built on its own merits — not parked until a
+> demo needs it** (the earlier "trigger conditions" framing was demo-quality logic). The
+> cube width ladder (PLAN §M17) becomes a *beneficiary and benchmark*: rung 1 (1024-wide)
+> trains on CPU now; rung 2 (2048-wide) is a natural **GPU showcase** once the perf path
+> lands, since it can't converge on CPU.
+>
+> **Status 2026-06-13 — the pillar landed (PLAN §M12, gate table):**
+> - **M12a multithreaded CPU GEMM** — bitwise-identical, ~3.95× on 8 cores; the baseline every
+>   GPU-less user gets.
+> - **M12b benchmarks** — CPU thread-scaling + CPU↔GPU crossover tables measured & committed.
+> - **M12c ILGPU backend** — separate `…Ilgpu` package implementing `IComputeBackend` (CUDA, else
+>   CPU accelerator); plus **`AdaptiveBackend`** that auto-routes each GEMM CPU-vs-GPU by size, no
+>   knobs. Correctness validated vs `ManagedBackend`.
+> - **M12c-perf (scoped) device-resident forward** — `IlgpuBackend.MlpForwardScalar` keeps an MLP
+>   forward resident on the GPU (no per-layer transfer); **~2× DAVI throughput**, used by the
+>   value-iteration campaign (§13).
+>
+> **The two GPU bottlenecks (investigated 2026-06-13; PLAN §M19–M20 — the owner's focus):**
+> 1. **Compute — the GEMM kernel was naive** (one thread per output element, no reuse). ✅ **M19 done
+>    (2026-06-13):** replaced with a **shared-memory tiled GEMM** (adaptive tile, one `GemmDims`-generic
+>    core for all three layouts + write). Measured **1.2–2.3× the naive kernel** (RTX 3060, resident
+>    operands: up to **620 GFLOP/s** at 2048³, gain grows with size). Honest shortfall vs the 5–10×
+>    estimate — tiling only; **register-blocked micro-tiles (M19b)** is the open lever toward multi-TFLOP.
+>    From-scratch; cuBLAS documented as a native-dependency escape hatch only.
+> 2. **Transfer — weights re-uploaded every call.** The scoped resident forward kept activations on the
+>    GPU but re-uploaded weights each call (~570 MB/step at 8192-wide). ✅ **M20 Stage 1 done
+>    (2026-06-13):** a **`DeviceMlp`** holds weights resident and re-uploads only on the trainer's
+>    target-net sync, via a Core-side **`ITargetForward`** seam (`Forward` + `OnTargetSynced`) — weight
+>    upload drops **per-step → per-sync (~200×)**, wired into `cube-davi`. Remaining stages: (2) device-
+>    resident training fwd/bwd + on-device Adam; (3) the full `IComputeBackend` device-handle redesign
+>    with `Tensor` device-backed (the general SDK-wide GPU capability). Memory fits a 6 GB 3060 (~2.2 GB
+>    for an 8192×3 net); throughput, not memory, is the constraint.
+>
+> Together these unlock training the residual nets the **shortest-move solver (§13.1, PLAN §M21)** needs.
+>
+> **Measured 2026-06-14 (after Stages 1–3 + parallel successor gen):** the residual DAVI campaign is now
+> **GPU-bound at ~620 GFLOP/s** (3060 at 95–100%). Two consequences for the *learning curve*: (1) **batch
+> size and net width are NOT levers** — batch is throughput-neutral (just moves the bottleneck CPU→GPU; an
+> iter-paced curriculum then climbs ~3.4× slower), width is diminishing (M17) + quadratically more GFLOP on
+> a slow kernel; (2) **the throughput lever is the GEMM kernel — register-blocked micro-tiles (P.1/M19b),
+> targeting ~3–5×.** Cheap per-update/pacing wins (LR scaling, ε-loss target sync, sample-paced curriculum,
+> lighter eval) stack on top. Full analysis: `docs/OPTIMIZATIONS.md` ("Learning-curve levers").
 
 **Key findings from the assessment:**
 
@@ -212,3 +263,164 @@ oracle-labeled samples/hour today).
 | Library | **ILGPU** (C# kernels JIT-compiled to PTX): MIT, megabytes not gigabytes, keeps the from-scratch identity (own tiled GEMM kernel, 1–3 TFLOP/s realistic), CPU accelerator keeps CI green without a GPU. TorchSharp stays the fallback option. |
 | First consumer | The imitation Lab — oracle data is infinite, so batch 4096+ and wider nets are pure wins; expected 5–20× campaign throughput. |
 | Order of work | Benchmark first (CPU↔GPU crossover table, with/without transfer costs), then evolve the backend seam to device tensors, then a payoff campaign past the 92.3% plateau. |
+
+## 11. Rubik's Cube page — owner's game #3 (M13–M14)
+
+*Requirement inserted 2026-06-12. The owner's existing standalone app
+`C:\Repos\WebGames\Rubiksolver` (ASP.NET Core + Three.js + a C# port of Kociemba's
+two-phase solver) is **ported into** the playground; the WebGames repo is read-only
+source material and stays untouched.*
+
+A third game page at `/cube`, following the §7 playground contract (draw/scramble →
+solve → trajectory playback → gallery), with one deliberate twist: the cube keeps
+**two** solve buttons.
+
+1. **3D cube + manual play.** Three.js-rendered 3×3×3 cube (ported from
+   `Rubiksolver/Scripts/rubiksCube.ts` + `main.ts`, ~800 LOC): orbit camera, 18
+   face-move buttons (U U' U2 … B2) with animated 90°/180° rotations, move history,
+   animation-speed slider, scramble and reset. Three.js becomes a proper npm
+   dependency of the Angular workspace (the original loads it from a CDN import map).
+2. **Solve (algorithm) — kept as-is.** Posts the cube state to the backend, which runs
+   the ported Kociemba two-phase solver (`Rubiksolver/Kociemba/`, ~2,500 LOC, pure C#,
+   pruning tables generated in memory on first use) and returns a move list (≤ 22
+   moves, ~10 s timeout). This button always works on any valid cube — it is the
+   oracle, exactly as the BFS solver is for Rush Hour.
+3. **Solve (AI).** Posts the same state; the backend runs the trained RL agent —
+   greedy rollout first, falling back to a Q-guided best-first search by the same net
+   (the M11 Rush Hour pattern: still the AI, now with lookahead) — and returns its move
+   trajectory, the mode that produced it (`aiMode: greedy|search`) and the Kociemba
+   reference move count. Failures are reported honestly (`solved: false`).
+4. **RL environment + training** per the §7.3 contract: a `RubiksCubeEnv` in
+   `MintPlayer.AI.ReinforcementLearning.Environments`, a model service that loads from
+   the model store or trains once at startup, a pre-trained checkpoint committed in
+   `models/`, console demo section, and Lab support for longer campaigns.
+5. **Honest scope for the AI (pre-registered).** Solving arbitrary 20-move scrambles
+   with RL is DeepCubeA-scale work and is **out of scope for v1**; the v1 agent is
+   trained on a shallow-scramble curriculum and gated on that band. The UI offers both
+   a full **Scramble** (~20 moves — where the algorithm button shines and the AI will
+   usually fail, shown honestly) and an **Easy scramble** (≤ 6 quarter-turns — the AI's
+   home turf). Deeper capability (imitation from Kociemba solutions + policy-guided
+   search, the M11 Rush Hour recipe) is the designated stretch.
+
+Environment spec (extends the §6 table):
+
+| Env | Spaces (obs / act) | Solved criterion | Role |
+|---|---|---|---|
+| **Rubik's Cube 3×3×3** (episode = invert a depth-*d* scramble, d ~ U[1..6]; reward −1/step, +100 solved; cap 20 moves) | Box(324): 54 stickers one-hot over 6 colors / Discrete(12): quarter-turns U U' D D' L L' R R' F F' B B' | Pre-registered: ≥ 90% of 100 eval scrambles (depths 1–6) solved within 20 moves | Owner's game #3; huge state space, curriculum learning, oracle-checked |
+
+Key decisions:
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Where the Kociemba port lives | `MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/Kociemba` (namespace adjusted, otherwise verbatim) | It is the cube's oracle — same role and home as `RushHourSolver`; also the future imitation-data source. Testable without the web host. |
+| Cube state encoding | One canonical facelet cube (54 stickers) in C# with move tables; converters to the 6×9-color DTO (wire format, ported validation incl. detailed edge/corner diagnostics) and the 54-char Kociemba string | One source of truth for move semantics; the DTO stays human-readable and matches the existing front-end state tracker. |
+| AI action space | 12 quarter-turns (no half-turn actions) | Smaller action space learns faster; half-turns are two actions. The algorithm button still plays Kociemba's half-turn notation directly. |
+| Pruning-table cost | Tables built in memory on first solve (2–5 s), `buildTables: false` (no disk writes) | Matches the source app's behavior; a startup warm-up keeps the first user request fast. No new Docker volume content. |
+| WeatherForecast template cruft | Not ported | Dead code in the source app. |
+
+Risks (extends §9): RL on the cube is famously hard — vanilla DQN may plateau below the
+gate even on depth ≤ 6. Mitigations: curriculum over scramble depth, action masking is
+not applicable (all 12 moves always legal) but the inverse-of-last-move can be masked to
+halve trivial cycles; the Kociemba oracle provides unlimited imitation data if DQN falls
+short (promote the M11 recipe from stretch to plan). Failure on the deep band is a
+documented finding, not a blocker — the algorithm button always answers.
+
+## 12. 2048 — restore the classic play feel (M15)
+
+*Requirement inserted 2026-06-12. The owner dislikes the playground's canvas-rendered
+2048 and prefers the original game feel of `C:\Repos\WebGames\Game2048` (a faithful
+TypeScript port of Gabriele Cirulli's 2048: DOM tiles, 100 ms slide transitions, pop-on-
+merge and appear-on-spawn keyframes, score-addition float). That repo is read-only
+source material.*
+
+Swap **only the "how tiles merge" experience** — rendering, animation and the in-browser
+move engine — for the historic code. Everything else is explicitly out of scope and must
+not change:
+
+- **Unchanged:** the n-tuple agent and its checkpoint, `Game2048Controller` and the
+  solve/status API contract (exponent cells, `PlayoutStepDto(action, spawnIndex,
+  spawnValue, scoreGained)`, `FinalCells` checksum), `Board2048`/`Env2048`, the gallery,
+  the edit-mode concept (set up an arbitrary board, then play or let the AI play).
+- **Replaced:** the canvas board in `ClientApp/src/app/game-2048` becomes the classic
+  DOM/CSS board (grid background + absolutely-positioned tiles with
+  `tile-position-x-y` transition classes, `tile-new`/`tile-merged` animations, SCSS
+  adapted from `Game2048/Styles/main.scss` to the playground's dark theme); manual play
+  runs the historic engine (Cirulli traversal order + `mergedFrom` double-merge
+  prevention — same merge *semantics* as the server, different *presentation*).
+- **AI playback animates through the same classic board**: each `PlayoutStepDto` is
+  applied via the classic engine with the server-provided spawn injected instead of a
+  random one, so the AI's playout gets the same slide/pop/appear feel; scrubber seeks
+  re-derive the board without animation, and the existing `FinalCells` checksum still
+  verifies reconstruction.
+
+Boundary mappings (the two implementations disagree on conventions; convert at the API
+seam only): server cells are **exponents** (0–15), classic tiles are **values**
+(2–32768+); server action ids are 0=left 1=down 2=right 3=up, classic directions are
+0=up 1=right 2=down 3=left. The classic engine's merge results must stay bit-identical
+to `Board2048.SlideLine`/`applyMove` (existing parity: both are standard 2048 rules with
+double-merge prevention); this parity is asserted by replaying AI trajectories against
+the `FinalCells` checksum and by the existing Playwright e2e.
+
+## 13. Teacher-free value iteration — DAVI (M18)
+
+*Added 2026-06-13. Imitation (M16/M17) is capped by its teacher (Kociemba — itself not
+quarter-turn optimal), so the SDK needs a paradigm that can **exceed** a teacher. This is
+that paradigm: deep approximate value iteration (DAVI, à la DeepCubeA), bounded only by the
+cost objective (fewest moves), not a demonstrator. It's a general, reusable trainer — a third
+kind alongside RL (DQN/PPO) and imitation — and the SDK's "beat the teacher" capability.*
+
+Distinct from the exact tabular `Solvers.ValueIteration` (FrozenLake-scale, enumerated states):
+this is the **function-approximation** counterpart for state spaces too large to enumerate
+(the cube has ~4.3×10¹⁹ states), where a net generalizes a cost-to-go it never tabulates.
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Model seam | `IDeterministicModel<TState>` (actions / apply / goal-test / state-key) in `Core.Planning` | The pure forward model classical search and model-based learning share — distinct from the RL `IEnvironment` Reset/Step loop. Minimal, general; the cube implements it as `CubeModel`. |
+| Learning rule | DAVI: `target(s) = min_a [1 + (IsGoal(s′) ? 0 : V_target(s′))]`, anchored `V(goal)=0`, with a periodically-synced target net | The value-iteration update under function approximation; the signal propagates outward from the goal. No oracle/teacher — bounded by the move-cost objective. |
+| Value target scaling | Predict **raw** cost-to-go (`DistanceScale = 1`) | Squashing targets to ~0.1 starves the gradients so the greedy `argmin` can't separate distances (a real finding — it then only solves the depth-1 freebies). |
+| Inference | Greedy descent (`GreedyValuePlanner`) for speed; **weighted A\*** (`ValueGuidedSearch`, `f = g + w·h`) to reach deeper than greedy with no retraining | Greedy is the fast path; the search is the inference-time ceiling-raiser (mirrors the policy-guided A* used for the imitation nets). |
+| Generality | Trainer is generic over `TState`; env-specifics (featurize, state sampler) are injected | The DAVI algorithm is reusable across goal-directed envs (cube, Rush Hour, future), not cube-specific. |
+| Campaign / compute | `Lab --game cube-davi`: solve-rate curriculum (deepen at ≥95%), runs on the `AdaptiveBackend` with the device-resident GPU forward (§10), configurable net (`--width`/`--layers`), persists the full training state (Adam + curriculum + iterations + RNG) for lossless resume | DAVI evaluates ActionCount× successors per state, so the value-net forwards are large enough to win on the GPU; the campaign is the M12d GPU showcase. |
+
+**Validation / gate:** a fast deterministic test proves the greedy policy descends *optimally*
+under an exact (BFS) value; a `[Slow]` test proves the full DAVI loop learns to solve ≥ 80% of
+shallow (depth ≤ 3) cubes **teacher-free**, checked against the `BreadthFirstPlanner` optimum.
+**First campaign result (2026-06-13):** reached **curriculum depth 9 teacher-free** (greedy d7 70%,
+d9 30%); the stall-fallback curriculum unstuck the old 0.95 gate; the per-depth greedy fall-off is
+the 1024×3-MLP capacity wall — evidence for §13.1.
+
+### 13.1 Shortest-move (quarter-turn-optimal) solver — the flagship goal (PLAN §M21)
+
+*Owner's goal (2026-06-13): solve the cube in the **fewest quarter-turns** (god's number 26 QTM),
+teacher-free, beating Kociemba (which is fast but not QTM-optimal). Investigated 2026-06-13; depends
+on the GPU bottleneck removal (§10 / PLAN §M19–M20) — a residual net at depth can't train in tolerable
+wall-clock until then.*
+
+> **✅ BUILT + MEASURED 2026-06-14.** All pieces shipped; the GPU port (M19/M20 + register-blocked GEMM)
+> made the residual net trainable. **BWAS result after the 236k-iter campaign** (residual 1024×4, weight
+> **1.5, ≤100k expansions**, 12 cubes/depth): **QTM-OPTIMAL through depth 15** — 12/12 at every depth, each
+> solution exactly *depth* quarter-turns — then d16 10/12 (16.2 qt), d17 5/12 (17.0 qt); **every solved cube
+> beats Kociemba's QTM ~2–2.5×** (d12 12 vs 29.3, d15 15 vs 30.2 — Kociemba minimizes half-turns, so its QTM
+> balloons). Tier 1 (≤ depth 7) met empirically; a *provable* claim needs weight=1 + BFS verification (open).
+> Tier 2 (beat Kociemba's QTM) met comfortably through ~depth 16. **Key finding:** an earlier light read
+> (44k net, ≤40k exp) and the live greedy eval (collapses ~d10) and the in-loop 8k-exp probe (looked flat at
+> d14-partial) all **undersold** the net — the apparent plateau was a *search-budget* artifact, not a
+> capacity ceiling. The net heuristic is accurate to ~d15 and degrades gradually past it. **So the next
+> capability lever is eval-time search (more expansions / weight→1 / wider frontier), not a wider net.**
+> **✅ Wired into the web cube page** (2026-06-14): the "Solve (self-taught AI)" button runs BWAS via a
+> resident GPU forward where a CUDA device is present, CPU fallback otherwise (the host-span GPU path is
+> transfer-bound and barely beats CPU — resident is 7–10×; see `OPTIMIZATIONS.md`). **Still open:** the
+> eval-time-search lever (P.10); heavier in-loop eval readout; depth-16+ (more capacity/training; full
+> god's-number 26 QTM remains out of reach on one 3060).
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Net | **Residual MLP** (`Core.Nn` `ResidualMlp`): 324→4096→2048 + 3–4 residual blocks (width 2048, **LayerNorm** not BatchNorm), scalar out, ~8–14M params | Depth-with-residuals is the untried lever (M17: width alone is diminishing); the identity path makes 6–10 effective layers trainable for the non-smooth cost surface. LayerNorm avoids the BatchNorm-vs-target-net-bootstrap interaction. Reuses the scalar-output/checkpoint contract. |
+| Curriculum | Deepen toward depth 26; past the greedy-stall depth, advance on **loss convergence / time-per-rung** (not greedy solve-rate); optional **ε-loss target sync** (sync only when online loss < ε) | Greedy solve-rate never hits a mastery threshold at deep levels, but the value still learns from exposure; ε-sync is DeepCubeA's stability trick. |
+| Shortest-path inference | **Batch-weighted A\* (BWAS)** — batched `ValueGuidedSearch` (expand top-N frontier, score all successors in one forward); λ knob | IDA* re-evaluates the net per node (kills throughput); BWAS amortizes the GPU forward. λ=1 optimal iff the value is admissible; λ>1 faster but suboptimal — **near-optimal is the honest claim**. |
+| Optimality gate (two-tier) | **Tier 1:** depths 1–7 (BFS-tractable), ≥95% solved **provably QTM-optimal** (vs `BreadthFirstPlanner`). **Tier 2:** depths 8–20, ≥90% solved with **mean QTM length ≤ Kociemba's** | Tier 1 is the rigorous, falsifiable core ("optimal where we can prove it"); Tier 2 is the honest "beats the teacher" claim where proof is intractable. |
+| Honest non-goal | Full god's-number coverage (~60% optimal everywhere, à la DeepCubeA) is **NOT** reachable on a single RTX 3060 | DeepCubeA used ~billions of states on multi-GPU for days. State the laptop-GPU ceiling plainly. |
+
+**Realistic target on one 3060 (after M19+M20):** "Solves any cube; provably QTM-optimal to depth ~7,
+near-optimal and shorter than Kociemba to ~depth 15–20, teacher-free." Then it becomes the third
+**"self-taught AI"** solver on the web cube page, beside the Kociemba button and the imitation AI.

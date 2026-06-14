@@ -1,9 +1,8 @@
-using System.Numerics.Tensors;
-
 namespace MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 
-// Autograd ops. Each forward computes into a fresh buffer and registers a closure that
-// ACCUMULATES (+=) into parents' Grad — a tensor used twice receives both contributions.
+// Autograd ops. Each op's raw math runs through Backend.Current (the compute seam); this file only
+// builds the tape — a forward into a fresh buffer plus a closure that ACCUMULATES (+=) into parents'
+// Grad (a tensor used twice receives both contributions).
 public sealed partial class Tensor
 {
     /// <summary>[m,k] · [k,n] → [m,n]</summary>
@@ -37,7 +36,7 @@ public sealed partial class Tensor
     {
         CheckSameShape(this, other);
         var data = new float[Length];
-        TensorPrimitives.Add(Data, other.Data, data);
+        Backend.Current.Zip(BinaryOp.Add, Data, other.Data, data);
 
         return MakeResult(data, Shape, [this, other], result => () =>
         {
@@ -55,8 +54,7 @@ public sealed partial class Tensor
         int rows = Rows, cols = Cols;
 
         var data = new float[Length];
-        for (int r = 0; r < rows; r++)
-            TensorPrimitives.Add(Data.AsSpan(r * cols, cols), bias.Data, data.AsSpan(r * cols, cols));
+        Backend.Current.AddBias(Data, bias.Data, rows, cols, data);
 
         return MakeResult(data, Shape, [this, bias], result => () =>
         {
@@ -64,9 +62,7 @@ public sealed partial class Tensor
             if (bias.NeedsGrad)
             {
                 bias.EnsureGrad();
-                var biasGrad = bias.Grad.AsSpan();
-                for (int r = 0; r < rows; r++)
-                    TensorPrimitives.Add(biasGrad, result.Grad.AsSpan(r * cols, cols), biasGrad);
+                Backend.Current.BiasGradInto(result.Grad!, bias.Grad!, rows, cols);
             }
         });
     }
@@ -76,7 +72,7 @@ public sealed partial class Tensor
     {
         CheckSameShape(this, other);
         var data = new float[Length];
-        TensorPrimitives.Subtract(Data, other.Data, data);
+        Backend.Current.Zip(BinaryOp.Sub, Data, other.Data, data);
 
         return MakeResult(data, Shape, [this, other], result => () =>
         {
@@ -84,7 +80,7 @@ public sealed partial class Tensor
             if (other.NeedsGrad)
             {
                 other.EnsureGrad();
-                TensorPrimitives.Subtract(other.Grad, result.Grad, other.Grad);
+                Backend.Current.SubInto(other.Grad!, result.Grad!);
             }
         });
     }
@@ -94,19 +90,19 @@ public sealed partial class Tensor
     {
         CheckSameShape(this, other);
         var data = new float[Length];
-        TensorPrimitives.Multiply(Data, other.Data, data);
+        Backend.Current.Zip(BinaryOp.Mul, Data, other.Data, data);
 
         return MakeResult(data, Shape, [this, other], result => () =>
         {
             if (NeedsGrad)
             {
                 EnsureGrad();
-                for (int i = 0; i < Length; i++) Grad![i] += other.Data[i] * result.Grad![i];
+                Backend.Current.MulAddInto(Grad!, other.Data, result.Grad!);
             }
             if (other.NeedsGrad)
             {
                 other.EnsureGrad();
-                for (int i = 0; i < Length; i++) other.Grad![i] += Data[i] * result.Grad![i];
+                Backend.Current.MulAddInto(other.Grad!, Data, result.Grad!);
             }
         });
     }
@@ -114,74 +110,33 @@ public sealed partial class Tensor
     public Tensor MulScalar(float scalar)
     {
         var data = new float[Length];
-        TensorPrimitives.Multiply(Data, scalar, data);
+        Backend.Current.Scale(Data, scalar, data);
 
         return MakeResult(data, Shape, [this], result => () =>
         {
             EnsureGrad();
-            for (int i = 0; i < Length; i++) Grad![i] += scalar * result.Grad![i];
+            Backend.Current.AxpyInto(Grad!, scalar, result.Grad!);
         });
     }
 
-    public Tensor Square()
+    // Elementwise unary ops route their forward + backward math through the compute seam
+    // (Backend.Current.Map / MapBackward), so a device backend can run them; ManagedBackend keeps the
+    // exact (bitwise-identical) reference math.
+    public Tensor Square() => MapOp(UnaryOp.Square);
+    public Tensor Relu() => MapOp(UnaryOp.Relu);
+    public Tensor Tanh() => MapOp(UnaryOp.Tanh);
+    public Tensor Exp() => MapOp(UnaryOp.Exp);
+    public Tensor Log() => MapOp(UnaryOp.Log);
+
+    private Tensor MapOp(UnaryOp op)
     {
         var data = new float[Length];
-        TensorPrimitives.Multiply(Data, Data, data);
+        Backend.Current.Map(op, Data, data);
 
         return MakeResult(data, Shape, [this], result => () =>
         {
             EnsureGrad();
-            for (int i = 0; i < Length; i++) Grad![i] += 2f * Data[i] * result.Grad![i];
-        });
-    }
-
-    public Tensor Relu()
-    {
-        var data = new float[Length];
-        for (int i = 0; i < Length; i++) data[i] = Math.Max(0f, Data[i]);
-
-        return MakeResult(data, Shape, [this], result => () =>
-        {
-            EnsureGrad();
-            for (int i = 0; i < Length; i++)
-                if (Data[i] > 0f) Grad![i] += result.Grad![i];
-        });
-    }
-
-    public Tensor Tanh()
-    {
-        var data = new float[Length];
-        TensorPrimitives.Tanh(Data, data);
-
-        return MakeResult(data, Shape, [this], result => () =>
-        {
-            EnsureGrad();
-            for (int i = 0; i < Length; i++)
-                Grad![i] += (1f - result.Data[i] * result.Data[i]) * result.Grad![i];
-        });
-    }
-
-    public Tensor Exp()
-    {
-        var data = new float[Length];
-        TensorPrimitives.Exp(Data, data);
-
-        return MakeResult(data, Shape, [this], result => () =>
-        {
-            EnsureGrad();
-            for (int i = 0; i < Length; i++) Grad![i] += result.Data[i] * result.Grad![i];
-        });
-    }
-
-    public Tensor Log()
-    {
-        var data = new float[Length];
-        TensorPrimitives.Log(Data, data);
-
-        return MakeResult(data, Shape, [this], result => () =>
-        {
-            EnsureGrad();
-            for (int i = 0; i < Length; i++) Grad![i] += result.Grad![i] / Data[i];
+            Backend.Current.MapBackward(op, Data, result.Data, result.Grad!, Grad!);
         });
     }
 
@@ -189,13 +144,12 @@ public sealed partial class Tensor
     public Tensor Clamp(float min, float max)
     {
         var data = new float[Length];
-        for (int i = 0; i < Length; i++) data[i] = Math.Clamp(Data[i], min, max);
+        Backend.Current.Clamp(Data, min, max, data);
 
         return MakeResult(data, Shape, [this], result => () =>
         {
             EnsureGrad();
-            for (int i = 0; i < Length; i++)
-                if (Data[i] > min && Data[i] < max) Grad![i] += result.Grad![i];
+            Backend.Current.ClampBackwardInto(Data, min, max, result.Grad!, Grad!);
         });
     }
 
@@ -204,16 +158,19 @@ public sealed partial class Tensor
     {
         CheckSameShape(this, other);
         var data = new float[Length];
-        for (int i = 0; i < Length; i++) data[i] = Math.Min(Data[i], other.Data[i]);
+        Backend.Current.Zip(BinaryOp.Min, Data, other.Data, data);
 
         return MakeResult(data, Shape, [this, other], result => () =>
         {
-            if (NeedsGrad) EnsureGrad();
-            if (other.NeedsGrad) other.EnsureGrad();
-            for (int i = 0; i < Length; i++)
+            if (NeedsGrad)
             {
-                if (Data[i] <= other.Data[i]) { if (NeedsGrad) Grad![i] += result.Grad![i]; }
-                else if (other.NeedsGrad) other.Grad![i] += result.Grad![i];
+                EnsureGrad();
+                Backend.Current.MinBackwardInto(Data, other.Data, result.Grad!, Grad!, forA: true);
+            }
+            if (other.NeedsGrad)
+            {
+                other.EnsureGrad();
+                Backend.Current.MinBackwardInto(Data, other.Data, result.Grad!, other.Grad!, forA: false);
             }
         });
     }
@@ -227,38 +184,36 @@ public sealed partial class Tensor
         int cols = Cols;
 
         var data = new float[Rows];
-        for (int r = 0; r < data.Length; r++) data[r] = Data[r * cols + indices[r]];
+        Backend.Current.Gather(Data, indices, Rows, cols, data);
 
         return MakeResult(data, [Rows], [this], result => () =>
         {
             EnsureGrad();
-            for (int r = 0; r < result.Length; r++) Grad![r * cols + indices[r]] += result.Grad![r];
+            Backend.Current.GatherBackwardInto(indices, result.Grad!, Rows, cols, Grad!);
         });
     }
 
     /// <summary>Sum of all elements → scalar.</summary>
     public Tensor Sum()
     {
-        var data = new[] { TensorPrimitives.Sum<float>(Data) };
+        var data = new[] { Backend.Current.Sum(Data) };
 
         return MakeResult(data, [1], [this], result => () =>
         {
             EnsureGrad();
-            float g = result.Grad![0];
-            for (int i = 0; i < Length; i++) Grad![i] += g;
+            Backend.Current.AddScalarInto(Grad!, result.Grad![0]);
         });
     }
 
     /// <summary>Mean of all elements → scalar.</summary>
     public Tensor Mean()
     {
-        var data = new[] { TensorPrimitives.Sum<float>(Data) / Length };
+        var data = new[] { Backend.Current.Sum(Data) / Length };
 
         return MakeResult(data, [1], [this], result => () =>
         {
             EnsureGrad();
-            float g = result.Grad![0] / Length;
-            for (int i = 0; i < Length; i++) Grad![i] += g;
+            Backend.Current.AddScalarInto(Grad!, result.Grad![0] / Length);
         });
     }
 
@@ -268,18 +223,12 @@ public sealed partial class Tensor
         CheckRank2(this);
         int cols = Cols;
         var data = new float[Rows];
-        for (int r = 0; r < data.Length; r++)
-            data[r] = TensorPrimitives.Sum<float>(Data.AsSpan(r * cols, cols));
+        Backend.Current.SumRows(Data, Rows, cols, data);
 
         return MakeResult(data, [Rows], [this], result => () =>
         {
             EnsureGrad();
-            for (int r = 0; r < result.Length; r++)
-            {
-                float g = result.Grad![r];
-                var row = Grad.AsSpan(r * cols, cols);
-                for (int c = 0; c < cols; c++) row[c] += g;
-            }
+            Backend.Current.SumRowsBackwardInto(result.Grad!, Rows, cols, Grad!);
         });
     }
 
@@ -289,33 +238,12 @@ public sealed partial class Tensor
         CheckRank2(this);
         int cols = Cols;
         var data = new float[Length];
-        for (int r = 0; r < Rows; r++)
-        {
-            var row = Data.AsSpan(r * cols, cols);
-            var outRow = data.AsSpan(r * cols, cols);
-            float max = TensorPrimitives.Max<float>(row);
-            float sum = 0f;
-            for (int c = 0; c < cols; c++)
-            {
-                outRow[c] = row[c] - max;
-                sum += MathF.Exp(outRow[c]);
-            }
-            float logSum = MathF.Log(sum);
-            for (int c = 0; c < cols; c++) outRow[c] -= logSum;
-        }
+        Backend.Current.LogSoftmax(Data, Rows, cols, data);
 
         return MakeResult(data, Shape, [this], result => () =>
         {
-            // d/dx = dy − softmax(x) · Σ_row dy
             EnsureGrad();
-            for (int r = 0; r < result.Rows; r++)
-            {
-                var dy = result.Grad.AsSpan(r * cols, cols);
-                var y = result.Data.AsSpan(r * cols, cols);
-                var dx = Grad.AsSpan(r * cols, cols);
-                float rowSum = TensorPrimitives.Sum<float>(dy);
-                for (int c = 0; c < cols; c++) dx[c] += dy[c] - MathF.Exp(y[c]) * rowSum;
-            }
+            Backend.Current.LogSoftmaxBackwardInto(result.Data, result.Grad!, Rows, cols, Grad!);
         });
     }
 
@@ -323,26 +251,49 @@ public sealed partial class Tensor
     public Tensor HuberLoss(Tensor target, float delta = 1f)
     {
         CheckSameShape(this, target);
-        float total = 0f;
-        for (int i = 0; i < Length; i++)
-        {
-            float diff = Data[i] - target.Data[i];
-            float abs = Math.Abs(diff);
-            total += abs <= delta ? 0.5f * diff * diff : delta * (abs - 0.5f * delta);
-        }
-        var data = new[] { total / Length };
+        var data = new[] { Backend.Current.HuberLoss(Data, target.Data, delta) };
 
         return MakeResult(data, [1], [this, target], result => () =>
         {
             float g = result.Grad![0] / Length;
-            if (NeedsGrad) EnsureGrad();
-            if (target.NeedsGrad) target.EnsureGrad();
-            for (int i = 0; i < Length; i++)
+            if (NeedsGrad) { EnsureGrad(); Backend.Current.HuberGradInto(Data, target.Data, delta, g, Grad!, negate: false); }
+            if (target.NeedsGrad) { target.EnsureGrad(); Backend.Current.HuberGradInto(Data, target.Data, delta, g, target.Grad!, negate: true); }
+        });
+    }
+
+    /// <summary>
+    /// Row-wise layer normalization with a learned per-feature scale (<paramref name="gamma"/>) and
+    /// shift (<paramref name="beta"/>), both [Cols]: for each row, ŷ = (x − μ)/√(σ² + ε), out = γ·ŷ + β,
+    /// where μ, σ² are the row's mean and variance over its Cols features. Unlike BatchNorm it uses no
+    /// running statistics and no cross-row coupling, so it is stable under the DAVI target-net bootstrap
+    /// (BatchNorm's batch statistics fight a frozen target). This is the normalizer for deep residual
+    /// value nets (PLAN M21).
+    /// </summary>
+    public Tensor LayerNorm(Tensor gamma, Tensor beta, float eps = 1e-5f)
+    {
+        CheckRank2(this);
+        int rows = Rows, cols = Cols;
+        if (gamma.Length != cols || beta.Length != cols)
+            throw new ArgumentException($"LayerNorm gamma/beta length must be {cols}, got {gamma.Length}/{beta.Length}.");
+
+        var data = new float[Length];
+        var xhat = new float[Length];   // normalized inputs, cached for backward
+        var invStd = new float[rows];   // 1/√(σ²+ε) per row, cached for backward
+        Backend.Current.LayerNorm(Data, gamma.Data, beta.Data, rows, cols, eps, data, xhat, invStd);
+
+        return MakeResult(data, Shape, [this, gamma, beta], result => () =>
+        {
+            var dy = result.Grad!;
+            if (gamma.NeedsGrad || beta.NeedsGrad)
             {
-                float diff = Data[i] - target.Data[i];
-                float d = Math.Clamp(diff, -delta, delta) * g;
-                if (NeedsGrad) Grad![i] += d;
-                if (target.NeedsGrad) target.Grad![i] -= d;
+                gamma.EnsureGrad();
+                beta.EnsureGrad();
+                Backend.Current.LayerNormParamGradInto(dy, xhat, rows, cols, gamma.Grad!, beta.Grad!);
+            }
+            if (NeedsGrad)
+            {
+                EnsureGrad();
+                Backend.Current.LayerNormInputGradInto(dy, xhat, invStd, gamma.Data, rows, cols, Grad!);
             }
         });
     }
@@ -361,7 +312,7 @@ public sealed partial class Tensor
         return MakeResult(Data, shape, [this], result => () =>
         {
             EnsureGrad();
-            System.Numerics.Tensors.TensorPrimitives.Add(Grad, result.Grad, Grad);
+            Backend.Current.AddInto(Grad!, result.Grad!);
         });
     }
 
@@ -369,7 +320,7 @@ public sealed partial class Tensor
     {
         if (!tensor.NeedsGrad) return;
         tensor.EnsureGrad();
-        TensorPrimitives.Add(tensor.Grad, grad, tensor.Grad);
+        Backend.Current.AddInto(tensor.Grad!, grad);
     }
 
     private static void CheckRank2(Tensor t)

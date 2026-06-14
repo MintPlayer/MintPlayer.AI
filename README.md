@@ -1,18 +1,21 @@
 # MintPlayer.AI.ReinforcementLearning
 
 A reinforcement-learning library written from scratch in C#/.NET — no Python, no libtorch,
-no native dependencies. See [docs/PRD.md](docs/PRD.md) for the why and what, and
-[docs/PLAN.md](docs/PLAN.md) for the milestone roadmap.
+no native dependencies. See [docs/PRD.md](docs/PRD.md) for the why and what,
+[docs/PLAN.md](docs/PLAN.md) for the milestone roadmap, and
+[docs/OPTIMIZATIONS.md](docs/OPTIMIZATIONS.md) for the performance/capability optimization ledger
+(CPU & GPU compute, residency, training efficiency — done and planned).
 
 ## Layout
 
 | Project | Contents |
 |---|---|
 | `src/MintPlayer.AI.ReinforcementLearning.Core` | Environment API (Gymnasium-faithful), spaces, seeded RNG, agents, trainers, solvers, checkpoints + model store |
-| `src/MintPlayer.AI.ReinforcementLearning.Environments` | GridWorld, FrozenLake, CartPole, 2048, Rush Hour (incl. BFS solver + puzzle generator) |
+| `src/MintPlayer.AI.ReinforcementLearning.Environments` | GridWorld, FrozenLake, CartPole, 2048, Rush Hour (incl. BFS solver + puzzle generator), Rubik's Cube (incl. a C# port of Kociemba's two-phase solver) |
 | `src/RLDemo.Console` | Console demo — watch agents learn and play (`--save`/`--load` persist trained models) |
-| `src/RLDemo.Web` | **MintPlayer.AI.ReinforcementLearning Playground** — ASP.NET Core + Angular web app: draw a Rush Hour puzzle on a canvas, play it yourself, then watch the trained DQN solve it with back/forward playback |
+| `src/RLDemo.Web` | **MintPlayer.AI.ReinforcementLearning Playground** — ASP.NET Core + Angular web app: three games (Rush Hour, classic-feel 2048, a 3D Rubik's Cube), each playable yourself and solvable by the trained AI with step-through playback, plus a public gallery of every submitted board |
 | `tests/MintPlayer.AI.ReinforcementLearning.Tests` | xUnit suite incl. solved-threshold gates, determinism tests and web API integration tests |
+| `tools/MintPlayer.AI.ReinforcementLearning.Lab` | Long-running imitation-learning campaigns (Rush Hour from the BFS oracle, Rubik's Cube from Kociemba) — resumable, checkpointing into the model store |
 
 ## Run the playground
 
@@ -21,10 +24,12 @@ dotnet run --project src/RLDemo.Web
 ```
 
 Open the printed URL (default `http://localhost:5210`). In Development the host spawns and
-proxies the Angular dev server itself — don't run `ng serve` separately. On first start it
-trains its models (2048 ≈ 3 min; Rush Hour DQN fallback ≈ 30 min — page banners show live
-progress) and saves them under `data/`; later starts load instantly. The strongest Rush
-Hour solver (the imitation policy net) is trained with `tools/MintPlayer.AI.ReinforcementLearning.Lab`.
+proxies the Angular dev server itself — don't run `ng serve` separately. A fresh `data/`
+directory seeds itself from the shipped checkpoints in `models/`, so all three games'
+AIs are ready immediately; with an empty seed the host trains at startup instead (page
+banners show live progress). The strongest Rush Hour and Rubik's Cube solvers (the
+imitation policy nets) are trained with `tools/MintPlayer.AI.ReinforcementLearning.Lab`
+(see "Train the models" below).
 
 ### Docker
 
@@ -68,13 +73,40 @@ Demos (each ends with animated console playback):
   Double DQN) — reaches the 2048 tile in ~84% of games after ~3 minutes of self-play.
 - **Rush Hour** (`rushhour`) — masked Double DQN on a generated 30-puzzle easy set with
   a BFS oracle; solves 100% within 2× optimal after ~1 minute of training.
+- **Rubik's Cube** (`cube`) — masked Double DQN on shallow quarter-turn scrambles
+  (depths 1–6); with Q-guided lookahead it solves the whole band (600/600) after
+  ~65 minutes of training. The Kociemba port doubles as the always-available
+  algorithmic solver and the imitation oracle.
 
-The playground's strongest Rush Hour solver goes further: **imitation learning from the
-BFS oracle + policy-guided A\*** (`tools/MintPlayer.AI.ReinforcementLearning.Lab`) — after an overnight self-supervised
-run (224M labeled states, pure managed .NET) it solves every official ThinkFun card we
-tested **optimally**, including expert card 40 (81 moves) in ~2,500 node expansions:
+The playground's strongest solvers go further with **imitation learning + net-guided
+search** (`tools/MintPlayer.AI.ReinforcementLearning.Lab`):
+
+- **Rush Hour** — imitation from the BFS oracle + policy-guided A\*: after an overnight
+  run (224M labeled states, pure managed .NET) it solves every official ThinkFun card we
+  tested **optimally**, including expert card 40 (81 moves) in ~2,500 node expansions:
 
 ![Card 40 solved optimally by the AI](docs/screenshots/card40-ai-solved.png)
+
+- **Rubik's Cube** — imitation from Kociemba solutions + value-guided A\*: after a 2-hour
+  campaign (7.7M labeled states) it solves 96% of depth-1–10 scrambles within 40
+  quarter-turns; deeper scrambles fail honestly and the Kociemba button always answers.
+
+## Train the models
+
+The web host trains its fallback models automatically when the store is empty. The
+imitation policy nets are trained (and resumed — net + Adam state checkpoint to the
+model store every eval) by Lab campaigns:
+
+```
+dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --hours N --data src/RLDemo.Web/data           # Rush Hour
+dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --game cube --hours N --data models            # Rubik's Cube
+dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --game cube --eval-only --data models          # cube gate report
+```
+
+Point `--data` at `src/RLDemo.Web/data` to have the running playground pick up improving
+checkpoints live (it re-reads them every few minutes), or at `models/` to refresh the
+committed seeds. The DQN fallbacks can be retrained from the console:
+`dotnet run --project src/RLDemo.Console -c Release -- rushhour|cube --save --data models`.
 
 ## Run the tests
 

@@ -1,0 +1,88 @@
+<h1>Rubik's Cube</h1>
+<p class="subtitle">
+  Scramble the cube (drag to orbit), then solve it three ways: Kociemba's two-phase algorithm (≤ 22 moves,
+  any cube), the trained DQN (shallow scrambles are its home turf), or the <strong>self-taught AI</strong> —
+  a value net that learned the cube with no teacher and searches for the <em>fewest quarter-turns</em>
+  (optimal short solutions for typical scrambles, well under Kociemba's QTM — deeper ones stay Kociemba's job).
+</p>
+
+@if (modelStatus(); as ms) {
+  @if (ms.status === 'training') {
+    <div class="banner training">
+      The AI model is training on the server (step {{ ms.trainingStep }} / {{ ms.trainingMaxSteps }},
+      eval {{ ms.lastEvalReturn.toFixed(1) }}) — the algorithm button works meanwhile.
+    </div>
+  } @else if (ms.status === 'failed') {
+    <div class="banner error">AI model training failed: {{ ms.error }}</div>
+  }
+}
+
+<div class="layout">
+  <div class="board-panel">
+    <canvas #cubeCanvas></canvas>
+    <div class="board-caption">
+      <span>{{ status() }}</span>
+    </div>
+  </div>
+
+  <div class="side-panel">
+    <h3>Face rotations</h3>
+    <p class="hint">Keys U/D/L/R/F/B turn a face clockwise; hold Shift for counter-clockwise.</p>
+    <div class="move-grid">
+      @for (move of moveButtons; track move) {
+        <button (click)="executeMove(move)" [disabled]="locked()">{{ move }}</button>
+      }
+    </div>
+
+    <h3>Actions</h3>
+    <div class="actions">
+      <button (click)="scramble()" [disabled]="locked()">Scramble (full)</button>
+      <button (click)="easyScramble()" [disabled]="locked()">Easy scramble</button>
+      <button class="primary" (click)="solve()" [disabled]="locked()">
+        {{ busy() ? 'Solving…' : 'Solve (algorithm)' }}
+      </button>
+      <button class="primary" (click)="solveAi()"
+              [disabled]="locked() || modelStatus()?.status !== 'ready'">
+        {{ busy() ? 'Solving…' : 'Solve (AI)' }}
+      </button>
+      <button class="primary" (click)="solveDavi()" [disabled]="locked()"
+              title="Teacher-free value net + shortest-move search (batch-weighted A*)">
+        {{ busy() ? 'Solving…' : 'Solve (self-taught AI)' }}
+      </button>
+      <button (click)="reset()" [disabled]="locked()">Reset</button>
+    </div>
+
+    <h3>Speed</h3>
+    <div class="speed">
+      <input type="range" min="100" max="1000" [value]="animationSpeed()"
+             (input)="setSpeed($any($event.target).value)" />
+      <span>{{ animationSpeed() }}ms</span>
+    </div>
+
+    @if (solution(); as s) {
+      <h3>Solution</h3>
+      <p class="hint">{{ s.info }}</p>
+      <div class="solution-moves">
+        @for (move of s.moves; track $index) {
+          <span [class]="moveClass($index)">{{ move }}</span>
+        }
+      </div>
+      <div class="actions playback-controls">
+        <button (click)="stepPrev()" [disabled]="locked() || playing() || solutionIndex() < 0" title="Previous step">◀</button>
+        <button class="primary" (click)="togglePlay()" [disabled]="busy() || (!playing() && atSolutionEnd())">
+          {{ playing() ? '⏸' : '▶' }}
+        </button>
+        <button (click)="stepNext()" [disabled]="locked() || playing() || atSolutionEnd()" title="Next step">▶|</button>
+      </div>
+    }
+
+    @if (moveHistory().length > 0) {
+      <h3>Move history</h3>
+      <div class="move-history">
+        @for (move of moveHistory(); track $index) {
+          <span class="history-move">{{ move }}</span>
+        }
+      </div>
+    }
+  </div>
+</div>
