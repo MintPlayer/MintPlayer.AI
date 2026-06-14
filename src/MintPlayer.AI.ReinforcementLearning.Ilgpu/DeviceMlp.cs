@@ -46,9 +46,13 @@ public sealed class DeviceMlp : ITargetForward, IDisposable
     }
 
     /// <summary>Re-upload the (just-synced) target net's weights into the resident buffers.</summary>
-    public void OnTargetSynced(Mlp target)
+    public void OnTargetSynced(IValueNet target)
     {
-        lock (_backend.DeviceLock) Upload(target);
+        // The resident path is MLP-specific (it uploads dense Linear weights); a residual net trains
+        // via the autograd path instead, so it never reaches here.
+        if (target is not Mlp mlp)
+            throw new NotSupportedException($"DeviceMlp resident forward supports {nameof(Mlp)} only, not {target.GetType().Name}.");
+        lock (_backend.DeviceLock) Upload(mlp);
     }
 
     private void Upload(Mlp net)

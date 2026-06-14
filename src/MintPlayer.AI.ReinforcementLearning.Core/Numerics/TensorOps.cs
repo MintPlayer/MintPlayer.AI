@@ -347,6 +347,81 @@ public sealed partial class Tensor
         });
     }
 
+    /// <summary>
+    /// Row-wise layer normalization with a learned per-feature scale (<paramref name="gamma"/>) and
+    /// shift (<paramref name="beta"/>), both [Cols]: for each row, ŷ = (x − μ)/√(σ² + ε), out = γ·ŷ + β,
+    /// where μ, σ² are the row's mean and variance over its Cols features. Unlike BatchNorm it uses no
+    /// running statistics and no cross-row coupling, so it is stable under the DAVI target-net bootstrap
+    /// (BatchNorm's batch statistics fight a frozen target). This is the normalizer for deep residual
+    /// value nets (PLAN M21).
+    /// </summary>
+    public Tensor LayerNorm(Tensor gamma, Tensor beta, float eps = 1e-5f)
+    {
+        CheckRank2(this);
+        int rows = Rows, cols = Cols;
+        if (gamma.Length != cols || beta.Length != cols)
+            throw new ArgumentException($"LayerNorm gamma/beta length must be {cols}, got {gamma.Length}/{beta.Length}.");
+
+        var data = new float[Length];
+        var xhat = new float[Length];   // normalized inputs, cached for backward
+        var invStd = new float[rows];   // 1/√(σ²+ε) per row, cached for backward
+        for (int r = 0; r < rows; r++)
+        {
+            var row = Data.AsSpan(r * cols, cols);
+            float mean = TensorPrimitives.Sum<float>(row) / cols;
+            float var = 0f;
+            for (int c = 0; c < cols; c++) { float d = row[c] - mean; var += d * d; }
+            var /= cols;
+            float inv = 1f / MathF.Sqrt(var + eps);
+            invStd[r] = inv;
+            for (int c = 0; c < cols; c++)
+            {
+                float xh = (row[c] - mean) * inv;
+                xhat[r * cols + c] = xh;
+                data[r * cols + c] = gamma.Data[c] * xh + beta.Data[c];
+            }
+        }
+
+        return MakeResult(data, Shape, [this, gamma, beta], result => () =>
+        {
+            var dy = result.Grad!;
+            if (gamma.NeedsGrad)
+            {
+                gamma.EnsureGrad();
+                for (int r = 0; r < rows; r++)
+                    for (int c = 0; c < cols; c++) gamma.Grad![c] += dy[r * cols + c] * xhat[r * cols + c];
+            }
+            if (beta.NeedsGrad)
+            {
+                beta.EnsureGrad();
+                for (int r = 0; r < rows; r++)
+                    for (int c = 0; c < cols; c++) beta.Grad![c] += dy[r * cols + c];
+            }
+            if (NeedsGrad)
+            {
+                EnsureGrad();
+                float invN = 1f / cols;
+                for (int r = 0; r < rows; r++)
+                {
+                    // dx_i = (1/σ)·(dx̂_i − mean(dx̂) − x̂_i·mean(dx̂·x̂)),  dx̂ = dy·γ
+                    float sum1 = 0f, sum2 = 0f;
+                    for (int c = 0; c < cols; c++)
+                    {
+                        float dxh = dy[r * cols + c] * gamma.Data[c];
+                        sum1 += dxh;
+                        sum2 += dxh * xhat[r * cols + c];
+                    }
+                    float inv = invStd[r];
+                    for (int c = 0; c < cols; c++)
+                    {
+                        float dxh = dy[r * cols + c] * gamma.Data[c];
+                        Grad![r * cols + c] += inv * (dxh - sum1 * invN - xhat[r * cols + c] * sum2 * invN);
+                    }
+                }
+            }
+        });
+    }
+
     /// <summary>Mean squared error between two same-shape tensors → scalar.</summary>
     public Tensor MseLoss(Tensor target) => Sub(target).Square().Mean();
 

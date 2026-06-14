@@ -1,8 +1,10 @@
 # MintPlayer.AI.ReinforcementLearning
 
 A reinforcement-learning library written from scratch in C#/.NET — no Python, no libtorch,
-no native dependencies. See [docs/PRD.md](docs/PRD.md) for the why and what, and
-[docs/PLAN.md](docs/PLAN.md) for the milestone roadmap.
+no native dependencies. See [docs/PRD.md](docs/PRD.md) for the why and what,
+[docs/PLAN.md](docs/PLAN.md) for the milestone roadmap, and
+[docs/OPTIMIZATIONS.md](docs/OPTIMIZATIONS.md) for the performance/capability optimization ledger
+(CPU & GPU compute, residency, training efficiency — done and planned).
 
 ## Layout
 

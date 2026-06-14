@@ -57,6 +57,76 @@ public class DaviTrainerTests
     }
 
     [Fact]
+    public void BatchedSearch_WithExactValue_IsOptimal()
+    {
+        // BWAS (goal-on-pop) with weight=1 and an exact, admissible value (BFS distance) must return
+        // OPTIMAL-length solutions — the Tier-1 "provably QTM-optimal" guarantee, isolated from learning.
+        var model = new CubeModel();
+        var cache = new Dictionary<string, float>();
+        float ExactCost(FaceletCube state)
+        {
+            string key = model.StateKey(state);
+            if (cache.TryGetValue(key, out float cached)) return cached;
+            var optimal = BreadthFirstPlanner.FindOptimal(model, state, maxDepth: 5);
+            float cost = optimal?.Count ?? 1000f;
+            cache[key] = cost;
+            return cost;
+        }
+        float[] BatchExact(IReadOnlyList<FaceletCube> states)
+        {
+            var r = new float[states.Count];
+            for (int i = 0; i < states.Count; i++) r[i] = ExactCost(states[i]);
+            return r;
+        }
+
+        for (int depth = 1; depth <= 3; depth++)
+        {
+            var rng = new Xoshiro256StarStar((ulong)(8000 + depth));
+            var cube = new FaceletCube();
+            cube.Apply(FaceletCube.ScrambleMoves(rng, depth, quarterTurnsOnly: true));
+            if (cube.IsSolved) continue;
+
+            int optimalLength = BreadthFirstPlanner.FindOptimal(model, cube, maxDepth: 5)!.Count;
+            var solution = ValueGuidedSearch.SolveBatched(model, BatchExact, cube, maxExpansions: 2000, weight: 1f, expandBatch: 16);
+
+            Assert.NotNull(solution);
+            Assert.Equal(optimalLength, solution!.Count); // weight=1 + admissible value ⇒ optimal
+            var replay = cube.Clone();
+            foreach (int action in solution) replay.ApplyQuarterTurn(action);
+            Assert.True(replay.IsSolved);
+        }
+    }
+
+    [Fact]
+    public void BatchedSearch_SolvesWhatNonBatchedSolves()
+    {
+        // The batched search must reach the goal on the same shallow cubes the non-batched search does
+        // (same model, same value) — batching changes throughput, not reachability.
+        var model = new CubeModel();
+        var net = new Mlp([RubiksCubeEnv.ObservationSize, 64, 1], new Xoshiro256StarStar(13), Activation.Relu);
+        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, new Adam(net.Parameters(), 1e-3f),
+            new ValueIterationOptions { DistanceScale = 1f });
+
+        for (int depth = 1; depth <= 4; depth++)
+        {
+            var rng = new Xoshiro256StarStar((ulong)(9000 + depth));
+            var cube = new FaceletCube();
+            cube.Apply(FaceletCube.ScrambleMoves(rng, depth, quarterTurnsOnly: true));
+
+            var nonBatched = trainer.SolveWithSearch(cube, maxExpansions: 20_000, weight: 2f);
+            var batched = trainer.SolveWithSearchBatched(cube, maxExpansions: 20_000, weight: 2f, expandBatch: 32);
+
+            Assert.Equal(nonBatched is null, batched is null);
+            if (batched is not null)
+            {
+                var replay = cube.Clone();
+                foreach (int action in batched) replay.ApplyQuarterTurn(action);
+                Assert.True(replay.IsSolved);
+            }
+        }
+    }
+
+    [Fact]
     public void BatchedGreedySolve_MatchesPerSuccessorSolve()
     {
         // trainer.Solve now batches each step's successors into one forward; it must produce the

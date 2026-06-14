@@ -11,6 +11,13 @@ public sealed class ValueIterationOptions
     public float LearningRate { get; init; } = 1e-3f;
     /// <summary>Steps between copying the online net into the bootstrapping target net (stability).</summary>
     public int TargetUpdateInterval { get; init; } = 100;
+    /// <summary>
+    /// DeepCubeA-style ε-loss target sync: when &gt; 0, the periodic target update is gated on the
+    /// batch loss having fallen below this threshold, so the bootstrapping target only advances once
+    /// the online net has actually converged on the current target — a stability win at depth, where
+    /// a target that chases a still-moving net oscillates. 0 (default) = sync every interval, always.
+    /// </summary>
+    public float TargetUpdateLossThreshold { get; init; } = 0f;
     /// <summary>Cost-to-go is regressed in units of this many moves (keeps the target ~O(1)).</summary>
     public float DistanceScale { get; init; } = 20f;
     public float HuberDelta { get; init; } = 1f;
@@ -43,8 +50,8 @@ public sealed class ValueIterationTrainer<TState>
 {
     private readonly IDeterministicModel<TState> _model;
     private readonly Func<TState, float[]> _featurize;
-    private readonly Mlp _net;
-    private readonly Mlp _target;
+    private readonly IValueNet _net;
+    private readonly IValueNet _target;
     private readonly Adam _adam;
     private readonly ValueIterationOptions _options;
     private readonly int _featureSize;
@@ -64,7 +71,7 @@ public sealed class ValueIterationTrainer<TState>
     /// The trainer drives its <see cref="ITargetForward.OnTargetSynced"/> on every target-net sync.
     /// </param>
     public ValueIterationTrainer(
-        IDeterministicModel<TState> model, Func<TState, float[]> featurize, Mlp valueNet, Adam optimizer, ValueIterationOptions options,
+        IDeterministicModel<TState> model, Func<TState, float[]> featurize, IValueNet valueNet, Adam optimizer, ValueIterationOptions options,
         ITargetForward? targetForward = null)
     {
         _model = model;
@@ -72,11 +79,11 @@ public sealed class ValueIterationTrainer<TState>
         _net = valueNet;
         _adam = optimizer;
         _options = options;
-        _featureSize = valueNet.Sizes[0];
+        _featureSize = valueNet.InputSize;
 
         // Independent bootstrapping target, kept structurally identical and periodically synced.
         // On resume it starts equal to the loaded net (as if just synced) — harmless.
-        _target = new Mlp(valueNet.Sizes, new Xoshiro256StarStar(0), valueNet.HiddenActivation);
+        _target = valueNet.CloneStructure();
         _target.CopyFrom(valueNet);
 
         _targetForward = targetForward ?? new AutogradTargetForward(_featureSize);
@@ -126,6 +133,17 @@ public sealed class ValueIterationTrainer<TState>
     /// </summary>
     public IReadOnlyList<int>? SolveWithSearch(TState start, int maxExpansions, float weight = 1f)
         => ValueGuidedSearch.Solve(_model, Value, start, maxExpansions, weight);
+
+    /// <summary>
+    /// Batch-weighted A* (BWAS) bound to this trainer's value net — the same search as
+    /// <see cref="SolveWithSearch"/> but it scores each expansion round's successors in ONE batched
+    /// forward (<see cref="BatchValue"/>), so the value net's cost amortizes over the whole frontier
+    /// slice. This is the form fast enough for deep solves and the GPU. <paramref name="expandBatch"/>
+    /// is how many open nodes are expanded per round; <paramref name="weight"/> = 1 is optimal under an
+    /// admissible value, &gt; 1 reaches deeper for possibly-longer solutions.
+    /// </summary>
+    public IReadOnlyList<int>? SolveWithSearchBatched(TState start, int maxExpansions, float weight = 1f, int expandBatch = 100)
+        => ValueGuidedSearch.SolveBatched(_model, BatchValue, start, maxExpansions, weight, expandBatch);
 
     /// <summary>
     /// Run <paramref name="iterations"/> DAVI updates. <paramref name="sampleState"/> draws a
@@ -182,7 +200,10 @@ public sealed class ValueIterationTrainer<TState>
             _adam.ClipGradNorm(_options.GradClipNorm);
             _adam.Step();
 
-            if ((it + 1) % _options.TargetUpdateInterval == 0)
+            // Sync the bootstrap target on schedule — and, when an ε-loss threshold is set, only once
+            // the online net has converged on the current target (DeepCubeA stability trick).
+            if ((it + 1) % _options.TargetUpdateInterval == 0 &&
+                (_options.TargetUpdateLossThreshold <= 0f || loss.Data[0] < _options.TargetUpdateLossThreshold))
             {
                 _target.CopyFrom(_net);
                 _targetForward.OnTargetSynced(_target); // re-sync resident weights (per-sync, not per-step)

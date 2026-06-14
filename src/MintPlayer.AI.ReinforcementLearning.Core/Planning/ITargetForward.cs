@@ -20,7 +20,7 @@ public interface ITargetForward
     /// Adopt <paramref name="target"/>'s current weights as the net to evaluate. Called by the
     /// trainer whenever the target net is (re)synced — including once before training begins.
     /// </summary>
-    void OnTargetSynced(Mlp target);
+    void OnTargetSynced(IValueNet target);
 
     /// <summary>Raw scalar outputs for <paramref name="rows"/> feature rows (row-major), no autograd.</summary>
     float[] Forward(float[] features, int rows);
@@ -32,9 +32,9 @@ public interface ITargetForward
 /// </summary>
 public sealed class AutogradTargetForward(int featureSize) : ITargetForward
 {
-    private Mlp? _net;
+    private IValueNet? _net;
 
-    public void OnTargetSynced(Mlp target) => _net = target;
+    public void OnTargetSynced(IValueNet target) => _net = target;
 
     public float[] Forward(float[] features, int rows)
     {

@@ -9,6 +9,25 @@ public interface IModule
     IEnumerable<Tensor> Parameters();
 }
 
+/// <summary>
+/// A scalar-output value network the DAVI trainer (<c>ValueIterationTrainer</c>) can learn and
+/// bootstrap: any architecture mapping an [B, <see cref="InputSize"/>] observation batch to [B, 1]
+/// cost-to-go. The trainer needs only to run it forward, know its input width, and clone + sync a
+/// structurally identical target net — so both the plain <see cref="Mlp"/> and the deep
+/// <see cref="ResidualMlp"/> plug into the same trainer with no special-casing.
+/// </summary>
+public interface IValueNet : IModule
+{
+    /// <summary>Observation width (the net's input dimension).</summary>
+    int InputSize { get; }
+
+    /// <summary>A structurally identical net (fresh init) for the bootstrap target; sync via <see cref="CopyFrom"/>.</summary>
+    IValueNet CloneStructure();
+
+    /// <summary>Copies every parameter from a structurally identical net (target-network sync).</summary>
+    void CopyFrom(IValueNet source);
+}
+
 public enum Activation { None, Relu, Tanh }
 
 /// <summary>Fully-connected layer: x[B,in] · W[in,out] + b[out].</summary>
@@ -37,7 +56,7 @@ public sealed class Linear : IModule
 }
 
 /// <summary>Multi-layer perceptron: Linear + activation per hidden layer, linear output head.</summary>
-public sealed class Mlp : IModule
+public sealed class Mlp : IValueNet
 {
     private readonly Linear[] _layers;
     private readonly Activation _hidden;
@@ -64,6 +83,12 @@ public sealed class Mlp : IModule
     /// <summary>Layer sizes [input, hidden..., output], recovered from the weight shapes.</summary>
     public int[] Sizes => [_layers[0].Weight.Rows, .. _layers.Select(l => l.Weight.Cols)];
 
+    /// <summary>Observation width (input dimension), for <see cref="IValueNet"/>.</summary>
+    public int InputSize => _layers[0].Weight.Rows;
+
+    /// <summary>A same-shaped MLP (fresh init) — the DAVI bootstrap target; sync with <see cref="CopyFrom"/>.</summary>
+    public IValueNet CloneStructure() => new Mlp(Sizes, new Xoshiro256StarStar(0), _hidden);
+
     public Tensor Forward(Tensor input)
     {
         var x = input;
@@ -83,8 +108,8 @@ public sealed class Mlp : IModule
 
     public IEnumerable<Tensor> Parameters() => _layers.SelectMany(l => l.Parameters());
 
-    /// <summary>Copies all parameters from another structurally identical MLP (target-network sync).</summary>
-    public void CopyFrom(Mlp source)
+    /// <summary>Copies all parameters from a structurally identical net (target-network sync).</summary>
+    public void CopyFrom(IValueNet source)
     {
         using var mine = Parameters().GetEnumerator();
         using var theirs = source.Parameters().GetEnumerator();

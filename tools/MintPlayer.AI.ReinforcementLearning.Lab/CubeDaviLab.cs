@@ -28,6 +28,13 @@ internal static class CubeDaviLab
         int hiddenLayers = 2;
         int maxDepthCap = 8;
         bool evalOnly = false;
+        bool useSearch = false;       // eval via value-guided A* (else greedy)
+        float searchWeight = 2f;      // f = g + weight·h; >1 reaches deeper, may be non-optimal
+        int maxExpansions = 50_000;   // A* node budget per solve
+        string netKind = "mlp";       // "mlp" (plain) or "residual" (M21 deep residual value net)
+        int blocks = 4;               // residual block count (--net residual)
+        bool batchedSearch = false;   // use batched A* (BWAS) for --search eval
+        bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
@@ -35,9 +42,17 @@ internal static class CubeDaviLab
             else if (args[i] == "--seed" && i + 1 < args.Length) seed = ulong.Parse(args[++i]);
             else if (args[i] == "--width" && i + 1 < args.Length) width = int.Parse(args[++i]);
             else if (args[i] == "--layers" && i + 1 < args.Length) hiddenLayers = int.Parse(args[++i]); // #3: net depth
+            else if (args[i] == "--blocks" && i + 1 < args.Length) blocks = int.Parse(args[++i]);
+            else if (args[i] == "--net" && i + 1 < args.Length) netKind = args[++i].ToLowerInvariant();
             else if (args[i] == "--max-depth" && i + 1 < args.Length) maxDepthCap = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
+            else if (args[i] == "--search") useSearch = true;
+            else if (args[i] == "--batched") batchedSearch = true;
+            else if (args[i] == "--vs-kociemba") vsKociemba = true;
+            else if (args[i] == "--weight" && i + 1 < args.Length) searchWeight = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--max-exp" && i + 1 < args.Length) maxExpansions = int.Parse(args[++i]);
         }
+        bool residual = netKind == "residual";
 
         using var adaptive = new AdaptiveBackend();
         Backend.Current = adaptive;
@@ -46,14 +61,27 @@ internal static class CubeDaviLab
         var store = new FileModelStore(dataDir);
         string logPath = Path.Combine(store.RootDirectory, "logs");
         Directory.CreateDirectory(logPath);
-        string csvPath = Path.Combine(logPath, "cube-davi.csv");
+        // Residual and plain nets use distinct checkpoint ids + CSVs so the two campaigns resume
+        // independently and never collide on format or column count.
+        string valueId = residual ? "value-davi-res" : "value-davi";
+        string stateId = valueId + "-state";
+        string csvPath = Path.Combine(logPath, residual ? "cube-davi-res.csv" : "cube-davi.csv");
         if (!File.Exists(csvPath))
             File.AppendAllText(csvPath, "utc,iterations,curriculumDepth,loss," + string.Join(',', Enumerable.Range(1, maxDepthCap).Select(d => $"d{d}")) + "\n");
 
-        Mlp net;
-        using (var existing = store.TryOpenRead(CubeIds.Environment, "value-davi"))
+        IValueNet net;
+        using (var existing = store.TryOpenRead(CubeIds.Environment, valueId))
         {
-            if (existing is not null) { net = MlpCheckpoint.Load(existing); Log($"resumed DAVI value net ({string.Join('→', net.Sizes)})"); }
+            if (existing is not null)
+            {
+                net = residual ? ResidualMlpCheckpoint.Load(existing) : MlpCheckpoint.Load(existing);
+                Log($"resumed DAVI value net ({DescribeNet(net)})");
+            }
+            else if (residual)
+            {
+                net = new ResidualMlp(RubiksCubeEnv.ObservationSize, width, blocks, new Xoshiro256StarStar(seed ^ 0xDA71));
+                Log($"fresh DAVI value net ({DescribeNet(net)})");
+            }
             else
             {
                 // #3: net shape is configurable — hiddenLayers × width. Deeper/wider raises the
@@ -63,7 +91,7 @@ internal static class CubeDaviLab
                 for (int i = 1; i <= hiddenLayers; i++) sizes[i] = width;
                 sizes[^1] = 1;
                 net = new Mlp(sizes, new Xoshiro256StarStar(seed ^ 0xDA71), Activation.Relu);
-                Log($"fresh DAVI value net ({string.Join('→', sizes)})");
+                Log($"fresh DAVI value net ({DescribeNet(net)})");
             }
         }
 
@@ -79,7 +107,7 @@ internal static class CubeDaviLab
         int curriculumDepth = 2;
         long totalIterations = 0;
         var sampleRng = new Xoshiro256StarStar(seed);
-        using (var state = store.TryOpenRead(CubeIds.Environment, "value-davi-state"))
+        using (var state = store.TryOpenRead(CubeIds.Environment, stateId))
         {
             if (state is not null)
             {
@@ -99,17 +127,26 @@ internal static class CubeDaviLab
         }
 
         // M20 Stage 1: route DAVI's ActionCount× successor evaluation through a device-resident MLP
-        // whose weights stay on the GPU across steps and re-upload only on the trainer's target sync
-        // (the dominant cost is this successor batch; the small autograd train pass stays on the
-        // AdaptiveBackend — CPU at this size). CPU-only machines pass null → autograd forward.
-        using DeviceMlp? resident = adaptive.Gpu is { } gpu ? gpu.CreateResidentForward(net) : null;
-        Log(resident is not null ? "successor evaluation: device-resident GPU forward (resident weights)" : "successor evaluation: CPU autograd forward");
+        // whose weights stay on the GPU across steps and re-upload only on the trainer's target sync.
+        // The resident path is MLP-specific (dense Linear weights); a residual net evaluates via the
+        // autograd path, whose large GEMMs still route to the GPU through the adaptive backend — only
+        // the LayerNorm/ReLU run on the CPU. CPU-only machines also use the autograd path.
+        using DeviceMlp? resident = !residual && adaptive.Gpu is { } gpu && net is Mlp mlpNet
+            ? gpu.CreateResidentForward(mlpNet) : null;
+        Log(resident is not null
+            ? "successor evaluation: device-resident GPU forward (resident weights)"
+            : residual
+                ? "successor evaluation: autograd forward (GEMMs route to GPU via adaptive backend)"
+                : "successor evaluation: CPU autograd forward");
 
         var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options, resident);
 
         if (evalOnly)
         {
-            ReportEval(trainer, csvPath, totalIterations, curriculumDepth, loss: 0, evalUpTo: maxDepthCap, maxDepthCap);
+            if (useSearch) Log($"eval via {(batchedSearch ? "batched " : "")}value-guided A* (weight {searchWeight}, ≤{maxExpansions:N0} expansions)");
+            if (vsKociemba) { CubeSolver.WarmUp(); Log("Tier-2 gate: comparing mean QTM length vs Kociemba"); }
+            ReportEval(trainer, csvPath, totalIterations, curriculumDepth, loss: 0, evalUpTo: maxDepthCap, maxDepthCap,
+                useSearch, searchWeight, maxExpansions, batchedSearch, vsKociemba);
             return;
         }
 
@@ -124,8 +161,12 @@ internal static class CubeDaviLab
 
         void SaveCheckpoint()
         {
-            store.Save(CubeIds.Environment, "value-davi", s => MlpCheckpoint.Save(net, s));
-            store.Save(CubeIds.Environment, "value-davi-state", s =>
+            store.Save(CubeIds.Environment, valueId, s =>
+            {
+                if (net is ResidualMlp res) ResidualMlpCheckpoint.Save(res, s);
+                else MlpCheckpoint.Save((Mlp)net, s);
+            });
+            store.Save(CubeIds.Environment, stateId, s =>
             {
                 using var writer = new BinaryWriter(s, System.Text.Encoding.UTF8, leaveOpen: true);
                 CheckpointFormat.WriteHeader(writer, "cube-davi-state", 1);
@@ -179,29 +220,52 @@ internal static class CubeDaviLab
     /// logged to CSV (columns 1..<paramref name="maxDepthCap"/>, unevaluated depths left blank); returns depth→rate.
     /// </summary>
     private static Dictionary<int, double> ReportEval(
-        ValueIterationTrainer<FaceletCube> trainer, string csvPath, long iterations, int curriculumDepth, float loss, int evalUpTo, int maxDepthCap)
+        ValueIterationTrainer<FaceletCube> trainer, string csvPath, long iterations, int curriculumDepth, float loss, int evalUpTo, int maxDepthCap,
+        bool useSearch = false, float searchWeight = 2f, int maxExpansions = 50_000, bool batched = false, bool vsKociemba = false)
     {
         var rates = new Dictionary<int, double>();
         var report = new System.Text.StringBuilder();
-        report.Append($"[eval] iters {iterations:N0}, curr.depth {curriculumDepth}, loss {loss:F4} | ");
+        report.Append($"[eval{(useSearch ? "/A*" : "")}] iters {iterations:N0}, curr.depth {curriculumDepth}, loss {loss:F4} | ");
         var cells = new List<string> { $"{DateTime.UtcNow:u}", $"{iterations}", $"{curriculumDepth}", $"{loss:F5}" };
 
         for (int depth = 1; depth <= maxDepthCap; depth++)
         {
             if (depth > evalUpTo) { cells.Add(""); continue; } // beyond the curriculum frontier — skip
             int solved = 0;
+            long totalLen = 0;          // Σ net solution QTM over cubes the net solved
+            long kociembaLen = 0;       // Σ Kociemba QTM over the SAME solved cubes (Tier-2 baseline)
+            int beatsKociemba = 0;      // #cubes where the net's QTM ≤ Kociemba's
             const int episodes = 20;
             for (int episode = 0; episode < episodes; episode++)
             {
                 var evalRng = new Xoshiro256StarStar((ulong)(700_000 + 1_000 * depth + episode));
                 var cube = new FaceletCube();
                 cube.Apply(FaceletCube.ScrambleMoves(evalRng, depth, quarterTurnsOnly: true));
-                if (cube.IsSolved || trainer.Solve(cube, maxSteps: 2 * depth + 8) is not null) solved++;
+                if (cube.IsSolved) { solved++; continue; }
+
+                var solution = useSearch
+                    ? (batched ? trainer.SolveWithSearchBatched(cube, maxExpansions, searchWeight)
+                               : trainer.SolveWithSearch(cube, maxExpansions, searchWeight))
+                    : trainer.Solve(cube, maxSteps: 2 * depth + 8);
+                if (solution is not null)
+                {
+                    solved++; totalLen += solution.Count;
+                    if (vsKociemba)
+                    {
+                        int kqt = KociembaQtm(cube);
+                        kociembaLen += kqt;
+                        if (solution.Count <= kqt) beatsKociemba++;
+                    }
+                }
             }
             double rate = solved / (double)episodes;
             rates[depth] = rate;
             cells.Add($"{rate:F3}");
-            report.Append($"d{depth} {solved}/{episodes} | ");
+            // For A* the solution LENGTH matters (the shortest-move objective): show mean QTM over solves.
+            string lenTag = useSearch && solved > 0 ? $" ({totalLen / (double)solved:F1}qt)" : "";
+            string kTag = vsKociemba && solved > 0 ? $" [vs Koc {kociembaLen / (double)solved:F1}qt, ≤{beatsKociemba}/{solved}]" : "";
+            report.Append($"d{depth} {solved}/{episodes}{lenTag} | ");
+            if (useSearch) Log($"  d{depth}: {solved}/{episodes} solved{lenTag}{kTag}"); // incremental progress (A* is slow)
         }
 
         Log(report.ToString());
@@ -215,6 +279,23 @@ internal static class CubeDaviLab
         RubiksCubeEnv.WriteObservation(cube, obs);
         return obs;
     }
+
+    /// <summary>Quarter-turn length of Kociemba's (half-turn-metric) solution — a "X2" face turn is 2 quarter-turns.</summary>
+    private static int KociembaQtm(FaceletCube cube)
+    {
+        var result = CubeSolver.Solve(cube);
+        if (!result.Solved) return 1000;
+        int qt = 0;
+        foreach (var move in result.Moves) qt += move.EndsWith('2') ? 2 : 1;
+        return qt;
+    }
+
+    private static string DescribeNet(IValueNet net) => net switch
+    {
+        Mlp mlp => string.Join('→', mlp.Sizes),
+        ResidualMlp res => $"residual {res.InputSize}→{res.Width}×{res.Blocks}blocks→1",
+        _ => net.GetType().Name,
+    };
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }
