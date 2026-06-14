@@ -70,6 +70,17 @@ public sealed class AdaptiveBackend : IComputeBackend, IDisposable
     // Elementwise ops always stay on the CPU: at autograd granularity they're transfer-bound on the GPU.
     public void Map(UnaryOp op, ReadOnlySpan<float> x, Span<float> y) => _cpu.Map(op, x, y);
     public void MapBackward(UnaryOp op, ReadOnlySpan<float> x, ReadOnlySpan<float> y, ReadOnlySpan<float> dy, Span<float> dx) => _cpu.MapBackward(op, x, y, dy, dx);
+    public void Zip(BinaryOp op, ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> result) => _cpu.Zip(op, a, b, result);
+    public void Scale(ReadOnlySpan<float> x, float s, Span<float> y) => _cpu.Scale(x, s, y);
+    public void Clamp(ReadOnlySpan<float> x, float min, float max, Span<float> y) => _cpu.Clamp(x, min, max, y);
+    public void AddBias(ReadOnlySpan<float> x, ReadOnlySpan<float> bias, int rows, int cols, Span<float> y) => _cpu.AddBias(x, bias, rows, cols, y);
+    public void AddInto(Span<float> dst, ReadOnlySpan<float> src) => _cpu.AddInto(dst, src);
+    public void SubInto(Span<float> dst, ReadOnlySpan<float> src) => _cpu.SubInto(dst, src);
+    public void MulAddInto(Span<float> dst, ReadOnlySpan<float> x, ReadOnlySpan<float> y) => _cpu.MulAddInto(dst, x, y);
+    public void AxpyInto(Span<float> dst, float a, ReadOnlySpan<float> x) => _cpu.AxpyInto(dst, a, x);
+    public void ClampBackwardInto(ReadOnlySpan<float> x, float min, float max, ReadOnlySpan<float> dy, Span<float> dx) => _cpu.ClampBackwardInto(x, min, max, dy, dx);
+    public void MinBackwardInto(ReadOnlySpan<float> a, ReadOnlySpan<float> b, ReadOnlySpan<float> dy, Span<float> dst, bool forA) => _cpu.MinBackwardInto(a, b, dy, dst, forA);
+    public void BiasGradInto(ReadOnlySpan<float> dy, Span<float> dbias, int rows, int cols) => _cpu.BiasGradInto(dy, dbias, rows, cols);
 
     public void Dispose() => _gpu?.Dispose(); // ManagedBackend holds no unmanaged state
 }

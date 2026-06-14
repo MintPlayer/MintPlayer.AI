@@ -37,7 +37,7 @@ public sealed partial class Tensor
     {
         CheckSameShape(this, other);
         var data = new float[Length];
-        TensorPrimitives.Add(Data, other.Data, data);
+        Backend.Current.Zip(BinaryOp.Add, Data, other.Data, data);
 
         return MakeResult(data, Shape, [this, other], result => () =>
         {
@@ -55,8 +55,7 @@ public sealed partial class Tensor
         int rows = Rows, cols = Cols;
 
         var data = new float[Length];
-        for (int r = 0; r < rows; r++)
-            TensorPrimitives.Add(Data.AsSpan(r * cols, cols), bias.Data, data.AsSpan(r * cols, cols));
+        Backend.Current.AddBias(Data, bias.Data, rows, cols, data);
 
         return MakeResult(data, Shape, [this, bias], result => () =>
         {
@@ -64,9 +63,7 @@ public sealed partial class Tensor
             if (bias.NeedsGrad)
             {
                 bias.EnsureGrad();
-                var biasGrad = bias.Grad.AsSpan();
-                for (int r = 0; r < rows; r++)
-                    TensorPrimitives.Add(biasGrad, result.Grad.AsSpan(r * cols, cols), biasGrad);
+                Backend.Current.BiasGradInto(result.Grad!, bias.Grad!, rows, cols);
             }
         });
     }
@@ -76,7 +73,7 @@ public sealed partial class Tensor
     {
         CheckSameShape(this, other);
         var data = new float[Length];
-        TensorPrimitives.Subtract(Data, other.Data, data);
+        Backend.Current.Zip(BinaryOp.Sub, Data, other.Data, data);
 
         return MakeResult(data, Shape, [this, other], result => () =>
         {
@@ -84,7 +81,7 @@ public sealed partial class Tensor
             if (other.NeedsGrad)
             {
                 other.EnsureGrad();
-                TensorPrimitives.Subtract(other.Grad, result.Grad, other.Grad);
+                Backend.Current.SubInto(other.Grad!, result.Grad!);
             }
         });
     }
@@ -94,19 +91,19 @@ public sealed partial class Tensor
     {
         CheckSameShape(this, other);
         var data = new float[Length];
-        TensorPrimitives.Multiply(Data, other.Data, data);
+        Backend.Current.Zip(BinaryOp.Mul, Data, other.Data, data);
 
         return MakeResult(data, Shape, [this, other], result => () =>
         {
             if (NeedsGrad)
             {
                 EnsureGrad();
-                for (int i = 0; i < Length; i++) Grad![i] += other.Data[i] * result.Grad![i];
+                Backend.Current.MulAddInto(Grad!, other.Data, result.Grad!);
             }
             if (other.NeedsGrad)
             {
                 other.EnsureGrad();
-                for (int i = 0; i < Length; i++) other.Grad![i] += Data[i] * result.Grad![i];
+                Backend.Current.MulAddInto(other.Grad!, Data, result.Grad!);
             }
         });
     }
@@ -114,12 +111,12 @@ public sealed partial class Tensor
     public Tensor MulScalar(float scalar)
     {
         var data = new float[Length];
-        TensorPrimitives.Multiply(Data, scalar, data);
+        Backend.Current.Scale(Data, scalar, data);
 
         return MakeResult(data, Shape, [this], result => () =>
         {
             EnsureGrad();
-            for (int i = 0; i < Length; i++) Grad![i] += scalar * result.Grad![i];
+            Backend.Current.AxpyInto(Grad!, scalar, result.Grad!);
         });
     }
 
@@ -148,13 +145,12 @@ public sealed partial class Tensor
     public Tensor Clamp(float min, float max)
     {
         var data = new float[Length];
-        for (int i = 0; i < Length; i++) data[i] = Math.Clamp(Data[i], min, max);
+        Backend.Current.Clamp(Data, min, max, data);
 
         return MakeResult(data, Shape, [this], result => () =>
         {
             EnsureGrad();
-            for (int i = 0; i < Length; i++)
-                if (Data[i] > min && Data[i] < max) Grad![i] += result.Grad![i];
+            Backend.Current.ClampBackwardInto(Data, min, max, result.Grad!, Grad!);
         });
     }
 
@@ -163,16 +159,19 @@ public sealed partial class Tensor
     {
         CheckSameShape(this, other);
         var data = new float[Length];
-        for (int i = 0; i < Length; i++) data[i] = Math.Min(Data[i], other.Data[i]);
+        Backend.Current.Zip(BinaryOp.Min, Data, other.Data, data);
 
         return MakeResult(data, Shape, [this, other], result => () =>
         {
-            if (NeedsGrad) EnsureGrad();
-            if (other.NeedsGrad) other.EnsureGrad();
-            for (int i = 0; i < Length; i++)
+            if (NeedsGrad)
             {
-                if (Data[i] <= other.Data[i]) { if (NeedsGrad) Grad![i] += result.Grad![i]; }
-                else if (other.NeedsGrad) other.Grad![i] += result.Grad![i];
+                EnsureGrad();
+                Backend.Current.MinBackwardInto(Data, other.Data, result.Grad!, Grad!, forA: true);
+            }
+            if (other.NeedsGrad)
+            {
+                other.EnsureGrad();
+                Backend.Current.MinBackwardInto(Data, other.Data, result.Grad!, other.Grad!, forA: false);
             }
         });
     }
@@ -395,7 +394,7 @@ public sealed partial class Tensor
         return MakeResult(Data, shape, [this], result => () =>
         {
             EnsureGrad();
-            System.Numerics.Tensors.TensorPrimitives.Add(Grad, result.Grad, Grad);
+            Backend.Current.AddInto(Grad!, result.Grad!);
         });
     }
 
@@ -403,7 +402,7 @@ public sealed partial class Tensor
     {
         if (!tensor.NeedsGrad) return;
         tensor.EnsureGrad();
-        TensorPrimitives.Add(tensor.Grad, grad, tensor.Grad);
+        Backend.Current.AddInto(tensor.Grad!, grad);
     }
 
     private static void CheckRank2(Tensor t)

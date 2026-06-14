@@ -195,6 +195,17 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     // elementwise lives in the resident paths (DeviceMlp / DeviceResidualTrainer kernels).
     public void Map(UnaryOp op, ReadOnlySpan<float> x, Span<float> y) => _cpuOps.Map(op, x, y);
     public void MapBackward(UnaryOp op, ReadOnlySpan<float> x, ReadOnlySpan<float> y, ReadOnlySpan<float> dy, Span<float> dx) => _cpuOps.MapBackward(op, x, y, dy, dx);
+    public void Zip(BinaryOp op, ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> result) => _cpuOps.Zip(op, a, b, result);
+    public void Scale(ReadOnlySpan<float> x, float s, Span<float> y) => _cpuOps.Scale(x, s, y);
+    public void Clamp(ReadOnlySpan<float> x, float min, float max, Span<float> y) => _cpuOps.Clamp(x, min, max, y);
+    public void AddBias(ReadOnlySpan<float> x, ReadOnlySpan<float> bias, int rows, int cols, Span<float> y) => _cpuOps.AddBias(x, bias, rows, cols, y);
+    public void AddInto(Span<float> dst, ReadOnlySpan<float> src) => _cpuOps.AddInto(dst, src);
+    public void SubInto(Span<float> dst, ReadOnlySpan<float> src) => _cpuOps.SubInto(dst, src);
+    public void MulAddInto(Span<float> dst, ReadOnlySpan<float> x, ReadOnlySpan<float> y) => _cpuOps.MulAddInto(dst, x, y);
+    public void AxpyInto(Span<float> dst, float a, ReadOnlySpan<float> x) => _cpuOps.AxpyInto(dst, a, x);
+    public void ClampBackwardInto(ReadOnlySpan<float> x, float min, float max, ReadOnlySpan<float> dy, Span<float> dx) => _cpuOps.ClampBackwardInto(x, min, max, dy, dx);
+    public void MinBackwardInto(ReadOnlySpan<float> a, ReadOnlySpan<float> b, ReadOnlySpan<float> dy, Span<float> dst, bool forA) => _cpuOps.MinBackwardInto(a, b, dy, dst, forA);
+    public void BiasGradInto(ReadOnlySpan<float> dy, Span<float> dbias, int rows, int cols) => _cpuOps.BiasGradInto(dy, dbias, rows, cols);
 
     private void LaunchHostSpan(ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> c, GemmDims dims)
     {

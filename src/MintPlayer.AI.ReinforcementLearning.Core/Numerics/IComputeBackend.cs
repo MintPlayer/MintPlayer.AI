@@ -6,6 +6,10 @@ namespace MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 /// <see cref="IComputeBackend.MapBackward"/> pair covers them all (keeps the seam's surface small).</summary>
 public enum UnaryOp { Relu, Tanh, Exp, Log, Square }
 
+/// <summary>Elementwise binary op for <see cref="IComputeBackend.Zip"/> (forward). Backward is op-specific
+/// and composed from the accumulate primitives (AddInto/SubInto/MulAddInto/MinBackwardInto).</summary>
+public enum BinaryOp { Add, Sub, Mul, Min }
+
 /// <summary>
 /// The seam between the autograd layer and raw compute kernels: every op the tape records routes its
 /// raw math through here, so an alternative backend (TorchSharp/ILGPU) can run the whole graph without
@@ -38,6 +42,35 @@ public interface IComputeBackend
     /// each op uses whichever its derivative needs (ReLU/Square/Log use x; Tanh/Exp use y).
     /// </summary>
     void MapBackward(UnaryOp op, ReadOnlySpan<float> x, ReadOnlySpan<float> y, ReadOnlySpan<float> dy, Span<float> dx);
+
+    /// <summary>Elementwise binary forward: <c>result[i] = op(a[i], b[i])</c> (writes result).</summary>
+    void Zip(BinaryOp op, ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> result);
+
+    /// <summary><c>x[i] = s·x[i]</c> written to <paramref name="y"/> (MulScalar forward).</summary>
+    void Scale(ReadOnlySpan<float> x, float s, Span<float> y);
+
+    /// <summary>Clamp forward: <c>y[i] = clamp(x[i], min, max)</c>.</summary>
+    void Clamp(ReadOnlySpan<float> x, float min, float max, Span<float> y);
+
+    /// <summary>x[B,N] + bias[N] broadcast over rows → y[B,N].</summary>
+    void AddBias(ReadOnlySpan<float> x, ReadOnlySpan<float> bias, int rows, int cols, Span<float> y);
+
+    // ── gradient-accumulate primitives (all do dst += …), the building blocks of op backwards ──
+
+    /// <summary><c>dst[i] += src[i]</c>.</summary>
+    void AddInto(Span<float> dst, ReadOnlySpan<float> src);
+    /// <summary><c>dst[i] -= src[i]</c>.</summary>
+    void SubInto(Span<float> dst, ReadOnlySpan<float> src);
+    /// <summary><c>dst[i] += x[i]·y[i]</c> (Mul backward).</summary>
+    void MulAddInto(Span<float> dst, ReadOnlySpan<float> x, ReadOnlySpan<float> y);
+    /// <summary><c>dst[i] += a·x[i]</c> (MulScalar backward).</summary>
+    void AxpyInto(Span<float> dst, float a, ReadOnlySpan<float> x);
+    /// <summary>Clamp backward: <c>dx[i] += dy[i]</c> where <c>min &lt; x[i] &lt; max</c>.</summary>
+    void ClampBackwardInto(ReadOnlySpan<float> x, float min, float max, ReadOnlySpan<float> dy, Span<float> dx);
+    /// <summary>Min backward: <c>dst[i] += dy[i]</c> on the side selected by <paramref name="forA"/> (ties → a).</summary>
+    void MinBackwardInto(ReadOnlySpan<float> a, ReadOnlySpan<float> b, ReadOnlySpan<float> dy, Span<float> dst, bool forA);
+    /// <summary>Bias gradient: <c>dbias[c] += Σ_r dy[r,c]</c> over a [rows,cols] grad.</summary>
+    void BiasGradInto(ReadOnlySpan<float> dy, Span<float> dbias, int rows, int cols);
 }
 
 public static class Backend
@@ -179,6 +212,53 @@ public sealed unsafe class ManagedBackend : IComputeBackend
             case UnaryOp.Log: for (int i = 0; i < x.Length; i++) dx[i] += dy[i] / x[i]; break;
             case UnaryOp.Square: for (int i = 0; i < x.Length; i++) dx[i] += 2f * x[i] * dy[i]; break;
         }
+    }
+
+    public void Zip(BinaryOp op, ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> result)
+    {
+        switch (op)
+        {
+            case BinaryOp.Add: TensorPrimitives.Add(a, b, result); break;
+            case BinaryOp.Sub: TensorPrimitives.Subtract(a, b, result); break;
+            case BinaryOp.Mul: TensorPrimitives.Multiply(a, b, result); break;
+            case BinaryOp.Min: for (int i = 0; i < a.Length; i++) result[i] = Math.Min(a[i], b[i]); break;
+        }
+    }
+
+    public void Scale(ReadOnlySpan<float> x, float s, Span<float> y) => TensorPrimitives.Multiply(x, s, y);
+
+    public void Clamp(ReadOnlySpan<float> x, float min, float max, Span<float> y)
+    {
+        for (int i = 0; i < x.Length; i++) y[i] = Math.Clamp(x[i], min, max);
+    }
+
+    public void AddBias(ReadOnlySpan<float> x, ReadOnlySpan<float> bias, int rows, int cols, Span<float> y)
+    {
+        for (int r = 0; r < rows; r++)
+            TensorPrimitives.Add(x.Slice(r * cols, cols), bias, y.Slice(r * cols, cols));
+    }
+
+    public void AddInto(Span<float> dst, ReadOnlySpan<float> src) => TensorPrimitives.Add(dst, src, dst);
+    public void SubInto(Span<float> dst, ReadOnlySpan<float> src) => TensorPrimitives.Subtract(dst, src, dst);
+    public void MulAddInto(Span<float> dst, ReadOnlySpan<float> x, ReadOnlySpan<float> y)
+    {
+        for (int i = 0; i < dst.Length; i++) dst[i] += x[i] * y[i];
+    }
+    public void AxpyInto(Span<float> dst, float a, ReadOnlySpan<float> x)
+    {
+        for (int i = 0; i < dst.Length; i++) dst[i] += a * x[i];
+    }
+    public void ClampBackwardInto(ReadOnlySpan<float> x, float min, float max, ReadOnlySpan<float> dy, Span<float> dx)
+    {
+        for (int i = 0; i < x.Length; i++) if (x[i] > min && x[i] < max) dx[i] += dy[i];
+    }
+    public void MinBackwardInto(ReadOnlySpan<float> a, ReadOnlySpan<float> b, ReadOnlySpan<float> dy, Span<float> dst, bool forA)
+    {
+        for (int i = 0; i < a.Length; i++) if (forA ? a[i] <= b[i] : a[i] > b[i]) dst[i] += dy[i];
+    }
+    public void BiasGradInto(ReadOnlySpan<float> dy, Span<float> dbias, int rows, int cols)
+    {
+        for (int r = 0; r < rows; r++) TensorPrimitives.Add(dbias, dy.Slice(r * cols, cols), dbias);
     }
 
     private bool Parallelize(int rows, long macs) => _maxDop > 1 && rows >= 2 && macs >= ParallelMacThreshold;
