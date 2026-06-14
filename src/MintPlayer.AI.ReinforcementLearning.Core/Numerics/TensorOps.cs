@@ -1,9 +1,8 @@
-using System.Numerics.Tensors;
-
 namespace MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 
-// Autograd ops. Each forward computes into a fresh buffer and registers a closure that
-// ACCUMULATES (+=) into parents' Grad — a tensor used twice receives both contributions.
+// Autograd ops. Each op's raw math runs through Backend.Current (the compute seam); this file only
+// builds the tape — a forward into a fresh buffer plus a closure that ACCUMULATES (+=) into parents'
+// Grad (a tensor used twice receives both contributions).
 public sealed partial class Tensor
 {
     /// <summary>[m,k] · [k,n] → [m,n]</summary>
@@ -185,38 +184,36 @@ public sealed partial class Tensor
         int cols = Cols;
 
         var data = new float[Rows];
-        for (int r = 0; r < data.Length; r++) data[r] = Data[r * cols + indices[r]];
+        Backend.Current.Gather(Data, indices, Rows, cols, data);
 
         return MakeResult(data, [Rows], [this], result => () =>
         {
             EnsureGrad();
-            for (int r = 0; r < result.Length; r++) Grad![r * cols + indices[r]] += result.Grad![r];
+            Backend.Current.GatherBackwardInto(indices, result.Grad!, Rows, cols, Grad!);
         });
     }
 
     /// <summary>Sum of all elements → scalar.</summary>
     public Tensor Sum()
     {
-        var data = new[] { TensorPrimitives.Sum<float>(Data) };
+        var data = new[] { Backend.Current.Sum(Data) };
 
         return MakeResult(data, [1], [this], result => () =>
         {
             EnsureGrad();
-            float g = result.Grad![0];
-            for (int i = 0; i < Length; i++) Grad![i] += g;
+            Backend.Current.AddScalarInto(Grad!, result.Grad![0]);
         });
     }
 
     /// <summary>Mean of all elements → scalar.</summary>
     public Tensor Mean()
     {
-        var data = new[] { TensorPrimitives.Sum<float>(Data) / Length };
+        var data = new[] { Backend.Current.Sum(Data) / Length };
 
         return MakeResult(data, [1], [this], result => () =>
         {
             EnsureGrad();
-            float g = result.Grad![0] / Length;
-            for (int i = 0; i < Length; i++) Grad![i] += g;
+            Backend.Current.AddScalarInto(Grad!, result.Grad![0] / Length);
         });
     }
 
@@ -226,18 +223,12 @@ public sealed partial class Tensor
         CheckRank2(this);
         int cols = Cols;
         var data = new float[Rows];
-        for (int r = 0; r < data.Length; r++)
-            data[r] = TensorPrimitives.Sum<float>(Data.AsSpan(r * cols, cols));
+        Backend.Current.SumRows(Data, Rows, cols, data);
 
         return MakeResult(data, [Rows], [this], result => () =>
         {
             EnsureGrad();
-            for (int r = 0; r < result.Length; r++)
-            {
-                float g = result.Grad![r];
-                var row = Grad.AsSpan(r * cols, cols);
-                for (int c = 0; c < cols; c++) row[c] += g;
-            }
+            Backend.Current.SumRowsBackwardInto(result.Grad!, Rows, cols, Grad!);
         });
     }
 
@@ -247,33 +238,12 @@ public sealed partial class Tensor
         CheckRank2(this);
         int cols = Cols;
         var data = new float[Length];
-        for (int r = 0; r < Rows; r++)
-        {
-            var row = Data.AsSpan(r * cols, cols);
-            var outRow = data.AsSpan(r * cols, cols);
-            float max = TensorPrimitives.Max<float>(row);
-            float sum = 0f;
-            for (int c = 0; c < cols; c++)
-            {
-                outRow[c] = row[c] - max;
-                sum += MathF.Exp(outRow[c]);
-            }
-            float logSum = MathF.Log(sum);
-            for (int c = 0; c < cols; c++) outRow[c] -= logSum;
-        }
+        Backend.Current.LogSoftmax(Data, Rows, cols, data);
 
         return MakeResult(data, Shape, [this], result => () =>
         {
-            // d/dx = dy − softmax(x) · Σ_row dy
             EnsureGrad();
-            for (int r = 0; r < result.Rows; r++)
-            {
-                var dy = result.Grad.AsSpan(r * cols, cols);
-                var y = result.Data.AsSpan(r * cols, cols);
-                var dx = Grad.AsSpan(r * cols, cols);
-                float rowSum = TensorPrimitives.Sum<float>(dy);
-                for (int c = 0; c < cols; c++) dx[c] += dy[c] - MathF.Exp(y[c]) * rowSum;
-            }
+            Backend.Current.LogSoftmaxBackwardInto(result.Data, result.Grad!, Rows, cols, Grad!);
         });
     }
 
@@ -281,27 +251,13 @@ public sealed partial class Tensor
     public Tensor HuberLoss(Tensor target, float delta = 1f)
     {
         CheckSameShape(this, target);
-        float total = 0f;
-        for (int i = 0; i < Length; i++)
-        {
-            float diff = Data[i] - target.Data[i];
-            float abs = Math.Abs(diff);
-            total += abs <= delta ? 0.5f * diff * diff : delta * (abs - 0.5f * delta);
-        }
-        var data = new[] { total / Length };
+        var data = new[] { Backend.Current.HuberLoss(Data, target.Data, delta) };
 
         return MakeResult(data, [1], [this, target], result => () =>
         {
             float g = result.Grad![0] / Length;
-            if (NeedsGrad) EnsureGrad();
-            if (target.NeedsGrad) target.EnsureGrad();
-            for (int i = 0; i < Length; i++)
-            {
-                float diff = Data[i] - target.Data[i];
-                float d = Math.Clamp(diff, -delta, delta) * g;
-                if (NeedsGrad) Grad![i] += d;
-                if (target.NeedsGrad) target.Grad![i] -= d;
-            }
+            if (NeedsGrad) { EnsureGrad(); Backend.Current.HuberGradInto(Data, target.Data, delta, g, Grad!, negate: false); }
+            if (target.NeedsGrad) { target.EnsureGrad(); Backend.Current.HuberGradInto(Data, target.Data, delta, g, target.Grad!, negate: true); }
         });
     }
 
@@ -323,59 +279,21 @@ public sealed partial class Tensor
         var data = new float[Length];
         var xhat = new float[Length];   // normalized inputs, cached for backward
         var invStd = new float[rows];   // 1/√(σ²+ε) per row, cached for backward
-        for (int r = 0; r < rows; r++)
-        {
-            var row = Data.AsSpan(r * cols, cols);
-            float mean = TensorPrimitives.Sum<float>(row) / cols;
-            float var = 0f;
-            for (int c = 0; c < cols; c++) { float d = row[c] - mean; var += d * d; }
-            var /= cols;
-            float inv = 1f / MathF.Sqrt(var + eps);
-            invStd[r] = inv;
-            for (int c = 0; c < cols; c++)
-            {
-                float xh = (row[c] - mean) * inv;
-                xhat[r * cols + c] = xh;
-                data[r * cols + c] = gamma.Data[c] * xh + beta.Data[c];
-            }
-        }
+        Backend.Current.LayerNorm(Data, gamma.Data, beta.Data, rows, cols, eps, data, xhat, invStd);
 
         return MakeResult(data, Shape, [this, gamma, beta], result => () =>
         {
             var dy = result.Grad!;
-            if (gamma.NeedsGrad)
+            if (gamma.NeedsGrad || beta.NeedsGrad)
             {
                 gamma.EnsureGrad();
-                for (int r = 0; r < rows; r++)
-                    for (int c = 0; c < cols; c++) gamma.Grad![c] += dy[r * cols + c] * xhat[r * cols + c];
-            }
-            if (beta.NeedsGrad)
-            {
                 beta.EnsureGrad();
-                for (int r = 0; r < rows; r++)
-                    for (int c = 0; c < cols; c++) beta.Grad![c] += dy[r * cols + c];
+                Backend.Current.LayerNormParamGradInto(dy, xhat, rows, cols, gamma.Grad!, beta.Grad!);
             }
             if (NeedsGrad)
             {
                 EnsureGrad();
-                float invN = 1f / cols;
-                for (int r = 0; r < rows; r++)
-                {
-                    // dx_i = (1/σ)·(dx̂_i − mean(dx̂) − x̂_i·mean(dx̂·x̂)),  dx̂ = dy·γ
-                    float sum1 = 0f, sum2 = 0f;
-                    for (int c = 0; c < cols; c++)
-                    {
-                        float dxh = dy[r * cols + c] * gamma.Data[c];
-                        sum1 += dxh;
-                        sum2 += dxh * xhat[r * cols + c];
-                    }
-                    float inv = invStd[r];
-                    for (int c = 0; c < cols; c++)
-                    {
-                        float dxh = dy[r * cols + c] * gamma.Data[c];
-                        Grad![r * cols + c] += inv * (dxh - sum1 * invN - xhat[r * cols + c] * sum2 * invN);
-                    }
-                }
+                Backend.Current.LayerNormInputGradInto(dy, xhat, invStd, gamma.Data, rows, cols, Grad!);
             }
         });
     }

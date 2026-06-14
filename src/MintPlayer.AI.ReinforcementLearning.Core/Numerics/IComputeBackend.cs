@@ -71,6 +71,40 @@ public interface IComputeBackend
     void MinBackwardInto(ReadOnlySpan<float> a, ReadOnlySpan<float> b, ReadOnlySpan<float> dy, Span<float> dst, bool forA);
     /// <summary>Bias gradient: <c>dbias[c] += Σ_r dy[r,c]</c> over a [rows,cols] grad.</summary>
     void BiasGradInto(ReadOnlySpan<float> dy, Span<float> dbias, int rows, int cols);
+
+    // ── reductions / structured ops ──
+
+    /// <summary>Sum of all elements → scalar.</summary>
+    float Sum(ReadOnlySpan<float> x);
+    /// <summary><c>dst[i] += s</c> (broadcast a scalar gradient, e.g. Sum/Mean backward).</summary>
+    void AddScalarInto(Span<float> dst, float s);
+
+    /// <summary>Row-wise sum: x[rows,cols] → out[rows].</summary>
+    void SumRows(ReadOnlySpan<float> x, int rows, int cols, Span<float> outp);
+    /// <summary>SumRows backward: <c>dx[r,c] += dy[r]</c> (broadcast each row's grad over its columns).</summary>
+    void SumRowsBackwardInto(ReadOnlySpan<float> dy, int rows, int cols, Span<float> dx);
+
+    /// <summary>Numerically stable row-wise log-softmax: x[rows,cols] → y[rows,cols].</summary>
+    void LogSoftmax(ReadOnlySpan<float> x, int rows, int cols, Span<float> y);
+    /// <summary>LogSoftmax backward: <c>dx += dy − softmax(x)·Σ_row dy</c>, using the forward output <paramref name="y"/>.</summary>
+    void LogSoftmaxBackwardInto(ReadOnlySpan<float> y, ReadOnlySpan<float> dy, int rows, int cols, Span<float> dx);
+
+    /// <summary>Per-row gather: x[rows,cols] with one index per row → out[rows].</summary>
+    void Gather(ReadOnlySpan<float> x, ReadOnlySpan<int> indices, int rows, int cols, Span<float> outp);
+    /// <summary>Gather backward (scatter-add): <c>dx[r, indices[r]] += dy[r]</c>.</summary>
+    void GatherBackwardInto(ReadOnlySpan<int> indices, ReadOnlySpan<float> dy, int rows, int cols, Span<float> dx);
+
+    /// <summary>Mean Huber (smooth-L1) loss between two [N] vectors → scalar.</summary>
+    float HuberLoss(ReadOnlySpan<float> pred, ReadOnlySpan<float> target, float delta);
+    /// <summary>Huber backward into one side: <c>dst[i] += (negate?−1:1)·clamp(pred−target, ±δ)·scale</c>.</summary>
+    void HuberGradInto(ReadOnlySpan<float> pred, ReadOnlySpan<float> target, float delta, float scale, Span<float> dst, bool negate);
+
+    /// <summary>Row-wise LayerNorm forward: writes <paramref name="y"/> = γ·x̂+β and caches x̂ and 1/σ for backward.</summary>
+    void LayerNorm(ReadOnlySpan<float> x, ReadOnlySpan<float> gamma, ReadOnlySpan<float> beta, int rows, int cols, float eps, Span<float> y, Span<float> xhat, Span<float> invStd);
+    /// <summary>LayerNorm γ/β gradients: <c>dGamma[c] += Σ_r dy·x̂</c>, <c>dBeta[c] += Σ_r dy</c>.</summary>
+    void LayerNormParamGradInto(ReadOnlySpan<float> dy, ReadOnlySpan<float> xhat, int rows, int cols, Span<float> dGamma, Span<float> dBeta);
+    /// <summary>LayerNorm input gradient: <c>dx += (1/σ)(dx̂ − mean(dx̂) − x̂·mean(dx̂·x̂))</c>, dx̂ = dy·γ.</summary>
+    void LayerNormInputGradInto(ReadOnlySpan<float> dy, ReadOnlySpan<float> xhat, ReadOnlySpan<float> invStd, ReadOnlySpan<float> gamma, int rows, int cols, Span<float> dx);
 }
 
 public static class Backend
@@ -259,6 +293,133 @@ public sealed unsafe class ManagedBackend : IComputeBackend
     public void BiasGradInto(ReadOnlySpan<float> dy, Span<float> dbias, int rows, int cols)
     {
         for (int r = 0; r < rows; r++) TensorPrimitives.Add(dbias, dy.Slice(r * cols, cols), dbias);
+    }
+
+    public float Sum(ReadOnlySpan<float> x) => TensorPrimitives.Sum(x);
+
+    public void AddScalarInto(Span<float> dst, float s)
+    {
+        for (int i = 0; i < dst.Length; i++) dst[i] += s;
+    }
+
+    public void SumRows(ReadOnlySpan<float> x, int rows, int cols, Span<float> outp)
+    {
+        for (int r = 0; r < rows; r++) outp[r] = TensorPrimitives.Sum(x.Slice(r * cols, cols));
+    }
+
+    public void SumRowsBackwardInto(ReadOnlySpan<float> dy, int rows, int cols, Span<float> dx)
+    {
+        for (int r = 0; r < rows; r++)
+        {
+            float g = dy[r];
+            var row = dx.Slice(r * cols, cols);
+            for (int c = 0; c < cols; c++) row[c] += g;
+        }
+    }
+
+    public void LogSoftmax(ReadOnlySpan<float> x, int rows, int cols, Span<float> y)
+    {
+        for (int r = 0; r < rows; r++)
+        {
+            var row = x.Slice(r * cols, cols);
+            var outRow = y.Slice(r * cols, cols);
+            float max = TensorPrimitives.Max(row);
+            float sum = 0f;
+            for (int c = 0; c < cols; c++) { outRow[c] = row[c] - max; sum += MathF.Exp(outRow[c]); }
+            float logSum = MathF.Log(sum);
+            for (int c = 0; c < cols; c++) outRow[c] -= logSum;
+        }
+    }
+
+    public void LogSoftmaxBackwardInto(ReadOnlySpan<float> y, ReadOnlySpan<float> dy, int rows, int cols, Span<float> dx)
+    {
+        for (int r = 0; r < rows; r++)
+        {
+            var dyRow = dy.Slice(r * cols, cols);
+            var yRow = y.Slice(r * cols, cols);
+            var dxRow = dx.Slice(r * cols, cols);
+            float rowSum = TensorPrimitives.Sum(dyRow);
+            for (int c = 0; c < cols; c++) dxRow[c] += dyRow[c] - MathF.Exp(yRow[c]) * rowSum;
+        }
+    }
+
+    public void Gather(ReadOnlySpan<float> x, ReadOnlySpan<int> indices, int rows, int cols, Span<float> outp)
+    {
+        for (int r = 0; r < rows; r++) outp[r] = x[r * cols + indices[r]];
+    }
+
+    public void GatherBackwardInto(ReadOnlySpan<int> indices, ReadOnlySpan<float> dy, int rows, int cols, Span<float> dx)
+    {
+        for (int r = 0; r < rows; r++) dx[r * cols + indices[r]] += dy[r];
+    }
+
+    public float HuberLoss(ReadOnlySpan<float> pred, ReadOnlySpan<float> target, float delta)
+    {
+        float total = 0f;
+        for (int i = 0; i < pred.Length; i++)
+        {
+            float diff = pred[i] - target[i], abs = Math.Abs(diff);
+            total += abs <= delta ? 0.5f * diff * diff : delta * (abs - 0.5f * delta);
+        }
+        return total / pred.Length;
+    }
+
+    public void HuberGradInto(ReadOnlySpan<float> pred, ReadOnlySpan<float> target, float delta, float scale, Span<float> dst, bool negate)
+    {
+        float sign = negate ? -1f : 1f;
+        for (int i = 0; i < pred.Length; i++)
+            dst[i] += sign * Math.Clamp(pred[i] - target[i], -delta, delta) * scale;
+    }
+
+    public void LayerNorm(ReadOnlySpan<float> x, ReadOnlySpan<float> gamma, ReadOnlySpan<float> beta, int rows, int cols, float eps, Span<float> y, Span<float> xhat, Span<float> invStd)
+    {
+        for (int r = 0; r < rows; r++)
+        {
+            var row = x.Slice(r * cols, cols);
+            float mean = TensorPrimitives.Sum(row) / cols;
+            float var = 0f;
+            for (int c = 0; c < cols; c++) { float d = row[c] - mean; var += d * d; }
+            var /= cols;
+            float inv = 1f / MathF.Sqrt(var + eps);
+            invStd[r] = inv;
+            for (int c = 0; c < cols; c++)
+            {
+                float xh = (row[c] - mean) * inv;
+                xhat[r * cols + c] = xh;
+                y[r * cols + c] = gamma[c] * xh + beta[c];
+            }
+        }
+    }
+
+    public void LayerNormParamGradInto(ReadOnlySpan<float> dy, ReadOnlySpan<float> xhat, int rows, int cols, Span<float> dGamma, Span<float> dBeta)
+    {
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++)
+            {
+                float d = dy[r * cols + c];
+                dGamma[c] += d * xhat[r * cols + c];
+                dBeta[c] += d;
+            }
+    }
+
+    public void LayerNormInputGradInto(ReadOnlySpan<float> dy, ReadOnlySpan<float> xhat, ReadOnlySpan<float> invStd, ReadOnlySpan<float> gamma, int rows, int cols, Span<float> dx)
+    {
+        float invN = 1f / cols;
+        for (int r = 0; r < rows; r++)
+        {
+            float sum1 = 0f, sum2 = 0f;
+            for (int c = 0; c < cols; c++)
+            {
+                float dxh = dy[r * cols + c] * gamma[c];
+                sum1 += dxh; sum2 += dxh * xhat[r * cols + c];
+            }
+            float inv = invStd[r];
+            for (int c = 0; c < cols; c++)
+            {
+                float dxh = dy[r * cols + c] * gamma[c];
+                dx[r * cols + c] += inv * (dxh - sum1 * invN - xhat[r * cols + c] * sum2 * invN);
+            }
+        }
     }
 
     private bool Parallelize(int rows, long macs) => _maxDop > 1 && rows >= 2 && macs >= ParallelMacThreshold;

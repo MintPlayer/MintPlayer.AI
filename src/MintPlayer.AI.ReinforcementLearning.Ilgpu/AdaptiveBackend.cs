@@ -81,6 +81,19 @@ public sealed class AdaptiveBackend : IComputeBackend, IDisposable
     public void ClampBackwardInto(ReadOnlySpan<float> x, float min, float max, ReadOnlySpan<float> dy, Span<float> dx) => _cpu.ClampBackwardInto(x, min, max, dy, dx);
     public void MinBackwardInto(ReadOnlySpan<float> a, ReadOnlySpan<float> b, ReadOnlySpan<float> dy, Span<float> dst, bool forA) => _cpu.MinBackwardInto(a, b, dy, dst, forA);
     public void BiasGradInto(ReadOnlySpan<float> dy, Span<float> dbias, int rows, int cols) => _cpu.BiasGradInto(dy, dbias, rows, cols);
+    public float Sum(ReadOnlySpan<float> x) => _cpu.Sum(x);
+    public void AddScalarInto(Span<float> dst, float s) => _cpu.AddScalarInto(dst, s);
+    public void SumRows(ReadOnlySpan<float> x, int rows, int cols, Span<float> outp) => _cpu.SumRows(x, rows, cols, outp);
+    public void SumRowsBackwardInto(ReadOnlySpan<float> dy, int rows, int cols, Span<float> dx) => _cpu.SumRowsBackwardInto(dy, rows, cols, dx);
+    public void LogSoftmax(ReadOnlySpan<float> x, int rows, int cols, Span<float> y) => _cpu.LogSoftmax(x, rows, cols, y);
+    public void LogSoftmaxBackwardInto(ReadOnlySpan<float> y, ReadOnlySpan<float> dy, int rows, int cols, Span<float> dx) => _cpu.LogSoftmaxBackwardInto(y, dy, rows, cols, dx);
+    public void Gather(ReadOnlySpan<float> x, ReadOnlySpan<int> indices, int rows, int cols, Span<float> outp) => _cpu.Gather(x, indices, rows, cols, outp);
+    public void GatherBackwardInto(ReadOnlySpan<int> indices, ReadOnlySpan<float> dy, int rows, int cols, Span<float> dx) => _cpu.GatherBackwardInto(indices, dy, rows, cols, dx);
+    public float HuberLoss(ReadOnlySpan<float> pred, ReadOnlySpan<float> target, float delta) => _cpu.HuberLoss(pred, target, delta);
+    public void HuberGradInto(ReadOnlySpan<float> pred, ReadOnlySpan<float> target, float delta, float scale, Span<float> dst, bool negate) => _cpu.HuberGradInto(pred, target, delta, scale, dst, negate);
+    public void LayerNorm(ReadOnlySpan<float> x, ReadOnlySpan<float> gamma, ReadOnlySpan<float> beta, int rows, int cols, float eps, Span<float> y, Span<float> xhat, Span<float> invStd) => _cpu.LayerNorm(x, gamma, beta, rows, cols, eps, y, xhat, invStd);
+    public void LayerNormParamGradInto(ReadOnlySpan<float> dy, ReadOnlySpan<float> xhat, int rows, int cols, Span<float> dGamma, Span<float> dBeta) => _cpu.LayerNormParamGradInto(dy, xhat, rows, cols, dGamma, dBeta);
+    public void LayerNormInputGradInto(ReadOnlySpan<float> dy, ReadOnlySpan<float> xhat, ReadOnlySpan<float> invStd, ReadOnlySpan<float> gamma, int rows, int cols, Span<float> dx) => _cpu.LayerNormInputGradInto(dy, xhat, invStd, gamma, rows, cols, dx);
 
     public void Dispose() => _gpu?.Dispose(); // ManagedBackend holds no unmanaged state
 }
