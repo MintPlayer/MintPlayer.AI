@@ -3,7 +3,7 @@
   Scramble the cube (drag to orbit), then solve it three ways: Kociemba's two-phase algorithm (≤ 22 moves,
   any cube), the trained DQN (shallow scrambles are its home turf), or the <strong>self-taught AI</strong> —
   a value net that learned the cube with no teacher and searches for the <em>fewest quarter-turns</em>
-  (optimal to ~15 deep, and shorter than Kociemba's QTM).
+  (optimal short solutions for typical scrambles, well under Kociemba's QTM — deeper ones stay Kociemba's job).
 </p>
 
 @if (modelStatus(); as ms) {

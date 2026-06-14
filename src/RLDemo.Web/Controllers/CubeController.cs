@@ -127,7 +127,11 @@ public sealed class CubeController(CubeModelService model, GalleryStore gallery)
         if (!reference.Solved)
             return BadRequest(new CubeSolveResponse([], 0, 0, reference.Error));
 
-        var search = CubeValueSearch.Solve(valueNet, cube);
+        // Interactivity bound: the web backend is pure-CPU (no Ilgpu reference), where each BWAS
+        // expansion costs ~2 ms. A 6k cap keeps a typical scramble's solve to a few seconds and bounds
+        // the worst case (a too-deep scramble that exhausts the budget) to ~12 s, accepting a shallower
+        // optimal reach than the GPU campaign's depth-15. Deeper cubes fail honestly → "use the algorithm".
+        var search = CubeValueSearch.Solve(valueNet, cube, maxExpansions: 6_000);
         var response = new CubeSolveAiResponse(
             search.Solved, search.Moves, search.Moves.Length, reference.Moves.Length, "davi");
 

@@ -20,8 +20,13 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 /// </summary>
 public static class CubeValueSearch
 {
-    /// <summary>Interactive defaults: near-optimal but responsive on a CPU backend.</summary>
-    public const float DefaultWeight = 1.8f;
+    /// <summary>
+    /// Weight 1.5 is the measured optimality sweet spot — it returned exact-length (optimal) solutions
+    /// through depth 15 in the campaign diagnostic, where a greedier 1.8+ trades length for reach. The
+    /// 50k expansion ceiling suits an offline/GPU caller; an interactive CPU caller should pass a tighter
+    /// budget (each expansion is ~2 ms on the multithreaded CPU backend — see the web layer).
+    /// </summary>
+    public const float DefaultWeight = 1.5f;
     public const int DefaultMaxExpansions = 50_000;
     private const int ExpandBatch = 100;
 

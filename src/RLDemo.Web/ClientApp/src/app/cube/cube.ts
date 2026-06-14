@@ -294,7 +294,7 @@ export class Cube {
           } else {
             this.clearSolution();
             this.status.set(`The self-taught AI ran out of search budget (Kociemba needs ${v.algorithmMoveCount} QTM) — ` +
-              'it solves shortest-move up to ~15 quarter-turns deep; try a shallower scramble, or the algorithm.');
+              'it finds the shortest solution on shallower scrambles; try an easy scramble, or the algorithm.');
           }
           break;
         }
