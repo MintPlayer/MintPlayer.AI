@@ -123,65 +123,24 @@ public sealed partial class Tensor
         });
     }
 
-    public Tensor Square()
+    // Elementwise unary ops route their forward + backward math through the compute seam
+    // (Backend.Current.Map / MapBackward), so a device backend can run them; ManagedBackend keeps the
+    // exact (bitwise-identical) reference math.
+    public Tensor Square() => MapOp(UnaryOp.Square);
+    public Tensor Relu() => MapOp(UnaryOp.Relu);
+    public Tensor Tanh() => MapOp(UnaryOp.Tanh);
+    public Tensor Exp() => MapOp(UnaryOp.Exp);
+    public Tensor Log() => MapOp(UnaryOp.Log);
+
+    private Tensor MapOp(UnaryOp op)
     {
         var data = new float[Length];
-        TensorPrimitives.Multiply(Data, Data, data);
+        Backend.Current.Map(op, Data, data);
 
         return MakeResult(data, Shape, [this], result => () =>
         {
             EnsureGrad();
-            for (int i = 0; i < Length; i++) Grad![i] += 2f * Data[i] * result.Grad![i];
-        });
-    }
-
-    public Tensor Relu()
-    {
-        var data = new float[Length];
-        for (int i = 0; i < Length; i++) data[i] = Math.Max(0f, Data[i]);
-
-        return MakeResult(data, Shape, [this], result => () =>
-        {
-            EnsureGrad();
-            for (int i = 0; i < Length; i++)
-                if (Data[i] > 0f) Grad![i] += result.Grad![i];
-        });
-    }
-
-    public Tensor Tanh()
-    {
-        var data = new float[Length];
-        TensorPrimitives.Tanh(Data, data);
-
-        return MakeResult(data, Shape, [this], result => () =>
-        {
-            EnsureGrad();
-            for (int i = 0; i < Length; i++)
-                Grad![i] += (1f - result.Data[i] * result.Data[i]) * result.Grad![i];
-        });
-    }
-
-    public Tensor Exp()
-    {
-        var data = new float[Length];
-        TensorPrimitives.Exp(Data, data);
-
-        return MakeResult(data, Shape, [this], result => () =>
-        {
-            EnsureGrad();
-            for (int i = 0; i < Length; i++) Grad![i] += result.Data[i] * result.Grad![i];
-        });
-    }
-
-    public Tensor Log()
-    {
-        var data = new float[Length];
-        TensorPrimitives.Log(Data, data);
-
-        return MakeResult(data, Shape, [this], result => () =>
-        {
-            EnsureGrad();
-            for (int i = 0; i < Length; i++) Grad![i] += result.Grad![i] / Data[i];
+            Backend.Current.MapBackward(op, Data, result.Data, result.Grad!, Grad!);
         });
     }
 

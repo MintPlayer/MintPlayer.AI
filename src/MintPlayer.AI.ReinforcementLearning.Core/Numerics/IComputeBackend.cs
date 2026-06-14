@@ -2,12 +2,21 @@ using System.Numerics.Tensors;
 
 namespace MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 
+/// <summary>Elementwise unary nonlinearity, selected by code so one <see cref="IComputeBackend.Map"/> /
+/// <see cref="IComputeBackend.MapBackward"/> pair covers them all (keeps the seam's surface small).</summary>
+public enum UnaryOp { Relu, Tanh, Exp, Log, Square }
+
 /// <summary>
-/// The seam between the autograd layer and raw compute kernels. v1 ships only the
-/// managed CPU backend; a TorchSharp/ILGPU backend can be slotted in later without
-/// touching the algorithm code (PRD §4, "scale-up seam").
-/// All GEMM kernels ACCUMULATE (+=) into the destination, which callers zero as needed —
-/// backward passes accumulate gradients, so this is the common case.
+/// The seam between the autograd layer and raw compute kernels: every op the tape records routes its
+/// raw math through here, so an alternative backend (TorchSharp/ILGPU) can run the whole graph without
+/// touching the algorithm code (PRD §4, "scale-up seam"). v1 shipped only GEMM here; the elementwise
+/// and reduction ops are being migrated behind the seam (PLAN M20 Stage 3 / general port, Phase 1) so a
+/// device backend can keep tensors resident.
+/// <para>
+/// Convention: forward ops WRITE their destination; <c>*Backward</c> ops ACCUMULATE (+=) into the
+/// gradient destination (a tensor used by several ops sums its contributions), so callers zero grads as
+/// needed. The default <see cref="ManagedBackend"/> is bitwise-deterministic regardless of thread count.
+/// </para>
 /// </summary>
 public interface IComputeBackend
 {
@@ -19,6 +28,16 @@ public interface IComputeBackend
 
     /// <summary>c += a·bᵀ for row-major a[m,n], b[k,n], c[m,k].</summary>
     void GemmTransposeB(ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> c, int m, int k, int n);
+
+    /// <summary>Elementwise unary forward: <c>y[i] = op(x[i])</c> (writes y).</summary>
+    void Map(UnaryOp op, ReadOnlySpan<float> x, Span<float> y);
+
+    /// <summary>
+    /// Elementwise unary backward, accumulating into <paramref name="dx"/>: <c>dx[i] += op'(·)·dy[i]</c>.
+    /// Both the input <paramref name="x"/> and the forward output <paramref name="y"/> are supplied so
+    /// each op uses whichever its derivative needs (ReLU/Square/Log use x; Tanh/Exp use y).
+    /// </summary>
+    void MapBackward(UnaryOp op, ReadOnlySpan<float> x, ReadOnlySpan<float> y, ReadOnlySpan<float> dy, Span<float> dx);
 }
 
 public static class Backend
@@ -135,6 +154,30 @@ public sealed unsafe class ManagedBackend : IComputeBackend
             var aRow = a.Slice(i * n, n);
             for (int p = 0; p < k; p++)
                 c[i * k + p] += TensorPrimitives.Dot(aRow, b.Slice(p * n, n));
+        }
+    }
+
+    public void Map(UnaryOp op, ReadOnlySpan<float> x, Span<float> y)
+    {
+        switch (op)
+        {
+            case UnaryOp.Relu: for (int i = 0; i < x.Length; i++) y[i] = Math.Max(0f, x[i]); break;
+            case UnaryOp.Tanh: TensorPrimitives.Tanh(x, y); break;
+            case UnaryOp.Exp: TensorPrimitives.Exp(x, y); break;
+            case UnaryOp.Log: TensorPrimitives.Log(x, y); break;
+            case UnaryOp.Square: TensorPrimitives.Multiply(x, x, y); break;
+        }
+    }
+
+    public void MapBackward(UnaryOp op, ReadOnlySpan<float> x, ReadOnlySpan<float> y, ReadOnlySpan<float> dy, Span<float> dx)
+    {
+        switch (op)
+        {
+            case UnaryOp.Relu: for (int i = 0; i < x.Length; i++) { if (x[i] > 0f) dx[i] += dy[i]; } break;
+            case UnaryOp.Tanh: for (int i = 0; i < x.Length; i++) dx[i] += (1f - y[i] * y[i]) * dy[i]; break;
+            case UnaryOp.Exp: for (int i = 0; i < x.Length; i++) dx[i] += y[i] * dy[i]; break;
+            case UnaryOp.Log: for (int i = 0; i < x.Length; i++) dx[i] += dy[i] / x[i]; break;
+            case UnaryOp.Square: for (int i = 0; i < x.Length; i++) dx[i] += 2f * x[i] * dy[i]; break;
         }
     }
 

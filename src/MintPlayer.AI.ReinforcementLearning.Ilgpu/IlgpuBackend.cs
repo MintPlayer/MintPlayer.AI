@@ -88,6 +88,7 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     private readonly Context _context;
     private readonly Accelerator _accelerator;
     private readonly int _tile; // ≤ MaxTile; tile² ≤ device max threads/group
+    private readonly ManagedBackend _cpuOps = new(); // elementwise/reduction fallback (see Map)
     private readonly Action<KernelConfig, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims, int> _gemmTiled;
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int> _biasActivation;
     // Resident residual-net forward (M20 Stage 2): row-wise LayerNorm(+optional ReLU) and an
@@ -187,6 +188,13 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     public void GemmTransposeB(ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> c, int m, int k, int n)
         // c[m,k] += a·bᵀ: rows=m, cols=k, reduce over n. B read as Bᵀ (t=j stride 1, col=p stride n).
         => LaunchHostSpan(a, b, c, new GemmDims(m, k, n, n, 1, 1, n, accumulate: 1));
+
+    // Elementwise ops run on the CPU helper, not host-span GPU kernels: at autograd granularity these
+    // are tiny and transfer-bound, so a GPU round-trip would only lose (and transcendentals would need
+    // ILGPU.Algorithms). The GPU's job through IComputeBackend is the compute-heavy GEMM; real on-device
+    // elementwise lives in the resident paths (DeviceMlp / DeviceResidualTrainer kernels).
+    public void Map(UnaryOp op, ReadOnlySpan<float> x, Span<float> y) => _cpuOps.Map(op, x, y);
+    public void MapBackward(UnaryOp op, ReadOnlySpan<float> x, ReadOnlySpan<float> y, ReadOnlySpan<float> dy, Span<float> dx) => _cpuOps.MapBackward(op, x, y, dy, dx);
 
     private void LaunchHostSpan(ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> c, GemmDims dims)
     {

@@ -67,5 +67,9 @@ public sealed class AdaptiveBackend : IComputeBackend, IDisposable
     public void GemmTransposeB(ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> c, int m, int k, int n)
         => Route(m, k, n).GemmTransposeB(a, b, c, m, k, n);
 
+    // Elementwise ops always stay on the CPU: at autograd granularity they're transfer-bound on the GPU.
+    public void Map(UnaryOp op, ReadOnlySpan<float> x, Span<float> y) => _cpu.Map(op, x, y);
+    public void MapBackward(UnaryOp op, ReadOnlySpan<float> x, ReadOnlySpan<float> y, ReadOnlySpan<float> dy, Span<float> dx) => _cpu.MapBackward(op, x, y, dy, dx);
+
     public void Dispose() => _gpu?.Dispose(); // ManagedBackend holds no unmanaged state
 }
