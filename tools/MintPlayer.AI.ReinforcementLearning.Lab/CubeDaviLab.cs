@@ -219,16 +219,33 @@ internal static class CubeDaviLab
         // that grows with curriculum depth. Eval every 1000 iters instead of 500.
         const int trainChunk = 1000;
 
+        // The greedy in-loop eval plateaus ~depth 10 and UNDERSTATES the net (search reads it far deeper).
+        // So every `probeEvery` iters run a BWAS capability probe at a few discriminating depths and log a
+        // [cap] line + cap CSV — this records the true capability-over-time curve during the run.
+        const long probeEvery = 15_000;
+        int[] probeDepths = [8, 10, 12, 14, 16];
+        string capCsvPath = Path.Combine(logPath, residual ? "cube-davi-res-cap.csv" : "cube-davi-cap.csv");
+        if (!File.Exists(capCsvPath))
+            File.AppendAllText(capCsvPath, "utc,iterations," + string.Join(',', probeDepths.Select(d => $"d{d}")) + "\n");
+        long nextProbe = totalIterations + probeEvery;
+
         var deadline = DateTime.UtcNow.AddHours(hours);
         float lastLoss = 0;
         Log($"training until {deadline:u} (~{hours:F1} h), data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
-        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, eval every {trainChunk} iters");
+        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, eval every {trainChunk} iters, BWAS cap-probe every {probeEvery:N0}");
 
         while (DateTime.UtcNow < deadline)
         {
             trainer.Train(Sample, iterations: trainChunk, onIteration: (_, loss) => lastLoss = loss);
             totalIterations += trainChunk;
             samplesSinceAdvance += (long)trainChunk * batchSize;
+
+            if (totalIterations >= nextProbe)
+            {
+                try { CapabilityProbe(trainer, capCsvPath, totalIterations, probeDepths); }
+                catch (Exception ex) { Log($"[cap] probe failed (non-fatal): {ex.Message}"); }
+                nextProbe = totalIterations + probeEvery;
+            }
 
             // Evaluate only up to one level beyond the current curriculum — enough to decide
             // advancement, without burning time on deep failed solves the net can't reach yet.
@@ -305,6 +322,36 @@ internal static class CubeDaviLab
         Log(report.ToString());
         File.AppendAllText(csvPath, string.Join(',', cells) + "\n");
         return rates;
+    }
+
+    /// <summary>
+    /// BWAS capability probe at a few discriminating depths (8 cubes each, small expansion budget). The live
+    /// greedy eval plateaus ~depth 10 and understates the net; this records the true solve-rate-over-time so a
+    /// long run shows whether capability is still climbing. Logs a [cap] line + a cap CSV.
+    /// </summary>
+    private static void CapabilityProbe(ValueIterationTrainer<FaceletCube> trainer, string capCsvPath, long iterations, int[] depths)
+    {
+        const int episodes = 8;
+        var report = new System.Text.StringBuilder($"[cap] iters {iterations:N0} (BWAS w2.5 ≤8k) | ");
+        var cells = new List<string> { $"{DateTime.UtcNow:u}", $"{iterations}" };
+        foreach (int depth in depths)
+        {
+            int solved = 0;
+            long totalLen = 0;
+            for (int e = 0; e < episodes; e++)
+            {
+                var rng = new Xoshiro256StarStar((ulong)(900_000 + 1_000 * depth + e));
+                var cube = new FaceletCube();
+                cube.Apply(FaceletCube.ScrambleMoves(rng, depth, quarterTurnsOnly: true));
+                if (cube.IsSolved) { solved++; continue; }
+                var sol = trainer.SolveWithSearchBatched(cube, maxExpansions: 8000, weight: 2.5f);
+                if (sol is not null) { solved++; totalLen += sol.Count; }
+            }
+            report.Append($"d{depth} {solved}/{episodes}{(solved > 0 ? $" ({totalLen / (double)solved:F1}qt)" : "")} | ");
+            cells.Add($"{solved / (double)episodes:F3}");
+        }
+        Log(report.ToString());
+        File.AppendAllText(capCsvPath, string.Join(',', cells) + "\n");
     }
 
     private static float[] Featurize(FaceletCube cube)
