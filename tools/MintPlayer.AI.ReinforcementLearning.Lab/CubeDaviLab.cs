@@ -33,6 +33,7 @@ internal static class CubeDaviLab
         int maxExpansions = 50_000;   // A* node budget per solve
         string netKind = "mlp";       // "mlp" (plain) or "residual" (M21 deep residual value net)
         int blocks = 4;               // residual block count (--net residual)
+        int batchSize = 128;          // DAVI training batch
         bool batchedSearch = false;   // use batched A* (BWAS) for --search eval
         bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
         for (int i = 0; i < args.Length; i++)
@@ -43,6 +44,7 @@ internal static class CubeDaviLab
             else if (args[i] == "--width" && i + 1 < args.Length) width = int.Parse(args[++i]);
             else if (args[i] == "--layers" && i + 1 < args.Length) hiddenLayers = int.Parse(args[++i]); // #3: net depth
             else if (args[i] == "--blocks" && i + 1 < args.Length) blocks = int.Parse(args[++i]);
+            else if (args[i] == "--batch" && i + 1 < args.Length) batchSize = int.Parse(args[++i]);
             else if (args[i] == "--net" && i + 1 < args.Length) netKind = args[++i].ToLowerInvariant();
             else if (args[i] == "--max-depth" && i + 1 < args.Length) maxDepthCap = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
@@ -96,7 +98,7 @@ internal static class CubeDaviLab
         }
 
         var model = new CubeModel();
-        var options = new ValueIterationOptions { BatchSize = 128, LearningRate = 1e-3f, DistanceScale = 1f, TargetUpdateInterval = 200 };
+        var options = new ValueIterationOptions { BatchSize = batchSize, LearningRate = 1e-3f, DistanceScale = 1f, TargetUpdateInterval = 200 };
 
         // Resume the FULL training state so a restart continues seamlessly. DAVI regenerates its
         // states from scrambles (nothing to store there — regeneration is free); what a resume must

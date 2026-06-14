@@ -163,13 +163,18 @@ public sealed class ValueIterationTrainer<TState>
 
         for (int it = 0; it < iterations; it++)
         {
+            // Sampling stays sequential to keep the RNG draw order deterministic.
             var states = new TState[batch];
             for (int b = 0; b < batch; b++) states[b] = sampleState();
 
             // Successor features for every (state, action) pair, plus which successors are goals.
+            // This Apply+featurize fan-out is pure (Apply clones, featurize writes a disjoint slice),
+            // so it parallelizes across the batch with results independent of scheduling — the bottleneck
+            // once the GPU forward is resident (PLAN P.7). Determinism is preserved (disjoint writes).
             var successorFeatures = new float[batch * actions * _featureSize];
             var successorIsGoal = new bool[batch * actions];
-            for (int b = 0; b < batch; b++)
+            Parallel.For(0, batch, b =>
+            {
                 for (int a = 0; a < actions; a++)
                 {
                     var next = _model.Apply(states[b], a);
@@ -177,6 +182,7 @@ public sealed class ValueIterationTrainer<TState>
                     successorIsGoal[idx] = _model.IsGoal(next);
                     _featurize(next).CopyTo(successorFeatures.AsSpan(idx * _featureSize, _featureSize));
                 }
+            });
 
             // Bootstrapped targets from the (frozen) target net: target = min_a [1 + cost(s')].
             // This ActionCount× batch is the dominant cost — routed through the injected forward
@@ -197,8 +203,8 @@ public sealed class ValueIterationTrainer<TState>
             }
 
             var features = new float[batch * _featureSize];
-            for (int b = 0; b < batch; b++)
-                _featurize(states[b]).CopyTo(features.AsSpan(b * _featureSize, _featureSize));
+            Parallel.For(0, batch, b =>
+                _featurize(states[b]).CopyTo(features.AsSpan(b * _featureSize, _featureSize)));
 
             // Train step: resident on-device (Stage 3) when injected, else the autograd path.
             float stepLoss;
