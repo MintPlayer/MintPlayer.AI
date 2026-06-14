@@ -56,6 +56,7 @@ public sealed class ValueIterationTrainer<TState>
     private readonly ValueIterationOptions _options;
     private readonly int _featureSize;
     private readonly ITargetForward _targetForward;
+    private readonly IResidentTrainStep? _residentTrain;
 
     /// <param name="valueNet">Scalar-output MLP (… → 1) predicting scaled cost-to-go.</param>
     /// <param name="optimizer">
@@ -70,9 +71,14 @@ public sealed class ValueIterationTrainer<TState>
     /// to any GPU backend. Null → <see cref="AutogradTargetForward"/> (autograd via Backend.Current).
     /// The trainer drives its <see cref="ITargetForward.OnTargetSynced"/> on every target-net sync.
     /// </param>
+    /// <param name="residentTrain">
+    /// Optional fully device-resident train step (the Ilgpu <c>DeviceResidualTrainer</c>): when provided,
+    /// the online net's forward+backward+clip+Adam run on-device and only sync back to the CPU net for
+    /// eval/checkpoint/target copy (PLAN M20 Stage 3). Null → the autograd train path via Backend.Current.
+    /// </param>
     public ValueIterationTrainer(
         IDeterministicModel<TState> model, Func<TState, float[]> featurize, IValueNet valueNet, Adam optimizer, ValueIterationOptions options,
-        ITargetForward? targetForward = null)
+        ITargetForward? targetForward = null, IResidentTrainStep? residentTrain = null)
     {
         _model = model;
         _featurize = featurize;
@@ -80,6 +86,7 @@ public sealed class ValueIterationTrainer<TState>
         _adam = optimizer;
         _options = options;
         _featureSize = valueNet.InputSize;
+        _residentTrain = residentTrain;
 
         // Independent bootstrapping target, kept structurally identical and periodically synced.
         // On resume it starts equal to the loaded net (as if just synced) — harmless.
@@ -193,22 +200,36 @@ public sealed class ValueIterationTrainer<TState>
             for (int b = 0; b < batch; b++)
                 _featurize(states[b]).CopyTo(features.AsSpan(b * _featureSize, _featureSize));
 
-            _adam.ZeroGrad();
-            var predicted = _net.Forward(new Tensor(features, batch, _featureSize)).Reshape(batch);
-            var loss = predicted.HuberLoss(new Tensor(targets, batch), _options.HuberDelta);
-            loss.Backward();
-            _adam.ClipGradNorm(_options.GradClipNorm);
-            _adam.Step();
+            // Train step: resident on-device (Stage 3) when injected, else the autograd path.
+            float stepLoss;
+            if (_residentTrain is not null)
+            {
+                stepLoss = _residentTrain.Step(features, targets, batch);
+            }
+            else
+            {
+                _adam.ZeroGrad();
+                var predicted = _net.Forward(new Tensor(features, batch, _featureSize)).Reshape(batch);
+                var loss = predicted.HuberLoss(new Tensor(targets, batch), _options.HuberDelta);
+                loss.Backward();
+                _adam.ClipGradNorm(_options.GradClipNorm);
+                _adam.Step();
+                stepLoss = loss.Data[0];
+            }
 
             // Sync the bootstrap target on schedule — and, when an ε-loss threshold is set, only once
             // the online net has converged on the current target (DeepCubeA stability trick).
             if ((it + 1) % _options.TargetUpdateInterval == 0 &&
-                (_options.TargetUpdateLossThreshold <= 0f || loss.Data[0] < _options.TargetUpdateLossThreshold))
+                (_options.TargetUpdateLossThreshold <= 0f || stepLoss < _options.TargetUpdateLossThreshold))
             {
+                _residentTrain?.SyncToHost();        // resident weights → CPU net before copying to the target
                 _target.CopyFrom(_net);
-                _targetForward.OnTargetSynced(_target); // re-sync resident weights (per-sync, not per-step)
+                _targetForward.OnTargetSynced(_target); // re-sync resident target weights (per-sync, not per-step)
             }
-            onIteration?.Invoke(it, loss.Data[0]);
+            onIteration?.Invoke(it, stepLoss);
         }
+
+        // Leave the CPU net holding the freshest (resident) weights so eval / checkpointing see them.
+        _residentTrain?.SyncToHost();
     }
 }

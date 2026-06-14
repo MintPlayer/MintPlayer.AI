@@ -156,4 +156,73 @@ public class ResidualMlpTests
         RubiksCubeEnv.WriteObservation(cube, obs);
         return obs;
     }
+
+    [Fact]
+    public void DeviceResidualTrainer_GradientsMatchAutograd()
+    {
+        // The resident backward (M20 Stage 3) must produce the same gradients as the autograd path for
+        // one DAVI train step — this validates every backward kernel (GEMM-transpose, LayerNorm grad,
+        // ReLU grad, bias grad, Huber grad) at once. Gradients (not post-Adam weights) are compared,
+        // because step-1 Adam ≈ lr·sign(grad) would mask magnitude errors.
+        const int inDim = 12, width = 16, blocks = 2, batch = 8;
+        var net = new ResidualMlp(inDim, width, blocks, new Xoshiro256StarStar(101));
+        var features = Random(batch * inDim, 202);
+        var targets = Random(batch, 203);
+
+        // Autograd reference: forward → Reshape → mean-Huber → backward (the trainer's exact loss path).
+        var adam = new Adam(net.Parameters(), 1e-3f);
+        adam.ZeroGrad();
+        var pred = net.Forward(new Tensor(features, batch, inDim)).Reshape(batch);
+        pred.HuberLoss(new Tensor(targets, batch), 1f).Backward();
+        var cpuGrads = net.Parameters().Select(p => p.Grad!.ToArray()).ToArray();
+
+        // Resident path: forward+backward only, download gradients in the same Parameters() order.
+        var ilgpu = new MintPlayer.AI.ReinforcementLearning.Ilgpu.IlgpuBackend(preferCpu: true);
+        try
+        {
+            using var trainer = ilgpu.CreateResidentTrainer(net, batch, learningRate: 1e-3f, clipNorm: 1e9f);
+            var gpuGrads = trainer.DebugGradients(features, targets, batch);
+
+            Assert.Equal(cpuGrads.Length, gpuGrads.Length);
+            for (int p = 0; p < cpuGrads.Length; p++)
+            {
+                Assert.Equal(cpuGrads[p].Length, gpuGrads[p].Length);
+                for (int i = 0; i < cpuGrads[p].Length; i++)
+                {
+                    float tol = 2e-3f * (1f + MathF.Abs(cpuGrads[p][i]));
+                    Assert.True(MathF.Abs(cpuGrads[p][i] - gpuGrads[p][i]) <= tol,
+                        $"param {p} idx {i}: cpu {cpuGrads[p][i]}, gpu {gpuGrads[p][i]} (tol {tol})");
+                }
+            }
+        }
+        finally { ilgpu.Dispose(); }
+    }
+
+    [Fact]
+    public void DeviceResidualTrainer_SyncToHost_RoundTrips()
+    {
+        // After taking steps, SyncToHost must write the resident weights back so the CPU net (used for
+        // eval/checkpoint) reflects them — and a forward then runs without error.
+        const int inDim = 12, width = 16, blocks = 2, batch = 8;
+        var net = new ResidualMlp(inDim, width, blocks, new Xoshiro256StarStar(111));
+        var before = net.Forward(new Tensor(Random(batch * inDim, 222), batch, inDim)).Data.ToArray();
+        var features = Random(batch * inDim, 333);
+        var targets = Random(batch, 444);
+
+        var ilgpu = new MintPlayer.AI.ReinforcementLearning.Ilgpu.IlgpuBackend(preferCpu: true);
+        try
+        {
+            using var trainer = ilgpu.CreateResidentTrainer(net, batch, 1e-2f, 5f);
+            for (int s = 0; s < 5; s++) trainer.Step(features, targets, batch);
+            trainer.SyncToHost(net);
+
+            // Weights moved (training changed them) and the net still produces finite output.
+            var after = net.Forward(new Tensor(Random(batch * inDim, 222), batch, inDim)).Data;
+            bool changed = false;
+            for (int i = 0; i < before.Length; i++) if (MathF.Abs(before[i] - after[i]) > 1e-6f) changed = true;
+            Assert.True(changed, "SyncToHost should reflect the resident weight updates");
+            foreach (float v in after) Assert.True(float.IsFinite(v));
+        }
+        finally { ilgpu.Dispose(); }
+    }
 }

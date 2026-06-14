@@ -126,10 +126,11 @@ internal static class CubeDaviLab
             }
         }
 
-        // Route DAVI's ActionCount× successor evaluation through a device-resident forward whose
-        // weights stay on the GPU across steps and re-upload only on the trainer's target sync — the
-        // MLP path (M20 Stage 1) or the residual path (M20 Stage 2), both fully on-device. CPU-only
-        // machines fall back to the autograd forward (null).
+        // Route DAVI's ActionCount× successor evaluation through a device-resident forward whose weights
+        // stay on the GPU across steps and re-upload only on the trainer's target sync — the MLP path
+        // (M20 Stage 1) or the residual path (M20 Stage 2). For a residual net we ALSO run the train step
+        // fully on-device (M20 Stage 3: DeviceResidualTrainer — resident fwd+bwd+Adam), removing the
+        // CPU-bound autograd train step. CPU-only machines fall back to the autograd path (nulls).
         ITargetForward? targetForward = adaptive.Gpu is { } gpu
             ? net switch
             {
@@ -139,11 +140,18 @@ internal static class CubeDaviLab
             }
             : null;
         using var residentDisposable = targetForward as IDisposable;
-        Log(targetForward is not null
-            ? "successor evaluation: device-resident GPU forward (resident weights)"
-            : "successor evaluation: CPU autograd forward");
 
-        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options, targetForward);
+        using DeviceResidualTrainer? residentTrain = adaptive.Gpu is { } gpu2 && net is ResidualMlp resNet
+            ? gpu2.CreateResidentTrainer(resNet, options.BatchSize, options.LearningRate, options.GradClipNorm, options.HuberDelta)
+            : null;
+
+        Log(residentTrain is not null
+            ? "training: fully device-resident step (fwd+bwd+Adam on GPU); successor eval resident"
+            : targetForward is not null
+                ? "successor evaluation: device-resident GPU forward (resident weights); train step on CPU"
+                : "successor/train: CPU autograd");
+
+        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options, targetForward, residentTrain);
 
         if (evalOnly)
         {

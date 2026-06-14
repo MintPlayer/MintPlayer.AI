@@ -21,6 +21,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="MintPlayer.AI.ReinforcementLearning.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
   </ItemGroup>
 

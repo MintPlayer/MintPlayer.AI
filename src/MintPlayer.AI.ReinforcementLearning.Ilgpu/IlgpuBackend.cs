@@ -22,6 +22,32 @@ public readonly struct GemmDims(
     public readonly int ARowStride = aRowStride, AColStride = aColStride;
     public readonly int BRowStride = bRowStride, BColStride = bColStride;
     public readonly int Accumulate = accumulate;
+
+    // Factories for the three layouts of a [m,k]·[k,n] layer, sharing one (m, k, n) convention so a
+    // Linear's forward / weight-grad / input-grad are constructed without hand-rolling strides:
+    //   forward  C[m,n] = A·B          (A[m,k], B[k,n])
+    //   weightΔ  C[k,n] = Aᵀ·B         (A[m,k], B[m,n])   — dW = Xᵀ·dC
+    //   inputΔ   C[m,k] = A·Bᵀ         (A[m,n], B[k,n])   — dX = dC·Wᵀ
+
+    /// <summary>C[m,n] = A·B for A[m,k]·B[k,n].</summary>
+    public static GemmDims AB(int m, int k, int n, int accumulate) => new(m, n, k, k, 1, n, 1, accumulate);
+
+    /// <summary>C[k,n] = Aᵀ·B for A[m,k], B[m,n] (weight gradient).</summary>
+    public static GemmDims AtB(int m, int k, int n, int accumulate) => new(k, n, m, 1, k, n, 1, accumulate);
+
+    /// <summary>C[m,k] = A·Bᵀ for A[m,n], B[k,n] (input gradient).</summary>
+    public static GemmDims ABt(int m, int k, int n, int accumulate) => new(m, k, n, n, 1, 1, n, accumulate);
+}
+
+/// <summary>
+/// Adam hyper-parameters + per-step bias-correction for the on-device update kernel (M20 Stage 3):
+/// learning rate, the two decay rates, ε, and the precomputed bias-correction denominators
+/// (<c>1−β₁ᵗ</c>, <c>1−β₂ᵗ</c>) for the current step <c>t</c> (computed host-side so the kernel stays
+/// branch-free). Blittable so it passes by value to the kernel.
+/// </summary>
+public readonly struct AdamParams(float lr, float beta1, float beta2, float eps, float biasCorr1, float biasCorr2)
+{
+    public readonly float Lr = lr, Beta1 = beta1, Beta2 = beta2, Eps = eps, BiasCorr1 = biasCorr1, BiasCorr2 = biasCorr2;
 }
 
 /// <summary>
@@ -68,6 +94,18 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     // elementwise add (the residual skip), so a ResidualMlp forward chains fully on-device.
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, float> _layerNorm;
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>> _addInto;
+    // Resident training (M20 Stage 3): backward + Adam kernels, so the whole DAVI step runs on-device.
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int> _biasGrad;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>> _reluBackward;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int> _lnInputGrad;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int> _lnParamGrad;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, float> _huberGrad;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, AdamParams> _adamUpdate;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int> _sumSq;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, float> _scaleInPlace;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, float> _layerNormTrain;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>> _relu;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>> _copy;
     // The original one-thread-per-output kernel, retained ONLY for the M19 naive-vs-tiled bench
     // comparison (see BenchGemmGflops); never on the production routing path.
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims> _gemmNaive;
@@ -94,6 +132,17 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
         _gemmNaive = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims>(GemmNaive_Kernel);
         _layerNorm = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, float>(LayerNorm_Kernel);
         _addInto = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>>(AddInto_Kernel);
+        _biasGrad = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int>(BiasGrad_Kernel);
+        _reluBackward = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>>(ReluBackward_Kernel);
+        _lnInputGrad = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int>(LayerNormInputGrad_Kernel);
+        _lnParamGrad = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int>(LayerNormParamGrad_Kernel);
+        _huberGrad = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, float>(HuberGrad_Kernel);
+        _adamUpdate = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, AdamParams>(AdamUpdate_Kernel);
+        _sumSq = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int>(SumSq_Kernel);
+        _scaleInPlace = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, float>(ScaleInPlace_Kernel);
+        _layerNormTrain = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, float>(LayerNormTrain_Kernel);
+        _relu = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>>(Relu_Kernel);
+        _copy = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>>(Copy_Kernel);
     }
 
     /// <summary>
@@ -184,6 +233,52 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     internal void LaunchAddInto(ArrayView1D<float, Stride1D.Dense> a, ArrayView1D<float, Stride1D.Dense> b)
         => _addInto(new Index1D((int)a.Length), a, b);
 
+    // ── resident training launch helpers (caller holds the lock) ──
+
+    /// <summary>Bias gradient: <c>dBias[c] = Σ_r dy[r,c]</c> (write), one thread per column.</summary>
+    internal void LaunchBiasGrad(ArrayView1D<float, Stride1D.Dense> dy, ArrayView1D<float, Stride1D.Dense> dBias, int rows, int dim)
+        => _biasGrad(new Index1D(dim), dy, dBias, rows, dim);
+
+    /// <summary>ReLU backward in place: <c>grad[i] = 0 where post[i] ≤ 0</c> (post = the ReLU output).</summary>
+    internal void LaunchReluBackward(ArrayView1D<float, Stride1D.Dense> grad, ArrayView1D<float, Stride1D.Dense> post)
+        => _reluBackward(new Index1D((int)grad.Length), grad, post);
+
+    /// <summary>LayerNorm input gradient (write to dx), one thread per row, using cached x̂ and 1/σ.</summary>
+    internal void LaunchLayerNormInputGrad(ArrayView1D<float, Stride1D.Dense> dy, ArrayView1D<float, Stride1D.Dense> xhat, ArrayView1D<float, Stride1D.Dense> invStd, ArrayView1D<float, Stride1D.Dense> gamma, ArrayView1D<float, Stride1D.Dense> dx, int rows, int dim)
+        => _lnInputGrad(new Index1D(rows), dy, xhat, invStd, gamma, dx, dim);
+
+    /// <summary>LayerNorm γ/β gradients (write), one thread per column: dγ[c]=Σ dy·x̂, dβ[c]=Σ dy.</summary>
+    internal void LaunchLayerNormParamGrad(ArrayView1D<float, Stride1D.Dense> dy, ArrayView1D<float, Stride1D.Dense> xhat, ArrayView1D<float, Stride1D.Dense> dGamma, ArrayView1D<float, Stride1D.Dense> dBeta, int rows, int dim)
+        => _lnParamGrad(new Index1D(dim), dy, xhat, dGamma, dBeta, rows, dim);
+
+    /// <summary>Huber gradient into dy: <c>clamp(pred−target, ±δ)·scale</c> ([rows] vectors, scale=1/rows).</summary>
+    internal void LaunchHuberGrad(ArrayView1D<float, Stride1D.Dense> pred, ArrayView1D<float, Stride1D.Dense> target, ArrayView1D<float, Stride1D.Dense> dOut, float scale)
+        => _huberGrad(new Index1D((int)pred.Length), pred, target, dOut, scale);
+
+    /// <summary>In-place Adam update of one parameter buffer against its gradient + moment buffers.</summary>
+    internal void LaunchAdamUpdate(ArrayView1D<float, Stride1D.Dense> w, ArrayView1D<float, Stride1D.Dense> g, ArrayView1D<float, Stride1D.Dense> m, ArrayView1D<float, Stride1D.Dense> v, AdamParams p)
+        => _adamUpdate(new Index1D((int)w.Length), w, g, m, v, p);
+
+    /// <summary>Accumulate Σ data[i]² into <paramref name="accum"/>[0] (atomic); pre-zero accum once.</summary>
+    internal void LaunchSumSq(ArrayView1D<float, Stride1D.Dense> data, ArrayView1D<float, Stride1D.Dense> accum, int partitions)
+        => _sumSq(new Index1D(partitions), data, accum, partitions);
+
+    /// <summary>In-place scale: <c>buf[i] *= scalar</c> (gradient-norm clipping).</summary>
+    internal void LaunchScaleInPlace(ArrayView1D<float, Stride1D.Dense> buf, float scalar)
+        => _scaleInPlace(new Index1D((int)buf.Length), buf, scalar);
+
+    /// <summary>LayerNorm forward that also caches x̂ and 1/σ for the backward (training path), no activation.</summary>
+    internal void LaunchLayerNormTrain(ArrayView1D<float, Stride1D.Dense> data, ArrayView1D<float, Stride1D.Dense> gamma, ArrayView1D<float, Stride1D.Dense> beta, ArrayView1D<float, Stride1D.Dense> xhat, ArrayView1D<float, Stride1D.Dense> invStd, int rows, int dim)
+        => _layerNormTrain(new Index1D(rows), data, gamma, beta, xhat, invStd, dim, 1e-5f);
+
+    /// <summary>In-place ReLU over a resident buffer.</summary>
+    internal void LaunchRelu(ArrayView1D<float, Stride1D.Dense> data)
+        => _relu(new Index1D((int)data.Length), data);
+
+    /// <summary>Device-to-device copy <c>dst[i] = src[i]</c> (activation snapshot).</summary>
+    internal void LaunchCopy(ArrayView1D<float, Stride1D.Dense> dst, ArrayView1D<float, Stride1D.Dense> src)
+        => _copy(new Index1D((int)dst.Length), dst, src);
+
     // ── tiled GEMM kernel: one 16×16 group computes a 16×16 output tile, staging operand tiles
     //    through shared memory and accumulating across the reduction in tile-sized steps. ──
 
@@ -257,6 +352,111 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     /// <summary>Elementwise <c>a[i] += b[i]</c> — the residual skip connection.</summary>
     private static void AddInto_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> a, ArrayView1D<float, Stride1D.Dense> b)
         => a[index] += b[index];
+
+    // ── resident training kernels (M20 Stage 3) ──
+
+    /// <summary>Bias gradient: one thread per column, <c>dBias[c] = Σ_r dy[r·dim+c]</c>.</summary>
+    private static void BiasGrad_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> dy, ArrayView1D<float, Stride1D.Dense> dBias, int rows, int dim)
+    {
+        int c = index;
+        float s = 0f;
+        for (int r = 0; r < rows; r++) s += dy[r * dim + c];
+        dBias[c] = s;
+    }
+
+    /// <summary>ReLU backward in place: zero the gradient where the (cached) ReLU output was ≤ 0.</summary>
+    private static void ReluBackward_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> grad, ArrayView1D<float, Stride1D.Dense> post)
+    {
+        if (post[index] <= 0f) grad[index] = 0f;
+    }
+
+    /// <summary>LayerNorm input gradient (one thread per row): dx = (1/σ)(dx̂ − mean(dx̂) − x̂·mean(dx̂·x̂)), dx̂ = dy·γ.</summary>
+    private static void LayerNormInputGrad_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> dy, ArrayView1D<float, Stride1D.Dense> xhat, ArrayView1D<float, Stride1D.Dense> invStd, ArrayView1D<float, Stride1D.Dense> gamma, ArrayView1D<float, Stride1D.Dense> dx, int dim)
+    {
+        int r = index;
+        int b = r * dim;
+        float sum1 = 0f, sum2 = 0f;
+        for (int c = 0; c < dim; c++) { float dxh = dy[b + c] * gamma[c]; sum1 += dxh; sum2 += dxh * xhat[b + c]; }
+        float invN = 1f / dim, inv = invStd[r];
+        for (int c = 0; c < dim; c++)
+        {
+            float dxh = dy[b + c] * gamma[c];
+            dx[b + c] = inv * (dxh - sum1 * invN - xhat[b + c] * sum2 * invN);
+        }
+    }
+
+    /// <summary>LayerNorm γ/β gradients (one thread per column): dγ[c]=Σ_r dy·x̂, dβ[c]=Σ_r dy.</summary>
+    private static void LayerNormParamGrad_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> dy, ArrayView1D<float, Stride1D.Dense> xhat, ArrayView1D<float, Stride1D.Dense> dGamma, ArrayView1D<float, Stride1D.Dense> dBeta, int rows, int dim)
+    {
+        int c = index;
+        float dg = 0f, db = 0f;
+        for (int r = 0; r < rows; r++) { float d = dy[r * dim + c]; dg += d * xhat[r * dim + c]; db += d; }
+        dGamma[c] = dg; dBeta[c] = db;
+    }
+
+    /// <summary>Mean-Huber gradient (δ=1) into dOut: <c>clamp(pred−target, ±1)·scale</c>, scale = 1/rows.</summary>
+    private static void HuberGrad_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> pred, ArrayView1D<float, Stride1D.Dense> target, ArrayView1D<float, Stride1D.Dense> dOut, float scale)
+    {
+        float diff = pred[index] - target[index];
+        float d = diff < -1f ? -1f : (diff > 1f ? 1f : diff);
+        dOut[index] = d * scale;
+    }
+
+    /// <summary>In-place Adam update of one parameter buffer (one thread per element).</summary>
+    private static void AdamUpdate_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> w, ArrayView1D<float, Stride1D.Dense> g, ArrayView1D<float, Stride1D.Dense> m, ArrayView1D<float, Stride1D.Dense> v, AdamParams p)
+    {
+        int i = index;
+        float gi = g[i];
+        float mi = p.Beta1 * m[i] + (1f - p.Beta1) * gi;
+        float vi = p.Beta2 * v[i] + (1f - p.Beta2) * gi * gi;
+        m[i] = mi; v[i] = vi;
+        float mhat = mi / p.BiasCorr1, vhat = vi / p.BiasCorr2;
+        w[i] -= p.Lr * mhat / (MathF.Sqrt(vhat) + p.Eps);
+    }
+
+    /// <summary>Σ data[i]² accumulated atomically into accum[0]; <paramref name="partitions"/> strided threads.</summary>
+    private static void SumSq_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> data, ArrayView1D<float, Stride1D.Dense> accum, int partitions)
+    {
+        int i = index;
+        float local = 0f;
+        for (long j = i; j < data.Length; j += partitions) { float x = data[j]; local += x * x; }
+        Atomic.Add(ref accum[0], local);
+    }
+
+    /// <summary>In-place scale (gradient-norm clipping): <c>buf[i] *= scalar</c>.</summary>
+    private static void ScaleInPlace_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> buf, float scalar)
+        => buf[index] *= scalar;
+
+    /// <summary>LayerNorm forward caching x̂ and 1/σ for backward, no scale-shift-relu fusion beyond γ/β.</summary>
+    private static void LayerNormTrain_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> data, ArrayView1D<float, Stride1D.Dense> gamma, ArrayView1D<float, Stride1D.Dense> beta, ArrayView1D<float, Stride1D.Dense> xhat, ArrayView1D<float, Stride1D.Dense> invStd, int dim, float eps)
+    {
+        int r = index;
+        int b = r * dim;
+        float mean = 0f;
+        for (int c = 0; c < dim; c++) mean += data[b + c];
+        mean /= dim;
+        float var = 0f;
+        for (int c = 0; c < dim; c++) { float dd = data[b + c] - mean; var += dd * dd; }
+        var /= dim;
+        float inv = 1f / MathF.Sqrt(var + eps);
+        invStd[r] = inv;
+        for (int c = 0; c < dim; c++)
+        {
+            float xh = (data[b + c] - mean) * inv;
+            xhat[b + c] = xh;
+            data[b + c] = gamma[c] * xh + beta[c];
+        }
+    }
+
+    /// <summary>In-place ReLU.</summary>
+    private static void Relu_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> data)
+    {
+        if (data[index] < 0f) data[index] = 0f;
+    }
+
+    /// <summary>Device-to-device copy.</summary>
+    private static void Copy_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> dst, ArrayView1D<float, Stride1D.Dense> src)
+        => dst[index] = src[index];
 
     /// <summary>The original naive kernel (one thread per output, no reuse) — bench baseline only.</summary>
     private static void GemmNaive_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> a, ArrayView1D<float, Stride1D.Dense> b, ArrayView1D<float, Stride1D.Dense> c, GemmDims d)
@@ -336,6 +536,15 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     /// transfer that makes a residual net's host-span successor evaluation transfer-bound.
     /// </summary>
     public DeviceResidualMlp CreateResidentForward(ResidualMlp net) => new(this, net);
+
+    /// <summary>
+    /// Creates a <see cref="DeviceResidualTrainer"/> bound to this backend: a fully device-resident DAVI
+    /// train step (forward + backward + clip + Adam) for a residual value net (M20 Stage 3). The online
+    /// weights are mastered on-device; call <see cref="DeviceResidualTrainer.SyncToHost"/> to read them
+    /// back for eval/checkpoint/target sync.
+    /// </summary>
+    public DeviceResidualTrainer CreateResidentTrainer(ResidualMlp net, int batch, float learningRate, float clipNorm, float huberDelta = 1f)
+        => new(this, net, batch, learningRate, clipNorm, huberDelta);
 
     /// <summary>Maps an MLP's hidden activation to the kernel's activation code (0 none, 1 ReLU).</summary>
     internal static int ResolveActivation(Mlp net)
