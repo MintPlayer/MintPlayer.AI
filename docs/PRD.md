@@ -397,15 +397,18 @@ on the GPU bottleneck removal (§10 / PLAN §M19–M20) — a residual net at de
 wall-clock until then.*
 
 > **✅ BUILT + MEASURED 2026-06-14.** All pieces shipped; the GPU port (M19/M20 + register-blocked GEMM)
-> made the residual net trainable. **BWAS result** (residual 1024×4, ~44k iters, weight 2.5, ≤40k
-> expansions, 12 cubes/depth): **QTM-optimal through depth 10** (12/12, exactly *depth* quarter-turns),
-> **100% solved through depth 12**, 83% at d13, 75% at d14; **every solved cube beats Kociemba's QTM,
-> typically ~2×** (d10 10 vs 19, d12 12.2 vs 29.3 — Kociemba minimizes half-turns, so its QTM balloons).
-> Tier 1 (≤ depth 7) met empirically (weight 2.5 found optimal; a *provable* claim needs weight=1 + BFS
-> verification — open). Tier 2 (beat Kociemba's QTM, depths 8–20) met through ~depth 14. Greedy (the live
-> training eval) collapses ~depth 10–11 — search reads the net far deeper, so the live curve understates it.
-> **Still open:** web cube-page wiring; A*-based in-loop eval readout; depth-15+ (more capacity/training;
-> full god's-number 26 QTM remains out of reach on one 3060).
+> made the residual net trainable. **BWAS result after the 236k-iter campaign** (residual 1024×4, weight
+> **1.5, ≤100k expansions**, 12 cubes/depth): **QTM-OPTIMAL through depth 15** — 12/12 at every depth, each
+> solution exactly *depth* quarter-turns — then d16 10/12 (16.2 qt), d17 5/12 (17.0 qt); **every solved cube
+> beats Kociemba's QTM ~2–2.5×** (d12 12 vs 29.3, d15 15 vs 30.2 — Kociemba minimizes half-turns, so its QTM
+> balloons). Tier 1 (≤ depth 7) met empirically; a *provable* claim needs weight=1 + BFS verification (open).
+> Tier 2 (beat Kociemba's QTM) met comfortably through ~depth 16. **Key finding:** an earlier light read
+> (44k net, ≤40k exp) and the live greedy eval (collapses ~d10) and the in-loop 8k-exp probe (looked flat at
+> d14-partial) all **undersold** the net — the apparent plateau was a *search-budget* artifact, not a
+> capacity ceiling. The net heuristic is accurate to ~d15 and degrades gradually past it. **So the next
+> capability lever is eval-time search (more expansions / weight→1 / wider frontier), not a wider net.**
+> **Still open:** the eval-time-search lever (P.10); web cube-page wiring; heavier in-loop eval readout;
+> depth-16+ (more capacity/training; full god's-number 26 QTM remains out of reach on one 3060).
 
 | Decision | Choice | Rationale |
 |---|---|---|

@@ -695,10 +695,15 @@ layer at 8192-wide → ~570 MB/step). Fix: weights resident, re-synced only when
 
 **✅ BUILT + MEASURED 2026-06-14.** All four pieces shipped (`c381389`): `ResidualMlp` + LayerNorm autograd
 op, `IValueNet` abstraction, **BWAS** (batched weighted A*), and the Kociemba-QTM gate eval. **Measured
-capability** (residual 1024×4, ~44k iters, BWAS w=2.5 ≤40k exp): **QTM-optimal through depth 10, 100%
-solved through depth 12, beats Kociemba's QTM on every solve (~2×)** — see the gate table. **Still open:**
-wire `value-davi` into the web cube page as the third "self-taught AI" solver; a provably-optimal Tier-1
-claim (weight=1 + BFS verification); pushing depth past ~14 (needs more capacity/training — god's-number
+capability after the 236k-iter campaign** (residual 1024×4, BWAS **w=1.5, ≤100k exp, 12 cubes/depth**):
+**QTM-optimal (solution length = scramble depth) on all 12/12 cubes through depth 15**, d16 10/12, d17 5/12,
+**every solve ~2–2.5× shorter than Kociemba's QTM** — see the gate table. **Key finding:** the live greedy
+eval (collapses ~d10) and the light in-loop probe (8k exp — looked plateaued at d14-partial) both badly
+**undersold** the net; only a real search budget reveals the true reach. The "plateau" was a *search-budget*
+artifact, **not** a network-capacity ceiling (full analysis: `OPTIMIZATIONS.md` → Capability findings).
+**Still open:** wire `value-davi` into the web cube page as the third "self-taught AI" solver; a
+provably-optimal Tier-1 claim (weight=1 + BFS verification); **P.10 — eval-time search as the capability
+lever** (the next step, no retraining); pushing past d15 (where the net finally softens — god's-number
 26 QTM remains out of reach on one 3060, as stated).
 
 Make the SDK solve a cube in the **fewest quarter-turns** (god's number 26 QTM), teacher-free, beating
@@ -802,12 +807,17 @@ SDK capability over squeezing a showcase.*
 **CURRENT STATUS (2026-06-14): M19, M20 (Stages 1–3), M21, the general-port Phase 1, and all
 learning-curve levers (P.1/P.7/P.8/P.9) are DONE** — see the gate table. The residual DAVI campaign runs
 fully device-resident at **~3,050 samples/s** (GPU-bound at ~2 TFLOP/s via the register-blocked GEMM),
-curriculum at the depth-20 cap. **Measured solver capability (BWAS): QTM-optimal through depth 10, 100%
-through depth 12, beating Kociemba's QTM ~2×.** The greedy *live* eval curve has plateaued (it understates
-the net — search reads it far deeper). **What remains:** wire `value-davi` into the web cube page (the
-"self-taught AI" solver); A*-based in-loop eval readout so the live curve reflects capability; resident
-Adam-state checkpointing (P.2, lossless resume); deeper-than-14 reach (more capacity/training; full
-god's-number 26 QTM is out of reach on one 3060).
+curriculum at the depth-20 cap (campaign stopped at 236k iters). **Measured solver capability (heavy BWAS,
+w=1.5, ≤100k exp): QTM-OPTIMAL through depth 15 (12/12, solution length = scramble depth), d16 10/12,
+d17 5/12, beating Kociemba's QTM ~2–2.5×.** A 2026-06-14 heavy-search diagnostic proved the apparent
+plateau was a **search-budget artifact** — the greedy live eval (~d10) and the light in-loop probe (8k exp,
+~d14-partial) both grossly understated the net; the net heuristic is accurate to ~d15 and degrades
+*gradually* past it. **The net is not the bottleneck through d15 — eval-time search is. → The next step is
+P.10 (tune BWAS expansions / weight / frontier), not a wider net** (deferred: `OPTIMIZATIONS.md` F.2).
+**What remains:** P.10 eval-time search lever; wire `value-davi` into the web cube page (the "self-taught AI"
+solver); heavier in-loop eval so the live curve reflects real capability; resident Adam-state checkpointing
+(P.2, lossless resume); deeper-than-15 reach (more capacity/training; full god's-number 26 QTM out of reach
+on one 3060).
 
 **Learning-curve findings (measured 2026-06-14).** The campaign is **GPU-bound** after the resident
 stages. **Batch size is throughput-neutral** (+16% samples/s 128→512 — it only moves the bottleneck
