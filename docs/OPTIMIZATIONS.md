@@ -67,9 +67,14 @@ nets transfer dominates and ~98% of the 3060 sits idle. These remove the transfe
 | P.1 | **Register-blocked GEMM micro-tiles** — each thread computes a 4×4/8×8 output block from registers + vectorized loads, on top of the shared-memory tiling. | M19b | the lever from ~0.6 → **multi-TFLOP**; M19 (tiling only) left this on the table |
 | P.2 | **Resident Adam-state checkpointing** — `DeviceResidualTrainer` keeps Adam moments on-device; they aren't yet downloaded into the campaign's Adam checkpoint, so a resumed resident run re-warms the optimizer (net weights resume fine). Add m/v download/upload to make the resident path's resume lossless. | M20 Stage 3 follow-up | lossless resume for the resident residual campaign |
 | P.7 | **Resident CPU-side successor generation** — at ~11 it/s the on-CPU successor generation (ActionCount× `model.Apply` + featurize per step) is a growing share. Overlap it with the GPU step or move featurization off the hot path. | backlog | squeeze the residual campaign past ~11 it/s |
-| ~~P.4~~ | **Device-backed `Tensor` (general-port Phase 2) — decided against.** Phase 1 completed the seam; Phase 2 would make `Tensor.Data/Grad` device-resident with per-op GPU dispatch. **Not pursued:** our autograd is fine-grained + RL-sized, and the GPU *loses* to the multithreaded CPU below ~256M MACs (measured — why `AdaptiveBackend` keeps small GEMMs on CPU). Per-op device dispatch would route everything to a GPU that's slower at these sizes; real GPU perf comes from **fusing** whole net fwd/bwd into few kernels — which the resident paths (3.2–3.4) already do. So Phase 2 = large central-type rewrite for **zero measured speedup**. Revisit only if a fused/lazy GPU graph executor + large-batch (4096+) training is added. | — | (architecture only; not worth the complexity at our scale) |
 | P.5 | **Recalibrate `AdaptiveBackend` threshold** — the 256M-MAC crossover was measured against the *naive* host-span kernel; re-measure now that the tiled kernel + residency change the crossover. | M19/M20 follow-up | route more work to the GPU correctly |
 | P.6 | **Lab gen/train double-buffering** — overlap oracle data generation with training instead of competing for cores. | backlog | modest end-to-end gen+train speedup |
+
+### Far future (someday / only if the workload changes)
+
+| # | Optimization | Why it's parked |
+|---|---|---|
+| F.1 | **Device-backed `Tensor` (general-port Phase 2)** — make `Tensor.Data/Grad` device-resident with per-op GPU dispatch (the second half of the `IComputeBackend` device-handle port; Phase 1 — the complete compute seam — is done, §2.5). | **Parked, low priority.** At our scale it's a large central-type rewrite for no measured speedup: the autograd is fine-grained + RL-sized, and the GPU *loses* to the multithreaded CPU below ~256M MACs (measured — why `AdaptiveBackend` keeps small GEMMs on CPU). Real GPU perf comes from **fusing** whole-net fwd/bwd into few kernels, which the resident paths (§3.2–3.4) already do. **Only worth it** with a fused/lazy GPU graph executor **and** large-batch (4096+) training where per-op GPU dispatch finally wins. |
 
 ---
 
