@@ -1,7 +1,9 @@
 <h1>Rubik's Cube</h1>
 <p class="subtitle">
-  Scramble the cube (drag to orbit), then solve it with Kociemba's two-phase algorithm (≤ 22 moves,
-  any cube) — or let the trained DQN try (shallow scrambles are its home turf).
+  Scramble the cube (drag to orbit), then solve it three ways: Kociemba's two-phase algorithm (≤ 22 moves,
+  any cube), the trained DQN (shallow scrambles are its home turf), or the <strong>self-taught AI</strong> —
+  a value net that learned the cube with no teacher and searches for the <em>fewest quarter-turns</em>
+  (optimal to ~15 deep, and shorter than Kociemba's QTM).
 </p>
 
 @if (modelStatus(); as ms) {
@@ -42,6 +44,10 @@
       <button class="primary" (click)="solveAi()"
               [disabled]="locked() || modelStatus()?.status !== 'ready'">
         {{ busy() ? 'Solving…' : 'Solve (AI)' }}
+      </button>
+      <button class="primary" (click)="solveDavi()" [disabled]="locked()"
+              title="Teacher-free value net + shortest-move search (batch-weighted A*)">
+        {{ busy() ? 'Solving…' : 'Solve (self-taught AI)' }}
       </button>
       <button (click)="reset()" [disabled]="locked()">Reset</button>
     </div>

@@ -96,6 +96,43 @@ public sealed class CubeModelService(IModelStore store, ILogger<CubeModelService
         }
     }
 
+    public const string ValueDaviAlgorithmId = "value-davi-res";
+    private ResidualMlp? _valueNet;
+    private DateTime _valueLoadedUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// The teacher-free DAVI value net (the "self-taught AI" shortest-move solver, PLAN M21), or null
+    /// if the store has none. Re-read on the same cadence as <see cref="PolicyNet"/> so an improving
+    /// Lab campaign's checkpoints are picked up without restarting the host.
+    /// </summary>
+    public ResidualMlp? ValueNet
+    {
+        get
+        {
+            if (DateTime.UtcNow - _valueLoadedUtc < PolicyRefresh) return _valueNet;
+            lock (_lock)
+            {
+                if (DateTime.UtcNow - _valueLoadedUtc < PolicyRefresh) return _valueNet;
+                try
+                {
+                    using var stream = store.TryOpenRead(EnvironmentId, ValueDaviAlgorithmId);
+                    if (stream is not null)
+                    {
+                        _valueNet = ResidualMlpCheckpoint.Load(stream);
+                        logger.LogInformation("Loaded cube DAVI value net from the store.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // A mid-write or corrupt checkpoint must not break solving; keep the previous net.
+                    logger.LogWarning(ex, "Failed to (re)load the cube DAVI value net; keeping the previous one.");
+                }
+                _valueLoadedUtc = DateTime.UtcNow;
+                return _valueNet;
+            }
+        }
+    }
+
     public bool TryLoadFromStore()
     {
         lock (_lock)

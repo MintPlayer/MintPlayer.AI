@@ -274,6 +274,45 @@ export class Cube {
     }
   }
 
+  /** The teacher-free DAVI value net via batch-weighted A* — shortest-move search, honest on failure. */
+  protected async solveDavi(): Promise<void> {
+    if (this.locked() || !this.cube) return;
+    this.busy.set(true);
+    this.status.set('Asking the self-taught AI (shortest-move search)…');
+
+    try {
+      const result = await this.api.solveDavi(this.cube.getState());
+      switch (result.kind) {
+        case 'done': {
+          const v = result.value;
+          if (v.solved) {
+            const beats = v.moveCount <= v.algorithmMoveCount;
+            this.armSolution(v.solution,
+              `Self-taught AI: ${v.moveCount} quarter-turns (Kociemba QTM: ${v.algorithmMoveCount})` +
+              (beats ? ' — shorter than Kociemba!' : ''));
+            this.status.set(`The self-taught AI solved it in ${v.moveCount} quarter-turns!`);
+          } else {
+            this.clearSolution();
+            this.status.set(`The self-taught AI ran out of search budget (Kociemba needs ${v.algorithmMoveCount} QTM) — ` +
+              'it solves shortest-move up to ~15 quarter-turns deep; try a shallower scramble, or the algorithm.');
+          }
+          break;
+        }
+        case 'training':
+          this.modelStatus.set(result.status);
+          this.status.set('The self-taught AI net is not loaded yet — try again in a moment.');
+          break;
+        case 'invalid':
+          this.status.set(result.error);
+          break;
+      }
+    } catch {
+      this.status.set('The solver is unreachable — is the backend running?');
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
   private armSolution(moves: string[], info: string): void {
     this.solution.set({ moves, info });
     this.solutionIndex.set(-1);

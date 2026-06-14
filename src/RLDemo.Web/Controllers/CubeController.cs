@@ -106,6 +106,38 @@ public sealed class CubeController(CubeModelService model, GalleryStore gallery)
         return response;
     }
 
+    /// <summary>
+    /// Runs the teacher-free DAVI value net (the "self-taught AI", PLAN M21) on the drawn cube via
+    /// batch-weighted A*: shortest-move search guided purely by the learned cost-to-go (no Kociemba).
+    /// Honest about failure — a scramble past the net's accurate band returns Solved = false.
+    /// </summary>
+    [HttpPost("solve-davi")]
+    public ActionResult<CubeSolveAiResponse> SolveDavi(CubeSolveRequest request)
+    {
+        if (!TryBuildCube(request, out var cube, out string? error))
+            return BadRequest(new CubeSolveResponse([], 0, 0, error));
+
+        var valueNet = model.ValueNet;
+        if (valueNet is null)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, Status());
+
+        // The Kociemba reference both vets the cube (orientation/parity errors the structural check
+        // misses) and gives the QTM baseline the self-taught solver is measured against.
+        var reference = CubeSolver.Solve(cube);
+        if (!reference.Solved)
+            return BadRequest(new CubeSolveResponse([], 0, 0, reference.Error));
+
+        var search = CubeValueSearch.Solve(valueNet, cube);
+        var response = new CubeSolveAiResponse(
+            search.Solved, search.Moves, search.Moves.Length, reference.Moves.Length, "davi");
+
+        if (search.Solved && search.Moves.Length > 0)
+            gallery.Add("cube",
+                $"Self-taught AI solved it in {search.Moves.Length} quarter-turns (Kociemba QTM reference {reference.Moves.Length})",
+                request, new CubeSolveResponse(search.Moves, search.Moves.Length, 0, null));
+        return response;
+    }
+
     /// <summary>Solves the cube with the Kociemba two-phase algorithm (the oracle, PRD §11).</summary>
     [HttpPost("solve")]
     public ActionResult<CubeSolveResponse> Solve(CubeSolveRequest request)

@@ -81,6 +81,68 @@ public class CubeApiTests(PlaygroundFactory factory) : IClassFixture<PlaygroundF
         Assert.NotNull(status);
         Assert.Equal("loading", status.Status);
     }
+
+    [Fact]
+    public async Task SolveDavi_WithoutValueNet_Returns503()
+    {
+        var cube = new FaceletCube();
+        cube.Apply("R");
+        var response = await _client.PostAsJsonAsync("/api/cube/solve-davi", RequestFor(cube));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+}
+
+/// <summary>Host fixture with a (deliberately untrained) DAVI residual value net in the store.</summary>
+public class CubeDaviPlaygroundFactory : PlaygroundFactory
+{
+    public CubeDaviPlaygroundFactory()
+    {
+        // Small + untrained: enough to exercise the load + BWAS wiring; the search itself
+        // (broad exploration under a generous budget) still solves a shallow scramble.
+        var net = new ResidualMlp(RubiksCubeEnv.ObservationSize, width: 32, blocks: 1, new Xoshiro256StarStar(7));
+        new FileModelStore(DataDirectory).Save(
+            CubeModelService.EnvironmentId, CubeModelService.ValueDaviAlgorithmId, s => ResidualMlpCheckpoint.Save(net, s));
+    }
+}
+
+public class CubeDaviSolveTests(CubeDaviPlaygroundFactory factory) : IClassFixture<CubeDaviPlaygroundFactory>
+{
+    private readonly HttpClient _client = factory.CreateClient();
+
+    private static CubeSolveRequest RequestFor(FaceletCube cube)
+    {
+        var faces = cube.ToColorFaces();
+        return new(new CubeStateDto(faces[0], faces[1], faces[2], faces[3], faces[4], faces[5]));
+    }
+
+    /// <summary>The self-taught solver reports mode "davi"; BWAS solves a shallow scramble even untrained, and the solution actually solves the cube.</summary>
+    [Fact]
+    public async Task SolveDavi_ReportsDaviMode_AndShallowScrambleSolves()
+    {
+        var cube = new FaceletCube();
+        cube.Apply("R");
+
+        var response = await _client.PostAsJsonAsync("/api/cube/solve-davi", RequestFor(cube));
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<CubeSolveAiResponse>();
+        Assert.NotNull(body);
+        Assert.Equal("davi", body.AiMode);
+        Assert.True(body.AlgorithmMoveCount >= 1);
+        Assert.Equal(body.Solution.Length, body.MoveCount);
+        Assert.True(body.Solved);
+
+        cube.Apply(body.Solution);
+        Assert.True(cube.IsSolved);
+    }
+
+    [Fact]
+    public async Task SolveDavi_InvalidCube_Returns400()
+    {
+        var request = RequestFor(new FaceletCube());
+        request.State!.U[0] = "G";
+        var response = await _client.PostAsJsonAsync("/api/cube/solve-davi", request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
 }
 
 /// <summary>Host fixture with a (deliberately untrained) cube DQN in the store.</summary>
