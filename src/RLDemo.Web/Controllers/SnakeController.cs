@@ -52,6 +52,7 @@ public sealed class SnakeController(SnakeModelService model) : ControllerBase
             act: (obs, mask) => agent.Act(obs, mask, greedy: true),
             frame: (e, action, step) => new SnakeFrameDto(
                 [.. e.Body], e.Food, action, step.Reward, step.Done, e.FoodEaten, e.Length),
+            resetAction: -1, // -1 marks the freshly reset start state
             tickMs: 120,
             startSeed: seed,
             ct: HttpContext.RequestAborted);

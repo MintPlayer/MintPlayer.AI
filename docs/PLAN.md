@@ -781,6 +781,40 @@ page with two modes (watch-AI WS client + human-play TS engine on a JS timer) + 
 **Effort:** the first WS streamer is the new infra (~1 d, reused by both); then Snake ~1–2 d, MountainCar ~2–3 d
 (env + PPO). Land the reusable streamer + Snake first (simpler env), then MountainCar.
 
+## M23 — Pendulum + SAC  *(SDK breadth: first continuous control; designed 2026-06-15 by a 4-agent investigation, built same day)*
+
+The SDK's first **continuous-action** algorithm — every prior agent picks one of N discrete actions; SAC outputs a
+real-valued torque. ✅ **BUILT + MEASURED 2026-06-15.** The four-agent investigation found the core is far more
+ready than it looks: `IEnvironment<TObs,TAct>`, `IAgent`, `Evaluator` are already generic over the action type,
+`BoxSpace` is already a valid action space, and the autograd layer needs **zero new backend kernels**.
+
+**New Core machinery (the continuous pillar):**
+- `Tensor.ConcatCols` / `SliceCols` — two small column-wise autograd ops (pure memory layout): `Concat` feeds the
+  critic its `concat(state, action)` input (routing the actor's gradient through the action half); `Slice` splits a
+  policy net's `[B, 2·A]` output into the mean and log-σ halves.
+- `Nn/Normal.cs` — diagonal **squashed Gaussian** (the continuous mirror of `Categorical`): reparameterized
+  `tanh(mean + σ·ε)` sample, log-prob with the tanh change-of-variables correction, `Mode` = tanh(mean). `ε` is a
+  detached `Tensor.RandomNormal` leaf (stop-gradient for free); log-σ clamped to [−20, 2] before exp.
+- `Training/ContinuousReplayBuffer.cs` (+ checkpoint) — sibling of `ReplayBuffer` with float-vector actions and no
+  mask, leaving the discrete buffer byte-compatible.
+- `Training/SacTrainer.cs` — **SAC** (Haarnoja 2018): a squashed-Gaussian actor `[obs → 2·A]`, **twin Q-critics**
+  (plain `Mlp([obs+A,…,1])`, clipped double-Q targets), **Polyak soft target update** (a `SoftUpdate` helper, NOT
+  an overload of the hard `CopyFrom`), and an **auto-tuned entropy temperature** (log-α against target entropy −A).
+  `ContinuousPolicyAgent : IAgent<float[],float[]>` serves greedy = tanh(mean), rescaled to the box bounds. The
+  off-policy collection loop mirrors `DqnTrainer` (single env + replay, warmup, eval cadence, solve-threshold,
+  bitwise-resumable `SacTrainingState`).
+
+**PendulumEnv** (`Environments/PendulumEnv.cs`) — faithful Gymnasium Pendulum-v1: obs `[cos θ, sin θ, θ̇]` (Box 3),
+action torque ∈ [−2,2] (**Box 1**), reward `−(θ² + 0.1·θ̇² + 0.001·τ²)` from the pre-update angle, **semi-implicit
+Euler** (θ advances using the new θ̇), torque clamped (not thrown), **no terminal — truncate@200**. `IStatefulEnvironment`.
+
+**Measured:** SAC (`Hidden [128,128], 30k steps, ~6 min CPU`) reaches greedy eval **mean return −149.1 over 100
+episodes** (random ≈ −1200; past the −200 "solved" bar and the −150 solve-threshold). Bitwise-resume test green.
+Seed shipped to `models/pendulum.sac.ckpt` (Git LFS). **Web (PRD §7.1):** `WS /api/pendulum/live` streams
+`{cosTheta, sinTheta, angularVelocity, torque, reward, done}` (the `EpisodeStreamer` was generalized over `TAct`);
+Angular `<canvas>` rod + **watch-AI** (WS) / **swing-it-yourself** (client TS physics on a JS timer, ←/→ = continuous
+torque). Serve-time checkpoint = actor-only via the existing `MlpCheckpoint` (critics/temperature are training-only).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -824,6 +858,8 @@ page with two modes (watch-AI WS client + human-play TS engine on a JS timer) + 
 | Learning-curve levers P.7/P.8/P.9 (2026-06-14) | feed GPU, decouple pacing, per-update efficiency | parallel successor gen (GPU 0→95-100% util) + `--batch`; sample-paced curriculum + lighter eval; ε-loss target sync (freeze-proof) + `--lr`. Net: **~3,050 samples/s (~2× prior)**, GPU-bound at ~2 TFLOP/s |
 | General `IComputeBackend` port Phase 1 (2026-06-14) | every autograd op behind the seam; CPU bitwise-identical | all ops (Map/Zip/reductions/LogSoftmax/Gather/Huber/LayerNorm) routed through the backend; 224/224 green. Phase 2 (device-backed Tensor) parked far-future (no measured win at our scale) |
 | **M21 shortest-move solver — BWAS capability (2026-06-14, residual 1024×4, ~44k iters)** | **provably-optimal shallow; beat Kociemba's QTM mid-range** | batched A* (w=2.5, ≤40k exp, 12/depth): **12/12 & QTM-optimal through depth 10** (exactly d·qt), **100% solved through depth 12**, 83% d13, 75% d14; **every solve beats Kociemba's QTM, often ~2×** (d10 10 vs 19, d12 12.2 vs 29.3). Greedy (live curve) collapses ~d10-11 — search reads the net far deeper. Beats the earlier 1024×3 MLP at every deep level (d12 100% vs 80%). Full god's-number (26 QTM) NOT reached — honest two-tier story |
+| M22 MountainCar (PPO) + Snake (masked Double+Dueling DQN) (2026-06-15) | MountainCar mean ≥ −110; Snake ≥ 5 food | MountainCar **−107.9, goal 100/100** (~120k steps, <1 min); Snake **22.1 food on 12×12** (trained on 6×6 → transfer) |
+| M23 SAC continuous control (2026-06-15) | Pendulum mean ≥ −200 (gate median/3 ≥ −250) | **−149.1 over 100 eps** (Hidden [128,128], 30k steps, ~6 min CPU); random ≈ −1200; bitwise-resume green |
 
 ## Shipped (2026-06-11) — release engineering
 
@@ -896,8 +932,9 @@ curriculum + lighter eval) and **✅ P.9** (LR scaling + ε-loss target sync). F
 3. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*
 3. **SDK breadth** (the demos exist to show range): algorithm coverage (✅ PPO action
-   masking *(done)*, ✅ dueling head *(done)*, maybe SAC), more envs (**MountainCar + Snake — designed, see M22**),
-   a TensorBoard writer, public-API stability/semver discipline, reproducibility guarantees.
+   masking *(done)*, ✅ dueling head *(done)*, ✅ SAC continuous control *(done, see M23)*), more envs
+   (✅ **MountainCar + Snake — M22**, ✅ **Pendulum continuous — M23**), a TensorBoard writer, public-API
+   stability/semver discipline, reproducibility guarantees.
 
    **"Switch algorithm, keep the work" — make the three reusable assets first-class.**
    When an algorithm plateaus, what carries over is the env (already portable via
@@ -925,7 +962,7 @@ curriculum + lighter eval) and **✅ P.9** (LR scaling + ε-loss target sync). F
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
-`dotnet run --project src/RLDemo.Console -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour|cube]
+`dotnet run --project src/RLDemo.Console -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour|cube|pendulum]
 [seed] [--load] [--save] [--data <dir>]`. Tests: `dotnet test` (`Category=Slow` for gates).
 Training campaigns (resume net + Adam + full training state from the model store):
 `dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release --

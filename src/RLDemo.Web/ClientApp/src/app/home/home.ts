@@ -58,6 +58,15 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
+      <a class="card" routerLink="/pendulum">
+        <h2>Pendulum</h2>
+        <p>
+          A SAC agent learned continuous control — a real-valued torque — to swing a rod upright and
+          balance it. Watch it live (the server drives the rod), or swing it yourself.
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
       <a class="card" routerLink="/gallery">
         <h2>Gallery</h2>
         <p>

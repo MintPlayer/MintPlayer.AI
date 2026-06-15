@@ -34,7 +34,8 @@ out (vectorized environments) without rewrites.
 2. **Gymnasium-faithful environment API** for .NET — typed `Reset`/`Step` with separate
    `Terminated`/`Truncated`, spaces, seeding — so results are comparable to literature.
 3. **Algorithm ladder**: tabular Q-learning/SARSA → REINFORCE → DQN (+Double/Dueling) → PPO
-   (vectorized envs, GAE). Each gated by a known-solved threshold before the next starts.
+   (vectorized envs, GAE) → SAC (off-policy continuous control). Each gated by a known-solved
+   threshold before the next starts.
 4. **From-scratch numerics**: own tensor type, SIMD matmul, tape-based autograd, Adam —
    zero native dependencies in the core.
 5. **Real games as benchmarks**: CartPole (literature-comparable flagship), **2048** and
@@ -69,7 +70,9 @@ Explicitly out of scope to prevent the scope creep every research thread warned 
 - Distributed training, ONNX export, model-based / offline RL
 - Unity/Godot adapters, netstandard multi-targeting
   *(NuGet publishing was originally out of scope here but shipped on 2026-06-11)*
-- LunarLander or anything needing a physics engine (Box2D port ≈ a project in itself)
+- LunarLander or anything needing a physics engine (Box2D port ≈ a project in itself).
+  *Classic-control continuous tasks (Pendulum) ARE in scope — their dynamics are a trivial ODE;
+  it's only the Box2D-class physics engines that stay out.*
 
 ## 4. Key decisions
 
@@ -136,6 +139,7 @@ Pre-registered, objective "solved" definitions (fixed now so benchmarks stay mea
 | **2048** (4×4, spawn 90% 2 / 10% 4, invalid moves masked) | Box(16) log2-encoded / Discrete(4) | Pre-registered: reach 2048 tile in ≥ 10% of 100 eval games (DQN target); stretch: TD/n-tuple agent ≥ 80% | Owner's game #1; stochastic, showy |
 | **Rush Hour** (6×6 sliding-block; action = (vehicle, ±1 slide); reward −1/step, +100 exit; per-difficulty puzzle sets) | Box(72): vehicle-identity plane + red-car plane / Discrete(32 masked) | ≥ 90% of *easy* puzzle set solved within 2× optimal moves (optimal via built-in BFS solver) | Owner's game #2; sparse-reward planning, curriculum learning |
 | MountainCar-v0 (optional) | Box(2) / Discrete(3) | Mean ≥ −110 over 100 episodes | Exploration stress test (vanilla agents *legitimately* fail — that's a finding, not a bug) |
+| **Pendulum-v1** (faithful port: g 10, m 1, l 1, dt 0.05, semi-implicit Euler, torque clip ±2, θ̇ clip ±8, no terminal, truncate@200) | Box(3) [cos θ, sin θ, θ̇] / **Box(1) torque ∈ [−2,2]** | Mean return ≥ −200 over 100 episodes | First **continuous-control** env; SAC flagship (random ≈ −1200) |
 
 Rush Hour note: board logic is reimplemented inside `MintPlayer.AI.ReinforcementLearning.Environments` (~150 LOC) rather
 than referencing `C:\Repos\Spelletjes\Rush Hour` (currently being modified by another
@@ -209,6 +213,8 @@ Per-game assignment:
 | **Snake — human play** | client-side only; a **JS timer** ticks the local TS engine, keyboard steers | — |
 | **MountainCar — watch-AI** | **B — server streams each tick `{position, velocity, action, reward, done}`** | `WS /api/mountaincar/live` |
 | **MountainCar — human play** | client-side only; a **JS timer** ticks the local TS physics, ←/→ push | — |
+| **Pendulum — watch-AI** | **B — server streams each tick `{cosTheta, sinTheta, angularVelocity, torque, reward, done}`** | `WS /api/pendulum/live` |
+| **Pendulum — human play** | client-side only; a **JS timer** ticks the local TS physics, ←/→ apply a continuous torque | — |
 
 Each new game ships **both modes**, which nicely demonstrates the two principles side by side:
 - **Watch-AI = principle B** — *backend* owns the loop + clock, streams frames, frontend is a pure renderer with

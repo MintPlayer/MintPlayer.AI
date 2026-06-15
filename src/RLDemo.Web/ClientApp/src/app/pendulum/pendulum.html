@@ -1,0 +1,37 @@
+<h1>Pendulum</h1>
+<p class="subtitle">
+  Swing a frictionless rod upright and hold it there with a bounded torque. A <strong>SAC</strong> agent learned
+  this <strong>continuous-control</strong> task from scratch — the action is a real-valued torque, not a button.
+  <strong>Watch it</strong> (the server drives the rod live over a WebSocket) or <strong>swing it yourself</strong>
+  (runs in your browser).
+</p>
+
+@if (modelStatus(); as ms) {
+  @if (ms.status === 'training') {
+    <div class="banner training">
+      The Pendulum agent is training on the server ({{ ms.trainingStep }} / {{ ms.trainingMaxSteps }} steps) —
+      swing it yourself meanwhile.
+    </div>
+  } @else if (ms.status === 'failed') {
+    <div class="banner error">AI training failed: {{ ms.error }}</div>
+  }
+}
+
+<div class="layout">
+  <canvas #penCanvas width="420" height="420" class="board"></canvas>
+
+  <div class="side">
+    <div class="actions">
+      <button class="primary" (click)="watchAi()" [disabled]="mode() === 'watch'">Watch AI</button>
+      <button class="primary" (click)="playHuman()">Swing it yourself</button>
+      <button (click)="stop()" [disabled]="mode() === 'idle'">Stop</button>
+    </div>
+    <p class="status">{{ status() }}</p>
+    @if (mode() !== 'idle') {
+      <p class="torque">Torque: {{ torque().toFixed(2) }}</p>
+    }
+    @if (mode() === 'human') {
+      <p class="hint">Hold ← / → (or A / D) to apply torque. Pump back and forth to build the swing, then ease off near the top to balance.</p>
+    }
+  </div>
+</div>

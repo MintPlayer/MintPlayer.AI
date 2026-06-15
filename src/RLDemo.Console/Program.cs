@@ -12,10 +12,10 @@ using MintPlayer.AI.ReinforcementLearning.Environments.Game2048;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 using MintPlayer.AI.ReinforcementLearning.Environments.RushHour;
 
-// Usage: RLDemo.Console [grid|lake|cartpole|ppo|2048|2048dqn|rushhour|cube ...] [seed] [--load] [--save] [--data <dir>]
-//        no env args = run everything except 2048dqn (DQN needs a long budget there).
+// Usage: RLDemo.Console [grid|lake|cartpole|ppo|2048|2048dqn|rushhour|cube|pendulum ...] [seed] [--load] [--save] [--data <dir>]
+//        no env args = run everything except 2048dqn and pendulum (both need a long budget).
 //        --load: skip training when the model store has a checkpoint; --save: checkpoint after training.
-string[] knownSections = ["grid", "lake", "cartpole", "ppo", "2048", "2048dqn", "rushhour", "cube"];
+string[] knownSections = ["grid", "lake", "cartpole", "ppo", "2048", "2048dqn", "rushhour", "cube", "pendulum"];
 var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 ulong masterSeed = 42;
 bool loadModels = false, saveModels = false;
@@ -31,7 +31,7 @@ for (int argIndex = 0; argIndex < args.Length; argIndex++)
     else Console.WriteLine($"(ignoring unknown argument '{arg}')");
 }
 bool ShouldRun(string name) => selected.Count == 0
-    ? name != "2048dqn"
+    ? name is not ("2048dqn" or "pendulum")
     : selected.Contains(name);
 bool animate = !Console.IsOutputRedirected;
 var store = new FileModelStore(dataDir);
@@ -403,8 +403,71 @@ if (ShouldRun("cube"))
     Console.WriteLine();
 }
 
+if (ShouldRun("pendulum"))
+{
+    Console.WriteLine("=== Pendulum-v1 — SAC from scratch (continuous control: torque ∈ [-2, 2]) ===");
+    Console.WriteLine("    solved criterion (PRD): mean return >= -200 over 100 episodes");
+
+    var seeds = new SeedSequence(masterSeed);
+    var env = new PendulumEnv();
+    var box = (BoxSpace)env.ActionSpace;
+
+    ContinuousPolicyAgent agent;
+    if (TryLoadMlp("pendulum", "sac") is { } loaded)
+    {
+        agent = new ContinuousPolicyAgent(loaded, box.Dimensions, box.Low, box.High, seeds.CreateRng(RngStreams.Policy));
+    }
+    else
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = SacTrainer.Train(env, new SacOptions
+        {
+            Hidden = [128, 128],
+            MaxSteps = 30_000,
+            WarmupSteps = 1_000,
+            EvalEvery = 5_000,
+            SolveThreshold = -150,
+            OnProgress = p => Console.WriteLine(
+                $"  step {p.Step,6}/{p.MaxSteps}  eval mean return: {p.EvalMeanReturn,8:F1}  alpha: {p.Alpha:F3}  qLoss: {p.CriticLoss:F2}"),
+        }, seeds);
+        sw.Stop();
+        Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalMinutes:F1} min");
+        agent = result.Agent;
+        SaveMlp("pendulum", "sac", result.Actor);
+    }
+
+    var eval = Evaluator.Evaluate(env, agent, episodes: 100, seeds.Derive(RngStreams.Evaluation));
+    Console.WriteLine($"final greedy eval: {eval.MeanReturn:F1} mean return over 100 episodes " +
+                      $"({(eval.MeanReturn >= -200 ? "SOLVED" : "not solved")})");
+    Console.WriteLine();
+    if (animate) AnimatePendulum(env, agent, seeds.Derive(RngStreams.Evaluation + 1));
+    Console.WriteLine();
+}
+
 Console.WriteLine("done.");
 return;
+
+static void AnimatePendulum(PendulumEnv env, ContinuousPolicyAgent agent, ulong seed)
+{
+    Console.WriteLine("--- Pendulum — greedy playback (200 steps) ---");
+    var (obs, _) = env.Reset(seed);
+    int frameTop = Console.CursorTop;
+    double episodeReturn = 0;
+
+    for (int step = 0; step < PendulumEnv.DefaultMaxEpisodeSteps; step++)
+    {
+        Console.SetCursorPosition(0, frameTop);
+        Console.Write(env.RenderString());
+        Console.WriteLine($"  step {step,3}/200  return {episodeReturn,8:F1}   ");
+        Thread.Sleep(30);
+
+        var result = env.Step(agent.Act(obs, greedy: true));
+        obs = result.Observation;
+        episodeReturn += result.Reward;
+        if (result.Done) break;
+    }
+    Console.WriteLine($"  episode return: {episodeReturn:F1}");
+}
 
 static (int SolvedInBudget, int SolvedAtAll) EvaluateRushHourGate(RushHourEnv env, GreedyQAgent agent, IReadOnlyList<RushHourPuzzle> puzzles)
 {

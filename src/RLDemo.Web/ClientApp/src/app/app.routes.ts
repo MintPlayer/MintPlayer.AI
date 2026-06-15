@@ -7,6 +7,7 @@ export const routes: Routes = [
   { path: 'cube', loadComponent: () => import('./cube/cube').then(m => m.Cube) },
   { path: 'snake', loadComponent: () => import('./snake/snake').then(m => m.Snake) },
   { path: 'mountaincar', loadComponent: () => import('./mountaincar/mountaincar').then(m => m.MountainCar) },
+  { path: 'pendulum', loadComponent: () => import('./pendulum/pendulum').then(m => m.Pendulum) },
   { path: 'gallery', loadComponent: () => import('./gallery/gallery').then(m => m.Gallery) },
   { path: '**', redirectTo: '' },
 ];
