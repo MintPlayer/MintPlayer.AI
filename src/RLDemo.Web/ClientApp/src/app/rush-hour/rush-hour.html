@@ -85,6 +85,38 @@
             {{ busy() ? 'Solving…' : '3 · Solve with AI' }}
           </button>
         </div>
+
+        <div class="deck">
+          <h3>Levels</h3>
+          @if (deck().length === 0) {
+            <p class="hint">No saved levels yet.@if (canEditDeck) { Draw a board, name it, and save it below.}</p>
+          } @else {
+            <ul class="level-list">
+              @for (level of deck(); track level.id) {
+                <li [class.active]="currentLevelId() === level.id" (click)="loadLevel(level)">
+                  <span class="level-name">{{ level.name }}</span>
+                  <span class="level-opt">{{ level.optimalMoves }} mv</span>
+                  @if (canEditDeck) {
+                    <button class="del" (click)="deleteLevel(level, $event)" title="Delete level">×</button>
+                  }
+                </li>
+              }
+            </ul>
+          }
+          @if (canEditDeck) {
+            <div class="save-row">
+              <input type="text" placeholder="Level name" [value]="levelName()"
+                     (input)="levelName.set($any($event.target).value)" />
+              <button (click)="saveToDeck()"
+                      [disabled]="!levelName() || !analysis()?.valid || !analysis()?.solvable || analysis()?.optimalMoves === 0">
+                {{ currentLevelId() ? 'Update level' : 'Save to deck' }}
+              </button>
+            </div>
+          }
+          @if (deckMessage(); as msg) {
+            <p class="message">{{ msg }}</p>
+          }
+        </div>
       }
       @case ('play') {
         <h3>Play it yourself</h3>

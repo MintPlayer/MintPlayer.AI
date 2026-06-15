@@ -1,7 +1,7 @@
 import { DecimalPipe } from '@angular/common';
-import { Component, DestroyRef, ElementRef, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, computed, effect, inject, isDevMode, signal, viewChild } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
-import { AnalyzeResponse, RushHourApi, SolveResponse, StatusResponse, VehicleDto } from './rush-hour-api';
+import { AnalyzeResponse, DeckLevel, RushHourApi, SolveResponse, StatusResponse, VehicleDto } from './rush-hour-api';
 import { EXIT_ROW, SIZE, canMove, canPlace, initialPositions, isSolved, occupancy } from './rush-hour-logic';
 
 type Mode = 'edit' | 'play' | 'playback';
@@ -51,6 +51,13 @@ export class RushHour {
   // --- model status ---
   protected readonly modelStatus = signal<StatusResponse | null>(null);
 
+  // --- curated level deck ---
+  protected readonly deck = signal<DeckLevel[]>([]);
+  protected readonly levelName = signal('');
+  protected readonly currentLevelId = signal<string | null>(null);
+  protected readonly deckMessage = signal<string | null>(null);
+  protected readonly canEditDeck = isDevMode(); // authoring UI shows only under `ng serve`
+
   private playbackTimer: ReturnType<typeof setInterval> | null = null;
 
   protected readonly initialPos = computed(() => initialPositions(this.vehicles()));
@@ -86,11 +93,54 @@ export class RushHour {
   constructor() {
     effect(() => this.draw());
     void this.refreshAnalysis();
+    void this.loadDeck();
     this.pollStatus();
     inject(DestroyRef).onDestroy(() => this.stopPlayback());
 
     const replayId = inject(ActivatedRoute).snapshot.queryParamMap.get('replay');
     if (replayId) void this.loadGalleryEntry(replayId);
+  }
+
+  // ------------------------------------------------------------------ curated deck
+
+  private async loadDeck(): Promise<void> {
+    this.deck.set(await this.api.getDeck());
+  }
+
+  /** Load a saved level onto the board for play / solve; keeps its id so a re-save updates it. */
+  protected loadLevel(level: DeckLevel): void {
+    this.stopPlayback();
+    this.vehicles.set(level.vehicles);
+    this.currentLevelId.set(level.id);
+    this.levelName.set(level.name);
+    this.solution.set(null);
+    this.deckMessage.set(null);
+    this.mode.set('edit');
+    void this.refreshAnalysis();
+  }
+
+  protected async saveToDeck(): Promise<void> {
+    const result = await this.api.saveLevel(this.levelName(), this.vehicles(), this.currentLevelId() ?? undefined);
+    switch (result.kind) {
+      case 'saved':
+        this.currentLevelId.set(result.level.id);
+        this.deckMessage.set(`Saved “${result.level.name}” (optimal ${result.level.optimalMoves} moves).`);
+        await this.loadDeck();
+        break;
+      case 'error':
+        this.deckMessage.set(result.error);
+        break;
+      case 'unavailable':
+        this.deckMessage.set('Saving is only available in development.');
+        break;
+    }
+  }
+
+  protected async deleteLevel(level: DeckLevel, event: Event): Promise<void> {
+    event.stopPropagation();
+    if (!await this.api.deleteLevel(level.id)) return;
+    if (this.currentLevelId() === level.id) this.currentLevelId.set(null);
+    await this.loadDeck();
   }
 
   private async loadGalleryEntry(id: string): Promise<void> {
@@ -177,6 +227,9 @@ export class RushHour {
   protected clearBoard(): void {
     this.applyDrawing([{ row: EXIT_ROW, col: 0, length: 2, horizontal: true }]);
     this.editMessage.set(null);
+    this.currentLevelId.set(null); // a fresh board is a new level, not an edit of the loaded one
+    this.levelName.set('');
+    this.deckMessage.set(null);
   }
 
   private async refreshAnalysis(): Promise<void> {
