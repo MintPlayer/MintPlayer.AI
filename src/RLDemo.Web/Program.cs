@@ -25,6 +25,10 @@ if (!string.IsNullOrEmpty(seedDirectory) && Directory.Exists(seedDirectory))
 }
 builder.Services.AddSingleton<IModelStore>(_ => new FileModelStore(dataDirectory));
 builder.Services.AddSingleton(new GalleryStore(Path.Combine(dataDirectory, "gallery")));
+// The curated Rush Hour level deck: committed canonical content under wwwroot (ships with the app);
+// served read-only everywhere, authored via the Development-only deck endpoints.
+builder.Services.AddSingleton(sp => new RushHourDeckStore(
+    Path.Combine(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath, "wwwroot", "rushhour-deck.json")));
 // One process-wide compute backend. It selects a discrete CUDA GPU when present (local dev) and
 // falls back to the multithreaded CPU otherwise (e.g. a GPU-less Hetzner container) — so the
 // self-taught cube solver gets a resident GPU forward where available, CPU everywhere else.

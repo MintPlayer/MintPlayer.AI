@@ -43,6 +43,24 @@ export type SolveResult =
   | { kind: 'invalid'; error: string }
   | { kind: 'training'; status: StatusResponse };
 
+/** A curated deck level: a named board plus its BFS-optimal move count. */
+export interface DeckLevel {
+  id: string;
+  name: string;
+  vehicles: VehicleDto[];
+  optimalMoves: number;
+}
+
+export interface RushHourDeck {
+  version: number;
+  levels: DeckLevel[];
+}
+
+export type SaveLevelResult =
+  | { kind: 'saved'; level: DeckLevel }
+  | { kind: 'error'; error: string }
+  | { kind: 'unavailable' }; // authoring endpoint is Development-only
+
 @Injectable({ providedIn: 'root' })
 export class RushHourApi {
   async status(): Promise<StatusResponse> {
@@ -73,5 +91,32 @@ export class RushHourApi {
     }
     const body: AnalyzeResponse = await response.json();
     return { kind: 'invalid', error: body.error ?? 'Invalid board.' };
+  }
+
+  /** The curated level deck (served everywhere; read-only in production). */
+  async getDeck(): Promise<DeckLevel[]> {
+    const response = await fetch('/api/rushhour/deck', { cache: 'no-store' });
+    if (!response.ok) return [];
+    const deck: RushHourDeck = await response.json();
+    return deck.levels ?? [];
+  }
+
+  /** Save (insert or, with id, update) a level — Development only; production returns 'unavailable'. */
+  async saveLevel(name: string, vehicles: VehicleDto[], id?: string): Promise<SaveLevelResult> {
+    const response = await fetch('/api/rushhour/deck', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name, vehicles }),
+    });
+    if (response.ok) return { kind: 'saved', level: await response.json() };
+    if (response.status === 404) return { kind: 'unavailable' };
+    const body = await response.json().catch(() => ({ error: 'Save failed.' }));
+    return { kind: 'error', error: body.error ?? 'Save failed.' };
+  }
+
+  /** Remove a level — Development only. */
+  async deleteLevel(id: string): Promise<boolean> {
+    const response = await fetch(`/api/rushhour/deck/${id}`, { method: 'DELETE' });
+    return response.ok;
   }
 }

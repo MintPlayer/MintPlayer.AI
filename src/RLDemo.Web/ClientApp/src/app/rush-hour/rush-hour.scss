@@ -109,3 +109,69 @@
   margin-top: 0.75rem;
   accent-color: #2563eb;
 }
+
+.deck {
+  margin-top: 1.25rem;
+  border-top: 1px solid #2b3245;
+  padding-top: 0.75rem;
+
+  .level-list {
+    list-style: none;
+    margin: 0 0 0.5rem;
+    padding: 0;
+    max-height: 280px;
+    overflow-y: auto;
+
+    li {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.55rem;
+      border-radius: 6px;
+      cursor: pointer;
+
+      &:hover {
+        background: #222938;
+      }
+
+      &.active {
+        background: #1d2c4f;
+        border: 1px solid #2f4a8a;
+      }
+
+      .level-name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .level-opt {
+        color: #aab2c5;
+        font-size: 0.85rem;
+      }
+
+      .del {
+        padding: 0 0.4rem;
+        line-height: 1.4;
+        background: transparent;
+        color: #f87171;
+      }
+    }
+  }
+
+  .save-row {
+    display: flex;
+    gap: 0.5rem;
+
+    input {
+      flex: 1;
+      min-width: 0;
+      padding: 0.45rem 0.6rem;
+      border-radius: 6px;
+      border: 1px solid #2b3245;
+      background: #11151e;
+      color: inherit;
+    }
+  }
+}
