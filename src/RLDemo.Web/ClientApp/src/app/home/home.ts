@@ -40,6 +40,15 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
+      <a class="card" routerLink="/snake">
+        <h2>Snake</h2>
+        <p>
+          A masked Double + Dueling DQN that learned Snake from scratch. Watch it play
+          live (the server drives the game), or play it yourself.
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
       <a class="card" routerLink="/gallery">
         <h2>Gallery</h2>
         <p>

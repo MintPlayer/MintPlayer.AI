@@ -756,17 +756,20 @@ episode-streamer (Reset → loop{policy → Step → send frame} until done) bac
   play:** client-side TS physics (the same dynamics) on a JS timer, ←/→ = push left/right (no key = no push).
   Needs `app.UseWebSockets()` + Traefik `Upgrade` pass-through (the infra delta, shared with Snake).
 
-**SnakeEnv** (`Environments/Snake/SnakeEnv.cs`, mirrors `Env2048`/`RushHourEnv` masked-env style):
-- 12×12 grid; obs = 3 binary planes (body / head / food) flattened → `BoxSpace(0,1, 432)`; 4 absolute-direction
-  actions; **`IActionMaskProvider` masks only the 180° reversal** (the move into the neck) — exactly the
-  invalid-action case PPO/DQN now handle, no new masking code. Reward +1 food / −0.01 step / −1 death;
-  `terminated` on wall/self collision (board-full = win), `truncated` at 1000 steps; food respawns from the env's
-  seeded RNG. Implements `IStatefulEnvironment` (cheap; bitwise resume).
-- **Algorithm: masked DQN (Double + Dueling)** — dense per-food credit + replay reuse beats PPO's on-policy cost
-  on CPU; Dueling fits (position-value dominates the near-equivalent direction choice). `Hidden [256,256], lr 5e-4,
-  buffer 100k, batch 128, ε→0.05 over 50k, MaxSteps 300k`. **Honest expected skill:** "seeks food, avoids walls,
-  eats mid-single-digits then self-traps" — not a perfect space-filling endgame (a from-scratch dense MLP has no
-  conv prior / true lookahead). **Gate:** mean ≥ 5 food / 100 greedy eps (≈ `SolveThreshold` return ≥ 3).
+**SnakeEnv** (`Environments/Snake/SnakeEnv.cs`, mirrors `Env2048`/`RushHourEnv` masked-env style). ✅ **BUILT + MEASURED 2026-06-15.**
+- Configurable `Size`×`Size` grid; 4 absolute-direction actions; **`IActionMaskProvider` masks only the 180°
+  reversal** (no new masking code — reuses the PPO/DQN masking). Reward +1 food / −0.01 step / −1 death;
+  `terminated` on wall/self collision (board-full = win), `truncated` at 1000 steps; seeded food respawn;
+  `IStatefulEnvironment` (bitwise resume).
+- **Observation: 12 compact engineered features** (danger one-step ×4, food-direction ×4, heading one-hot ×4) —
+  **not** a raw grid. *Measured finding:* the raw 12×12 grid (`float[432]`) into a dense MLP learned to
+  **survive but not hunt** (~1.5 food, 44 min) — no conv prior. The compact features fix food-seeking AND, being
+  **grid-size-invariant**, enable a **grid-size curriculum**: train fast on a small grid, transfer to a larger one.
+- **Algorithm: masked Double+Dueling DQN**, `Hidden [128,128], lr 5e-4, buffer 100k, batch 128, ε→0.05 over 30k,
+  MaxSteps 100k`, **trained on a 6×6 grid (~10–15 min CPU)**. **Measured:** eats **14.7 food on 6×6** and —
+  same net, never trained there — **22.1 food on the 12×12 demo grid** (transfer); far past the **≥5-food gate**.
+  Honest framing stays "eats a lot, then eventually self-traps" (no true endgame lookahead). Seed checkpoint
+  shipped to `models/snake.dqn.ckpt` (Git LFS).
 - **Viz:** DOM/CSS grid like 2048. **Watch-AI (B):** `WS /api/snake/live` streams each move
   `{body, food, action, reward, done}`, server owns the episode (incl. the food-respawn RNG → fully consistent),
   client renders. **Human play:** pure client-side TS engine (`snake-logic.ts`) on a JS timer, keyboard steers,

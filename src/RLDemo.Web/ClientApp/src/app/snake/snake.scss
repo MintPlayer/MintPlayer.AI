@@ -1,0 +1,52 @@
+:host { display: block; }
+
+.subtitle { max-width: 60ch; color: #9aa4b2; }
+
+.banner {
+  padding: 0.6rem 0.9rem;
+  border-radius: 6px;
+  margin: 0.5rem 0 1rem;
+  &.training { background: #2a2f3d; color: #ffd479; }
+  &.error { background: #3a2226; color: #ff8a8a; }
+}
+
+.layout {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(var(--size), 1fr);
+  gap: 1px;
+  width: 480px;
+  height: 480px;
+  padding: 4px;
+  background: #1c2230;
+  border-radius: 8px;
+}
+
+.cell {
+  background: #2a3142;
+  border-radius: 2px;
+
+  &.body { background: #4caf82; }
+  &.head { background: #7cffb2; }
+  &.food { background: #ff6b6b; border-radius: 50%; }
+}
+
+.side {
+  min-width: 220px;
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0.5rem 0;
+  }
+
+  .status { color: #cdd5e0; min-height: 1.4em; }
+  .hint { color: #8b95a5; font-size: 0.9em; }
+}
