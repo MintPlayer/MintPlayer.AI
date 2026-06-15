@@ -25,8 +25,10 @@ public sealed class SnakeController(SnakeModelService model) : ControllerBase
     /// Server-authoritative live stream of the trained AI playing Snake (PRD §7.1 principle B). The backend
     /// owns the episode + clock and pushes one frame per tick; the browser is a pure renderer. A 503 (rejected
     /// upgrade) means the model is still training — the client polls <c>status</c> and connects when ready.
+    /// <para>Accepts GET (HTTP/1.1 Upgrade) AND CONNECT (HTTP/2 Extended CONNECT, RFC 8441) so the WebSocket
+    /// works over both — over HTTPS the browser negotiates HTTP/2, where a GET-only route returns 405.</para>
     /// </summary>
-    [HttpGet("live")]
+    [AcceptVerbs("GET", "CONNECT", Route = "live")]
     public async Task Live()
     {
         if (!HttpContext.WebSockets.IsWebSocketRequest)

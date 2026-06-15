@@ -25,8 +25,10 @@ public sealed class MountainCarController(MountainCarModelService model) : Contr
     /// Server-authoritative live stream of the trained AI driving MountainCar (PRD §7.1 principle B): the
     /// backend owns the episode + clock and pushes one frame per tick; the browser renders. 503 (rejected
     /// upgrade) = still training.
+    /// <para>Accepts GET (HTTP/1.1 Upgrade) AND CONNECT (HTTP/2 Extended CONNECT, RFC 8441) so the WebSocket
+    /// works over both — over HTTPS the browser negotiates HTTP/2, where a GET-only route returns 405.</para>
     /// </summary>
-    [HttpGet("live")]
+    [AcceptVerbs("GET", "CONNECT", Route = "live")]
     public async Task Live()
     {
         if (!HttpContext.WebSockets.IsWebSocketRequest)
