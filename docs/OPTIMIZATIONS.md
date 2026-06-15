@@ -137,6 +137,26 @@ the value net. Measured the three backends for one solve on the trained 1024×4 
   Ilgpu csproj before restore; the GHCR build workflow checks out with `lfs: true` (the build context has
   no `.git`, so LFS must be materialized first — otherwise `COPY models/` ships pointer files).
 
+## Investigated, not pursued — policy-guided BWAS (measured 2026-06-15)
+
+Tested fusing the existing imitation policy net (`CubePolicyNet`) as an action prior into the value
+BWAS: `f = g + weight·h + policyWeight·(−logπ(a|parent))`. **Negative result** — it does not help and
+hurts at higher weight (one solve, 1024×4 value net, weight 1.5, ≤20k exp):
+
+| depth | value-only | policy λ=1 | policy λ=2 |
+|---|---|---|---|
+| 14 | len 14, 4547 ms | len 14, 5060 ms | len 14, **25563 ms** |
+| 16 | fail, 47 s | fail, 49 s | fail, 48 s |
+
+- The imitation policy is **Kociemba/HTM-flavoured (~73% acc)** and pulls *against* the QTM value's optimal
+  path — stronger prior = worse. It also never rescued depth 16.
+- Deeper point: **value-only BWAS is already the DeepCubeA approach** (DeepCubeA uses value-only batch
+  weighted A*, no policy). A *useful* policy would have to be QTM-consistent (self-distilled from the
+  value's arg-min), which is its own training run — and DeepCubeA's own result says value-only suffices.
+- **Conclusion:** the lever for harder cubes is **value-net capacity** (F.2 / a bigger fresh campaign),
+  not a search-time policy. The prototype + the generic `SolveBatchedWithPolicy` were reverted (no dead
+  code); recoverable from git history if a self-distilled policy is ever trained.
+
 ## Planned
 
 | # | Optimization | Milestone | Why / expected |
