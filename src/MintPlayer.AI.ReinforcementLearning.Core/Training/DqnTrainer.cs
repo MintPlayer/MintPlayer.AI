@@ -25,6 +25,13 @@ public sealed record DqnOptions
     /// <summary>Use Double DQN: online net picks argmax, target net evaluates it.</summary>
     public bool DoubleDqn { get; init; } = true;
 
+    /// <summary>
+    /// Use a <see cref="DuelingQNet"/> (shared trunk → value + advantage streams) instead of a plain
+    /// <see cref="Mlp"/> Q-net. Sample-efficient where most actions are near-equivalent; combines with
+    /// Double DQN. The hidden sizes (<see cref="Hidden"/>) become the shared trunk.
+    /// </summary>
+    public bool Dueling { get; init; }
+
     public int EvalEvery { get; init; } = 5_000;
     public int EvalEpisodes { get; init; } = 20;
 
@@ -36,10 +43,10 @@ public sealed record DqnOptions
 
 public readonly record struct DqnProgress(int Step, int MaxSteps, double EvalMeanReturn, double Epsilon, float LastLoss);
 
-public sealed record DqnResult(GreedyQAgent Agent, Mlp Network, int StepsTrained, double FinalEvalReturn, DqnTrainingState State);
+public sealed record DqnResult(GreedyQAgent Agent, IValueNet Network, int StepsTrained, double FinalEvalReturn, DqnTrainingState State);
 
 /// <summary>Acts greedily from a Q-network (evaluation/playback); epsilon-greedy when given an RNG.</summary>
-public sealed class GreedyQAgent(Mlp network, int actionCount, Xoshiro256StarStar? rng = null) : IAgent<float[], int>
+public sealed class GreedyQAgent(IValueNet network, int actionCount, Xoshiro256StarStar? rng = null) : IAgent<float[], int>
 {
     public double Epsilon { get; set; }
 
@@ -100,8 +107,11 @@ public static class DqnTrainer
         if (resume is null)
         {
             var initRng = seeds.CreateRng(RngStreams.Init);
-            var online = new Mlp([obsDim, .. options.Hidden, actionCount], initRng, Activation.Relu);
-            var target = new Mlp([obsDim, .. options.Hidden, actionCount], initRng, Activation.Relu);
+            IValueNet MakeNet() => options.Dueling
+                ? new DuelingQNet(obsDim, options.Hidden, actionCount, initRng)
+                : new Mlp([obsDim, .. options.Hidden, actionCount], initRng, Activation.Relu);
+            var online = MakeNet();
+            var target = MakeNet();
             target.CopyFrom(online);
             state = new DqnTrainingState
             {
@@ -183,7 +193,7 @@ public static class DqnTrainer
         return Finish(options.MaxSteps);
     }
 
-    private static float TrainStep(Mlp online, Mlp target, Adam adam, ReplayBuffer.Batch batch, DqnOptions options)
+    private static float TrainStep(IValueNet online, IValueNet target, Adam adam, ReplayBuffer.Batch batch, DqnOptions options)
     {
         // TD targets, gradient-free: y = r + γ·(1−terminated)·Q_target(s', a*)
         var targets = new float[batch.Size];

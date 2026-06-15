@@ -1,0 +1,38 @@
+<h1>Snake</h1>
+<p class="subtitle">
+  A masked Double + Dueling DQN that learned Snake from scratch — <strong>watch it play</strong> (the server
+  drives the game live over a WebSocket) or <strong>play it yourself</strong> (runs entirely in your browser).
+  Honest about its skill: it seeks food and dodges walls, but a from-scratch net eventually traps itself.
+</p>
+
+@if (modelStatus(); as ms) {
+  @if (ms.status === 'training') {
+    <div class="banner training">
+      The Snake AI is training on the server (step {{ ms.trainingStep }} / {{ ms.trainingMaxSteps }}) — play
+      yourself meanwhile.
+    </div>
+  } @else if (ms.status === 'failed') {
+    <div class="banner error">AI training failed: {{ ms.error }}</div>
+  }
+}
+
+<div class="layout">
+  <div class="board" [style.--size]="size">
+    @for (i of cells; track i) {
+      <div [class]="cellClass(i)"></div>
+    }
+  </div>
+
+  <div class="side">
+    <h3>Food eaten: {{ foodEaten() }}</h3>
+    <div class="actions">
+      <button class="primary" (click)="watchAi()" [disabled]="mode() === 'watch'">Watch AI</button>
+      <button class="primary" (click)="playHuman()">Play yourself</button>
+      <button (click)="stop()" [disabled]="mode() === 'idle'">Stop</button>
+    </div>
+    <p class="status">{{ status() }}</p>
+    @if (mode() === 'human') {
+      <p class="hint">Arrow keys or WASD to steer. You can't reverse straight back into your neck.</p>
+    }
+  </div>
+</div>

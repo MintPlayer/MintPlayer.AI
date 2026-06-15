@@ -56,6 +56,10 @@ public static class PpoTrainer
         var vec = new VectorEnv(envFactory, options.NumEnvs, options.ParallelEnvs);
         int obsDim = vec.ObsDim, actionCount = vec.ActionCount;
         int t = options.RolloutSteps, n = options.NumEnvs, batch = t * n;
+        // Invalid-action masking: if the envs expose masks, illegal actions are biased out of the policy
+        // during BOTH rollout sampling and the update (identical semantics), and at eval — so PPO works on
+        // the masked games (Rush Hour, 2048, cube) without ever proposing an illegal move.
+        bool masked = vec.Masked;
 
         var initRng = seeds.CreateRng(RngStreams.Init);
         var actor = BuildNet([obsDim, .. options.Hidden, actionCount], headGain: 0.01f, initRng);
@@ -74,6 +78,9 @@ public static class PpoTrainer
         var terminatedBuf = new bool[batch];
         var doneBuf = new bool[batch];
         var finalValuesBuf = new float[batch];
+        // Additive logit bias per (step, env, action): 0 legal, −1e9 illegal. Stored so the update re-masks
+        // exactly as collection did. Null when the envs are unmasked.
+        var maskBiasBuf = masked ? new float[batch * actionCount] : null;
 
         var obs = vec.Reset(seeds.Derive(RngStreams.Environment));
         var episodeReturns = new double[n];
@@ -92,11 +99,21 @@ public static class PpoTrainer
             {
                 obs.CopyTo(obsBuf.AsSpan(step * n * obsDim, n * obsDim));
 
+                // Mask of the state we're about to act on (after any autoreset in the previous Step).
+                float[]? stepBias = null;
+                if (masked)
+                {
+                    stepBias = ActionMasking.Bias(vec.CurrentActionMasks()!, n, actionCount);
+                    stepBias.CopyTo(maskBiasBuf.AsSpan(step * n * actionCount, n * actionCount));
+                }
+
                 int[] actions;
                 using (GradMode.NoGrad())
                 {
                     var obsT = new Tensor(obs, n, obsDim);
-                    var dist = new Categorical(actor.Forward(obsT));
+                    var logits = actor.Forward(obsT);
+                    if (stepBias is not null) logits = logits.Add(new Tensor(stepBias, n, actionCount));
+                    var dist = new Categorical(logits);
                     actions = dist.Sample(policyRng);
                     var logProbs = dist.LogProb(actions);
                     var values = critic.Forward(obsT);
@@ -177,6 +194,7 @@ public static class PpoTrainer
                     var mbOldLogProbs = new float[size];
                     var mbAdv = new float[size];
                     var mbReturns = new float[size];
+                    var mbMaskBias = masked ? new float[size * actionCount] : null;
                     for (int j = 0; j < size; j++)
                     {
                         obsBuf.AsSpan(mb[j] * obsDim, obsDim).CopyTo(mbObs.AsSpan(j * obsDim, obsDim));
@@ -184,12 +202,16 @@ public static class PpoTrainer
                         mbOldLogProbs[j] = logProbsBuf[mb[j]];
                         mbAdv[j] = advantages[mb[j]];
                         mbReturns[j] = returns[mb[j]];
+                        if (mbMaskBias is not null)
+                            maskBiasBuf.AsSpan(mb[j] * actionCount, actionCount).CopyTo(mbMaskBias.AsSpan(j * actionCount, actionCount));
                     }
                     NormalizeInPlace(mbAdv);
 
                     adam.ZeroGrad();
                     var obsT = new Tensor(mbObs, size, obsDim);
-                    var dist = new Categorical(actor.Forward(obsT));
+                    var logits = actor.Forward(obsT);
+                    if (mbMaskBias is not null) logits = logits.Add(new Tensor(mbMaskBias, size, actionCount));
+                    var dist = new Categorical(logits);
                     var newLogProbs = dist.LogProb(mbActions);
                     var ratio = newLogProbs.Sub(new Tensor(mbOldLogProbs, size)).Exp();
                     var advT = new Tensor(mbAdv, size);
@@ -224,8 +246,9 @@ public static class PpoTrainer
 
             if (iteration % options.EvalEveryIterations == 0)
             {
-                lastEval = Evaluator.Evaluate(evalEnv, agent, options.EvalEpisodes,
-                    seeds.Derive(RngStreams.Evaluation)).MeanReturn;
+                // Mask-aware eval (the lambda gets the env's current mask, or null when unmasked).
+                lastEval = Evaluator.Evaluate(evalEnv, (o, m) => agent.Act(o, m, greedy: true),
+                    options.EvalEpisodes, seeds.Derive(RngStreams.Evaluation)).MeanReturn;
                 if (options.SolveThreshold.HasValue && lastEval >= options.SolveThreshold.Value)
                     return new PpoResult(agent, actor, critic, envSteps, lastEval);
             }

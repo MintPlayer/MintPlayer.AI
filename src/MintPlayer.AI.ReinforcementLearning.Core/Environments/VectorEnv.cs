@@ -28,6 +28,23 @@ public sealed class VectorEnv
     public int ActionCount { get; }
     public bool Parallel { get; }
 
+    /// <summary>True when the sub-envs expose invalid-action masks (<see cref="IActionMaskProvider"/>).</summary>
+    public bool Masked => _envs[0] is IActionMaskProvider;
+
+    /// <summary>
+    /// Each env's current legality mask, flattened row-major to <see cref="Count"/>·<see cref="ActionCount"/>,
+    /// or null when the envs are not maskable. Reflects each env's <i>current</i> state — call it on the
+    /// observation about to be acted on (after any autoreset inside the previous <see cref="Step"/>).
+    /// </summary>
+    public bool[]? CurrentActionMasks()
+    {
+        if (!Masked) return null;
+        var masks = new bool[Count * ActionCount];
+        for (int i = 0; i < Count; i++)
+            ((IActionMaskProvider)_envs[i]).CurrentActionMask().CopyTo(masks.AsSpan(i * ActionCount, ActionCount));
+        return masks;
+    }
+
     /// <summary>Resets all envs, deriving a distinct deterministic seed per env.</summary>
     public float[] Reset(ulong baseSeed)
     {

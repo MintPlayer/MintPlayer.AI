@@ -393,8 +393,12 @@ GFLOP/s): per-call transfer + allocation dominate, exactly as PRD §10 predicted
 
 MountainCar (exploration stress test) · Snake (demo gif) · TorchSharp `IComputeBackend`
 implementation · TensorBoard event writer · self-play scaffolding (TicTacToe + minimax oracle)
-· NuGet packaging · Dueling DQN head (deferred from M3) · tensor/tape pooling (deferred
-from M2) · Categorical/PPO action masking (deferred from M5) · AlphaZero-style fine-tuning
+· NuGet packaging · ✅ Dueling DQN head *(done 2026-06-15 — `DuelingQNet` (shared trunk → value+advantage,
+mean-centered) behind `DqnOptions.Dueling`; reuses the `IValueNet` contract so it drops into the trainer +
+target-sync + type-tagged resume; solves CartPole median-of-3)* · tensor/tape pooling (deferred
+from M2) · ✅ Categorical/PPO action masking *(done 2026-06-15 — additive logit-bias mask shared by
+`PolicyAgent` inference + PPO rollout/update/eval; `VectorEnv.CurrentActionMasks`; unlocks PPO on the
+masked games)* · AlphaZero-style fine-tuning
 of the Rush Hour policy (close the reactive level-1 gap; shrink search expansions)
 · watch-only playground pages for CartPole/2048 self-play · importing puzzles from
 `C:\Repos\Spelletjes\Rush Hour` as gallery data (ask for a clean checkout first).
@@ -726,6 +730,57 @@ Kociemba (which isn't QTM-optimal). Depends on M19+M20 (a residual net at depth 
 - Then wire `value-davi` into the web cube page as the third **"self-taught AI"** solver. **Effort:** net
   ~2–4 d, curriculum ~2 d, BWAS ~2–3 d, then the multi-day GPU campaign (gated on M19+M20).
 
+## M22 — MountainCar + Snake  *(SDK breadth: classic control + masked grid game; designed 2026-06-15 by a 4-agent investigation)*
+
+Two new games that exercise different corners of the SDK. Prereqs already shipped this cycle: PPO action masking +
+Dueling DQN (PR #2). **Both games ship two modes** (PRD §7.1): **watch-AI = principle B** (server-authoritative
+WebSocket stream — backend owns the loop + clock, frontend is a pure renderer, no timer/race) and **human play =
+client-side** (a JS timer ticks a local TS engine + keyboard, no backend in the loop). A reusable server-side
+episode-streamer (Reset → loop{policy → Step → send frame} until done) backs both watch-AI modes.
+
+**MountainCarEnv** (`Environments/MountainCarEnv.cs`, mirrors `CartPoleEnv`). ✅ **BUILT + MEASURED 2026-06-15.**
+- Classic Gymnasium MountainCar-v0: `[position, velocity]`, 3 actions, reward −1/step, `terminated` at x ≥ 0.5,
+  `truncated` at 200 (distinct — GAE bootstraps the truncation). `v += (a−1)·0.001 + cos(3·x)·(−0.0025)`,
+  clamp v∈±0.07, x∈[−1.2,0.6], left-wall inelastic; start x∼U[−0.6,−0.4]. `IStatefulEnvironment`.
+- **Observation NORMALISED to ~[-1,1]** (position centred/9, velocity/MaxSpeed). *Measured finding — the key fix:*
+  raw velocity (~0.07) is ~14× smaller than raw position, so the dense net couldn't see velocity (the signal it
+  must pump on) and PPO reached the goal **0/100**. Normalising both → solved.
+- **Algorithm: PPO** (DQN's ε-greedy can't do the swing-up) trained against an **extended horizon (1000)** so a
+  fresh policy ever reaches the goal + a **speed-bonus reward shaping** (`+13·|velocity|`, training only); eval/gate
+  on the standard 200-step unshaped env. `NumEnvs 16, RolloutSteps 256, EntropyCoef 0.01, SolveThreshold −110`.
+  **Measured:** early-stops at ~120k steps (**< 1 min CPU**), greedy eval **mean return −107.9, reached goal
+  100/100** — past the official −110 "solved" bar. Seed shipped to `models/mountaincar.ppo.ckpt` (Git LFS).
+- **Viz:** 2-D `<canvas>` hill `y = sin(3x)` + flag at 0.5 + car. **Watch-AI (B):** `WS /api/mountaincar/live`
+  streams `{position, velocity, action, reward, done}` per tick, server owns the episode, client renders. **Human
+  play:** client-side TS physics (the same dynamics) on a JS timer, ←/→ = push left/right (no key = no push).
+  Needs `app.UseWebSockets()` + Traefik `Upgrade` pass-through (the infra delta, shared with Snake).
+
+**SnakeEnv** (`Environments/Snake/SnakeEnv.cs`, mirrors `Env2048`/`RushHourEnv` masked-env style). ✅ **BUILT + MEASURED 2026-06-15.**
+- Configurable `Size`×`Size` grid; 4 absolute-direction actions; **`IActionMaskProvider` masks only the 180°
+  reversal** (no new masking code — reuses the PPO/DQN masking). Reward +1 food / −0.01 step / −1 death;
+  `terminated` on wall/self collision (board-full = win), `truncated` at 1000 steps; seeded food respawn;
+  `IStatefulEnvironment` (bitwise resume).
+- **Observation: 12 compact engineered features** (danger one-step ×4, food-direction ×4, heading one-hot ×4) —
+  **not** a raw grid. *Measured finding:* the raw 12×12 grid (`float[432]`) into a dense MLP learned to
+  **survive but not hunt** (~1.5 food, 44 min) — no conv prior. The compact features fix food-seeking AND, being
+  **grid-size-invariant**, enable a **grid-size curriculum**: train fast on a small grid, transfer to a larger one.
+- **Algorithm: masked Double+Dueling DQN**, `Hidden [128,128], lr 5e-4, buffer 100k, batch 128, ε→0.05 over 30k,
+  MaxSteps 100k`, **trained on a 6×6 grid (~10–15 min CPU)**. **Measured:** eats **14.7 food on 6×6** and —
+  same net, never trained there — **22.1 food on the 12×12 demo grid** (transfer); far past the **≥5-food gate**.
+  Honest framing stays "eats a lot, then eventually self-traps" (no true endgame lookahead). Seed checkpoint
+  shipped to `models/snake.dqn.ckpt` (Git LFS).
+- **Viz:** DOM/CSS grid like 2048. **Watch-AI (B):** `WS /api/snake/live` streams each move
+  `{body, food, action, reward, done}`, server owns the episode (incl. the food-respawn RNG → fully consistent),
+  client renders. **Human play:** pure client-side TS engine (`snake-logic.ts`) on a JS timer, keyboard steers,
+  reversal guard mirroring the env mask.
+
+**Build path (per the add-a-game checklist — `docs/ADDING_A_GAME.md`, 6 layers each):** env (+ console training to
+produce the seed `.ckpt` in `models/`, shipped via Git LFS) → `*ModelService : ITrainableModelService` → a shared
+**WebSocket episode-streamer** handler (watch-AI, both games) + `Program.cs` DI & `app.UseWebSockets()` → Angular
+page with two modes (watch-AI WS client + human-play TS engine on a JS timer) + route/nav → gallery label.
+**Effort:** the first WS streamer is the new infra (~1 d, reused by both); then Snake ~1–2 d, MountainCar ~2–3 d
+(env + PPO). Land the reusable streamer + Snake first (simpler env), then MountainCar.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -840,9 +895,9 @@ curriculum + lighter eval) and **✅ P.9** (LR scaling + ε-loss target sync). F
    to ~15–20). Depends on M19+M20. Then wire `value-davi` into the web page as the third solver.
 3. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*
-3. **SDK breadth** (the demos exist to show range): algorithm coverage (PPO action
-   masking, dueling head, maybe SAC), more envs (MountainCar, Snake), a TensorBoard
-   writer, public-API stability/semver discipline, reproducibility guarantees.
+3. **SDK breadth** (the demos exist to show range): algorithm coverage (✅ PPO action
+   masking *(done)*, ✅ dueling head *(done)*, maybe SAC), more envs (**MountainCar + Snake — designed, see M22**),
+   a TensorBoard writer, public-API stability/semver discipline, reproducibility guarantees.
 
    **"Switch algorithm, keep the work" — make the three reusable assets first-class.**
    When an algorithm plateaus, what carries over is the env (already portable via

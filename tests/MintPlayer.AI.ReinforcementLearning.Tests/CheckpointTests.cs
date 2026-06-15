@@ -89,7 +89,7 @@ public class CheckpointTests
         }
     }
 
-    private static void AssertParametersBitwiseEqual(Mlp a, Mlp b)
+    private static void AssertParametersBitwiseEqual(IValueNet a, IValueNet b)
     {
         var pa = a.Parameters().ToArray();
         var pb = b.Parameters().ToArray();

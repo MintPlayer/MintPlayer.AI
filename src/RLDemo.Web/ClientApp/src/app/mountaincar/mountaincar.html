@@ -1,0 +1,33 @@
+<h1>Mountain Car</h1>
+<p class="subtitle">
+  An underpowered car has to swing back and forth to build the momentum to reach the flag. A <strong>PPO</strong>
+  agent learned the swing-up from scratch — <strong>watch it</strong> (the server drives the car live over a
+  WebSocket) or <strong>drive it yourself</strong> (runs in your browser).
+</p>
+
+@if (modelStatus(); as ms) {
+  @if (ms.status === 'training') {
+    <div class="banner training">
+      The MountainCar agent is training on the server ({{ ms.trainingStep }} / {{ ms.trainingMaxSteps }} steps) —
+      drive it yourself meanwhile.
+    </div>
+  } @else if (ms.status === 'failed') {
+    <div class="banner error">AI training failed: {{ ms.error }}</div>
+  }
+}
+
+<div class="layout">
+  <canvas #mcCanvas width="600" height="360" class="board"></canvas>
+
+  <div class="side">
+    <div class="actions">
+      <button class="primary" (click)="watchAi()" [disabled]="mode() === 'watch'">Watch AI</button>
+      <button class="primary" (click)="playHuman()">Drive yourself</button>
+      <button (click)="stop()" [disabled]="mode() === 'idle'">Stop</button>
+    </div>
+    <p class="status">{{ status() }}</p>
+    @if (mode() === 'human') {
+      <p class="hint">Hold ← / → (or A / D) to push left / right. You can't reach the flag by pushing right alone.</p>
+    }
+  </div>
+</div>

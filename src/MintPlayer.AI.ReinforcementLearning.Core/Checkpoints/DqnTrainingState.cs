@@ -15,10 +15,10 @@ namespace MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 public sealed class DqnTrainingState
 {
     public const string Kind = "dqn-state";
-    private const int Version = 1;
+    private const int Version = 2; // v2: networks are type-tagged (Mlp | DuelingQNet) via QNetCheckpoint
 
-    public required Mlp Online { get; init; }
-    public required Mlp Target { get; init; }
+    public required IValueNet Online { get; init; }
+    public required IValueNet Target { get; init; }
     public required Adam Optimizer { get; init; }
     public required ReplayBuffer Buffer { get; init; }
     public required Xoshiro256StarStar PolicyRng { get; init; }
@@ -37,8 +37,8 @@ public sealed class DqnTrainingState
         using var writer = new BinaryWriter(destination, Encoding.UTF8, leaveOpen: true);
         CheckpointFormat.WriteHeader(writer, Kind, Version);
 
-        MlpCheckpoint.Write(Online, writer);
-        MlpCheckpoint.Write(Target, writer);
+        QNetCheckpoint.Write(Online, writer);
+        QNetCheckpoint.Write(Target, writer);
         AdamCheckpoint.Write(Optimizer, writer);
 
         // Algorithm-agnostic transition payload (same bytes as the former inline block).
@@ -61,8 +61,8 @@ public sealed class DqnTrainingState
         using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
         CheckpointFormat.ReadHeader(reader, Kind, Version);
 
-        var online = MlpCheckpoint.Read(reader);
-        var target = MlpCheckpoint.Read(reader);
+        var online = QNetCheckpoint.Read(reader);
+        var target = QNetCheckpoint.Read(reader);
         var optimizer = AdamCheckpoint.Read(online.Parameters(), reader);
         var buffer = ReplayBufferCheckpoint.Read(reader);
 
