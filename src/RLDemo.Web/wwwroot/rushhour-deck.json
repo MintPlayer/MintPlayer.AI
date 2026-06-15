@@ -1,4 +1,5898 @@
 {
   "version": 1,
-  "levels": []
+  "levels": [
+    {
+      "id": "19204df0",
+      "name": "Level 1",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 16
+    },
+    {
+      "id": "ef7f5c75",
+      "name": "Level 2",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 14
+    },
+    {
+      "id": "8c1a990f",
+      "name": "Level 3",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 33
+    },
+    {
+      "id": "92d31131",
+      "name": "Level 4",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 22
+    },
+    {
+      "id": "3ca15e8e",
+      "name": "Level 5",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 18
+    },
+    {
+      "id": "ff1190ca",
+      "name": "Level 6",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 18
+    },
+    {
+      "id": "3112822e",
+      "name": "Level 7",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 21
+    },
+    {
+      "id": "586e859a",
+      "name": "Level 8",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 22
+    },
+    {
+      "id": "3ceab8a5",
+      "name": "Level 9",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 17
+    },
+    {
+      "id": "0badd329",
+      "name": "Level 10",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 32
+    },
+    {
+      "id": "0c53610b",
+      "name": "Level 11",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 56
+    },
+    {
+      "id": "f8e6dcd6",
+      "name": "Level 12",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 33
+    },
+    {
+      "id": "39a1f63e",
+      "name": "Level 13",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 32
+    },
+    {
+      "id": "1479b69d",
+      "name": "Level 14",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 34
+    },
+    {
+      "id": "55409011",
+      "name": "Level 15",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 1,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 32
+    },
+    {
+      "id": "9fceefb2",
+      "name": "Level 16",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 41
+    },
+    {
+      "id": "1256aa43",
+      "name": "Level 17",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 47
+    },
+    {
+      "id": "f01e97e3",
+      "name": "Level 18",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 60
+    },
+    {
+      "id": "c016617b",
+      "name": "Level 19",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 44
+    },
+    {
+      "id": "6ecc6954",
+      "name": "Level 20",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 18
+    },
+    {
+      "id": "e3342cef",
+      "name": "Level 21",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 49
+    },
+    {
+      "id": "c1080bc7",
+      "name": "Level 22",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 46
+    },
+    {
+      "id": "6639c98e",
+      "name": "Level 23",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 49
+    },
+    {
+      "id": "18c759d8",
+      "name": "Level 24",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 50
+    },
+    {
+      "id": "4582e2a3",
+      "name": "Level 25",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 52
+    },
+    {
+      "id": "999d88ca",
+      "name": "Level 26",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 49
+    },
+    {
+      "id": "740b4295",
+      "name": "Level 27",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 57
+    },
+    {
+      "id": "39120f2b",
+      "name": "Level 28",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 51
+    },
+    {
+      "id": "71cbb37a",
+      "name": "Level 29",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 54
+    },
+    {
+      "id": "efa4dc97",
+      "name": "Level 30",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 55
+    },
+    {
+      "id": "8f48cff4",
+      "name": "Level 31",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 69
+    },
+    {
+      "id": "e9f626ad",
+      "name": "Level 32",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 62
+    },
+    {
+      "id": "81ce5248",
+      "name": "Level 33",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 77
+    },
+    {
+      "id": "cff26c4a",
+      "name": "Level 34",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 71
+    },
+    {
+      "id": "1ace24da",
+      "name": "Level 35",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 75
+    },
+    {
+      "id": "e0490f72",
+      "name": "Level 36",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 63
+    },
+    {
+      "id": "d07ed01d",
+      "name": "Level 37",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 65
+    },
+    {
+      "id": "0cec889c",
+      "name": "Level 38",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 77
+    },
+    {
+      "id": "4e50f630",
+      "name": "Level 39",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 82
+    },
+    {
+      "id": "4bfd7735",
+      "name": "Level 40",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 81
+    },
+    {
+      "id": "2c6888de",
+      "name": "Level 1",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 37
+    },
+    {
+      "id": "7c6e1902",
+      "name": "Level 2",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 40
+    },
+    {
+      "id": "7fdd0502",
+      "name": "Level 3",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 44
+    },
+    {
+      "id": "fe88726c",
+      "name": "Level 4",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 27
+    },
+    {
+      "id": "fb0a14e6",
+      "name": "Level 5",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 51
+    },
+    {
+      "id": "2eba755f",
+      "name": "Level 6",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 45
+    },
+    {
+      "id": "1fed9ed4",
+      "name": "Level 7",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 46
+    },
+    {
+      "id": "565af009",
+      "name": "Level 8",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 35
+    },
+    {
+      "id": "d4dbc8b8",
+      "name": "Level 9",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 65
+    },
+    {
+      "id": "9af9ff52",
+      "name": "Level 10",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 51
+    },
+    {
+      "id": "4ad15ee3",
+      "name": "Level 11",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 42
+    },
+    {
+      "id": "271a2084",
+      "name": "Level 12",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 33
+    },
+    {
+      "id": "6a7b13b2",
+      "name": "Level 13",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 36
+    },
+    {
+      "id": "b75c47cf",
+      "name": "Level 14",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 44
+    },
+    {
+      "id": "a1980dbd",
+      "name": "Level 15",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 54
+    },
+    {
+      "id": "4dd0eb3a",
+      "name": "Level 16",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 44
+    },
+    {
+      "id": "68562534",
+      "name": "Level 17",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 49
+    },
+    {
+      "id": "fd85f0be",
+      "name": "Level 18",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 44
+    },
+    {
+      "id": "d6d3d561",
+      "name": "Level 19",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 50
+    },
+    {
+      "id": "38c55134",
+      "name": "Level 20",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 70
+    },
+    {
+      "id": "e2cfd68c",
+      "name": "Level 21",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 35
+    },
+    {
+      "id": "bf4dabeb",
+      "name": "Level 22",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 43
+    },
+    {
+      "id": "8b2c6bc9",
+      "name": "Level 23",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 45
+    },
+    {
+      "id": "45c06abc",
+      "name": "Level 24",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 49
+    },
+    {
+      "id": "c7828c13",
+      "name": "Level 25",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 58
+    },
+    {
+      "id": "63c1ab25",
+      "name": "Level 26",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 46
+    },
+    {
+      "id": "40e463bb",
+      "name": "Level 27",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 52
+    },
+    {
+      "id": "b009baf0",
+      "name": "Level 28",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 55
+    },
+    {
+      "id": "d30b2a16",
+      "name": "Level 29",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 56
+    },
+    {
+      "id": "9e7e90fc",
+      "name": "Level 31",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 64
+    },
+    {
+      "id": "9375ae17",
+      "name": "Level 32",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 63
+    },
+    {
+      "id": "89f2676c",
+      "name": "Level 33",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 40
+    },
+    {
+      "id": "ef0d8a21",
+      "name": "Level 34",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 69
+    },
+    {
+      "id": "1a360db3",
+      "name": "Level 35",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 61
+    },
+    {
+      "id": "81931429",
+      "name": "Level 36",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 84
+    },
+    {
+      "id": "5695f460",
+      "name": "Level 37",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "length": 3,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 69
+    },
+    {
+      "id": "c0044a4b",
+      "name": "Level 38",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        }
+      ],
+      "optimalMoves": 65
+    },
+    {
+      "id": "1d348bd8",
+      "name": "Level 39",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 3,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "length": 3,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 69
+    },
+    {
+      "id": "041e6cc1",
+      "name": "Level 40",
+      "vehicles": [
+        {
+          "row": 2,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 0,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "length": 2,
+          "horizontal": true
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "length": 2,
+          "horizontal": false
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "length": 3,
+          "horizontal": false
+        }
+      ],
+      "optimalMoves": 80
+    }
+  ]
 }
