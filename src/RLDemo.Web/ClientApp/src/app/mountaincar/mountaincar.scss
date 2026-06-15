@@ -1,0 +1,38 @@
+:host { display: block; }
+
+.subtitle { max-width: 62ch; color: #9aa4b2; }
+
+.banner {
+  padding: 0.6rem 0.9rem;
+  border-radius: 6px;
+  margin: 0.5rem 0 1rem;
+  &.training { background: #2a2f3d; color: #ffd479; }
+  &.error { background: #3a2226; color: #ff8a8a; }
+}
+
+.layout {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.board {
+  background: #141823;
+  border-radius: 8px;
+  max-width: 100%;
+}
+
+.side {
+  min-width: 220px;
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 0.5rem;
+  }
+
+  .status { color: #cdd5e0; min-height: 1.4em; }
+  .hint { color: #8b95a5; font-size: 0.9em; }
+}

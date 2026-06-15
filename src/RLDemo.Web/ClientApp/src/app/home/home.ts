@@ -49,6 +49,15 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
+      <a class="card" routerLink="/mountaincar">
+        <h2>Mountain Car</h2>
+        <p>
+          A PPO agent learned to swing an underpowered car up to the flag. Watch it drive
+          live (the server runs the episode), or drive it yourself.
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
       <a class="card" routerLink="/gallery">
         <h2>Gallery</h2>
         <p>

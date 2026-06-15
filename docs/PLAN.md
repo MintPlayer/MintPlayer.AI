@@ -738,19 +738,18 @@ WebSocket stream — backend owns the loop + clock, frontend is a pure renderer,
 client-side** (a JS timer ticks a local TS engine + keyboard, no backend in the loop). A reusable server-side
 episode-streamer (Reset → loop{policy → Step → send frame} until done) backs both watch-AI modes.
 
-**MountainCarEnv** (`Environments/MountainCarEnv.cs`, mirrors `CartPoleEnv` conventions):
-- Classic Gymnasium MountainCar-v0: state `[position, velocity]`, 3 actions (push left/none/right), reward −1/step,
-  `terminated` at position ≥ 0.5, `truncated` at 200 steps (kept distinct — GAE bootstraps the truncation).
-  Dynamics: `v += (a−1)·0.001 + cos(3·x)·(−0.0025)`, clamp v∈±0.07, x∈[−1.2,0.6], left-wall inelastic stop;
-  start x∼U[−0.6,−0.4], v=0. Implements `IStatefulEnvironment` (bitwise resume), not `IActionMaskProvider`.
-- **Algorithm: PPO** — DQN's ε-greedy can't string together the ~100-step swing-up (sparse −1 reward → Q
-  collapses); PPO's entropy-held stochastic policy explores far better. Train with a **longer horizon than 200**
-  (ctor `maxEpisodeSteps`, e.g. 1000) so a fresh policy ever sees the goal; **evaluate/gate on the standard 200**.
-  Hyperparams: `NumEnvs 16, RolloutSteps 256, EntropyCoef 0.01, TotalSteps ~1M, ParallelEnvs`. **Fallback** if it
-  stalls: optional potential-based reward shaping (`+k·|velocity|`, off by default to stay v0-faithful) — then
-  even masked Double+Dueling DQN solves it. **Gate:** mean return ≥ −110 over 100 eps (official "solved");
-  reaching the goal at all (return > −200) is the binary "works" signal. Honest framing: report "reaches the goal,
-  not yet solved" when between.
+**MountainCarEnv** (`Environments/MountainCarEnv.cs`, mirrors `CartPoleEnv`). ✅ **BUILT + MEASURED 2026-06-15.**
+- Classic Gymnasium MountainCar-v0: `[position, velocity]`, 3 actions, reward −1/step, `terminated` at x ≥ 0.5,
+  `truncated` at 200 (distinct — GAE bootstraps the truncation). `v += (a−1)·0.001 + cos(3·x)·(−0.0025)`,
+  clamp v∈±0.07, x∈[−1.2,0.6], left-wall inelastic; start x∼U[−0.6,−0.4]. `IStatefulEnvironment`.
+- **Observation NORMALISED to ~[-1,1]** (position centred/9, velocity/MaxSpeed). *Measured finding — the key fix:*
+  raw velocity (~0.07) is ~14× smaller than raw position, so the dense net couldn't see velocity (the signal it
+  must pump on) and PPO reached the goal **0/100**. Normalising both → solved.
+- **Algorithm: PPO** (DQN's ε-greedy can't do the swing-up) trained against an **extended horizon (1000)** so a
+  fresh policy ever reaches the goal + a **speed-bonus reward shaping** (`+13·|velocity|`, training only); eval/gate
+  on the standard 200-step unshaped env. `NumEnvs 16, RolloutSteps 256, EntropyCoef 0.01, SolveThreshold −110`.
+  **Measured:** early-stops at ~120k steps (**< 1 min CPU**), greedy eval **mean return −107.9, reached goal
+  100/100** — past the official −110 "solved" bar. Seed shipped to `models/mountaincar.ppo.ckpt` (Git LFS).
 - **Viz:** 2-D `<canvas>` hill `y = sin(3x)` + flag at 0.5 + car. **Watch-AI (B):** `WS /api/mountaincar/live`
   streams `{position, velocity, action, reward, done}` per tick, server owns the episode, client renders. **Human
   play:** client-side TS physics (the same dynamics) on a JS timer, ←/→ = push left/right (no key = no push).
