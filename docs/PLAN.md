@@ -394,7 +394,9 @@ GFLOP/s): per-call transfer + allocation dominate, exactly as PRD §10 predicted
 MountainCar (exploration stress test) · Snake (demo gif) · TorchSharp `IComputeBackend`
 implementation · TensorBoard event writer · self-play scaffolding (TicTacToe + minimax oracle)
 · NuGet packaging · Dueling DQN head (deferred from M3) · tensor/tape pooling (deferred
-from M2) · Categorical/PPO action masking (deferred from M5) · AlphaZero-style fine-tuning
+from M2) · ✅ Categorical/PPO action masking *(done 2026-06-15 — additive logit-bias mask shared by
+`PolicyAgent` inference + PPO rollout/update/eval; `VectorEnv.CurrentActionMasks`; unlocks PPO on the
+masked games)* · AlphaZero-style fine-tuning
 of the Rush Hour policy (close the reactive level-1 gap; shrink search expansions)
 · watch-only playground pages for CartPole/2048 self-play · importing puzzles from
 `C:\Repos\Spelletjes\Rush Hour` as gallery data (ask for a clean checkout first).
@@ -840,8 +842,8 @@ curriculum + lighter eval) and **✅ P.9** (LR scaling + ε-loss target sync). F
    to ~15–20). Depends on M19+M20. Then wire `value-davi` into the web page as the third solver.
 3. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*
-3. **SDK breadth** (the demos exist to show range): algorithm coverage (PPO action
-   masking, dueling head, maybe SAC), more envs (MountainCar, Snake), a TensorBoard
+3. **SDK breadth** (the demos exist to show range): algorithm coverage (✅ PPO action
+   masking *(done)*, dueling head, maybe SAC), more envs (MountainCar, Snake), a TensorBoard
    writer, public-API stability/semver discipline, reproducibility guarantees.
 
    **"Switch algorithm, keep the work" — make the three reusable assets first-class.**

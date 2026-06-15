@@ -28,11 +28,20 @@ public sealed record ReinforceResult(PolicyAgent Agent, Mlp Network, int Episode
 /// <summary>Samples (or argmaxes) actions from a policy network's categorical head.</summary>
 public sealed class PolicyAgent(Mlp network, Xoshiro256StarStar rng) : IAgent<float[], int>
 {
-    public int Act(float[] observation, bool greedy = false)
+    public int Act(float[] observation, bool greedy = false) => Act(observation, null, greedy);
+
+    /// <summary>
+    /// Masked inference: illegal actions (mask false) are pushed to ~0 probability before sampling/argmax,
+    /// so the policy never emits one. <paramref name="mask"/> null ⇒ unmasked. Mirrors the masking PPO
+    /// applies during training, so eval matches the trained (masked) distribution.
+    /// </summary>
+    public int Act(float[] observation, bool[]? mask, bool greedy = false)
     {
         using (GradMode.NoGrad())
         {
-            var dist = new Categorical(network.Forward(new Tensor(observation, 1, observation.Length)));
+            var logits = network.Forward(new Tensor(observation, 1, observation.Length));
+            if (mask is not null) logits = ActionMasking.Apply(logits, mask);
+            var dist = new Categorical(logits);
             return greedy ? dist.Mode()[0] : dist.Sample(rng)[0];
         }
     }
