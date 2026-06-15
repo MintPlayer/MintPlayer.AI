@@ -22,6 +22,8 @@ internal static class CubeDaviLab
     public static void Run(string[] args)
     {
         double hours = 9;
+        long targetSamples = 0;       // --samples N: stop after N total states processed (0 = time-bounded only)
+        int[]? probeOverride = null;  // --probe-depths a,b,c: BWAS capability-probe depths
         string dataDir = "data";
         ulong seed = 1;
         int width = Hidden;
@@ -41,6 +43,8 @@ internal static class CubeDaviLab
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--samples" && i + 1 < args.Length) targetSamples = long.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--probe-depths" && i + 1 < args.Length) probeOverride = args[++i].Split(',').Select(int.Parse).ToArray();
             else if (args[i] == "--data" && i + 1 < args.Length) dataDir = args[++i];
             else if (args[i] == "--seed" && i + 1 < args.Length) seed = ulong.Parse(args[++i]);
             else if (args[i] == "--width" && i + 1 < args.Length) width = int.Parse(args[++i]);
@@ -223,7 +227,9 @@ internal static class CubeDaviLab
         // So every `probeEvery` iters run a BWAS capability probe at a few discriminating depths and log a
         // [cap] line + cap CSV — this records the true capability-over-time curve during the run.
         const long probeEvery = 15_000;
-        int[] probeDepths = [8, 10, 12, 14, 16];
+        // The cheap in-loop probe runs a small (8k-expansion) BWAS, so it only shows signal where that budget
+        // can reach — keep it near the frontier (the real deep d16+ check is the heavy `--eval-only --search`).
+        int[] probeDepths = probeOverride ?? [8, 10, 12, 14, 16];
         string capCsvPath = Path.Combine(logPath, residual ? "cube-davi-res-cap.csv" : "cube-davi-cap.csv");
         if (!File.Exists(capCsvPath))
             File.AppendAllText(capCsvPath, "utc,iterations," + string.Join(',', probeDepths.Select(d => $"d{d}")) + "\n");
@@ -231,10 +237,14 @@ internal static class CubeDaviLab
 
         var deadline = DateTime.UtcNow.AddHours(hours);
         float lastLoss = 0;
-        Log($"training until {deadline:u} (~{hours:F1} h), data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
-        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, eval every {trainChunk} iters, BWAS cap-probe every {probeEvery:N0}");
+        // A campaign can be bounded by wall-clock (--hours), a total state count (--samples), or both —
+        // whichever trips first. The state count resumes across sessions because totalIterations is restored,
+        // so "run 1B states" can be done in chunked sessions and stops exactly once 1B total are processed.
+        bool TargetReached() => targetSamples > 0 && totalIterations * (long)batchSize >= targetSamples;
+        Log($"training until {deadline:u} (~{hours:F1} h){(targetSamples > 0 ? $" or {targetSamples:N0} total states ({totalIterations * (long)batchSize:N0} done)" : "")}, data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
+        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, eval every {trainChunk} iters, BWAS cap-probe (d{string.Join(',', probeDepths)}) every {probeEvery:N0}");
 
-        while (DateTime.UtcNow < deadline)
+        while (DateTime.UtcNow < deadline && !TargetReached())
         {
             trainer.Train(Sample, iterations: trainChunk, onIteration: (_, loss) => lastLoss = loss);
             totalIterations += trainChunk;
@@ -263,7 +273,9 @@ internal static class CubeDaviLab
             }
         }
 
-        Log("time budget reached — final checkpoint saved.");
+        Log(TargetReached()
+            ? $"target state count reached ({totalIterations * (long)batchSize:N0}) — final checkpoint saved."
+            : "time budget reached — final checkpoint saved.");
     }
 
     /// <summary>
