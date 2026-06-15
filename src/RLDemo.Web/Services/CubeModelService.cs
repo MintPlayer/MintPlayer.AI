@@ -187,7 +187,8 @@ public sealed class CubeModelService(IModelStore store, AdaptiveBackend backend,
                     p.Step, p.MaxSteps, p.EvalMeanReturn);
             }), new SeedSequence(TrainingMasterSeed));
 
-            store.Save(EnvironmentId, AlgorithmId, s => MlpCheckpoint.Save(result.Network, s));
+            // This service trains a plain-MLP DQN (no Dueling), so the result is always an Mlp.
+            store.Save(EnvironmentId, AlgorithmId, s => MlpCheckpoint.Save((Mlp)result.Network, s));
             _agent = new GreedyQAgent(result.Network, RubiksCubeEnv.ActionCount);
             Status = ModelStatus.Ready;
             logger.LogInformation("Rubik's Cube model trained ({Steps} steps, eval {Eval:F1}) and saved.",

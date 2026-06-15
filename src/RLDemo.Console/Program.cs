@@ -140,7 +140,7 @@ if (ShouldRun("cartpole"))
         sw.Stop();
         Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalSeconds:F1} s");
         agent = result.Agent;
-        SaveMlp("cartpole", "dqn", result.Network);
+        SaveMlp("cartpole", "dqn", (Mlp)result.Network);
     }
 
     var eval = Evaluator.Evaluate(env, agent, episodes: 100, seeds.Derive(RngStreams.Evaluation));
@@ -256,7 +256,7 @@ if (ShouldRun("2048dqn"))
         sw.Stop();
         Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalMinutes:F1} min");
         agent = result.Agent;
-        SaveMlp("2048", "dqn", result.Network);
+        SaveMlp("2048", "dqn", (Mlp)result.Network);
     }
 
     // Report in game terms: play 50 greedy games, count tiles reached.
@@ -318,7 +318,7 @@ if (ShouldRun("rushhour"))
         sw.Stop();
         Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalMinutes:F1} min");
         agent = result.Agent;
-        SaveMlp("rushhour", "dqn", result.Network);
+        SaveMlp("rushhour", "dqn", (Mlp)result.Network);
     }
 
     var (solvedInBudget, solvedAtAll) = EvaluateRushHourGate(env, agent, puzzles);
@@ -363,7 +363,7 @@ if (ShouldRun("cube"))
         sw.Stop();
         Console.WriteLine($"trained {result.StepsTrained:N0} env steps in {sw.Elapsed.TotalMinutes:F1} min");
         agent = result.Agent;
-        SaveMlp("cube", "dqn", result.Network);
+        SaveMlp("cube", "dqn", (Mlp)result.Network);
     }
 
     // Greedy rollouts first; failures retried with the Q-guided lookahead, mirroring the

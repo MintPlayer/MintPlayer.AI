@@ -151,7 +151,8 @@ public sealed class RushHourModelService(IModelStore store, ILogger<RushHourMode
                     p.Step, p.MaxSteps, p.EvalMeanReturn);
             }), new SeedSequence(TrainingMasterSeed));
 
-            store.Save(EnvironmentId, AlgorithmId, s => MlpCheckpoint.Save(result.Network, s));
+            // This service trains a plain-MLP DQN (no Dueling), so the result is always an Mlp.
+            store.Save(EnvironmentId, AlgorithmId, s => MlpCheckpoint.Save((Mlp)result.Network, s));
             _agent = new GreedyQAgent(result.Network, RushHourBoard.ActionCount);
             Status = ModelStatus.Ready;
             logger.LogInformation("Rush Hour model trained ({Steps} steps, eval {Eval:F1}) and saved.",

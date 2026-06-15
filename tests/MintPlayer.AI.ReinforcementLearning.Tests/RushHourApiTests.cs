@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RushHour;
@@ -209,7 +210,7 @@ public class TrainedPlaygroundFactory : PlaygroundFactory
 
         var store = new FileModelStore(DataDirectory);
         store.Save(RushHourModelService.EnvironmentId, RushHourModelService.AlgorithmId,
-            s => MlpCheckpoint.Save(result.Network, s));
+            s => MlpCheckpoint.Save((Mlp)result.Network, s));
     }
 }
 

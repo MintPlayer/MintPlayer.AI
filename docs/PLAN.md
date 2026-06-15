@@ -393,7 +393,9 @@ GFLOP/s): per-call transfer + allocation dominate, exactly as PRD §10 predicted
 
 MountainCar (exploration stress test) · Snake (demo gif) · TorchSharp `IComputeBackend`
 implementation · TensorBoard event writer · self-play scaffolding (TicTacToe + minimax oracle)
-· NuGet packaging · Dueling DQN head (deferred from M3) · tensor/tape pooling (deferred
+· NuGet packaging · ✅ Dueling DQN head *(done 2026-06-15 — `DuelingQNet` (shared trunk → value+advantage,
+mean-centered) behind `DqnOptions.Dueling`; reuses the `IValueNet` contract so it drops into the trainer +
+target-sync + type-tagged resume; solves CartPole median-of-3)* · tensor/tape pooling (deferred
 from M2) · ✅ Categorical/PPO action masking *(done 2026-06-15 — additive logit-bias mask shared by
 `PolicyAgent` inference + PPO rollout/update/eval; `VectorEnv.CurrentActionMasks`; unlocks PPO on the
 masked games)* · AlphaZero-style fine-tuning
@@ -843,7 +845,7 @@ curriculum + lighter eval) and **✅ P.9** (LR scaling + ε-loss target sync). F
 3. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*
 3. **SDK breadth** (the demos exist to show range): algorithm coverage (✅ PPO action
-   masking *(done)*, dueling head, maybe SAC), more envs (MountainCar, Snake), a TensorBoard
+   masking *(done)*, ✅ dueling head *(done)*, maybe SAC), more envs (MountainCar, Snake), a TensorBoard
    writer, public-API stability/semver discipline, reproducibility guarantees.
 
    **"Switch algorithm, keep the work" — make the three reusable assets first-class.**
