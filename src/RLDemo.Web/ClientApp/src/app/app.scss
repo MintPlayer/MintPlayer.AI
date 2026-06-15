@@ -35,6 +35,24 @@
       cursor: default;
     }
   }
+
+  // Pushed to the far right of the bar; the rest of the nav stays left next to the brand.
+  .repo-link {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #aab2c5;
+    text-decoration: none;
+
+    &:hover {
+      color: #e6e8ee;
+    }
+
+    span {
+      font-size: 0.95rem;
+    }
+  }
 }
 
 main {
