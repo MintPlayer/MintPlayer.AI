@@ -732,10 +732,11 @@ Kociemba (which isn't QTM-optimal). Depends on M19+M20 (a residual net at depth 
 
 ## M22 — MountainCar + Snake  *(SDK breadth: classic control + masked grid game; designed 2026-06-15 by a 4-agent investigation)*
 
-Two new games that exercise different corners of the SDK and **both new interaction principles** (PRD §7.1).
-Prereqs already shipped this cycle: PPO action masking + Dueling DQN (PR #2). Connection design: see the PRD
-§7.1 matrix — **MountainCar = principle B (live WebSocket control stream)**, **Snake = principle A (one-shot
-watch-AI) + client-side human play**.
+Two new games that exercise different corners of the SDK. Prereqs already shipped this cycle: PPO action masking +
+Dueling DQN (PR #2). **Both games ship two modes** (PRD §7.1): **watch-AI = principle B** (server-authoritative
+WebSocket stream — backend owns the loop + clock, frontend is a pure renderer, no timer/race) and **human play =
+client-side** (a JS timer ticks a local TS engine + keyboard, no backend in the loop). A reusable server-side
+episode-streamer (Reset → loop{policy → Step → send frame} until done) backs both watch-AI modes.
 
 **MountainCarEnv** (`Environments/MountainCarEnv.cs`, mirrors `CartPoleEnv` conventions):
 - Classic Gymnasium MountainCar-v0: state `[position, velocity]`, 3 actions (push left/none/right), reward −1/step,
@@ -750,9 +751,10 @@ watch-AI) + client-side human play**.
   even masked Double+Dueling DQN solves it. **Gate:** mean return ≥ −110 over 100 eps (official "solved");
   reaching the goal at all (return > −200) is the binary "works" signal. Honest framing: report "reaches the goal,
   not yet solved" when between.
-- **Viz (principle B):** 2-D `<canvas>` hill `y = sin(3x)` + flag at 0.5 + car; `WS /api/mountaincar/live`
-  streams `{position, velocity, action, reward, done}` per tick, the server owning the authoritative episode,
-  the client a thin renderer. Needs `app.UseWebSockets()` + Traefik `Upgrade` pass-through (the one infra delta).
+- **Viz:** 2-D `<canvas>` hill `y = sin(3x)` + flag at 0.5 + car. **Watch-AI (B):** `WS /api/mountaincar/live`
+  streams `{position, velocity, action, reward, done}` per tick, server owns the episode, client renders. **Human
+  play:** client-side TS physics (the same dynamics) on a JS timer, ←/→ = push left/right (no key = no push).
+  Needs `app.UseWebSockets()` + Traefik `Upgrade` pass-through (the infra delta, shared with Snake).
 
 **SnakeEnv** (`Environments/Snake/SnakeEnv.cs`, mirrors `Env2048`/`RushHourEnv` masked-env style):
 - 12×12 grid; obs = 3 binary planes (body / head / food) flattened → `BoxSpace(0,1, 432)`; 4 absolute-direction
@@ -765,15 +767,17 @@ watch-AI) + client-side human play**.
   buffer 100k, batch 128, ε→0.05 over 50k, MaxSteps 300k`. **Honest expected skill:** "seeks food, avoids walls,
   eats mid-single-digits then self-traps" — not a perfect space-filling endgame (a from-scratch dense MLP has no
   conv prior / true lookahead). **Gate:** mean ≥ 5 food / 100 greedy eps (≈ `SolveThreshold` return ≥ 3).
-- **Viz (principle A):** DOM/CSS grid like 2048. **Human play = pure client-side** TS engine (`snake-logic.ts`,
-  keyboard, reversal guard mirroring the env mask). **Watch-AI = one `POST /api/snake/solve-ai`** returning the
-  full playthrough as **RushHour-style full-state-per-step** (`SnakeStepDto{Action, int[] Body, int Food, Reward}`
-  — not 2048's compact form, because food respawn is server-RNG), animated client-side.
+- **Viz:** DOM/CSS grid like 2048. **Watch-AI (B):** `WS /api/snake/live` streams each move
+  `{body, food, action, reward, done}`, server owns the episode (incl. the food-respawn RNG → fully consistent),
+  client renders. **Human play:** pure client-side TS engine (`snake-logic.ts`) on a JS timer, keyboard steers,
+  reversal guard mirroring the env mask.
 
-**Build path (per the add-a-game checklist — `docs/ADDING_A_GAME.md`, 6 layers each):** env (+ console training to produce the seed `.ckpt`
-in `models/`, shipped via Git LFS) → `*ModelService : ITrainableModelService` → controller (HTTP for Snake; a
-WebSocket handler for MountainCar) → `Program.cs` DI + (MountainCar) `UseWebSockets` → Angular page/api/route/nav
-→ gallery label. **Effort:** Snake ~1–2 d (pure principle-A reuse), MountainCar ~2–3 d (env + PPO + the first WS).
+**Build path (per the add-a-game checklist — `docs/ADDING_A_GAME.md`, 6 layers each):** env (+ console training to
+produce the seed `.ckpt` in `models/`, shipped via Git LFS) → `*ModelService : ITrainableModelService` → a shared
+**WebSocket episode-streamer** handler (watch-AI, both games) + `Program.cs` DI & `app.UseWebSockets()` → Angular
+page with two modes (watch-AI WS client + human-play TS engine on a JS timer) + route/nav → gallery label.
+**Effort:** the first WS streamer is the new infra (~1 d, reused by both); then Snake ~1–2 d, MountainCar ~2–3 d
+(env + PPO). Land the reusable streamer + Snake first (simpler env), then MountainCar.
 
 ## Testing strategy (cross-cutting, from research)
 

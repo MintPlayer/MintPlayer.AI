@@ -189,27 +189,38 @@ it uses:
 
 | Principle | What it is | When to use | Transport | State |
 |---|---|---|---|---|
-| **A. Compute-and-return** | The frontend sends a request; the backend computes the *entire* answer (a solution, or a full deterministic playout) and returns it in one response. The browser then animates/scrubs it entirely client-side. | A **solve** (no live game) or **turn-based** play where there is no real-time pressure. | Plain HTTP `POST` (the existing `fetch` + `await json()` pattern). | Stateless; survives deploys; retriable. |
-| **B. Live agent-in-the-loop control stream** | The simulation advances **continuously in real time** while the policy is **queried every control tick** — the agent is *in the loop* of a running game, not solving a fixed instance. The backend streams `(state, action)` frames; the frontend renders as they arrive. | A **real-time continuous-control** game where the dynamics never pause for the network. | **WebSocket** (`app.UseWebSockets()`; Traefik passes the `Upgrade` through the existing `websecure` router). | Stateful per connection; a dropped socket just restarts the (cheap) episode. |
+| **A. Compute-and-return** | The frontend sends a request; the backend computes the *entire* answer (a solution / full playout) and returns it in one response. The browser renders it. | A **solve** (one fixed optimal answer) or where the **client legitimately drives** (human play; simple per-move query). | Plain HTTP `POST` (the existing `fetch` + `await json()` pattern). | Stateless; survives deploys; retriable. |
+| **B. Server-authoritative live stream** | The **backend owns the episode loop *and* the clock**: it `Reset`s an env, then on each tick runs the policy + `Step`s and **streams the frame** `(state, action, reward, done)`. The frontend is a **pure renderer** — it draws frames as they arrive and has **no timer of its own**. | Watching an **agent play a game live** — whether real-time continuous-control (MountainCar) or step-paced turn-based (Snake). | **WebSocket** (`app.UseWebSockets()`; Traefik passes the `Upgrade` through the existing `websecure` router). | Stateful per connection; a dropped socket just restarts the (cheap) episode. |
 
-This is a genuine architectural fork, not a MountainCar special-case: principle A is "ask a question, get the
-answer"; principle B is "watch an agent *play*, live." The decision rule: **if the game has a real-time clock
-that can't block on a round-trip, it's B; otherwise A** (and A is strongly preferred for its statelessness and
-deployment simplicity — B is reserved for the cases that genuinely need it).
+This is a genuine architectural fork, not a one-off. Principle A is "ask a question, get the answer." Principle
+B is "watch an agent *play*, live" — and crucially it is **server-authoritative**: putting the game loop and the
+clock on the backend means there is **no frontend timer to drift, and no race** between a client tick and in-flight
+data, so behavior is consistent across clients and runs. The decision rule: **if the user is *watching the AI
+play*, it's B (the backend drives); if the user is asking for an answer or driving the game themselves, it's A.**
 
 Per-game assignment:
 
 | Game | Principle | Endpoint(s) |
 |---|---|---|
 | Rubik's Cube | A — one request → full solution | `POST /api/cube/solve{,-ai,-davi}` |
-| 2048 | A — per-move query or full playout | `POST /api/2048/solve` |
-| Rush Hour | A — one request → full trajectory + BFS-optimal | `POST /api/rushhour/{analyze,solve}` |
-| Snake (watch-AI) | A — one request → full playthrough (RushHour-style full-state-per-step, since food respawn is server-RNG) | `POST /api/snake/solve-ai` |
-| Snake (human play) | client-side only (no backend in the loop) | — |
-| **MountainCar** | **B — live control stream** (server owns the episode; streams `{position, velocity, action, reward, done}` per tick) | `WS /api/mountaincar/live` |
+| 2048 | A — per-move query or full playout *(shipped pre-§7.1)* | `POST /api/2048/solve` |
+| Rush Hour | A — one request → full trajectory + BFS-optimal *(shipped pre-§7.1)* | `POST /api/rushhour/{analyze,solve}` |
+| **Snake — watch-AI** | **B — server streams each move `{body, food, action, reward, done}`** | `WS /api/snake/live` |
+| **Snake — human play** | client-side only; a **JS timer** ticks the local TS engine, keyboard steers | — |
+| **MountainCar — watch-AI** | **B — server streams each tick `{position, velocity, action, reward, done}`** | `WS /api/mountaincar/live` |
+| **MountainCar — human play** | client-side only; a **JS timer** ticks the local TS physics, ←/→ push | — |
 
-WebSocket is the app's first realtime infrastructure; it is justified *only* by principle B and stays confined
-to MountainCar (and any future real-time control game). All compute-and-return games remain plain HTTP.
+Each new game ships **both modes**, which nicely demonstrates the two principles side by side:
+- **Watch-AI = principle B** — *backend* owns the loop + clock, streams frames, frontend is a pure renderer with
+  no timer (no drift, no race with in-flight data).
+- **Human play = client-side** — the *human* is the clock, so a **JavaScript timer** drives a local TS engine
+  (Snake grid logic / MountainCar physics) with keyboard input and **no backend in the loop** (no round-trip per
+  tick, no race). Using a client timer here is correct precisely because nothing on the server is authoritative.
+
+WebSocket is the app's first realtime infrastructure. The existing solve-style games (cube, Rush Hour) and the
+already-shipped 2048 stay on principle A. A reusable server-side episode-streamer (Reset → loop{policy → Step →
+send frame} until done) backs both watch-AI modes; a small client engine backs both human-play modes — only the
+env/agent/state-serialization differ.
 
 ## 8. Performance targets (measured with BenchmarkDotNet on dev machine)
 
