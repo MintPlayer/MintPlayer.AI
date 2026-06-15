@@ -730,6 +730,51 @@ Kociemba (which isn't QTM-optimal). Depends on M19+M20 (a residual net at depth 
 - Then wire `value-davi` into the web cube page as the third **"self-taught AI"** solver. **Effort:** net
   ~2–4 d, curriculum ~2 d, BWAS ~2–3 d, then the multi-day GPU campaign (gated on M19+M20).
 
+## M22 — MountainCar + Snake  *(SDK breadth: classic control + masked grid game; designed 2026-06-15 by a 4-agent investigation)*
+
+Two new games that exercise different corners of the SDK and **both new interaction principles** (PRD §7.1).
+Prereqs already shipped this cycle: PPO action masking + Dueling DQN (PR #2). Connection design: see the PRD
+§7.1 matrix — **MountainCar = principle B (live WebSocket control stream)**, **Snake = principle A (one-shot
+watch-AI) + client-side human play**.
+
+**MountainCarEnv** (`Environments/MountainCarEnv.cs`, mirrors `CartPoleEnv` conventions):
+- Classic Gymnasium MountainCar-v0: state `[position, velocity]`, 3 actions (push left/none/right), reward −1/step,
+  `terminated` at position ≥ 0.5, `truncated` at 200 steps (kept distinct — GAE bootstraps the truncation).
+  Dynamics: `v += (a−1)·0.001 + cos(3·x)·(−0.0025)`, clamp v∈±0.07, x∈[−1.2,0.6], left-wall inelastic stop;
+  start x∼U[−0.6,−0.4], v=0. Implements `IStatefulEnvironment` (bitwise resume), not `IActionMaskProvider`.
+- **Algorithm: PPO** — DQN's ε-greedy can't string together the ~100-step swing-up (sparse −1 reward → Q
+  collapses); PPO's entropy-held stochastic policy explores far better. Train with a **longer horizon than 200**
+  (ctor `maxEpisodeSteps`, e.g. 1000) so a fresh policy ever sees the goal; **evaluate/gate on the standard 200**.
+  Hyperparams: `NumEnvs 16, RolloutSteps 256, EntropyCoef 0.01, TotalSteps ~1M, ParallelEnvs`. **Fallback** if it
+  stalls: optional potential-based reward shaping (`+k·|velocity|`, off by default to stay v0-faithful) — then
+  even masked Double+Dueling DQN solves it. **Gate:** mean return ≥ −110 over 100 eps (official "solved");
+  reaching the goal at all (return > −200) is the binary "works" signal. Honest framing: report "reaches the goal,
+  not yet solved" when between.
+- **Viz (principle B):** 2-D `<canvas>` hill `y = sin(3x)` + flag at 0.5 + car; `WS /api/mountaincar/live`
+  streams `{position, velocity, action, reward, done}` per tick, the server owning the authoritative episode,
+  the client a thin renderer. Needs `app.UseWebSockets()` + Traefik `Upgrade` pass-through (the one infra delta).
+
+**SnakeEnv** (`Environments/Snake/SnakeEnv.cs`, mirrors `Env2048`/`RushHourEnv` masked-env style):
+- 12×12 grid; obs = 3 binary planes (body / head / food) flattened → `BoxSpace(0,1, 432)`; 4 absolute-direction
+  actions; **`IActionMaskProvider` masks only the 180° reversal** (the move into the neck) — exactly the
+  invalid-action case PPO/DQN now handle, no new masking code. Reward +1 food / −0.01 step / −1 death;
+  `terminated` on wall/self collision (board-full = win), `truncated` at 1000 steps; food respawns from the env's
+  seeded RNG. Implements `IStatefulEnvironment` (cheap; bitwise resume).
+- **Algorithm: masked DQN (Double + Dueling)** — dense per-food credit + replay reuse beats PPO's on-policy cost
+  on CPU; Dueling fits (position-value dominates the near-equivalent direction choice). `Hidden [256,256], lr 5e-4,
+  buffer 100k, batch 128, ε→0.05 over 50k, MaxSteps 300k`. **Honest expected skill:** "seeks food, avoids walls,
+  eats mid-single-digits then self-traps" — not a perfect space-filling endgame (a from-scratch dense MLP has no
+  conv prior / true lookahead). **Gate:** mean ≥ 5 food / 100 greedy eps (≈ `SolveThreshold` return ≥ 3).
+- **Viz (principle A):** DOM/CSS grid like 2048. **Human play = pure client-side** TS engine (`snake-logic.ts`,
+  keyboard, reversal guard mirroring the env mask). **Watch-AI = one `POST /api/snake/solve-ai`** returning the
+  full playthrough as **RushHour-style full-state-per-step** (`SnakeStepDto{Action, int[] Body, int Food, Reward}`
+  — not 2048's compact form, because food respawn is server-RNG), animated client-side.
+
+**Build path (per the add-a-game checklist — `docs/ADDING_A_GAME.md`, 6 layers each):** env (+ console training to produce the seed `.ckpt`
+in `models/`, shipped via Git LFS) → `*ModelService : ITrainableModelService` → controller (HTTP for Snake; a
+WebSocket handler for MountainCar) → `Program.cs` DI + (MountainCar) `UseWebSockets` → Angular page/api/route/nav
+→ gallery label. **Effort:** Snake ~1–2 d (pure principle-A reuse), MountainCar ~2–3 d (env + PPO + the first WS).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -845,8 +890,8 @@ curriculum + lighter eval) and **✅ P.9** (LR scaling + ε-loss target sync). F
 3. **AlphaZero-style fine-tune** — *started 2026-06-11, paused mid-campaign; see the
    "Fine-tune round" section under M11 for results so far and the resume command.*
 3. **SDK breadth** (the demos exist to show range): algorithm coverage (✅ PPO action
-   masking *(done)*, ✅ dueling head *(done)*, maybe SAC), more envs (MountainCar, Snake), a TensorBoard
-   writer, public-API stability/semver discipline, reproducibility guarantees.
+   masking *(done)*, ✅ dueling head *(done)*, maybe SAC), more envs (**MountainCar + Snake — designed, see M22**),
+   a TensorBoard writer, public-API stability/semver discipline, reproducibility guarantees.
 
    **"Switch algorithm, keep the work" — make the three reusable assets first-class.**
    When an algorithm plateaus, what carries over is the env (already portable via

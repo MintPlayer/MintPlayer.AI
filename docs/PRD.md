@@ -181,6 +181,36 @@ Angular CLI dev server in development; serves the built bundle in production).
    image); a **volume** (`/data`) persists the model store and the submitted-games
    gallery across container restarts.
 
+### 7.1 Interaction models — two architectural principles *(added 2026-06-15)*
+
+A game's frontend↔backend connection is **not one-size-fits-all**; the right shape follows the game's
+*temporal nature*. The playground supports two distinct interaction principles, and each game declares which
+it uses:
+
+| Principle | What it is | When to use | Transport | State |
+|---|---|---|---|---|
+| **A. Compute-and-return** | The frontend sends a request; the backend computes the *entire* answer (a solution, or a full deterministic playout) and returns it in one response. The browser then animates/scrubs it entirely client-side. | A **solve** (no live game) or **turn-based** play where there is no real-time pressure. | Plain HTTP `POST` (the existing `fetch` + `await json()` pattern). | Stateless; survives deploys; retriable. |
+| **B. Live agent-in-the-loop control stream** | The simulation advances **continuously in real time** while the policy is **queried every control tick** — the agent is *in the loop* of a running game, not solving a fixed instance. The backend streams `(state, action)` frames; the frontend renders as they arrive. | A **real-time continuous-control** game where the dynamics never pause for the network. | **WebSocket** (`app.UseWebSockets()`; Traefik passes the `Upgrade` through the existing `websecure` router). | Stateful per connection; a dropped socket just restarts the (cheap) episode. |
+
+This is a genuine architectural fork, not a MountainCar special-case: principle A is "ask a question, get the
+answer"; principle B is "watch an agent *play*, live." The decision rule: **if the game has a real-time clock
+that can't block on a round-trip, it's B; otherwise A** (and A is strongly preferred for its statelessness and
+deployment simplicity — B is reserved for the cases that genuinely need it).
+
+Per-game assignment:
+
+| Game | Principle | Endpoint(s) |
+|---|---|---|
+| Rubik's Cube | A — one request → full solution | `POST /api/cube/solve{,-ai,-davi}` |
+| 2048 | A — per-move query or full playout | `POST /api/2048/solve` |
+| Rush Hour | A — one request → full trajectory + BFS-optimal | `POST /api/rushhour/{analyze,solve}` |
+| Snake (watch-AI) | A — one request → full playthrough (RushHour-style full-state-per-step, since food respawn is server-RNG) | `POST /api/snake/solve-ai` |
+| Snake (human play) | client-side only (no backend in the loop) | — |
+| **MountainCar** | **B — live control stream** (server owns the episode; streams `{position, velocity, action, reward, done}` per tick) | `WS /api/mountaincar/live` |
+
+WebSocket is the app's first realtime infrastructure; it is justified *only* by principle B and stays confined
+to MountainCar (and any future real-time control game). All compute-and-return games remain plain HTTP.
+
 ## 8. Performance targets (measured with BenchmarkDotNet on dev machine)
 
 - Tabular: ≥ 500k env-steps/sec on GridWorld (training loop included)
