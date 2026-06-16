@@ -38,6 +38,10 @@ internal static class CubeDaviLab
         int batchSize = 128;          // DAVI training batch
         float learningRate = 1e-3f;   // --lr (linear-scaling rule: raise with batch)
         float epsSync = 0.06f;        // ε-loss target sync threshold (P.9); 0 disables
+        int targetSyncInterval = 200; // --target-sync-interval: steps between bootstrap-target syncs (gated by ε-sync)
+        float beta2 = 0.999f;         // --beta2: Adam β₂ (DeepCubeA uses 0.9999 for depth-20+ stability)
+        int checkpointEvery = 1;      // --checkpoint-every N: write a checkpoint only every Nth eval (cuts I/O on slow storage)
+        bool frontierBias = false;    // --frontier-bias: sample scramble depth near the curriculum frontier (Gaussian) instead of uniform
         bool batchedSearch = false;   // use batched A* (BWAS) for --search eval
         bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
         int evalEpisodes = 12;        // --episodes N: cubes per depth in --eval-only (fewer = faster deep probes)
@@ -54,6 +58,10 @@ internal static class CubeDaviLab
             else if (args[i] == "--batch" && i + 1 < args.Length) batchSize = int.Parse(args[++i]);
             else if (args[i] == "--lr" && i + 1 < args.Length) learningRate = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--eps-sync" && i + 1 < args.Length) epsSync = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--target-sync-interval" && i + 1 < args.Length) targetSyncInterval = int.Parse(args[++i]);
+            else if (args[i] == "--beta2" && i + 1 < args.Length) beta2 = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--checkpoint-every" && i + 1 < args.Length) checkpointEvery = Math.Max(1, int.Parse(args[++i]));
+            else if (args[i] == "--frontier-bias") frontierBias = true;
             else if (args[i] == "--net" && i + 1 < args.Length) netKind = args[++i].ToLowerInvariant();
             else if (args[i] == "--max-depth" && i + 1 < args.Length) maxDepthCap = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
@@ -116,8 +124,9 @@ internal static class CubeDaviLab
             BatchSize = batchSize,
             LearningRate = learningRate,
             DistanceScale = 1f,
-            TargetUpdateInterval = 200,
+            TargetUpdateInterval = targetSyncInterval,
             TargetUpdateLossThreshold = epsSync,
+            AdamBeta2 = beta2,
         };
 
         // Resume the FULL training state so a restart continues seamlessly. DAVI regenerates its
@@ -144,7 +153,7 @@ internal static class CubeDaviLab
             }
             else
             {
-                adam = new Adam(net.Parameters(), options.LearningRate);
+                adam = new Adam(net.Parameters(), options.LearningRate, beta2: options.AdamBeta2);
             }
         }
 
@@ -164,7 +173,7 @@ internal static class CubeDaviLab
         using var residentDisposable = targetForward as IDisposable;
 
         using DeviceResidualTrainer? residentTrain = adaptive.Gpu is { } gpu2 && net is ResidualMlp resNet
-            ? gpu2.CreateResidentTrainer(resNet, options.BatchSize, options.LearningRate, options.GradClipNorm, options.HuberDelta)
+            ? gpu2.CreateResidentTrainer(resNet, options.BatchSize, options.LearningRate, options.GradClipNorm, options.HuberDelta, options.AdamBeta2)
             : null;
 
         Log(residentTrain is not null
@@ -186,10 +195,19 @@ internal static class CubeDaviLab
 
         // Solve-rate curriculum: start shallow, deepen once the current level is ~mastered. The
         // value-iteration signal propagates outward from the goal, so easy depths must land first.
+        // Depth sampling within [1, curriculumDepth]:
+        //  - uniform (default): every depth equally likely — but easy depths converge early, so a fixed
+        //    fraction of every batch keeps re-training already-solved shallow states.
+        //  - --frontier-bias: triangular weighting toward the frontier (max of two uniform draws), so
+        //    samples concentrate where the value signal is still moving. Opt-in: it changes the sampler's
+        //    RNG draw pattern, so use it for a FRESH run, not to resume a uniform-sampled campaign.
         FaceletCube Sample()
         {
+            int depth = frontierBias
+                ? 1 + Math.Max(sampleRng.NextInt(curriculumDepth), sampleRng.NextInt(curriculumDepth))
+                : 1 + sampleRng.NextInt(curriculumDepth);
             var cube = new FaceletCube();
-            cube.Apply(FaceletCube.ScrambleMoves(sampleRng, 1 + sampleRng.NextInt(curriculumDepth), quarterTurnsOnly: true));
+            cube.Apply(FaceletCube.ScrambleMoves(sampleRng, depth, quarterTurnsOnly: true));
             return cube;
         }
 
@@ -244,8 +262,9 @@ internal static class CubeDaviLab
         // so "run 1B states" can be done in chunked sessions and stops exactly once 1B total are processed.
         bool TargetReached() => targetSamples > 0 && totalIterations * (long)batchSize >= targetSamples;
         Log($"training until {deadline:u} (~{hours:F1} h){(targetSamples > 0 ? $" or {targetSamples:N0} total states ({totalIterations * (long)batchSize:N0} done)" : "")}, data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
-        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, eval every {trainChunk} iters, BWAS cap-probe (d{string.Join(',', probeDepths)}) every {probeEvery:N0}");
+        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, target-sync every {targetSyncInterval}, β₂ {beta2:g}, eval every {trainChunk} iters, checkpoint every {checkpointEvery} eval(s), BWAS cap-probe (d{string.Join(',', probeDepths)}) every {probeEvery:N0}{(frontierBias ? ", frontier-biased sampling" : "")}");
 
+        int evalCount = 0;
         while (DateTime.UtcNow < deadline && !TargetReached())
         {
             trainer.Train(Sample, iterations: trainChunk, onIteration: (_, loss) => lastLoss = loss);
@@ -263,7 +282,10 @@ internal static class CubeDaviLab
             // advancement, without burning time on deep failed solves the net can't reach yet.
             int evalUpTo = Math.Min(curriculumDepth + 1, maxDepthCap);
             var rates = ReportEval(trainer, csvPath, totalIterations, curriculumDepth, lastLoss, evalUpTo, maxDepthCap);
-            SaveCheckpoint();
+            // Checkpointing dominates I/O on slow storage (weights + Adam moments, written every eval).
+            // --checkpoint-every N writes only every Nth eval; the post-loop save below guarantees the
+            // final state is always persisted regardless of where N lands.
+            if (++evalCount % checkpointEvery == 0) SaveCheckpoint();
 
             bool mastered = rates[curriculumDepth] >= advanceThreshold;
             bool stalled = samplesSinceAdvance >= forceAdvanceSamples;
@@ -274,6 +296,8 @@ internal static class CubeDaviLab
                 Log($"curriculum advanced → scramble depth {curriculumDepth}{(mastered ? "" : " (forced after stall)")}");
             }
         }
+
+        SaveCheckpoint(); // always persist the latest state on exit (the loop may skip saves under --checkpoint-every)
 
         Log(TargetReached()
             ? $"target state count reached ({totalIterations * (long)batchSize:N0}) — final checkpoint saved."

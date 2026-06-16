@@ -679,8 +679,8 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     /// weights are mastered on-device; call <see cref="DeviceResidualTrainer.SyncToHost"/> to read them
     /// back for eval/checkpoint/target sync.
     /// </summary>
-    public DeviceResidualTrainer CreateResidentTrainer(ResidualMlp net, int batch, float learningRate, float clipNorm, float huberDelta = 1f)
-        => new(this, net, batch, learningRate, clipNorm, huberDelta);
+    public DeviceResidualTrainer CreateResidentTrainer(ResidualMlp net, int batch, float learningRate, float clipNorm, float huberDelta = 1f, float beta2 = 0.999f)
+        => new(this, net, batch, learningRate, clipNorm, huberDelta, beta2: beta2);
 
     /// <summary>Maps an MLP's hidden activation to the kernel's activation code (0 none, 1 ReLU).</summary>
     internal static int ResolveActivation(Mlp net)

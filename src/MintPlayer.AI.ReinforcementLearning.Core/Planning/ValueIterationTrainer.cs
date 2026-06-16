@@ -23,6 +23,13 @@ public sealed class ValueIterationOptions
     public float HuberDelta { get; init; } = 1f;
     /// <summary>Gradient-norm clip (matches the DQN/imitation trainers).</summary>
     public float GradClipNorm { get; init; } = 5f;
+    /// <summary>
+    /// Adam's second-moment decay β₂. The 0.999 default is fine for shallow training; DeepCubeA uses
+    /// 0.9999 for stability once targets stretch to depth ~20+ (slower-decaying variance estimate ⇒ a
+    /// steadier step when deep-state targets are noisy). Plumbed to both the autograd Adam and the
+    /// resident on-device optimizer so the two paths stay identical.
+    /// </summary>
+    public float AdamBeta2 { get; init; } = 0.999f;
 }
 
 /// <summary>

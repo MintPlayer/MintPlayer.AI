@@ -48,6 +48,59 @@ multiplies the clock; checkpoint/eval overhead is real; and this is single-GPU �
 more GPUs. **ROI honesty:** the net is already optimal to d15; this chases d16→20, and even DeepCubeA only reaches
 "solved, ~60% optimal" there. Treat 1 B as a bounded experiment, not a guaranteed "any cube".
 
+## Efficiency levers (M-eff)
+
+New knobs and experiments to reach the same capability in less wall-clock / fewer samples. All default
+to the previous behaviour, so the in-flight campaign is unaffected unless you opt in.
+
+### New CLI flags
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--target-sync-interval N` | `200` | Steps between bootstrap-target syncs (still gated by `--eps-sync`). Lower = the target tracks the online net more tightly early on; raise it late. It's a **step** count — if you change `--batch`, scale this to keep the *samples-per-sync* constant. |
+| `--beta2 B` | `0.999` | Adam β₂. DeepCubeA uses `0.9999` for a steadier step once targets stretch to depth ~20+. **Pass the same value on resume** (the resident trainer always starts its moments fresh — see note). |
+| `--checkpoint-every N` | `1` | Write a checkpoint only every Nth eval. On slow/HDD storage the per-eval write (weights + Adam moments) is real overhead; `N=5` keeps a recent rolling save without stalling the loop. The final state is always saved on exit. |
+| `--frontier-bias` | off | Sample scramble depth with a triangular weighting toward the curriculum frontier (max of two uniform draws) instead of uniform `[1, depth]`. Concentrates samples where the value signal is still moving; easy depths converge early and stop needing a fixed batch share. **Use on a FRESH run** — it changes the sampler's RNG draw pattern, so it can't resume a uniform-sampled checkpoint cleanly. |
+
+> **Note — resident-path Adam moments do not persist across resume.** For a residual GPU campaign the
+> actual optimizer is `DeviceResidualTrainer`, which allocates its own (zeroed) moment buffers each launch;
+> the checkpointed host-`Adam` moments feed only the CPU autograd path. So a resumed residual run re-warms
+> Adam from zero (a few hundred steps). Fixing this means persisting the device M/V buffers — tracked
+> separately, out of scope for the M-eff flags.
+
+### Experiment 1 — the 512×4 width validation (highest ROI: potential ~3×)
+
+`OPTIMIZATIONS.md` concludes **width is not the bottleneck through d15** (the net is search-bound there).
+GEMM cost is ~quadratic in width, so a **512-wide net trains ~3–4× faster per sample** and *should* reach
+the same d15 capability. This decides the per-sample cost of every future campaign — run it before
+committing to another wide multi-day run.
+
+```bash
+# Same recipe as the 1 B campaign but half-width, into a SEPARATE data dir. Compare the BWAS
+# capability curve (logs/cube-davi-res-cap.csv) against the 1024×4 run at equal SAMPLES (not wall-clock).
+dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab -- \
+  --game cube-davi --net residual --width 512 --blocks 4 \
+  --batch 1000 --lr 2e-3 --eps-sync 0.06 \
+  --samples 100000000 --max-depth 26 \
+  --probe-depths 12,14,15,16 \
+  --seed 1 --data <512x4-data-dir> --hours 12
+```
+
+Decision rule: if 512×4 matches 1024×4's d12–15 cap curve at equal samples, adopt 512×4 as the campaign
+default (≈3× cheaper). If it falls short at d15+, the width is buying frontier capacity — keep 1024×4 for
+the deep push. (Width-doesn't-matter is proven only *through* d15; the 1 B run's whole point is d16–20.)
+
+### Experiment 2 — curriculum-plateau analysis (right-size the next run)
+
+The campaign runs a fixed sample budget, but the curriculum stops deepening once it hits `--max-depth` or
+the value stops propagating. Samples spent after that only refine loss on static deep states. After a run:
+
+1. Plot `curriculumDepth` (column 3) vs `iterations` (column 2) in `logs/cube-davi-res.csv`.
+2. Find where `curriculumDepth` flattens — that's the plateau sample count (`iterations × batch`).
+3. Size the next campaign to `plateau + ~100 M` margin instead of a round 1 B.
+
+If the curriculum plateaus at, say, 300 M, the next run is ~40% shorter for the same end capability.
+
 ## Measuring deep capability (the real check, not the cheap probe)
 
 The in-loop probe is a trend tracker. To measure true reach at the frontier, run an **eval-only heavy search** on

@@ -29,6 +29,13 @@ public sealed class DeviceResidualMlp : ITargetForward, IDisposable
     private readonly MemoryBuffer1D<float, Stride1D.Dense>[] _w1, _b1, _g, _beta, _w2, _b2;
     private readonly MemoryBuffer1D<float, Stride1D.Dense> _headW, _headB;
 
+    // Forward activation pool, reused across calls (DAVI's successor eval runs this every train step at a
+    // fixed row count). Allocating/freeing these on every Forward churned the GPU allocator on the hot path;
+    // they grow to the largest row count seen and are then reused. Sized in rows; sub-viewed to the exact
+    // length each call so the length-driven kernels (bias/activation, residual add) touch only live rows.
+    private int _poolRows;
+    private MemoryBuffer1D<float, Stride1D.Dense>? _pInput, _pX, _pH, _pH2, _pOut;
+
     internal DeviceResidualMlp(IlgpuBackend backend, ResidualMlp net)
     {
         _backend = backend;
@@ -83,51 +90,66 @@ public sealed class DeviceResidualMlp : ITargetForward, IDisposable
     public float[] Forward(float[] features, int rows)
     {
         var acc = _backend.Accelerator;
-        var temps = new List<IDisposable>();
-        MemoryBuffer1D<float, Stride1D.Dense> Temp(long len) { var b = acc.Allocate1D<float>(len); temps.Add(b); return b; }
-
         lock (_backend.DeviceLock)
         {
-            try
+            EnsurePool(rows);
+            // Exact-length sub-views: the length-driven kernels (bias/activation, residual add) iterate
+            // view.Length, so the pool's larger backing buffers must be trimmed to the live row count.
+            var input = _pInput!.View.SubView(0, (long)rows * _inputSize);
+            var x = _pX!.View.SubView(0, (long)rows * _width);
+            var h = _pH!.View.SubView(0, (long)rows * _width);
+            var h2 = _pH2!.View.SubView(0, (long)rows * _width);
+            var output = _pOut!.View.SubView(0, rows);
+
+            input.CopyFromCPU(features);
+
+            // Input projection → LayerNorm → ReLU.
+            _backend.LaunchGemmTiled(input, _inW.View, x, new GemmDims(rows, _width, _inputSize, _inputSize, 1, _width, 1, accumulate: 0));
+            _backend.LaunchBiasActivation(x, _inB.View, _width, activation: 0);
+            _backend.LaunchLayerNorm(x, _inG.View, _inBeta.View, rows, _width, relu: true);
+
+            var square = new GemmDims(rows, _width, _width, _width, 1, _width, 1, accumulate: 0);
+            for (int i = 0; i < _blocks; i++)
             {
-                var input = Temp((long)rows * _inputSize);
-                input.CopyFromCPU(features);
+                _backend.LaunchGemmTiled(x, _w1[i].View, h, square);
+                _backend.LaunchBiasActivation(h, _b1[i].View, _width, activation: 0);
+                _backend.LaunchLayerNorm(h, _g[i].View, _beta[i].View, rows, _width, relu: true);
 
-                // Input projection → LayerNorm → ReLU.
-                var x = Temp((long)rows * _width);
-                _backend.LaunchGemmTiled(input.View, _inW.View, x.View, new GemmDims(rows, _width, _inputSize, _inputSize, 1, _width, 1, accumulate: 0));
-                _backend.LaunchBiasActivation(x.View, _inB.View, _width, activation: 0);
-                _backend.LaunchLayerNorm(x.View, _inG.View, _inBeta.View, rows, _width, relu: true);
+                _backend.LaunchGemmTiled(h, _w2[i].View, h2, square);
+                _backend.LaunchBiasActivation(h2, _b2[i].View, _width, activation: 0);
 
-                var h = Temp((long)rows * _width);
-                var h2 = Temp((long)rows * _width);
-                var square = new GemmDims(rows, _width, _width, _width, 1, _width, 1, accumulate: 0);
-                for (int i = 0; i < _blocks; i++)
-                {
-                    _backend.LaunchGemmTiled(x.View, _w1[i].View, h.View, square);
-                    _backend.LaunchBiasActivation(h.View, _b1[i].View, _width, activation: 0);
-                    _backend.LaunchLayerNorm(h.View, _g[i].View, _beta[i].View, rows, _width, relu: true);
-
-                    _backend.LaunchGemmTiled(h.View, _w2[i].View, h2.View, square);
-                    _backend.LaunchBiasActivation(h2.View, _b2[i].View, _width, activation: 0);
-
-                    _backend.LaunchAddInto(x.View, h2.View); // residual skip: x += block(x)
-                }
-
-                var output = Temp(rows);
-                _backend.LaunchGemmTiled(x.View, _headW.View, output.View, new GemmDims(rows, 1, _width, _width, 1, 1, 1, accumulate: 0));
-                _backend.LaunchBiasActivation(output.View, _headB.View, 1, activation: 0);
-
-                acc.Synchronize();
-                var result = new float[rows];
-                output.CopyToCPU(result);
-                return result;
+                _backend.LaunchAddInto(x, h2); // residual skip: x += block(x)
             }
-            finally
-            {
-                foreach (var t in temps) t.Dispose();
-            }
+
+            _backend.LaunchGemmTiled(x, _headW.View, output, new GemmDims(rows, 1, _width, _width, 1, 1, 1, accumulate: 0));
+            _backend.LaunchBiasActivation(output, _headB.View, 1, activation: 0);
+
+            acc.Synchronize();
+            var result = new float[rows];
+            output.CopyToCPU(result);
+            return result;
         }
+    }
+
+    /// <summary>Grow the reused activation pool to <paramref name="rows"/> rows (no-op once large enough). Caller holds the lock.</summary>
+    private void EnsurePool(int rows)
+    {
+        if (rows <= _poolRows) return;
+        DisposePool();
+        var acc = _backend.Accelerator;
+        _pInput = acc.Allocate1D<float>((long)rows * _inputSize);
+        _pX = acc.Allocate1D<float>((long)rows * _width);
+        _pH = acc.Allocate1D<float>((long)rows * _width);
+        _pH2 = acc.Allocate1D<float>((long)rows * _width);
+        _pOut = acc.Allocate1D<float>(rows);
+        _poolRows = rows;
+    }
+
+    private void DisposePool()
+    {
+        _pInput?.Dispose(); _pX?.Dispose(); _pH?.Dispose(); _pH2?.Dispose(); _pOut?.Dispose();
+        _pInput = _pX = _pH = _pH2 = _pOut = null;
+        _poolRows = 0;
     }
 
     public void Dispose()
@@ -137,6 +159,7 @@ public sealed class DeviceResidualMlp : ITargetForward, IDisposable
             _inW.Dispose(); _inB.Dispose(); _inG.Dispose(); _inBeta.Dispose();
             for (int i = 0; i < _blocks; i++) { _w1[i].Dispose(); _b1[i].Dispose(); _g[i].Dispose(); _beta[i].Dispose(); _w2[i].Dispose(); _b2[i].Dispose(); }
             _headW.Dispose(); _headB.Dispose();
+            DisposePool();
         }
     }
 }
