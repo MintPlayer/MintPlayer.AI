@@ -200,6 +200,38 @@ sample on states whose targets are still meaningful, let the value climb there, 
 accurate band outward — rather than spraying samples to d26. (If consolidation does NOT lift the d14-16 values,
 the ceiling is capacity, and the lever becomes a wider trunk via `ResidualMlp.WidenTo` / `--grow-to`.)
 
+### How DAVI accuracy propagates — train outward, gate on mastery (principle)
+
+The saturation above is a symptom of *how* DAVI learns, worth stating plainly so the training recipe follows from it:
+
+- **There is no dataset.** Training states are generated fresh each step by random scrambling — free and infinite.
+  We are never short of scrambles (any depth, anytime); scramble supply is never the constraint.
+- **The learnable signal is the bootstrapped *target*, not the state.** A state's target is
+  `min over moves of [1 + V(neighbour)]`, computed from the net's *own* (target-net) prediction. The only hard
+  anchor in the system is `V(solved) = 0`.
+- **So accuracy radiates outward from the goal, one shell at a time.** 1 move out is anchored (`1 + 0`); 2 moves
+  out is trustworthy only once 1-move states are learned; 20 moves out is trustworthy only once 19-move states
+  are. A deep state whose neighbours the net gets wrong has a *garbage* target — neighbours guessing from
+  neighbours who are also guessing. Training it can't teach anything; it just reinforces the saturated ceiling.
+- **It's a continuous moving frontier, not discrete hand-offs.** You train a *window* (e.g. d1–16) and the
+  accurate region grows outward on its own as inner shells firm up — overlapping waves, not "perfect d12, then
+  start d14." Shells also overlap: a d16 scramble's solution path runs through d15…d1 and the one-move lookahead
+  touches every neighbour, so training near the frontier exercises the inner shells too. The constraint is
+  **target quality, not exposure.**
+- **The advancement bar is value accuracy, not greedy solve-rate.** A shell is "ready" when `V` is accurate and
+  correctly *ordered* enough that the arg-min picks the move toward the goal — modest noise is fine (the `min`
+  and target-net averaging smooth it). It does **not** need ~95% greedy solves. Critically, greedy solve-rate
+  plateaus ~d10–12 because greedy is myopic, so it would *never* clear a high bar deep even when `V` is fine —
+  gating the curriculum on greedy stalls it far too early. Gate on a **value-accuracy / BWAS probe** instead.
+
+**Recipe implication (the campaign's real bug).** The curriculum's **force-advance-on-stall** rule shoved the
+depth to d26 whenever progress stalled — i.e. exactly when the inner shells were *not* yet mastered — so it built
+deep targets on sand and the value saturated at ~14. The fix is a **mastery gate with no forced advance**,
+measured by value accuracy / a search probe rather than greedy solve-rate: widen the window only when the current
+frontier is genuinely trustworthy, and let accuracy propagate outward at its own pace. The `--set-curriculum-depth`
++ `--frontier-bias` consolidation run is the first test of this; a principled follow-up is to replace the
+force-advance gate in `CubeDaviLab` outright.
+
 **Honest ceiling.** Search budget is the cheap near-term lever and extends reliable reach to ~d17–18; it does
 **not** get to d26 on its own. Beyond ~d17 the heuristic's accuracy degrades, and no search budget rescues an
 inaccurate heuristic (DeepCubeA itself only reaches "solved, ~60% optimal" at the deep end). Pushing the
