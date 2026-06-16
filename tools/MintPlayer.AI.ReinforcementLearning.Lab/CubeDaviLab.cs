@@ -45,6 +45,8 @@ internal static class CubeDaviLab
         int growToWidth = 0;          // --grow-to W: Net2WiderNet-widen the residual trunk to W once --grow-at is reached (0 = never)
         long growAtSamples = 0;       // --grow-at S: sample count at which to widen (progressive growing: train cheap narrow, widen on demand)
         double timeBudgetSec = 0;     // --time-budget S: eval-only, solve probe depths through the deployed CubeValueSearch with an S-second wall-clock budget (verifies the time-bounded web solver)
+        bool valueCurve = false;      // --value-curve: eval-only, report mean predicted V(start) vs scramble depth (heuristic calibration — where V saturates is the accuracy ceiling)
+        int setCurriculumDepth = 0;   // --set-curriculum-depth N: on resume, override the restored curriculum depth (consolidate the accuracy frontier instead of training capped deep states)
         bool batchedSearch = false;   // use batched A* (BWAS) for --search eval
         bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
         int evalEpisodes = 12;        // --episodes N: cubes per depth in --eval-only (fewer = faster deep probes)
@@ -68,6 +70,8 @@ internal static class CubeDaviLab
             else if (args[i] == "--grow-to" && i + 1 < args.Length) growToWidth = int.Parse(args[++i]);
             else if (args[i] == "--grow-at" && i + 1 < args.Length) growAtSamples = long.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--time-budget" && i + 1 < args.Length) timeBudgetSec = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--value-curve") valueCurve = true;
+            else if (args[i] == "--set-curriculum-depth" && i + 1 < args.Length) setCurriculumDepth = int.Parse(args[++i]);
             else if (args[i] == "--net" && i + 1 < args.Length) netKind = args[++i].ToLowerInvariant();
             else if (args[i] == "--max-depth" && i + 1 < args.Length) maxDepthCap = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
@@ -163,6 +167,16 @@ internal static class CubeDaviLab
             }
         }
 
+        // Consolidation override: a long campaign can force-advance the curriculum to the cap while the value
+        // is only accurate far shallower (the d26 push left V saturated ~14, OPTIMIZATIONS.md). Re-pinning the
+        // curriculum to the accuracy frontier focuses every sample on states whose bootstrap targets are still
+        // meaningful, instead of capped deep states that can't teach the net anything. Pair with --max-depth.
+        if (setCurriculumDepth > 0 && curriculumDepth != setCurriculumDepth)
+        {
+            Log($"curriculum depth overridden {curriculumDepth} → {setCurriculumDepth} (--set-curriculum-depth)");
+            curriculumDepth = setCurriculumDepth;
+        }
+
         // Route DAVI's ActionCount× successor evaluation through a device-resident forward whose weights
         // stay on the GPU across steps and re-upload only on the trainer's target sync — the MLP path
         // (M20 Stage 1) or the residual path (M20 Stage 2). For a residual net we ALSO run the train step
@@ -204,6 +218,17 @@ internal static class CubeDaviLab
 
         if (evalOnly)
         {
+            // Heuristic calibration: mean predicted cost-to-go V(start) per scramble depth. For random
+            // scrambles V should track depth (≈ d, minus a little for cancellation); where it flattens is the
+            // accuracy ceiling — the net can no longer tell a d20 cube from a d24 one, so search can't be guided
+            // there. This separates "search-bound" (V still climbs, just needs more search) from "accuracy-bound
+            // / under-trained at depth" (V saturated) — i.e. whether MORE TRAINING can deepen the net at all.
+            if (valueCurve)
+            {
+                int[] depths = probeOverride ?? [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26];
+                ValueCurve(trainer, depths, Math.Max(evalEpisodes, 50));
+                return;
+            }
             // Verify the DEPLOYED time-bounded solver (CubeValueSearch + the resident forward + the search
             // deadline) — the exact code the web `/api/cube/solve-davi` runs, with per-cube wall-clock timing.
             if (timeBudgetSec > 0)
@@ -448,6 +473,32 @@ internal static class CubeDaviLab
         var obs = new float[RubiksCubeEnv.ObservationSize];
         RubiksCubeEnv.WriteObservation(cube, obs);
         return obs;
+    }
+
+    /// <summary>
+    /// Heuristic-calibration probe: mean predicted cost-to-go <c>V(start)</c> (in moves) over
+    /// <paramref name="episodes"/> random scrambles per depth. A calibrated value tracks the scramble depth;
+    /// the depth at which the mean flattens is where the net stops distinguishing harder cubes — the accuracy
+    /// ceiling that gates how deep value-guided search can reach.
+    /// </summary>
+    private static void ValueCurve(ValueIterationTrainer<FaceletCube> trainer, int[] depths, int episodes)
+    {
+        Log($"value calibration: mean predicted V(start) vs scramble depth ({episodes} cubes/depth)");
+        foreach (int depth in depths)
+        {
+            double sum = 0, sumSq = 0; float min = float.MaxValue, max = 0;
+            for (int e = 0; e < episodes; e++)
+            {
+                var rng = new Xoshiro256StarStar((ulong)(800_000 + 1_000 * depth + e));
+                var cube = new FaceletCube();
+                cube.Apply(FaceletCube.ScrambleMoves(rng, depth, quarterTurnsOnly: true));
+                float v = trainer.Value(cube);
+                sum += v; sumSq += (double)v * v; min = MathF.Min(min, v); max = MathF.Max(max, v);
+            }
+            double mean = sum / episodes;
+            double std = Math.Sqrt(Math.Max(0, sumSq / episodes - mean * mean));
+            Log($"  d{depth,2}: mean V {mean,6:F2}  (std {std:F2}, range {min:F1}–{max:F1})  ratio V/d {mean / depth:F2}");
+        }
     }
 
     /// <summary>

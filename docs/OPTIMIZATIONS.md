@@ -178,6 +178,28 @@ few solves (d14 92→100%, d16/d17 +1 each), so 15 s is the knee. Shipped the GP
 (`CubeController`). (d17 > d16 here is small-sample seed noise — per-cube difficulty isn't strictly monotonic
 in depth.)
 
+### Heuristic calibration — the value saturates at ~14 (2026-06-16, accuracy-bound at depth)
+
+`--value-curve` (mean predicted `V(start)` vs scramble depth, 200 cubes/depth, current 690M net):
+
+| depth | 2 | 6 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | 26 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| mean V | 1.96 | 6.07 | 10.12 | 11.34 | 12.19 | 12.71 | 13.14 | 13.48 | 13.57 | 13.68 |
+| V/depth | 0.98 | 1.01 | 1.01 | 0.94 | 0.87 | 0.79 | 0.73 | 0.67 | 0.62 | 0.53 |
+
+`V` tracks depth almost exactly through ~d10, then **saturates at ~13.7 and flattens past d18** — the net can't
+distinguish a d20 cube from a d26 one. This is why search collapses past d16-17 and why more budget doesn't
+help: the heuristic gives no gradient to follow once it's saturated. So the deep regime is **accuracy-bound, not
+search-bound** — the opposite of d≤14. Training *can* deepen the net (the value has real headroom to climb).
+
+Root cause is a DAVI bootstrap fixed point: deep targets are `1 + V_target(s')`, capped by the saturated target
+net, so the ceiling self-reinforces. Compounding it, the campaign **force-advanced the curriculum to d26 while
+the value was only accurate to ~d12**, so most deep samples train on capped targets that teach nothing. The
+lever is to **consolidate the accuracy frontier** (`--set-curriculum-depth ~16` + `--frontier-bias`): focus every
+sample on states whose targets are still meaningful, let the value climb there, and let propagation extend the
+accurate band outward — rather than spraying samples to d26. (If consolidation does NOT lift the d14-16 values,
+the ceiling is capacity, and the lever becomes a wider trunk via `ResidualMlp.WidenTo` / `--grow-to`.)
+
 **Honest ceiling.** Search budget is the cheap near-term lever and extends reliable reach to ~d17–18; it does
 **not** get to d26 on its own. Beyond ~d17 the heuristic's accuracy degrades, and no search budget rescues an
 inaccurate heuristic (DeepCubeA itself only reaches "solved, ~60% optimal" at the deep end). Pushing the
