@@ -781,6 +781,36 @@ page with two modes (watch-AI WS client + human-play TS engine on a JS timer) + 
 **Effort:** the first WS streamer is the new infra (~1 d, reused by both); then Snake ~1–2 d, MountainCar ~2–3 d
 (env + PPO). Land the reusable streamer + Snake first (simpler env), then MountainCar.
 
+## M24 — Cube efficiency: time-bounded solver + curriculum autopilot  *(2026-06-16, branch `cube-davi-efficiency`)*
+
+Follows the M18/M21 DAVI line. Two fronts; full detail + measurements in `docs/OPTIMIZATIONS.md`.
+
+**Inference (deployed solver).**
+- Buffer-pooled `DeviceResidualMlp.Forward` (reuse GPU activation buffers across calls; the per-step successor-eval
+  hot path no longer churns the allocator) + state-key caching in `ValueGuidedSearch.SolveBatched`.
+- **Time-bounded search:** `ValueGuidedSearch.Solve/SolveBatched` gained an optional `TimeSpan maxTime`; the web
+  `CubeController` ships a **15 s deadline** (expansions kept only as a memory-safety ceiling). A budget sweep
+  showed 15 s solves the same cubes as 20 s with lower latency — so the budget is *dynamic per cube* (effort scales
+  with difficulty) under a fixed latency cap. Diagnosis: the solver was **search-bound through ~d15**, so this is
+  the cheap reach lever; verified live on the RTX 3060.
+
+**Training (capability autopilot).** Diagnosed (via the new `--value-curve` probe) that the value is
+**accuracy-bound past ~d14** — predicted `V(start)` saturates ~13.7 and flatlines past d18 (a DAVI bootstrap fixed
+point, worsened by the old curriculum force-advancing to d26 onto unmastered shells). Rebuilt the recipe into a
+run that's safe to leave training unattended:
+- **Value-accuracy advance gate** (`--advance-ratio`, default 0.9) replaces the old `greedy ≥0.6 OR force-advance`
+  rule — deepen a shell only when `V(d)/d` shows it's mastered, so bootstrap targets are always trustworthy.
+- **Auto-widen-on-plateau** (`--auto-widen`/`--max-width`/`--widen-stall-samples`) — on a frontier loss plateau
+  (capacity-bound), auto-`WidenTo` the trunk 2× (function-preserving warm start) and continue; trigger is
+  loss-plateau, not a timer.
+- Supporting: progressive `ResidualMlp.WidenTo` (Net2WiderNet, exact at integer-multiple widths),
+  `--set-curriculum-depth`, and tuning flags (`--target-sync-interval`, `--beta2`, `--checkpoint-every`,
+  `--frontier-bias`).
+
+Together: the run **deepens when accurate, grows capacity when stuck, and never advances onto inaccurate targets**.
+Status: branch open; an autopilot consolidation run is validating it on the 690M-sample net (in a scratch copy; the
+deployed checkpoint is untouched).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
