@@ -163,6 +163,21 @@ budget now reaches d18 (the old 50k/~13 s budget could not). Caveat: d16 is heav
 Reproduce anytime: `--game cube-davi --net residual --eval-only --time-budget 20 --weight 1.5 --max-exp 150000
 --probe-depths 10,12,14,16,18 --episodes 6 --data <dir>`.
 
+**Budget sweep → ship 15 s, not 20 s (2026-06-16, 12 cubes/depth, same seeds across budgets):**
+
+| depth | solved 10s / 15s / 20s | mean ms 10s / 15s / 20s |
+|---|---|---|
+| 14 | 11/12 · **12/12** · 12/12 | 2211 · 2247 · 2292 |
+| 15 | 8/12 · 8/12 · 8/12 | 4930 · 6589 · 8266 |
+| 16 | 4/12 · **5/12** · 5/12 | 7407 · 10573 · 13483 |
+| 17 | 6/12 · **7/12** · 7/12 | 6766 · 9086 · 11147 |
+
+**15 s Pareto-dominates 20 s:** identical solve rate on every depth, ~2–3 s lower mean latency and 5 s lower
+worst case — the extra 5 s only burns time on cubes that won't solve regardless. The 10→15 s step *does* buy a
+few solves (d14 92→100%, d16/d17 +1 each), so 15 s is the knee. Shipped the GPU path at **15 s** accordingly
+(`CubeController`). (d17 > d16 here is small-sample seed noise — per-cube difficulty isn't strictly monotonic
+in depth.)
+
 **Honest ceiling.** Search budget is the cheap near-term lever and extends reliable reach to ~d17–18; it does
 **not** get to d26 on its own. Beyond ~d17 the heuristic's accuracy degrades, and no search budget rescues an
 inaccurate heuristic (DeepCubeA itself only reaches "solved, ~60% optimal" at the deep end). Pushing the

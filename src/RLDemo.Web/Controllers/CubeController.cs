@@ -132,11 +132,13 @@ public sealed class CubeController(CubeModelService model, GalleryStore gallery)
         // difficulty. A time budget instead caps the wait while letting each cube use as much search as fits —
         // easy cubes return fast, hard ones search to the deadline then fail honestly. The expansion count is
         // kept only as a memory-safety ceiling (nodes/visited grow per expansion); the deadline is the real
-        // limit. Resident GPU forward ≈ 0.3 ms/expansion → ~20 s reaches well past the old 50k/depth-15 band;
-        // the CPU fallback (~2 ms/expansion, e.g. a GPU-less Hetzner box) gets a tighter 10 s, shallower reach.
+        // limit. Resident GPU forward ≈ 0.3 ms/expansion → 15 s; a budget sweep (OPTIMIZATIONS.md, 2026-06-16)
+        // showed 15 s solves exactly the same cubes as 20 s on every depth (d14–d17) with ~2–3 s lower mean
+        // latency — 20 s only burns more time on cubes that won't solve, so 15 s Pareto-dominates it. The CPU
+        // fallback (~2 ms/expansion, e.g. a GPU-less Hetzner box) gets a tighter 10 s, shallower reach.
         var resident = model.ResidentValueForward;
         var search = resident is not null
-            ? CubeValueSearch.Solve(resident, cube, maxExpansions: 150_000, maxTime: TimeSpan.FromSeconds(20))
+            ? CubeValueSearch.Solve(resident, cube, maxExpansions: 150_000, maxTime: TimeSpan.FromSeconds(15))
             : CubeValueSearch.Solve(valueNet, cube, maxExpansions: 50_000, maxTime: TimeSpan.FromSeconds(10));
         var response = new CubeSolveAiResponse(
             search.Solved, search.Moves, search.Moves.Length, reference.Moves.Length, "davi");
