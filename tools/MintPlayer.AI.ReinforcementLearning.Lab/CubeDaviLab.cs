@@ -42,6 +42,8 @@ internal static class CubeDaviLab
         float beta2 = 0.999f;         // --beta2: Adam β₂ (DeepCubeA uses 0.9999 for depth-20+ stability)
         int checkpointEvery = 1;      // --checkpoint-every N: write a checkpoint only every Nth eval (cuts I/O on slow storage)
         bool frontierBias = false;    // --frontier-bias: sample scramble depth near the curriculum frontier (Gaussian) instead of uniform
+        int growToWidth = 0;          // --grow-to W: Net2WiderNet-widen the residual trunk to W once --grow-at is reached (0 = never)
+        long growAtSamples = 0;       // --grow-at S: sample count at which to widen (progressive growing: train cheap narrow, widen on demand)
         bool batchedSearch = false;   // use batched A* (BWAS) for --search eval
         bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
         int evalEpisodes = 12;        // --episodes N: cubes per depth in --eval-only (fewer = faster deep probes)
@@ -62,6 +64,8 @@ internal static class CubeDaviLab
             else if (args[i] == "--beta2" && i + 1 < args.Length) beta2 = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--checkpoint-every" && i + 1 < args.Length) checkpointEvery = Math.Max(1, int.Parse(args[++i]));
             else if (args[i] == "--frontier-bias") frontierBias = true;
+            else if (args[i] == "--grow-to" && i + 1 < args.Length) growToWidth = int.Parse(args[++i]);
+            else if (args[i] == "--grow-at" && i + 1 < args.Length) growAtSamples = long.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--net" && i + 1 < args.Length) netKind = args[++i].ToLowerInvariant();
             else if (args[i] == "--max-depth" && i + 1 < args.Length) maxDepthCap = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
@@ -162,19 +166,30 @@ internal static class CubeDaviLab
         // (M20 Stage 1) or the residual path (M20 Stage 2). For a residual net we ALSO run the train step
         // fully on-device (M20 Stage 3: DeviceResidualTrainer — resident fwd+bwd+Adam), removing the
         // CPU-bound autograd train step. CPU-only machines fall back to the autograd path (nulls).
-        ITargetForward? targetForward = adaptive.Gpu is { } gpu
-            ? net switch
-            {
-                Mlp m => gpu.CreateResidentForward(m),
-                ResidualMlp r => gpu.CreateResidentForward(r),
-                _ => (ITargetForward?)null,
-            }
-            : null;
-        using var residentDisposable = targetForward as IDisposable;
-
-        using DeviceResidualTrainer? residentTrain = adaptive.Gpu is { } gpu2 && net is ResidualMlp resNet
-            ? gpu2.CreateResidentTrainer(resNet, options.BatchSize, options.LearningRate, options.GradClipNorm, options.HuberDelta, options.AdamBeta2)
-            : null;
+        // The device stack (resident successor-eval forward + resident train step) and the trainer are
+        // rebuilt from the current net by BuildStack(). Held in mutable locals (not `using`) so progressive
+        // growing (--grow-to) can dispose and recreate them at the new width mid-run.
+        ITargetForward? targetForward = null;
+        DeviceResidualTrainer? residentTrain = null;
+        ValueIterationTrainer<FaceletCube> trainer = null!;
+        void BuildStack()
+        {
+            (targetForward as IDisposable)?.Dispose();
+            residentTrain?.Dispose();
+            targetForward = adaptive.Gpu is { } gpu
+                ? net switch
+                {
+                    Mlp m => gpu.CreateResidentForward(m),
+                    ResidualMlp r => gpu.CreateResidentForward(r),
+                    _ => (ITargetForward?)null,
+                }
+                : null;
+            residentTrain = adaptive.Gpu is { } gpu2 && net is ResidualMlp resNet
+                ? gpu2.CreateResidentTrainer(resNet, options.BatchSize, options.LearningRate, options.GradClipNorm, options.HuberDelta, options.AdamBeta2)
+                : null;
+            trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options, targetForward, residentTrain);
+        }
+        BuildStack();
 
         Log(residentTrain is not null
             ? "training: fully device-resident step (fwd+bwd+Adam on GPU); successor eval resident"
@@ -182,7 +197,8 @@ internal static class CubeDaviLab
                 ? "successor evaluation: device-resident GPU forward (resident weights); train step on CPU"
                 : "successor/train: CPU autograd");
 
-        var trainer = new ValueIterationTrainer<FaceletCube>(model, Featurize, net, adam, options, targetForward, residentTrain);
+        try
+        {
 
         if (evalOnly)
         {
@@ -295,6 +311,20 @@ internal static class CubeDaviLab
                 samplesSinceAdvance = 0;
                 Log($"curriculum advanced → scramble depth {curriculumDepth}{(mastered ? "" : " (forced after stall)")}");
             }
+
+            // Progressive growing: train cheap at the narrow width, then widen the trunk once enough samples
+            // are in (Net2WiderNet warm start — capability carries over; see ResidualMlp.WidenTo). Adam restarts
+            // (its moments don't transfer through the widen) and the device stack rebuilds at the new width.
+            if (growToWidth > 0 && net is ResidualMlp toGrow && toGrow.Width < growToWidth
+                && totalIterations * (long)batchSize >= growAtSamples)
+            {
+                int oldWidth = toGrow.Width;
+                net = toGrow.WidenTo(growToWidth, new Xoshiro256StarStar(seed ^ 0x67707D), symmetryNoise: 1e-3f);
+                adam = new Adam(net.Parameters(), options.LearningRate, beta2: options.AdamBeta2);
+                BuildStack();
+                SaveCheckpoint(); // persist the widened shape immediately so a resume picks it up
+                Log($"net widened {oldWidth}→{growToWidth} (Net2WiderNet warm start) at {totalIterations * (long)batchSize:N0} samples → {DescribeNet(net)}");
+            }
         }
 
         SaveCheckpoint(); // always persist the latest state on exit (the loop may skip saves under --checkpoint-every)
@@ -302,6 +332,12 @@ internal static class CubeDaviLab
         Log(TargetReached()
             ? $"target state count reached ({totalIterations * (long)batchSize:N0}) — final checkpoint saved."
             : "time budget reached — final checkpoint saved.");
+        }
+        finally
+        {
+            (targetForward as IDisposable)?.Dispose();
+            residentTrain?.Dispose();
+        }
     }
 
     /// <summary>

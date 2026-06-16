@@ -157,6 +157,42 @@ public class ResidualMlpTests
         return obs;
     }
 
+    [Theory]
+    [InlineData(16, 32)]  // 2× — uniform replication
+    [InlineData(16, 48)]  // 3× — uniform replication
+    public void WidenTo_IntegerMultiple_PreservesFunction(int width, int newWidth)
+    {
+        // Net2WiderNet growth: at an integer-multiple width with NO symmetry noise, LayerNorm's mean/variance
+        // are unchanged by uniform duplication, so the grown net computes the same function (to fp error).
+        var net = new ResidualMlp(inputSize: 12, width, blocks: 3, new Xoshiro256StarStar(7));
+        var input = new Tensor(Random(4 * 12, 8), 4, 12);
+        var before = net.Forward(input).Data.ToArray();
+
+        var wide = net.WidenTo(newWidth, new Xoshiro256StarStar(99), symmetryNoise: 0f);
+
+        Assert.Equal(newWidth, wide.Width);
+        Assert.Equal(net.Blocks, wide.Blocks);
+        var after = wide.Forward(input).Data;
+        for (int i = 0; i < before.Length; i++) Assert.Equal(before[i], after[i], 3); // function-preserving
+    }
+
+    [Fact]
+    public void WidenTo_WithNoise_StartsNearOriginal_NotRandom()
+    {
+        // With symmetry-breaking noise the grown net is a WARM START — close to the original (so capability
+        // carries over), not a random re-init. The jitter only lets the duplicated units diverge in training.
+        var net = new ResidualMlp(inputSize: 12, width: 16, blocks: 2, new Xoshiro256StarStar(5));
+        var input = new Tensor(Random(6 * 12, 6), 6, 12);
+        var before = net.Forward(input).Data.ToArray();
+
+        var wide = net.WidenTo(32, new Xoshiro256StarStar(77), symmetryNoise: 1e-3f);
+        var after = wide.Forward(input).Data;
+
+        for (int i = 0; i < before.Length; i++)
+            Assert.True(MathF.Abs(before[i] - after[i]) < 0.05f * (1f + MathF.Abs(before[i])),
+                $"widen-with-noise drifted too far at {i}: {before[i]} vs {after[i]}");
+    }
+
     [Fact]
     public void DeviceResidualTrainer_GradientsMatchAutograd()
     {

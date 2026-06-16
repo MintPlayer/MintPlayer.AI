@@ -61,6 +61,7 @@ to the previous behaviour, so the in-flight campaign is unaffected unless you op
 | `--beta2 B` | `0.999` | Adam β₂. DeepCubeA uses `0.9999` for a steadier step once targets stretch to depth ~20+. **Pass the same value on resume** (the resident trainer always starts its moments fresh — see note). |
 | `--checkpoint-every N` | `1` | Write a checkpoint only every Nth eval. On slow/HDD storage the per-eval write (weights + Adam moments) is real overhead; `N=5` keeps a recent rolling save without stalling the loop. The final state is always saved on exit. |
 | `--frontier-bias` | off | Sample scramble depth with a triangular weighting toward the curriculum frontier (max of two uniform draws) instead of uniform `[1, depth]`. Concentrates samples where the value signal is still moving; easy depths converge early and stop needing a fixed batch share. **Use on a FRESH run** — it changes the sampler's RNG draw pattern, so it can't resume a uniform-sampled checkpoint cleanly. |
+| `--grow-to W` + `--grow-at S` | off (0) | **Progressive growing.** Train at the narrow `--width` until `S` total samples, then Net2WiderNet-widen the residual trunk to `W` and continue. The widen is a function-preserving **warm start** (capability carries over — confirmed in `ResidualMlpTests.WidenTo_*`), so you pay the cheap narrow GEMM for the bulk of the run and the wide GEMM only near the frontier. |
 
 > **Note — resident-path Adam moments do not persist across resume.** For a residual GPU campaign the
 > actual optimizer is `DeviceResidualTrainer`, which allocates its own (zeroed) moment buffers each launch;
@@ -89,6 +90,29 @@ dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab --
 Decision rule: if 512×4 matches 1024×4's d12–15 cap curve at equal samples, adopt 512×4 as the campaign
 default (≈3× cheaper). If it falls short at d15+, the width is buying frontier capacity — keep 1024×4 for
 the deep push. (Width-doesn't-matter is proven only *through* d15; the 1 B run's whole point is d16–20.)
+
+### Experiment 1b — progressive growing (the dynamic-width campaign)
+
+Instead of betting on one width, start narrow and widen on demand. The early curriculum (d1–~d10) is
+search-bound, not capacity-bound, so a 512-wide trunk learns it ~3–4× cheaper per sample than 1024; widen
+to 1024 only once the frontier starts needing the capacity.
+
+```bash
+dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab -- \
+  --game cube-davi --net residual --width 512 --blocks 4 \
+  --batch 1000 --lr 2e-3 --eps-sync 0.06 \
+  --grow-to 1024 --grow-at 400000000 \
+  --samples 1000000000 --max-depth 26 --probe-depths 12,14,15,16 \
+  --seed 1 --data <grow-data-dir> --hours 12
+```
+
+Pick `--grow-to` as an **integer multiple** of `--width` (512→1024 = 2×) so LayerNorm statistics are
+preserved exactly at the widen (uniform unit replication; see `ResidualMlp.WidenTo`). Set `--grow-at` to the
+plateau point from Experiment 2 (where the narrow net stops climbing). Caveats: Adam moments do **not**
+transfer through the widen (a brief re-warm), and the widen's new neurons start as jittered copies that need
+training to differentiate — so capability is preserved at the widen but the *added* capacity takes samples to
+become useful. Net effect: most of the run is cheap, and you only confirm the wide net helps if the frontier
+was capacity-bound (if it was search-bound, widening won't break through — that's the bet).
 
 ### Experiment 2 — curriculum-plateau analysis (right-size the next run)
 
