@@ -48,6 +48,9 @@ internal static class CubeDaviLab
         bool valueCurve = false;      // --value-curve: eval-only, report mean predicted V(start) vs scramble depth (heuristic calibration — where V saturates is the accuracy ceiling)
         int setCurriculumDepth = 0;   // --set-curriculum-depth N: on resume, override the restored curriculum depth (consolidate the accuracy frontier instead of training capped deep states)
         double advanceRatio = 0.9;    // --advance-ratio R: curriculum value-accuracy gate — advance d→d+1 when mean V(d)/d ≥ R (replaces greedy-solve + force-advance)
+        bool autoWiden = false;       // --auto-widen: when the frontier loss PLATEAUS (capacity-bound, not under-trained), widen the trunk (Net2WiderNet) automatically
+        int maxWidth = 2048;          // --max-width W: cap for auto-widen (won't grow the trunk beyond this)
+        long widenStallSamples = 50_000_000; // --widen-stall-samples N: loss-plateau window (no improvement) before an auto-widen fires
         bool batchedSearch = false;   // use batched A* (BWAS) for --search eval
         bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
         int evalEpisodes = 12;        // --episodes N: cubes per depth in --eval-only (fewer = faster deep probes)
@@ -74,6 +77,9 @@ internal static class CubeDaviLab
             else if (args[i] == "--value-curve") valueCurve = true;
             else if (args[i] == "--set-curriculum-depth" && i + 1 < args.Length) setCurriculumDepth = int.Parse(args[++i]);
             else if (args[i] == "--advance-ratio" && i + 1 < args.Length) advanceRatio = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--auto-widen") autoWiden = true;
+            else if (args[i] == "--max-width" && i + 1 < args.Length) maxWidth = int.Parse(args[++i]);
+            else if (args[i] == "--widen-stall-samples" && i + 1 < args.Length) widenStallSamples = long.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--net" && i + 1 < args.Length) netKind = args[++i].ToLowerInvariant();
             else if (args[i] == "--max-depth" && i + 1 < args.Length) maxDepthCap = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
@@ -321,9 +327,14 @@ internal static class CubeDaviLab
         // so "run 1B states" can be done in chunked sessions and stops exactly once 1B total are processed.
         bool TargetReached() => targetSamples > 0 && totalIterations * (long)batchSize >= targetSamples;
         Log($"training until {deadline:u} (~{hours:F1} h){(targetSamples > 0 ? $" or {targetSamples:N0} total states ({totalIterations * (long)batchSize:N0} done)" : "")}, data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
-        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, target-sync every {targetSyncInterval}, β₂ {beta2:g}, eval every {trainChunk} iters, checkpoint every {checkpointEvery} eval(s), advance gate V/d ≥ {advanceRatio:F2}, BWAS cap-probe (d{string.Join(',', probeDepths)}) every {probeEvery:N0}{(frontierBias ? ", frontier-biased sampling" : "")}");
+        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, target-sync every {targetSyncInterval}, β₂ {beta2:g}, eval every {trainChunk} iters, checkpoint every {checkpointEvery} eval(s), advance gate V/d ≥ {advanceRatio:F2}, BWAS cap-probe (d{string.Join(',', probeDepths)}) every {probeEvery:N0}{(frontierBias ? ", frontier-biased sampling" : "")}{(autoWiden ? $", auto-widen on loss-plateau ({widenStallSamples:N0} samples) up to width {maxWidth}" : "")}");
 
         int evalCount = 0;
+        // Loss-plateau tracking for --auto-widen: the best (lowest) loss since the last advance/widen and when
+        // it was hit. If the loss fails to improve for `widenStallSamples`, training has stopped helping at the
+        // frontier — the signal that the shell is capacity-bound, not merely under-trained.
+        double bestLossSinceReset = double.MaxValue;
+        long samplesAtBestLoss = totalIterations * (long)batchSize;
         while (DateTime.UtcNow < deadline && !TargetReached())
         {
             trainer.Train(Sample, iterations: trainChunk, onIteration: (_, loss) => lastLoss = loss);
@@ -349,16 +360,36 @@ internal static class CubeDaviLab
             // Value-accuracy gate: advance only when V at the frontier tracks true depth (mean V(d)/d ≥ ratio),
             // so d+1's bootstrap targets are trustworthy. No forced advance — a persistent stall is the honest
             // "needs more training / capacity" signal, surfaced as a note rather than papered over.
+            long currentSamples = totalIterations * (long)batchSize;
+            if (lastLoss < bestLossSinceReset * 0.98f) { bestLossSinceReset = lastLoss; samplesAtBestLoss = currentSamples; } // ≥2% improvement resets the plateau timer
+            long lossStagnantSamples = currentSamples - samplesAtBestLoss;
+
             double frontierRatio = MeanValueAtDepth(trainer, curriculumDepth, episodes: 64) / curriculumDepth;
             if (curriculumDepth < maxDepthCap && frontierRatio >= advanceRatio)
             {
                 curriculumDepth++;
                 samplesSinceAdvance = 0;
+                bestLossSinceReset = double.MaxValue; samplesAtBestLoss = currentSamples; // new shell → track its loss afresh
                 Log($"curriculum advanced → scramble depth {curriculumDepth} (frontier V/d {frontierRatio:F2} ≥ {advanceRatio:F2})");
+            }
+            else if (autoWiden && net is ResidualMlp wNet && wNet.Width < maxWidth && lossStagnantSamples >= widenStallSamples)
+            {
+                // Loss has flatlined at the frontier (more training isn't helping) AND we still can't clear the
+                // gate → capacity-bound. Widen the trunk (function-preserving warm start: accuracy is preserved,
+                // the curriculum frontier doesn't move, so we never train inaccurate data — we just gain the
+                // capacity for V to climb past the gate). On NEED (plateau), not a timer; distinct from --grow-at.
+                int oldW = wNet.Width, newW = Math.Min(maxWidth, wNet.Width * 2);
+                double plateauLoss = bestLossSinceReset;
+                net = wNet.WidenTo(newW, new Xoshiro256StarStar(seed ^ ((ulong)newW * 0x9E3779B1u)), symmetryNoise: 1e-3f);
+                adam = new Adam(net.Parameters(), options.LearningRate, beta2: options.AdamBeta2);
+                BuildStack();
+                bestLossSinceReset = double.MaxValue; samplesAtBestLoss = currentSamples; samplesSinceAdvance = 0;
+                SaveCheckpoint();
+                Log($"auto-widen {oldW}→{newW}: frontier d{curriculumDepth} loss plateaued (~{plateauLoss:F4} for {lossStagnantSamples:N0} samples) → added capacity (Net2WiderNet warm start) → {DescribeNet(net)}");
             }
             else if (curriculumDepth < maxDepthCap && samplesSinceAdvance >= stallWarnSamples)
             {
-                Log($"frontier d{curriculumDepth} not yet mastered (V/d {frontierRatio:F2} < {advanceRatio:F2}) after {samplesSinceAdvance:N0} samples — needs longer training or more capacity (no forced advance)");
+                Log($"frontier d{curriculumDepth} not yet mastered (V/d {frontierRatio:F2} < {advanceRatio:F2}) after {samplesSinceAdvance:N0} samples — needs longer training{(net is ResidualMlp nw && nw.Width < maxWidth ? " or more capacity (enable --auto-widen)" : "")} (no forced advance)");
                 samplesSinceAdvance = 0; // throttle the note
             }
 

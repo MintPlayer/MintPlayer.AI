@@ -238,6 +238,19 @@ not something to paper over. Smoke-confirmed: a fresh net advances d2→6 on `V/
 forced steps. (`--set-curriculum-depth` re-pins a resumed campaign back onto the accuracy frontier so the gate can
 re-earn the deeper levels honestly.)
 
+**Auto-widen-on-plateau — IMPLEMENTED (2026-06-16): closes the loop into a capability autopilot.** The gate makes
+a stall *informative* but doesn't *act* on it. `--auto-widen` adds the missing response: when the frontier loss
+**plateaus** (no ≥2% improvement for `--widen-stall-samples`, default 50M) while the gate still can't advance, the
+shell is **capacity-bound** (more training has stopped helping) — so the trunk auto-widens one tier (`WidenTo`,
+2×, capped at `--max-width`) and training continues. The no-inaccurate-data invariant is preserved throughout:
+the widen is function-preserving (accuracy unchanged), the curriculum frontier doesn't move, so the net never
+trains past its mastered shell — it just gains the capacity for `V` to climb past the gate. The trigger is
+**loss-plateau, not a timer**: if loss is still dropping, more training is working and it won't widen (avoids
+premature widening). Smoke-confirmed: a pinned net auto-widened 16→32→64 on plateau, stopping at `--max-width`.
+Together the three pieces — value-accuracy gate (advance), loss-plateau auto-widen (capacity), function-preserving
+`WidenTo` (warm start) — make a run safe to leave training unattended: it deepens when accurate, grows when
+capacity-bound, and never advances onto inaccurate targets.
+
 **Honest ceiling.** Search budget is the cheap near-term lever and extends reliable reach to ~d17–18; it does
 **not** get to d26 on its own. Beyond ~d17 the heuristic's accuracy degrades, and no search budget rescues an
 inaccurate heuristic (DeepCubeA itself only reaches "solved, ~60% optimal" at the deep end). Pushing the
