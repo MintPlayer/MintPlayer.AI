@@ -453,6 +453,25 @@ wall-clock until then.*
 > transfer-bound and barely beats CPU — resident is 7–10×; see `OPTIMIZATIONS.md`). **Still open:** the
 > eval-time-search lever (P.10); heavier in-loop eval readout; depth-16+ (more capacity/training; full
 > god's-number 26 QTM remains out of reach on one 3060).
+>
+> **Update 2026-06-15 — the deeper-than-15 lever is training *scale*, not architecture.** A fresh resume
+> (236k → ~313k iters, curriculum force-climbed to its depth-26 cap) left the deep frontier **flat** (light
+> in-loop probe held d15/d16 within sampling noise; loss steady ~0.10 — DAVI bootstraps, so flat loss ≠
+> failure). Diagnosis: the net has trained on **~36.5M states vs DeepCubeA's ~10B (≈0.4%)** — a *training-scale
+> gap, not a capacity ceiling* (M17 settled that width is not the lever). On one RTX 3060 Laptop (~1.5–3k
+> states/s ≈ 130–260M/day), 10B is ~5–11 **weeks** — infeasible. So depth past 15 comes from two complementary
+> levers, **neither a wider net**: **(a) eval-time search budget** (P.10; free, no training) and **(b) longer
+> training** (several days ≈ 10–20× more states → optimal frontier somewhat past d15, **not** god's number).
+> Per the owner (2026-06-15), a multi-day campaign is running from the depth-26 checkpoint (uniform 1–26
+> scramble sampling — the regime that actually builds deep states), tracked with periodic *heavy* BWAS probes
+> (the light 8k-exp in-loop probe is blind past its budget). See PLAN.md → "Further-training findings (2026-06-15)".
+>
+> **Result (2026-06-16).** Overnight run 313k → **615k iters (+38.7M states, ~doubling total training to ~79M)**,
+> lr 1e-3 throughout. Heavy-BWAS deep-solve rate (w2.5, 200k exp, same cubes, 5/depth, d14–22): **21/25 → 24/25**
+> (d22 **3/5 → 5/5**, d16 4/5 → 5/5; gain landed in the first half, then consolidated). The improvement is in
+> **reach/robustness**, not optimality (solves still ~19–24 qt vs Kociemba ~29–31). Incremental, as predicted —
+> not "any cube" (that needs ~10B-state DeepCubeA-scale compute). The stronger 615k net is now the shipped
+> `models/cube.value-davi-res.ckpt` (LFS).
 
 | Decision | Choice | Rationale |
 |---|---|---|

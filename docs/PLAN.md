@@ -874,6 +874,32 @@ resident Adam-state checkpointing
 (P.2, lossless resume); deeper-than-15 reach (more capacity/training; full god's-number 26 QTM out of reach
 on one 3060).
 
+**Further-training findings (2026-06-15).** Resuming the campaign from the depth-20 / 236k checkpoint and
+letting the curriculum climb to its depth-26 cap (force-advanced past the greedy-stall gate) over ~80k more
+iters left the deep frontier **flat**: the light in-loop BWAS probe held d15/d16 within sampling noise and
+the training loss never descended below ~0.10 (DAVI bootstraps, so flat loss ≠ failure — but the capability
+curve confirmed no real movement). This is **not** an architecture ceiling: the 1024×4 residual net already
+matches DeepCubeA's class (M17 settled that width is not the lever). It is a **training-scale gap** — the net
+has seen ~36.5M states (≈285k iters × batch 128) vs DeepCubeA's **~10 billion** (≈0.4%). At the observed
+~1.5–3k states/s on one RTX 3060 Laptop (≈130–260M states/day), reaching 10B is ~5–11 **weeks** — infeasible.
+So deeper-cube capability has **two complementary levers, neither a wider net**: (a) **eval-time search budget**
+(P.10 — already proven to turn the strong ≤d15 heuristic into deeper solves; free, no training), and
+(b) **longer training** for genuinely deeper *heuristic* reach (bounded by laptop wall-clock — several days
+buys ~10–20× more states, pushing the optimal frontier somewhat past d15, **not** to god's number).
+**Decision (user opted into multi-day training, 2026-06-15):** run a multi-day DAVI campaign from the current
+depth-26 checkpoint (uniform 1–26 scramble sampling — finally the regime that builds deep states; the prior
+run had only just reached depth 26), monitored with periodic *heavy* BWAS probes (the light in-loop probe is
+blind past its 8k budget), and combined with the P.10 search-budget lever. Full analysis: `OPTIMIZATIONS.md`.
+
+**Result (2026-06-16).** Overnight run **313k → 615k iters (+38.7M states, ~doubling total training to ~79M)**,
+lr 1e-3 throughout (heavy-probe A/B confirmed it was still learning, so no LR decay). Heavy-BWAS deep-solve
+rate (w2.5, 200k exp, same cubes, 5/depth, d14–22) rose **21/25 (313k) → 24/25 (415k) → 24/25 (615k)** — the
+jump was the first half; the second half consolidated (d22 **3/5 → 5/5**, d16 4/5 → 5/5; d18/d20 swap within
+n=5 noise). Gains are in **reach/robustness**, not optimality (solution lengths held/crept up slightly at
+weight 2.5; every solve still ~19–24 qt vs Kociemba's ~29–31). Confirms the call: incremental sharpening, not
+a leap to "any cube" — that needs DeepCubeA-scale (~10B) compute. The 615k net is promoted to
+`models/cube.value-davi-res.ckpt` (LFS) so the web "Solve (self-taught AI)" ships it.
+
 **Learning-curve findings (measured 2026-06-14).** The campaign is **GPU-bound** after the resident
 stages. **Batch size is throughput-neutral** (+16% samples/s 128→512 — it only moves the bottleneck
 CPU→GPU; an iter-paced curriculum then advanced ~3.4× slower, since fixed by sample-pacing); **net width is
