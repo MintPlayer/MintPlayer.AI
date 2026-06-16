@@ -48,11 +48,11 @@ public static class CubeValueSearch
     /// </summary>
     public static SearchResult Solve(
         BatchForward forward, FaceletCube start,
-        int maxExpansions = DefaultMaxExpansions, float weight = DefaultWeight)
+        int maxExpansions = DefaultMaxExpansions, float weight = DefaultWeight, TimeSpan? maxTime = null)
     {
         var model = new CubeModel();
         var solution = ValueGuidedSearch.SolveBatched(
-            model, states => CostToGo(forward, states), start, maxExpansions, weight, ExpandBatch);
+            model, states => CostToGo(forward, states), start, maxExpansions, weight, ExpandBatch, maxTime);
 
         if (solution is null) return new(false, []);
         return new(true, [.. solution.Select(a => FaceletCube.QuarterTurnMoves[a])]);
@@ -61,8 +61,8 @@ public static class CubeValueSearch
     /// <summary>Convenience overload that scores on the CPU autograd backend (the no-GPU path).</summary>
     public static SearchResult Solve(
         ResidualMlp valueNet, FaceletCube start,
-        int maxExpansions = DefaultMaxExpansions, float weight = DefaultWeight)
-        => Solve((features, rows) => CpuForward(valueNet, features, rows), start, maxExpansions, weight);
+        int maxExpansions = DefaultMaxExpansions, float weight = DefaultWeight, TimeSpan? maxTime = null)
+        => Solve((features, rows) => CpuForward(valueNet, features, rows), start, maxExpansions, weight, maxTime);
 
     private static float[] CpuForward(ResidualMlp valueNet, float[] features, int rows)
     {

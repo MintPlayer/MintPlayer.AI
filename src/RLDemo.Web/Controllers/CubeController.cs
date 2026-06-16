@@ -127,14 +127,17 @@ public sealed class CubeController(CubeModelService model, GalleryStore gallery)
         if (!reference.Solved)
             return BadRequest(new CubeSolveResponse([], 0, 0, reference.Error));
 
-        // Interactivity is bounded by the expansion budget, sized to the backend. A resident GPU forward
-        // (~0.3 ms/expansion) affords a 50k budget → optimal reach to ~depth 15 with a ~13 s worst case.
-        // The CPU fallback (~2 ms/expansion, e.g. a GPU-less Hetzner box) caps at 6k → a few seconds for a
-        // typical scramble, ~12 s worst case, shallower reach. Either way, too-deep cubes fail honestly.
+        // Interactivity is bounded by a wall-clock deadline, not a fixed expansion count: an unsolvable cube
+        // would otherwise burn the whole expansion budget before failing, coupling worst-case latency to cube
+        // difficulty. A time budget instead caps the wait while letting each cube use as much search as fits —
+        // easy cubes return fast, hard ones search to the deadline then fail honestly. The expansion count is
+        // kept only as a memory-safety ceiling (nodes/visited grow per expansion); the deadline is the real
+        // limit. Resident GPU forward ≈ 0.3 ms/expansion → ~20 s reaches well past the old 50k/depth-15 band;
+        // the CPU fallback (~2 ms/expansion, e.g. a GPU-less Hetzner box) gets a tighter 10 s, shallower reach.
         var resident = model.ResidentValueForward;
         var search = resident is not null
-            ? CubeValueSearch.Solve(resident, cube, maxExpansions: 50_000)
-            : CubeValueSearch.Solve(valueNet, cube, maxExpansions: 6_000);
+            ? CubeValueSearch.Solve(resident, cube, maxExpansions: 150_000, maxTime: TimeSpan.FromSeconds(20))
+            : CubeValueSearch.Solve(valueNet, cube, maxExpansions: 50_000, maxTime: TimeSpan.FromSeconds(10));
         var response = new CubeSolveAiResponse(
             search.Solved, search.Moves, search.Moves.Length, reference.Moves.Length, "davi");
 

@@ -185,6 +185,24 @@ public class DaviTrainerTests
     }
 
     [Fact]
+    public void BatchedSearch_TimeDeadline_StopsEarly()
+    {
+        // A wall-clock budget bounds the search regardless of the expansion ceiling: a zero time budget trips
+        // the per-round deadline check before any expansion (honest null), while the same search with no time
+        // limit solves the cube — so the EFFECTIVE budget is the deadline, with maxExpansions only a ceiling.
+        var model = new CubeModel();
+        float[] ZeroHeuristic(IReadOnlyList<FaceletCube> states) => new float[states.Count]; // f = g ⇒ plain BFS
+        var cube = new FaceletCube();
+        cube.Apply(FaceletCube.ScrambleMoves(new Xoshiro256StarStar(4242), 3, quarterTurnsOnly: true));
+
+        var stopped = ValueGuidedSearch.SolveBatched(model, ZeroHeuristic, cube, maxExpansions: 1_000_000, weight: 2f, expandBatch: 32, maxTime: TimeSpan.Zero);
+        Assert.Null(stopped); // deadline tripped before expanding
+
+        var solved = ValueGuidedSearch.SolveBatched(model, ZeroHeuristic, cube, maxExpansions: 1_000_000, weight: 2f, expandBatch: 32, maxTime: null);
+        Assert.NotNull(solved); // no time limit ⇒ the same search reaches the goal
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public void Davi_LearnsToSolveShallowCubes_TeacherFree()
     {
