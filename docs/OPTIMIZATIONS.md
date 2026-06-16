@@ -111,6 +111,48 @@ told a completely different story:
 - **A wider/deeper net is *not* the next lever.** It isn't the bottleneck through d15; it would only help
   push the d16+ frontier, and even there more search buys depth first. Reframed in the Planned table.
 
+### Reconfirmed on the 690M-sample net + inference-budget strategy (2026-06-16)
+
+Re-ran the diagnostic on the current shipped 1024×4 net (`cube.value-davi-res.ckpt`, ~690M samples,
+curriculum at cap d26) to check the finding still holds at far more training. It does — and more sharply:
+
+| evidence (same net, varying ONLY the search given to it) | d14 | d15 | d16 | d17 |
+|---|---|---|---|---|
+| greedy (0 search) | solid | falls off | ~0 | 0 |
+| BWAS 8k exp, w2.5 (in-loop probe) | 87.5% | 50% | 37.5% | — |
+| BWAS 50k exp, w1.0 (heavy) | **4/4 @ 14.0qt (optimal)** | — | **2/4 @ 16.0qt (optimal)** | — |
+| BWAS 100k exp, w1.0 (heavy) | 100% | 100% | 83% | 42% |
+
+**Verdict: search-budget-bound, not capacity-bound, through ~d17.** Two independent signals: (1) solve rate
+at a fixed depth climbs monotonically as the *same* net is given more search (d16: ~0 → 37.5% → 50% → 83%);
+(2) every solution found is **optimal-length** — a heuristic that yields optimal solves whenever the search
+reaches the goal is accurate, not misleading. Failures are the admissible search exhausting its node budget,
+not the net mispredicting. (Capacity-bound would look the opposite: budget-insensitive solve rates and
+long/suboptimal solutions.) The depth limit is the solver's search budget, **not the net's brain size.**
+
+**Product goal:** reach scrambles up to god's-number (26 QTM) for as many cubes as possible, and prefer a
+*solved* cube (even a few moves longer than optimal) over an honest fail. That reprioritizes the current
+optimality-first stance toward solve-success, which points at two inference knobs — **bigger budget** and a
+**slightly greedier weight** (>1.5 reaches the goal in fewer expansions, trading exact-optimal length for
+reach). Neither needs retraining or data.
+
+**Budget: dynamic (time-bounded) beats a fixed constant.** A constant `maxExpansions` couples latency to cube
+difficulty — an unsolvable cube burns the *entire* budget before failing, so one number can't be both
+"deep enough" and "fast enough." A **wall-clock deadline** instead bounds the thing the UX actually cares
+about (latency) while letting every cube use as much search as fits in the time → maximal reach and
+solve-rate under a fixed worst-case wait. Mechanically: thread a deadline (or `CancellationToken`) into
+`ValueGuidedSearch.SolveBatched` and check it once per expansion round; the web layer passes ~15–20 s on the
+resident-GPU path, a few seconds on the CPU fallback. (Alternatives considered: difficulty-scaled budget from
+the net's own `V(start)` estimate — subsumed by a time cap; escalating retry-on-fail — wastes the first
+attempt. The time cap is the simplest dynamic scheme that maximizes solved-cubes-per-second-of-wait.)
+
+**Honest ceiling.** Search budget is the cheap near-term lever and extends reliable reach to ~d17–18; it does
+**not** get to d26 on its own. Beyond ~d17 the heuristic's accuracy degrades, and no search budget rescues an
+inaccurate heuristic (DeepCubeA itself only reaches "solved, ~60% optimal" at the deep end). Pushing the
+frontier toward d26 is a *combined* problem — more inference search **and** a more accurate value net (more /
+better-targeted training, the F.2 / progressive-growing track). Order of operations: bank the free
+inference-budget win first; treat d26 as the long game.
+
 ## Web solver backend — resident forward, not host-span (measured 2026-06-14)
 
 The self-taught DAVI solver is wired into the web cube page (`/api/cube/solve-davi`, "Solve
