@@ -34,3 +34,6 @@ Thumbs.db
 
 ## NuGet pack output
 artifacts/
+
+# scratch dir for the depth-consolidation training experiment
+data-deepen/
