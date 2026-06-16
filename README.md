@@ -99,14 +99,50 @@ model store every eval) by Lab campaigns:
 
 ```
 dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --hours N --data src/RLDemo.Web/data           # Rush Hour
-dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --game cube --hours N --data models            # Rubik's Cube
+dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --game cube --hours N --data models            # Rubik's Cube (imitation)
 dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --game cube --eval-only --data models          # cube gate report
 ```
+
+(The cube's stronger *self-taught* value net — `--game cube-davi` — has its own start/resume
+instructions below.)
 
 Point `--data` at `src/RLDemo.Web/data` to have the running playground pick up improving
 checkpoints live (it re-reads them every few minutes), or at `models/` to refresh the
 committed seeds. The DQN fallbacks can be retrained from the console:
 `dotnet run --project src/RLDemo.Console -c Release -- rushhour|cube --save --data models`.
+
+### Train / further-train the self-taught cube solver (DAVI)
+
+The cube's strongest net is trained *teacher-free* by deep approximate value iteration
+(`--game cube-davi`, residual value net) — no Kociemba, just the goal and a cost objective — and
+solved by value-guided batch-weighted A\*. The shipped net is already QTM-optimal to depth 15;
+pushing the frontier deeper is a longer GPU campaign (net *capacity/coverage*, not width — width
+plateaued).
+
+**Start** a campaign (GPU-resident when a CUDA device is present, CPU fallback otherwise):
+
+```
+dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- \
+  --game cube-davi --net residual --max-depth 26 --probe-depths 12,14,15,16 \
+  --hours 12 --data src/RLDemo.Web/data
+```
+
+**Resume / further-train** — just run the **same command again**. The campaign checkpoints the net,
+Adam state, curriculum depth and sampler RNG to the store every eval, so a re-run *continues* where
+it left off (warm-starting from the shipped net) rather than restarting. Add `--samples N` to stop
+at a total state count (also resumable across runs); bound a single session with `--hours`. Watch
+capability climb in `<data>/logs/cube-davi-res-cap.csv`.
+
+**Measure** deep capability without training (no `--hours`):
+
+```
+dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- \
+  --game cube-davi --net residual --eval-only --search --batched \
+  --weight 1.0 --max-exp 100000 --max-depth 20 --vs-kociemba --data src/RLDemo.Web/data
+```
+
+Full recipe + expected single-GPU wall-clock:
+[`tools/…/Lab/CUBE_CAMPAIGN.md`](tools/MintPlayer.AI.ReinforcementLearning.Lab/CUBE_CAMPAIGN.md).
 
 ## Run the tests
 

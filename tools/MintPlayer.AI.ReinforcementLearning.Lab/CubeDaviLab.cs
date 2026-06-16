@@ -22,6 +22,8 @@ internal static class CubeDaviLab
     public static void Run(string[] args)
     {
         double hours = 9;
+        long targetSamples = 0;       // --samples N: stop after N total states processed (0 = time-bounded only)
+        int[]? probeOverride = null;  // --probe-depths a,b,c: BWAS capability-probe depths
         string dataDir = "data";
         ulong seed = 1;
         int width = Hidden;
@@ -38,9 +40,12 @@ internal static class CubeDaviLab
         float epsSync = 0.06f;        // ε-loss target sync threshold (P.9); 0 disables
         bool batchedSearch = false;   // use batched A* (BWAS) for --search eval
         bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
+        int evalEpisodes = 12;        // --episodes N: cubes per depth in --eval-only (fewer = faster deep probes)
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--samples" && i + 1 < args.Length) targetSamples = long.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--probe-depths" && i + 1 < args.Length) probeOverride = args[++i].Split(',').Select(int.Parse).ToArray();
             else if (args[i] == "--data" && i + 1 < args.Length) dataDir = args[++i];
             else if (args[i] == "--seed" && i + 1 < args.Length) seed = ulong.Parse(args[++i]);
             else if (args[i] == "--width" && i + 1 < args.Length) width = int.Parse(args[++i]);
@@ -57,6 +62,7 @@ internal static class CubeDaviLab
             else if (args[i] == "--vs-kociemba") vsKociemba = true;
             else if (args[i] == "--weight" && i + 1 < args.Length) searchWeight = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--max-exp" && i + 1 < args.Length) maxExpansions = int.Parse(args[++i]);
+            else if (args[i] == "--episodes" && i + 1 < args.Length) evalEpisodes = int.Parse(args[++i]);
         }
         bool residual = netKind == "residual";
 
@@ -174,7 +180,7 @@ internal static class CubeDaviLab
             if (useSearch) Log($"eval via {(batchedSearch ? "batched " : "")}value-guided A* (weight {searchWeight}, ≤{maxExpansions:N0} expansions)");
             if (vsKociemba) { CubeSolver.WarmUp(); Log("Tier-2 gate: comparing mean QTM length vs Kociemba"); }
             ReportEval(trainer, csvPath, totalIterations, curriculumDepth, loss: 0, evalUpTo: maxDepthCap, maxDepthCap,
-                useSearch, searchWeight, maxExpansions, batchedSearch, vsKociemba);
+                useSearch, searchWeight, maxExpansions, batchedSearch, vsKociemba, onlyDepths: probeOverride, episodes: evalEpisodes);
             return;
         }
 
@@ -223,7 +229,9 @@ internal static class CubeDaviLab
         // So every `probeEvery` iters run a BWAS capability probe at a few discriminating depths and log a
         // [cap] line + cap CSV — this records the true capability-over-time curve during the run.
         const long probeEvery = 15_000;
-        int[] probeDepths = [8, 10, 12, 14, 16];
+        // The cheap in-loop probe runs a small (8k-expansion) BWAS, so it only shows signal where that budget
+        // can reach — keep it near the frontier (the real deep d16+ check is the heavy `--eval-only --search`).
+        int[] probeDepths = probeOverride ?? [8, 10, 12, 14, 16];
         string capCsvPath = Path.Combine(logPath, residual ? "cube-davi-res-cap.csv" : "cube-davi-cap.csv");
         if (!File.Exists(capCsvPath))
             File.AppendAllText(capCsvPath, "utc,iterations," + string.Join(',', probeDepths.Select(d => $"d{d}")) + "\n");
@@ -231,10 +239,14 @@ internal static class CubeDaviLab
 
         var deadline = DateTime.UtcNow.AddHours(hours);
         float lastLoss = 0;
-        Log($"training until {deadline:u} (~{hours:F1} h), data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
-        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, eval every {trainChunk} iters, BWAS cap-probe every {probeEvery:N0}");
+        // A campaign can be bounded by wall-clock (--hours), a total state count (--samples), or both —
+        // whichever trips first. The state count resumes across sessions because totalIterations is restored,
+        // so "run 1B states" can be done in chunked sessions and stops exactly once 1B total are processed.
+        bool TargetReached() => targetSamples > 0 && totalIterations * (long)batchSize >= targetSamples;
+        Log($"training until {deadline:u} (~{hours:F1} h){(targetSamples > 0 ? $" or {targetSamples:N0} total states ({totalIterations * (long)batchSize:N0} done)" : "")}, data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
+        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, eval every {trainChunk} iters, BWAS cap-probe (d{string.Join(',', probeDepths)}) every {probeEvery:N0}");
 
-        while (DateTime.UtcNow < deadline)
+        while (DateTime.UtcNow < deadline && !TargetReached())
         {
             trainer.Train(Sample, iterations: trainChunk, onIteration: (_, loss) => lastLoss = loss);
             totalIterations += trainChunk;
@@ -263,7 +275,9 @@ internal static class CubeDaviLab
             }
         }
 
-        Log("time budget reached — final checkpoint saved.");
+        Log(TargetReached()
+            ? $"target state count reached ({totalIterations * (long)batchSize:N0}) — final checkpoint saved."
+            : "time budget reached — final checkpoint saved.");
     }
 
     /// <summary>
@@ -272,7 +286,8 @@ internal static class CubeDaviLab
     /// </summary>
     private static Dictionary<int, double> ReportEval(
         ValueIterationTrainer<FaceletCube> trainer, string csvPath, long iterations, int curriculumDepth, float loss, int evalUpTo, int maxDepthCap,
-        bool useSearch = false, float searchWeight = 2f, int maxExpansions = 50_000, bool batched = false, bool vsKociemba = false)
+        bool useSearch = false, float searchWeight = 2f, int maxExpansions = 50_000, bool batched = false, bool vsKociemba = false,
+        int[]? onlyDepths = null, int episodes = 12)
     {
         var rates = new Dictionary<int, double>();
         var report = new System.Text.StringBuilder();
@@ -281,12 +296,13 @@ internal static class CubeDaviLab
 
         for (int depth = 1; depth <= maxDepthCap; depth++)
         {
-            if (depth > evalUpTo) { cells.Add(""); continue; } // beyond the curriculum frontier — skip
+            // Skip depths beyond the curriculum frontier, or — when an explicit set is given
+            // (--probe-depths in eval-only) — any depth not in it, so deep probes stay cheap.
+            if (depth > evalUpTo || (onlyDepths is not null && !onlyDepths.Contains(depth))) { cells.Add(""); continue; }
             int solved = 0;
             long totalLen = 0;          // Σ net solution QTM over cubes the net solved
             long kociembaLen = 0;       // Σ Kociemba QTM over the SAME solved cubes (Tier-2 baseline)
             int beatsKociemba = 0;      // #cubes where the net's QTM ≤ Kociemba's
-            const int episodes = 12;    // P.8: lighter in-loop eval (was 20) — eval is pure overhead
             for (int episode = 0; episode < episodes; episode++)
             {
                 var evalRng = new Xoshiro256StarStar((ulong)(700_000 + 1_000 * depth + episode));
