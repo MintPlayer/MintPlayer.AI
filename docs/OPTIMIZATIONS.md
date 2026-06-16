@@ -146,6 +146,23 @@ resident-GPU path, a few seconds on the CPU fallback. (Alternatives considered: 
 the net's own `V(start)` estimate — subsumed by a time cap; escalating retry-on-fail — wastes the first
 attempt. The time cap is the simplest dynamic scheme that maximizes solved-cubes-per-second-of-wait.)
 
+**Measured — deployed time-bounded solver (2026-06-16, RTX 3060, weight 1.5, 20 s deadline, 6 cubes/depth):**
+
+| depth | solved | mean length | mean ms | worst ms |
+|---|---|---|---|---|
+| 10 | 6/6 | 10.0qt (optimal) | 286 | 364 |
+| 12 | 6/6 | 12.0qt (optimal) | 328 | 351 |
+| 14 | 6/6 | 14.0qt (optimal) | 1174 | 4954 |
+| 16 | 3/6 | 16.0qt (optimal) | 10461 | 20013 |
+| 18 | 1/6 | 18.0qt (optimal) | 18356 | 20033 |
+
+Confirms the design: per-cube effort is dynamic (easy ~300 ms, hard up to the cap), worst-case latency is the
+**deadline** (~20 s — the 150k expansion ceiling is never hit), solutions stay optimal-length, and the 20 s
+budget now reaches d18 (the old 50k/~13 s budget could not). Caveat: d16 is heavy for interactive use (mean
+~10 s, half hit the full 20 s); pushing d16 toward the offline 83% needs ~30 s+, past a comfortable web cap.
+Reproduce anytime: `--game cube-davi --net residual --eval-only --time-budget 20 --weight 1.5 --max-exp 150000
+--probe-depths 10,12,14,16,18 --episodes 6 --data <dir>`.
+
 **Honest ceiling.** Search budget is the cheap near-term lever and extends reliable reach to ~d17–18; it does
 **not** get to d26 on its own. Beyond ~d17 the heuristic's accuracy degrades, and no search budget rescues an
 inaccurate heuristic (DeepCubeA itself only reaches "solved, ~60% optimal" at the deep end). Pushing the

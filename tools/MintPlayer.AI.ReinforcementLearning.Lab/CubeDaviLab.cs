@@ -44,6 +44,7 @@ internal static class CubeDaviLab
         bool frontierBias = false;    // --frontier-bias: sample scramble depth near the curriculum frontier (Gaussian) instead of uniform
         int growToWidth = 0;          // --grow-to W: Net2WiderNet-widen the residual trunk to W once --grow-at is reached (0 = never)
         long growAtSamples = 0;       // --grow-at S: sample count at which to widen (progressive growing: train cheap narrow, widen on demand)
+        double timeBudgetSec = 0;     // --time-budget S: eval-only, solve probe depths through the deployed CubeValueSearch with an S-second wall-clock budget (verifies the time-bounded web solver)
         bool batchedSearch = false;   // use batched A* (BWAS) for --search eval
         bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
         int evalEpisodes = 12;        // --episodes N: cubes per depth in --eval-only (fewer = faster deep probes)
@@ -66,6 +67,7 @@ internal static class CubeDaviLab
             else if (args[i] == "--frontier-bias") frontierBias = true;
             else if (args[i] == "--grow-to" && i + 1 < args.Length) growToWidth = int.Parse(args[++i]);
             else if (args[i] == "--grow-at" && i + 1 < args.Length) growAtSamples = long.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+            else if (args[i] == "--time-budget" && i + 1 < args.Length) timeBudgetSec = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--net" && i + 1 < args.Length) netKind = args[++i].ToLowerInvariant();
             else if (args[i] == "--max-depth" && i + 1 < args.Length) maxDepthCap = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
@@ -202,6 +204,17 @@ internal static class CubeDaviLab
 
         if (evalOnly)
         {
+            // Verify the DEPLOYED time-bounded solver (CubeValueSearch + the resident forward + the search
+            // deadline) — the exact code the web `/api/cube/solve-davi` runs, with per-cube wall-clock timing.
+            if (timeBudgetSec > 0)
+            {
+                int[] depths = probeOverride ?? [10, 12, 14, 16, 18];
+                Func<FaceletCube, CubeValueSearch.SearchResult> solve = targetForward is not null
+                    ? c => CubeValueSearch.Solve(targetForward.Forward, c, maxExpansions, searchWeight, TimeSpan.FromSeconds(timeBudgetSec))
+                    : c => CubeValueSearch.Solve((ResidualMlp)net, c, maxExpansions, searchWeight, TimeSpan.FromSeconds(timeBudgetSec));
+                VerifyTimeBudget(solve, depths, evalEpisodes, maxExpansions, searchWeight, timeBudgetSec, targetForward is not null);
+                return;
+            }
             if (useSearch) Log($"eval via {(batchedSearch ? "batched " : "")}value-guided A* (weight {searchWeight}, ≤{maxExpansions:N0} expansions)");
             if (vsKociemba) { CubeSolver.WarmUp(); Log("Tier-2 gate: comparing mean QTM length vs Kociemba"); }
             ReportEval(trainer, csvPath, totalIterations, curriculumDepth, loss: 0, evalUpTo: maxDepthCap, maxDepthCap,
@@ -435,6 +448,38 @@ internal static class CubeDaviLab
         var obs = new float[RubiksCubeEnv.ObservationSize];
         RubiksCubeEnv.WriteObservation(cube, obs);
         return obs;
+    }
+
+    /// <summary>
+    /// Benchmark the deployed time-bounded solver: per depth, solve <paramref name="episodes"/> fixed-seed
+    /// scrambles through <paramref name="solve"/> (the web's CubeValueSearch path) and report solve rate,
+    /// mean solution length, and mean/worst wall-clock. The worst-case ms is the latency a user can actually
+    /// hit — it should sit at (not far past) the budget, confirming the deadline binds before the expansion cap.
+    /// </summary>
+    private static void VerifyTimeBudget(
+        Func<FaceletCube, CubeValueSearch.SearchResult> solve, int[] depths, int episodes,
+        int maxExpansions, float weight, double seconds, bool gpu)
+    {
+        Log($"time-bounded solve verification ({(gpu ? "resident GPU forward" : "CPU forward")}): weight {weight:g}, ≤{maxExpansions:N0} exp ceiling, {seconds:F0}s budget, {episodes} cubes/depth");
+        foreach (int depth in depths)
+        {
+            int solved = 0; long totalLen = 0; double totalMs = 0, worstMs = 0;
+            for (int e = 0; e < episodes; e++)
+            {
+                var rng = new Xoshiro256StarStar((ulong)(950_000 + 1_000 * depth + e));
+                var cube = new FaceletCube();
+                cube.Apply(FaceletCube.ScrambleMoves(rng, depth, quarterTurnsOnly: true));
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var result = solve(cube);
+                sw.Stop();
+                double ms = sw.Elapsed.TotalMilliseconds;
+                totalMs += ms; worstMs = Math.Max(worstMs, ms);
+                if (result.Solved) { solved++; totalLen += result.Moves.Length; }
+            }
+            string len = solved > 0 ? $", mean {totalLen / (double)solved:F1}qt" : "";
+            Log($"  d{depth}: {solved}/{episodes} solved{len} | mean {totalMs / episodes:F0} ms, worst {worstMs:F0} ms");
+        }
     }
 
     /// <summary>Quarter-turn length of Kociemba's (half-turn-metric) solution — a "X2" face turn is 2 quarter-turns.</summary>
