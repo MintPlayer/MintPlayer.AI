@@ -226,11 +226,17 @@ The saturation above is a symptom of *how* DAVI learns, worth stating plainly so
 
 **Recipe implication (the campaign's real bug).** The curriculum's **force-advance-on-stall** rule shoved the
 depth to d26 whenever progress stalled — i.e. exactly when the inner shells were *not* yet mastered — so it built
-deep targets on sand and the value saturated at ~14. The fix is a **mastery gate with no forced advance**,
-measured by value accuracy / a search probe rather than greedy solve-rate: widen the window only when the current
-frontier is genuinely trustworthy, and let accuracy propagate outward at its own pace. The `--set-curriculum-depth`
-+ `--frontier-bias` consolidation run is the first test of this; a principled follow-up is to replace the
-force-advance gate in `CubeDaviLab` outright.
+deep targets on sand and the value saturated at ~14.
+
+**Fix — IMPLEMENTED (2026-06-16).** `CubeDaviLab`'s advance rule (was `greedy ≥0.6 OR force-advance every 384k
+samples`) is replaced by a **value-accuracy gate with no forced advance**: advance d→d+1 only when mean predicted
+`V(d)/d ≥ --advance-ratio` (default 0.9), i.e. the value tracks true cost-to-go at the frontier so its one-step
+targets for d+1 are trustworthy. Greedy solve-rate is no longer the gate (it plateaus ~d10-12 even where the value
+is fine, which would freeze the curriculum). A persistent stall is now surfaced as an informational note
+("needs longer training or more capacity") rather than triggering an advance — a stall is a true ceiling signal,
+not something to paper over. Smoke-confirmed: a fresh net advances d2→6 on `V/d` (0.99, 1.00, 0.97, 0.94), no
+forced steps. (`--set-curriculum-depth` re-pins a resumed campaign back onto the accuracy frontier so the gate can
+re-earn the deeper levels honestly.)
 
 **Honest ceiling.** Search budget is the cheap near-term lever and extends reliable reach to ~d17–18; it does
 **not** get to d26 on its own. Beyond ~d17 the heuristic's accuracy degrades, and no search budget rescues an

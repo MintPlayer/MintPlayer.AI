@@ -47,6 +47,7 @@ internal static class CubeDaviLab
         double timeBudgetSec = 0;     // --time-budget S: eval-only, solve probe depths through the deployed CubeValueSearch with an S-second wall-clock budget (verifies the time-bounded web solver)
         bool valueCurve = false;      // --value-curve: eval-only, report mean predicted V(start) vs scramble depth (heuristic calibration — where V saturates is the accuracy ceiling)
         int setCurriculumDepth = 0;   // --set-curriculum-depth N: on resume, override the restored curriculum depth (consolidate the accuracy frontier instead of training capped deep states)
+        double advanceRatio = 0.9;    // --advance-ratio R: curriculum value-accuracy gate — advance d→d+1 when mean V(d)/d ≥ R (replaces greedy-solve + force-advance)
         bool batchedSearch = false;   // use batched A* (BWAS) for --search eval
         bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
         int evalEpisodes = 12;        // --episodes N: cubes per depth in --eval-only (fewer = faster deep probes)
@@ -72,6 +73,7 @@ internal static class CubeDaviLab
             else if (args[i] == "--time-budget" && i + 1 < args.Length) timeBudgetSec = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--value-curve") valueCurve = true;
             else if (args[i] == "--set-curriculum-depth" && i + 1 < args.Length) setCurriculumDepth = int.Parse(args[++i]);
+            else if (args[i] == "--advance-ratio" && i + 1 < args.Length) advanceRatio = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--net" && i + 1 < args.Length) netKind = args[++i].ToLowerInvariant();
             else if (args[i] == "--max-depth" && i + 1 < args.Length) maxDepthCap = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
@@ -283,14 +285,17 @@ internal static class CubeDaviLab
             });
         }
 
-        // Curriculum advancement (P.8): greedy solve-rate falls off with depth (greedy is myopic), so a
-        // pure mastery gate caps the curriculum where greedy stalls. Advance when the frontier is mostly
-        // solved OR force-advance after a stall — exposure to deeper states is what lets the VALUE function
-        // (and thus value-guided search at inference) reach deep, even where greedy never hits the gate.
-        // The stall gate is measured in SAMPLES, not iterations, so batch size no longer distorts pacing
-        // (~384k samples ≈ the old 3000 iters at batch 128).
-        const double advanceThreshold = 0.6;
-        const long forceAdvanceSamples = 384_000;
+        // Curriculum advancement: VALUE-ACCURACY gate, NO forced advance (OPTIMIZATIONS.md "train outward,
+        // gate on mastery"). The old rule — greedy solve-rate ≥0.6 OR force-advance every 384k samples —
+        // deepened the curriculum on a timer whenever progress stalled, so it raced to the depth cap while the
+        // value was only accurate far shallower; the deep bootstrap targets (1 + V(neighbour)) were then built
+        // on unmastered inner shells and the value saturated (~14 moves regardless of true depth). Instead,
+        // advance d→d+1 only once the frontier shell is genuinely accurate — mean predicted V at depth d is
+        // within `advanceRatio` of d, so V tracks true cost-to-go there and its one-step targets for d+1 are
+        // trustworthy. Greedy solve-rate is deliberately NOT the gate: it plateaus ~d10-12 (greedy is myopic)
+        // even where the value is fine, so gating on it would freeze the curriculum. A stall now means "train
+        // longer / add capacity" — a true ceiling signal — never "advance into garbage".
+        const long stallWarnSamples = 4_000_000; // informational only: note when the frontier hasn't advanced
         long samplesSinceAdvance = 0;
 
         // P.8: train in larger chunks so the (CPU, GPU-idle) eval runs less often — it's pure overhead
@@ -316,7 +321,7 @@ internal static class CubeDaviLab
         // so "run 1B states" can be done in chunked sessions and stops exactly once 1B total are processed.
         bool TargetReached() => targetSamples > 0 && totalIterations * (long)batchSize >= targetSamples;
         Log($"training until {deadline:u} (~{hours:F1} h){(targetSamples > 0 ? $" or {targetSamples:N0} total states ({totalIterations * (long)batchSize:N0} done)" : "")}, data dir: {store.RootDirectory}, depth cap {maxDepthCap}");
-        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, target-sync every {targetSyncInterval}, β₂ {beta2:g}, eval every {trainChunk} iters, checkpoint every {checkpointEvery} eval(s), BWAS cap-probe (d{string.Join(',', probeDepths)}) every {probeEvery:N0}{(frontierBias ? ", frontier-biased sampling" : "")}");
+        Log($"batch {batchSize}, lr {learningRate:g}, ε-sync {epsSync:g}, target-sync every {targetSyncInterval}, β₂ {beta2:g}, eval every {trainChunk} iters, checkpoint every {checkpointEvery} eval(s), advance gate V/d ≥ {advanceRatio:F2}, BWAS cap-probe (d{string.Join(',', probeDepths)}) every {probeEvery:N0}{(frontierBias ? ", frontier-biased sampling" : "")}");
 
         int evalCount = 0;
         while (DateTime.UtcNow < deadline && !TargetReached())
@@ -335,19 +340,26 @@ internal static class CubeDaviLab
             // Evaluate only up to one level beyond the current curriculum — enough to decide
             // advancement, without burning time on deep failed solves the net can't reach yet.
             int evalUpTo = Math.Min(curriculumDepth + 1, maxDepthCap);
-            var rates = ReportEval(trainer, csvPath, totalIterations, curriculumDepth, lastLoss, evalUpTo, maxDepthCap);
+            ReportEval(trainer, csvPath, totalIterations, curriculumDepth, lastLoss, evalUpTo, maxDepthCap); // greedy CSV/log (not the advance gate)
             // Checkpointing dominates I/O on slow storage (weights + Adam moments, written every eval).
             // --checkpoint-every N writes only every Nth eval; the post-loop save below guarantees the
             // final state is always persisted regardless of where N lands.
             if (++evalCount % checkpointEvery == 0) SaveCheckpoint();
 
-            bool mastered = rates[curriculumDepth] >= advanceThreshold;
-            bool stalled = samplesSinceAdvance >= forceAdvanceSamples;
-            if (curriculumDepth < maxDepthCap && (mastered || stalled))
+            // Value-accuracy gate: advance only when V at the frontier tracks true depth (mean V(d)/d ≥ ratio),
+            // so d+1's bootstrap targets are trustworthy. No forced advance — a persistent stall is the honest
+            // "needs more training / capacity" signal, surfaced as a note rather than papered over.
+            double frontierRatio = MeanValueAtDepth(trainer, curriculumDepth, episodes: 64) / curriculumDepth;
+            if (curriculumDepth < maxDepthCap && frontierRatio >= advanceRatio)
             {
                 curriculumDepth++;
                 samplesSinceAdvance = 0;
-                Log($"curriculum advanced → scramble depth {curriculumDepth}{(mastered ? "" : " (forced after stall)")}");
+                Log($"curriculum advanced → scramble depth {curriculumDepth} (frontier V/d {frontierRatio:F2} ≥ {advanceRatio:F2})");
+            }
+            else if (curriculumDepth < maxDepthCap && samplesSinceAdvance >= stallWarnSamples)
+            {
+                Log($"frontier d{curriculumDepth} not yet mastered (V/d {frontierRatio:F2} < {advanceRatio:F2}) after {samplesSinceAdvance:N0} samples — needs longer training or more capacity (no forced advance)");
+                samplesSinceAdvance = 0; // throttle the note
             }
 
             // Progressive growing: train cheap at the narrow width, then widen the trunk once enough samples
@@ -473,6 +485,24 @@ internal static class CubeDaviLab
         var obs = new float[RubiksCubeEnv.ObservationSize];
         RubiksCubeEnv.WriteObservation(cube, obs);
         return obs;
+    }
+
+    /// <summary>
+    /// Mean predicted cost-to-go <c>V(start)</c> over <paramref name="episodes"/> fixed-seed random scrambles
+    /// at <paramref name="depth"/> (forward passes only). The curriculum's value-accuracy gate compares
+    /// <c>this / depth</c> against the advance ratio: a shell is ready to deepen once V tracks true depth there.
+    /// </summary>
+    private static double MeanValueAtDepth(ValueIterationTrainer<FaceletCube> trainer, int depth, int episodes)
+    {
+        double sum = 0;
+        for (int e = 0; e < episodes; e++)
+        {
+            var rng = new Xoshiro256StarStar((ulong)(860_000 + 1_000 * depth + e));
+            var cube = new FaceletCube();
+            cube.Apply(FaceletCube.ScrambleMoves(rng, depth, quarterTurnsOnly: true));
+            sum += trainer.Value(cube);
+        }
+        return sum / episodes;
     }
 
     /// <summary>
