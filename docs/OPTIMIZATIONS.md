@@ -251,6 +251,33 @@ Together the three pieces — value-accuracy gate (advance), loss-plateau auto-w
 `WidenTo` (warm start) — make a run safe to leave training unattended: it deepens when accurate, grows when
 capacity-bound, and never advances onto inaccurate targets.
 
+### Conclusion (2026-06-16): the d14 wall is sample/bootstrap-bound — NOT capacity, NOT lr
+
+Ran the autopilot on the 690M-sample net to push the accuracy frontier past d14 (where `V/d` first falls under the
+0.90 gate). It re-earned d12→13→14 instantly (already mastered) then **stuck hard at d14** — the gate correctly
+refused to advance (`V(14)/14 ≈ 0.86`). We then tried, in sequence, every lever short of DeepCubeA-scale compute:
+
+| lever tried | result at the d14 frontier |
+|---|---|
+| more training @ lr 2e-3, width 1024 (~34M samples) | loss floor ~0.10–0.13, `V/d` 0.86 — flat |
+| gentler lr 5e-4 (let loss settle under the 0.06 sync threshold) | loss floor unchanged ~0.11, `V/d` 0.86 — flat |
+| **widen 1024→2048** (the capacity lever, ~7M samples post-widen) | loss floor **unchanged** ~0.12–0.13, `V/d` 0.86 — flat |
+
+**The loss floor (~0.10) is invariant to learning rate (2e-3 / 1e-3 / 5e-4), to width (1024 / 2048), and to sample
+count (held across the whole 690M-sample campaign).** A limit that ignores all three is not a fitting error, an
+lr problem, or a capacity wall — it is the **DAVI bootstrap fixed point**: the value has converged to a
+self-consistent but *underestimating* solution (`V` saturates ~13.7, §calibration), and the deep targets
+`1 + V_target(neighbour)` are capped by it. The only thing that breaks a bootstrap fixed point is propagating
+accurate values outward shell-by-shell with **far more samples** — DeepCubeA used ~10¹⁰; this net is at ~7×10⁸
+(~7%). On a single RTX 3060 that gap is **weeks of compute**, not a tweak.
+
+**So: laptop-scale further-training does NOT make the net solve deeper than ~d14-15.** The remaining lever is
+compute we don't have, or a fundamentally different target (longer multi-step lookahead / occasional ground-truth
+anchoring) — not lr, not width, not the curriculum knobs. What this work *did* settle: the autopilot
+(gate + auto-widen) is sound and is the right machinery for a DeepCubeA-scale run; capacity is **ruled out** as the
+near-term bottleneck; and the cheap, real win is on the **inference** side (the 15 s time-bounded solver, shipped).
+The `data-deepen` experiment is scratch (gitignored) — the deployed net is unchanged.
+
 **Honest ceiling.** Search budget is the cheap near-term lever and extends reliable reach to ~d17–18; it does
 **not** get to d26 on its own. Beyond ~d17 the heuristic's accuracy degrades, and no search budget rescues an
 inaccurate heuristic (DeepCubeA itself only reaches "solved, ~60% optimal" at the deep end). Pushing the

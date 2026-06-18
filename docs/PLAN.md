@@ -808,8 +808,14 @@ run that's safe to leave training unattended:
   `--frontier-bias`).
 
 Together: the run **deepens when accurate, grows capacity when stuck, and never advances onto inaccurate targets**.
-Status: branch open; an autopilot consolidation run is validating it on the 690M-sample net (in a scratch copy; the
-deployed checkpoint is untouched).
+
+**Result (2026-06-16):** ran the autopilot on the 690M-sample net to push past d14. It stuck at d14, and the loss
+floor (~0.10) proved **invariant to lr (2e-3/1e-3/5e-4), width (1024→2048 widen), and sample count** — so the wall
+is the **DAVI bootstrap fixed point / sample-scale gap (~7% of DeepCubeA's 10¹⁰)**, *not* capacity or hyperparameters.
+**Laptop-scale further-training does not deepen past ~d14-15; the remaining lever is DeepCubeA-scale compute (weeks
+on one 3060), which is out of scope.** Capacity ruled out. Full analysis in `docs/OPTIMIZATIONS.md`. The autopilot
+itself is sound (the right machinery for such a run); the cheap real win was inference-side (the 15 s time-bounded
+solver). Status: branch open (PR #7); deployed net unchanged.
 
 ## Testing strategy (cross-cutting, from research)
 
