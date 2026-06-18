@@ -54,6 +54,46 @@ internal static class CubeDaviLab
         bool batchedSearch = false;   // use batched A* (BWAS) for --search eval
         bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
         int evalEpisodes = 12;        // --episodes N: cubes per depth in --eval-only (fewer = faster deep probes)
+
+        // Config precedence: in-code defaults (above) → appsettings.json "cube-davi" section → CLI flags (below).
+        // The file holds the long-lived campaign config so a multi-day run resumes with just `--game cube-davi`;
+        // any CLI flag still overrides it for a one-off. Only keys present in the file change anything.
+        var cfg = CubeDaviConfig.Load(out string? cfgSource);
+        if (cfgSource is not null) Log($"loaded cube-davi config from {cfgSource}");
+        hours = cfg.Hours ?? hours;
+        targetSamples = cfg.Samples ?? targetSamples;
+        probeOverride = cfg.ProbeDepths ?? probeOverride;
+        dataDir = cfg.Data ?? dataDir;
+        seed = cfg.Seed ?? seed;
+        netKind = cfg.Net?.ToLowerInvariant() ?? netKind;
+        width = cfg.Width ?? width;
+        hiddenLayers = cfg.Layers ?? hiddenLayers;
+        blocks = cfg.Blocks ?? blocks;
+        batchSize = cfg.Batch ?? batchSize;
+        learningRate = cfg.Lr ?? learningRate;
+        epsSync = cfg.EpsSync ?? epsSync;
+        targetSyncInterval = cfg.TargetSyncInterval ?? targetSyncInterval;
+        beta2 = cfg.Beta2 ?? beta2;
+        checkpointEvery = Math.Max(1, cfg.CheckpointEvery ?? checkpointEvery);
+        frontierBias = cfg.FrontierBias ?? frontierBias;
+        growToWidth = cfg.GrowTo ?? growToWidth;
+        growAtSamples = cfg.GrowAt ?? growAtSamples;
+        setCurriculumDepth = cfg.SetCurriculumDepth ?? setCurriculumDepth;
+        advanceRatio = cfg.AdvanceRatio ?? advanceRatio;
+        autoWiden = cfg.AutoWiden ?? autoWiden;
+        maxWidth = cfg.MaxWidth ?? maxWidth;
+        widenStallSamples = cfg.WidenStallSamples ?? widenStallSamples;
+        maxDepthCap = cfg.MaxDepth ?? maxDepthCap;
+        evalOnly = cfg.EvalOnly ?? evalOnly;
+        useSearch = cfg.Search ?? useSearch;
+        batchedSearch = cfg.Batched ?? batchedSearch;
+        vsKociemba = cfg.VsKociemba ?? vsKociemba;
+        searchWeight = cfg.Weight ?? searchWeight;
+        maxExpansions = cfg.MaxExpansions ?? maxExpansions;
+        timeBudgetSec = cfg.TimeBudget ?? timeBudgetSec;
+        valueCurve = cfg.ValueCurve ?? valueCurve;
+        evalEpisodes = cfg.Episodes ?? evalEpisodes;
+
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
