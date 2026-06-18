@@ -48,6 +48,40 @@ multiplies the clock; checkpoint/eval overhead is real; and this is single-GPU �
 more GPUs. **ROI honesty:** the net is already optimal to d15; this chases d16→20, and even DeepCubeA only reaches
 "solved, ~60% optimal" there. Treat 1 B as a bounded experiment, not a guaranteed "any cube".
 
+### The 10-billion-state brute-force campaign — the sample-bound lever (2026-06-16 conclusion)
+
+The d14 accuracy wall was proven **sample/bootstrap-bound, NOT capacity or lr** (see `docs/OPTIMIZATIONS.md`
+"Conclusion (2026-06-16)": the loss floor is invariant to lr 2e-3/1e-3/5e-4, width 1024→2048, and 690M samples).
+So the *only* lever that deepens the net is DeepCubeA-scale compute (~10¹⁰ states). Recipe corrections vs the M-eff
+autopilot, which matter at this scale:
+
+- **Use plain uniform sampling, NOT the curriculum gate / `--frontier-bias` / `--auto-widen`.** The value-accuracy
+  gate refuses to sample past the mastered frontier — stuck at d14 it would *never train d15-26*, starving the
+  exact states that need to improve. DeepCubeA uses uniform scramble-length `[1, K]` and brute scale: shallow
+  states (accurate targets) anchor and the accurate region propagates outward on its own. Pin the curriculum at the
+  cap so sampling is uniform `[1, 26]`: `--set-curriculum-depth 26 --max-depth 26` and **omit** `--frontier-bias`
+  and `--auto-widen`. (The gate is a small-scale sample-efficiency trick; at 10 B it's counterproductive.)
+- **Width 1024, not 2048.** Capacity is ruled out, and 1024 trains ~4× more samples/hour — for a sample-bound
+  problem that's 4× faster to 10 B.
+- **Robustness for ~weeks unattended:** it's fully resumable (checkpoints every eval to `--data`), so run it in
+  chunks via `--hours` and just re-run the same command after any reboot/sleep — it resumes net + Adam + curriculum
+  + RNG and stops once 10 B *total* are done. **Disable OS sleep** (a sleeping laptop has killed runs before).
+
+```bash
+# Warm-start from the shipped 1024 net, uniform [1,26], 10 B states, chunked (re-run to resume):
+dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab -- \
+  --game cube-davi --net residual --width 1024 --blocks 4 \
+  --batch 1000 --lr 1e-3 --eps-sync 0.06 \
+  --set-curriculum-depth 26 --max-depth 26 \
+  --samples 10000000000 --probe-depths 12,14,16,18 \
+  --data <campaign-dir> --hours 12
+```
+**Honest expectation:** ~38 days on one 3060 (chunked over calendar weeks). Even at the full 10 B, DeepCubeA reaches
+"solved, ~60% optimal" at the deep end — a big jump from today's ~d15-optimal / d16-partial, but **not** flawless
+god's-number optimality. A cloud GPU (A100-class, or multi-GPU) would cut the wall-clock several-fold if weeks of
+laptop GPU is disruptive. Promote the result into the web `data/` + `models/` (LFS) only after a heavy-search probe
+confirms it actually beats the current net.
+
 ## Efficiency levers (M-eff)
 
 New knobs and experiments to reach the same capability in less wall-clock / fewer samples. All default
