@@ -37,3 +37,6 @@ artifacts/
 
 # scratch dir for the depth-consolidation training experiment
 data-deepen/
+
+# scratch dir for the 10B brute-force campaign
+cube-10b/
