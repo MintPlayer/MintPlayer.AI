@@ -19,15 +19,16 @@ namespace RLDemo.Web.Services;
 /// </summary>
 public static class EpisodeStreamer
 {
-    public static async Task RunAsync<TEnv>(
+    public static async Task RunAsync<TEnv, TAct>(
         WebSocket socket,
         TEnv env,
-        Func<float[], bool[]?, int> act,
-        Func<TEnv, int, StepResult<float[]>, object> frame,
+        Func<float[], bool[]?, TAct> act,
+        Func<TEnv, TAct, StepResult<float[]>, object> frame,
+        TAct resetAction,
         int tickMs,
         ulong startSeed,
         CancellationToken ct)
-        where TEnv : IEnvironment<float[], int>
+        where TEnv : IEnvironment<float[], TAct>
     {
         var masker = env as IActionMaskProvider;
         ulong seed = startSeed;
@@ -36,13 +37,13 @@ public static class EpisodeStreamer
             while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
                 var (obs, _) = env.Reset(seed++);
-                // Frame with action = -1 marks the freshly reset start state so the client draws it.
-                await Send(socket, frame(env, -1, new StepResult<float[]>(obs, 0, false, false, EnvInfo.Empty)), ct);
+                // The reset-marker action tags the freshly reset start state so the client draws it.
+                await Send(socket, frame(env, resetAction, new StepResult<float[]>(obs, 0, false, false, EnvInfo.Empty)), ct);
                 await Task.Delay(tickMs, ct);
 
                 while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
                 {
-                    int action = act(obs, masker?.CurrentActionMask());
+                    TAct action = act(obs, masker?.CurrentActionMask());
                     var step = env.Step(action);
                     obs = step.Observation;
                     await Send(socket, frame(env, action, step), ct);

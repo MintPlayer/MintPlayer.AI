@@ -316,6 +316,69 @@ public sealed partial class Tensor
         });
     }
 
+    /// <summary>
+    /// Column-wise concatenation of two row-aligned tensors: [B,n₁] ⊕ [B,n₂] → [B,n₁+n₂]. Gradient
+    /// routes the left columns back to <c>this</c> and the right columns to <paramref name="other"/>.
+    /// (SAC's critic takes <c>concat(state, action)</c>, and the action half must carry the actor's gradient.)
+    /// Pure memory layout, so it copies directly rather than dispatching to the compute backend.
+    /// </summary>
+    public Tensor ConcatCols(Tensor other)
+    {
+        CheckRank2(this); CheckRank2(other);
+        if (Rows != other.Rows)
+            throw new ArgumentException($"ConcatCols row mismatch: {Rows} vs {other.Rows}.");
+        int rows = Rows, left = Cols, right = other.Cols, total = left + right;
+
+        var data = new float[rows * total];
+        for (int r = 0; r < rows; r++)
+        {
+            Array.Copy(Data, r * left, data, r * total, left);
+            Array.Copy(other.Data, r * right, data, r * total + left, right);
+        }
+
+        return MakeResult(data, [rows, total], [this, other], result => () =>
+        {
+            var dy = result.Grad!;
+            if (NeedsGrad)
+            {
+                EnsureGrad();
+                for (int r = 0; r < rows; r++)
+                    for (int c = 0; c < left; c++) Grad![r * left + c] += dy[r * total + c];
+            }
+            if (other.NeedsGrad)
+            {
+                other.EnsureGrad();
+                for (int r = 0; r < rows; r++)
+                    for (int c = 0; c < right; c++) other.Grad![r * right + c] += dy[r * total + left + c];
+            }
+        });
+    }
+
+    /// <summary>
+    /// Extracts a contiguous column range: [B,N] → [B,<paramref name="count"/>] starting at
+    /// <paramref name="start"/>. Gradient scatters back into the source columns. (Splits a policy net's
+    /// [B,2·A] output into the mean and log-σ halves of a Gaussian.) Pure layout op.
+    /// </summary>
+    public Tensor SliceCols(int start, int count)
+    {
+        CheckRank2(this);
+        if (start < 0 || count < 0 || start + count > Cols)
+            throw new ArgumentOutOfRangeException(nameof(start), $"Slice [{start},{start + count}) out of [0,{Cols}).");
+        int rows = Rows, cols = Cols;
+
+        var data = new float[rows * count];
+        for (int r = 0; r < rows; r++)
+            Array.Copy(Data, r * cols + start, data, r * count, count);
+
+        return MakeResult(data, [rows, count], [this], result => () =>
+        {
+            EnsureGrad();
+            var dy = result.Grad!;
+            for (int r = 0; r < rows; r++)
+                for (int c = 0; c < count; c++) Grad![r * cols + start + c] += dy[r * count + c];
+        });
+    }
+
     private static void AccumulateGrad(Tensor tensor, float[] grad)
     {
         if (!tensor.NeedsGrad) return;

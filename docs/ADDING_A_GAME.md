@@ -2,11 +2,18 @@
 
 The mechanical, file-by-file checklist for adding a game to the playground, reverse-engineered from
 **Rush Hour** / **2048** / **Cube** (investigated 2026-06-15). Cross-refs: `PRD.md` §7 + §7.1 (interaction
-models), `PLAN.md` M8–M10 (web slices) + M22 (MountainCar/Snake).
+models), `PLAN.md` M8–M10 (web slices) + M22 (MountainCar/Snake) + M23 (Pendulum/SAC).
 
 For a new game `X` (lowercase env id `xgame`, PascalCase `XGame`), pick the **interaction principle** first
 (PRD §7.1): **A — compute-and-return** (HTTP, like Cube/2048/RushHour/Snake) or **B — live control stream**
-(WebSocket, like MountainCar). Then work the six layers.
+(WebSocket, like MountainCar/Pendulum). Then work the six layers.
+
+**Continuous-action games** (a real-valued action, like Pendulum) differ only at a few seams: the env is
+`IEnvironment<float[],float[]>` with a **`BoxSpace` action space** (not `DiscreteSpace`), the agent is a
+`ContinuousPolicyAgent` over a Gaussian policy net (greedy = tanh(mean), rescaled to the box bounds), trained with
+**SAC** (`SacTrainer`), and the WS `EpisodeStreamer` is used with `TAct = float[]` (pass a zero-vector
+`resetAction`). Serve-time checkpoint is the actor `Mlp` via `MlpCheckpoint` (critics/temperature are training-only).
+Human play maps ←/→ to a continuous torque rather than a discrete button.
 
 ## Load-bearing conventions
 - **Model-store filename:** `FileModelStore.PathOf` maps `(environmentId, algorithmId)` → `<root>/<envId>.<algoId>.ckpt`.

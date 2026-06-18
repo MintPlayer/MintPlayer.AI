@@ -38,11 +38,13 @@ builder.Services.AddSingleton<Game2048ModelService>();
 builder.Services.AddSingleton<CubeModelService>();
 builder.Services.AddSingleton<SnakeModelService>();
 builder.Services.AddSingleton<MountainCarModelService>();
+builder.Services.AddSingleton<PendulumModelService>();
 builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<RushHourModelService>());
 builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<Game2048ModelService>());
 builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<CubeModelService>());
 builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<SnakeModelService>());
 builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<MountainCarModelService>());
+builder.Services.AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<PendulumModelService>());
 builder.Services.AddSingleton<ITrainableModelService, CubeSolverWarmupService>();
 
 // Integration tests control the model store themselves and host no SPA.
