@@ -1,3 +1,6 @@
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
+using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
+
 namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 
 /// <summary>
@@ -100,4 +103,91 @@ public static class CubePolicySearch
     }
 
     private sealed record Node(FaceletCube Cube, Node? Parent, int Action, int Depth);
+
+    /// <summary>CPU overload: runs the policy net's batched forward through the autograd backend.</summary>
+    public static SearchResult BeamSearch(CubePolicyNet net, FaceletCube start, int beamWidth = 2_000, int maxDepth = MaxSolutionMoves)
+        => BeamSearch((features, rows) =>
+        {
+            using (GradMode.NoGrad())
+                return net.Forward(new Tensor(features, rows, RubiksCubeEnv.ObservationSize)).Logits.Data;
+        }, start, beamWidth, maxDepth);
+
+    /// <summary>
+    /// EfficientCube-style beam search: keep the <paramref name="beamWidth"/> highest cumulative
+    /// log-probability move sequences, expand every node's non-undo children each step, and re-prune
+    /// to the beam (deduping repeated states, keeping the best-scoring route to each). Ranked purely
+    /// by the policy — the value head is unused — so it needs no admissible heuristic; it finds short
+    /// solutions by stitching together the moves the policy is locally most confident about. A wider
+    /// beam reaches deeper scrambles at the cost of more net evaluations per step.
+    /// <para>
+    /// <paramref name="policyLogits"/> maps a row-major observation batch (rows × ObservationSize) to
+    /// row-major raw policy logits (rows × ActionCount): a CPU autograd forward or, for the bulk of the
+    /// solve cost, a GPU-resident <c>DeviceMlp</c> whose weights stay on the device across steps.
+    /// </para>
+    /// </summary>
+    public static SearchResult BeamSearch(Func<float[], int, float[]> policyLogits, FaceletCube start, int beamWidth = 2_000, int maxDepth = MaxSolutionMoves)
+    {
+        if (start.IsSolved)
+            return new(true, [], 0);
+
+        var beam = new List<BeamNode> { new(start, -1, [], 0.0, start.ToKociembaString()) };
+        int expansions = 0;
+
+        for (int depth = 0; depth < maxDepth && beam.Count > 0; depth++)
+        {
+            // One batched forward over the whole beam (the net dominates the step cost).
+            int n = beam.Count;
+            var obs = new float[n * RubiksCubeEnv.ObservationSize];
+            for (int i = 0; i < n; i++)
+                RubiksCubeEnv.WriteObservation(beam[i].Cube, obs.AsSpan(i * RubiksCubeEnv.ObservationSize, RubiksCubeEnv.ObservationSize));
+
+            float[] logits = policyLogits(obs, n);
+
+            var candidates = new List<BeamNode>(n * RubiksCubeEnv.ActionCount);
+            for (int i = 0; i < n; i++)
+            {
+                expansions++;
+                var node = beam[i];
+                int off = i * RubiksCubeEnv.ActionCount;
+                int undo = RubiksCubeEnv.InverseAction(node.LastAction);
+
+                // log-softmax over the 12 logits with the undo move excluded.
+                float max = float.NegativeInfinity;
+                for (int a = 0; a < RubiksCubeEnv.ActionCount; a++)
+                    if (a != undo && logits[off + a] > max) max = logits[off + a];
+                double sumExp = 0;
+                for (int a = 0; a < RubiksCubeEnv.ActionCount; a++)
+                    if (a != undo) sumExp += Math.Exp(logits[off + a] - max);
+                double logZ = max + Math.Log(sumExp);
+
+                for (int a = 0; a < RubiksCubeEnv.ActionCount; a++)
+                {
+                    if (a == undo) continue;
+                    var child = node.Cube.Clone();
+                    child.ApplyQuarterTurn(a);
+                    var path = new List<int>(node.Path) { a };
+                    if (child.IsSolved)
+                        return new(true, [.. path.Select(x => FaceletCube.QuarterTurnMoves[x])], expansions);
+                    double cum = node.CumLogProb + (logits[off + a] - logZ);
+                    candidates.Add(new BeamNode(child, a, path, cum, child.ToKociembaString()));
+                }
+            }
+
+            // Prune to the top-`beamWidth` distinct states by cumulative log-probability.
+            candidates.Sort((x, y) => y.CumLogProb.CompareTo(x.CumLogProb));
+            var next = new List<BeamNode>(Math.Min(beamWidth, candidates.Count));
+            var taken = new HashSet<string>();
+            foreach (var c in candidates)
+            {
+                if (!taken.Add(c.Key)) continue;
+                next.Add(c);
+                if (next.Count >= beamWidth) break;
+            }
+            beam = next;
+        }
+
+        return new(false, [], expansions);
+    }
+
+    private sealed record BeamNode(FaceletCube Cube, int LastAction, List<int> Path, double CumLogProb, string Key);
 }

@@ -21,6 +21,7 @@ for (int i = 0; i < args.Length; i++)
     {
         string game = args[i + 1];
         if (game.Equals("cube-davi", StringComparison.OrdinalIgnoreCase)) { CubeDaviLab.Run(args); return; }
+        if (game.Equals("cube-policy", StringComparison.OrdinalIgnoreCase)) { CubePolicyLab.Run(args); return; }
         if (game.Equals("cube", StringComparison.OrdinalIgnoreCase)) { CubeLab.Run(args); return; }
     }
 }

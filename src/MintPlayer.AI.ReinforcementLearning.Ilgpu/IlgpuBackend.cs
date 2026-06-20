@@ -682,11 +682,13 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     public DeviceResidualTrainer CreateResidentTrainer(ResidualMlp net, int batch, float learningRate, float clipNorm, float huberDelta = 1f, float beta2 = 0.999f)
         => new(this, net, batch, learningRate, clipNorm, huberDelta, beta2: beta2);
 
-    /// <summary>Maps an MLP's hidden activation to the kernel's activation code (0 none, 1 ReLU).</summary>
+    /// <summary>
+    /// Maps an MLP's hidden activation to the kernel's activation code (0 none, 1 ReLU). Output width is
+    /// unconstrained: <see cref="DeviceMlp"/> sizes its result by the final layer (1 for a scalar value
+    /// net, e.g. 12 for the EfficientCube policy head).
+    /// </summary>
     internal static int ResolveActivation(Mlp net)
     {
-        if (net.Sizes[^1] != 1)
-            throw new ArgumentException($"Resident forward expects a scalar-output net, got output size {net.Sizes[^1]}.");
         return net.HiddenActivation switch
         {
             Activation.None => 0,

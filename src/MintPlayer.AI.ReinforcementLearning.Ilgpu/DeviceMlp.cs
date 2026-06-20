@@ -67,7 +67,8 @@ public sealed class DeviceMlp : ITargetForward, IDisposable
 
     /// <summary>
     /// Forward <paramref name="rows"/> feature rows against the resident weights, returning the raw
-    /// scalar output per row. Only the input batch and the final scalars cross the bus.
+    /// outputs row-major (rows × final-layer width — 1 for a value net, e.g. 12 for a policy head).
+    /// Only the input batch and the final outputs cross the bus.
     /// </summary>
     public float[] Forward(float[] features, int rows)
     {
@@ -100,7 +101,11 @@ public sealed class DeviceMlp : ITargetForward, IDisposable
                 }
 
                 acc.Synchronize();
-                var result = new float[rows];
+                // Output width is the final layer's size: 1 for a scalar value net (the original DAVI
+                // successor-eval use), but >1 for a classifier head (the EfficientCube 12-way policy).
+                // Size the result by it rather than assuming scalar. Row-major [rows × outWidth].
+                int outWidth = _sizes[^1];
+                var result = new float[rows * outWidth];
                 output.CopyToCPU(result);
                 return result;
             }
