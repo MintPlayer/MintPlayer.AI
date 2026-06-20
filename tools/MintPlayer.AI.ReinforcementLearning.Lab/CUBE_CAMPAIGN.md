@@ -82,6 +82,32 @@ god's-number optimality. A cloud GPU (A100-class, or multi-GPU) would cut the wa
 laptop GPU is disruptive. Promote the result into the web `data/` + `models/` (LFS) only after a heavy-search probe
 confirms it actually beats the current net.
 
+### The 20-billion-state fresh dynamic-width campaign (2026-06-20 — current config in appsettings.json)
+
+The active campaign supersedes the 10B recipe above on two points, both deliberate and both reflected in
+`appsettings.json` (resume with just `--game cube-davi`):
+
+- **Fresh from scratch, 20B states, into a NEW empty dir (`cube-20b`).** This is *not* a warm-start of the
+  690M-sample net — it is a clean DeepCubeA-scale run that tests the sample-scale hypothesis without inheriting
+  the old net's d14 bootstrap fixed point. The Lab resumes from `--data` if a checkpoint is present, so the dir
+  **must be empty** to start fresh; `cube-20b/` is gitignored scratch.
+- **Dynamic width: start small (512) and auto-widen on demand**, rather than the 10B recipe's fixed 1024. The
+  early uniform-`[1,26]` curriculum is dominated by shallow, search-bound states a 512-wide trunk learns the most
+  cheaply, so most of the 20B run pays the cheap narrow GEMM; `--auto-widen` doubles the trunk (512→1024→2048,
+  capped at `--max-width 2048`) **only** on a genuine frontier-loss plateau (no ≥2% improvement for
+  `--widen-stall-samples 100M`). It is function-preserving and does not gate sampling.
+
+> **Reconciling with the 10B recipe's "leave auto-widen OFF".** That guidance still holds for its purpose: at a
+> *fixed* width, auto-widen buys nothing because the d14 wall was proven sample/bootstrap-bound, **not**
+> capacity-bound (`OPTIMIZATIONS.md` 2026-06-16 — the loss floor was invariant to width 1024↔2048). Here auto-widen
+> plays a *different* role: it's the growth mechanism for a **start-small** net, and a cheap unattended **hedge** in
+> case capacity ever does bind at the deep frontier. The primary lever remains the 20B sample count — widening is
+> insurance, not the thing expected to break d14.
+
+Honest expectation is unchanged and if anything longer: 20B is ~2× the 10B wall-clock (10B ≈ 38 days on one 3060),
+though starting at 512 runs faster per sample than 1024 until it widens. Even at full scale this reaches "solved,
+~60% optimal" at the deep end, not flawless god's-number optimality. **Disable OS sleep** for the duration.
+
 ## Efficiency levers (M-eff)
 
 New knobs and experiments to reach the same capability in less wall-clock / fewer samples. All default
