@@ -23,7 +23,7 @@ internal static class CubePolicyLab
     private const string PolicyProgressId = "policy-efficient-progress";
     private const int BatchSize = 1000;
     private const int SamplesPerRound = 50_000;
-    private static readonly int[] EvalDepths = [4, 8, 12, 14, 16, 18];
+    private static readonly int[] EvalDepths = [4, 8, 12, 14, 16, 18, 20, 22, 24, 26];
 
     public static void Run(string[] args)
     {
