@@ -149,6 +149,59 @@ public sealed class CubeModelService(IModelStore store, AdaptiveBackend backend,
     /// </summary>
     public CubeValueSearch.BatchForward? ResidentValueForward => _residentValue is { } dev ? dev.Forward : null;
 
+    public const string EfficientPolicyAlgorithmId = "policy-efficient";
+    private CubePolicyNet? _efficientNet;
+    private DeviceMlp? _residentEfficient;
+    private DateTime _efficientLoadedUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// The teacher-free EfficientCube policy net (the website's "self-taught AI", trained self-supervised on
+    /// scramble reversals — no Kociemba, no value-iteration bootstrap), or null if the store has none. Solved
+    /// by beam search (<see cref="CubePolicySearch.BeamSearch(System.Func{float[],int,float[]}, FaceletCube, int, int)"/>).
+    /// Re-read on the same cadence as the other nets so an improving Lab campaign's checkpoints are picked up
+    /// without restarting the host; accessing this keeps <see cref="ResidentEfficientForward"/> in sync (the
+    /// policy head's weights mirrored onto the GPU whenever the net reloads).
+    /// </summary>
+    public CubePolicyNet? EfficientPolicyNet
+    {
+        get
+        {
+            if (DateTime.UtcNow - _efficientLoadedUtc < PolicyRefresh) return _efficientNet;
+            lock (_lock)
+            {
+                if (DateTime.UtcNow - _efficientLoadedUtc < PolicyRefresh) return _efficientNet;
+                try
+                {
+                    using var stream = store.TryOpenRead(EnvironmentId, EfficientPolicyAlgorithmId);
+                    if (stream is not null)
+                    {
+                        _efficientNet = CubePolicyNet.Load(stream);
+                        // Beam search runs the bulk of the forwards; mirror the policy head onto the GPU as a
+                        // resident forward when a CUDA device is present (host-span is transfer-bound).
+                        _residentEfficient?.Dispose();
+                        _residentEfficient = backend.Gpu is { } gpu ? gpu.CreateResidentForward(_efficientNet.PolicyAsMlp()) : null;
+                        logger.LogInformation("Loaded EfficientCube policy net from the store ({Mode}).",
+                            _residentEfficient is not null ? "resident GPU forward" : "CPU forward");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // A mid-write or corrupt checkpoint must not break solving; keep the previous net.
+                    logger.LogWarning(ex, "Failed to (re)load the EfficientCube policy net; keeping the previous one.");
+                }
+                _efficientLoadedUtc = DateTime.UtcNow;
+                return _efficientNet;
+            }
+        }
+    }
+
+    /// <summary>
+    /// A device-resident GPU forward over the current EfficientCube policy head (rows × 12 logits), or null when
+    /// no CUDA device is present (beam search then scores on the CPU). Kept in sync by the
+    /// <see cref="EfficientPolicyNet"/> getter — read that first. Thread-safe: the forward serializes GPU access.
+    /// </summary>
+    public Func<float[], int, float[]>? ResidentEfficientForward => _residentEfficient is { } dev ? dev.Forward : null;
+
     public bool TryLoadFromStore()
     {
         lock (_lock)
@@ -236,6 +289,8 @@ public sealed class CubeModelService(IModelStore store, AdaptiveBackend backend,
         {
             _residentValue?.Dispose();
             _residentValue = null;
+            _residentEfficient?.Dispose();
+            _residentEfficient = null;
         }
     }
 }

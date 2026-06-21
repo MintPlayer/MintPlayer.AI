@@ -234,54 +234,16 @@ export class Cube {
     }
   }
 
-  // ------------------------------------------------------------------ solve (AI)
+  // ------------------------------------------------------------------ solve (self-taught AI)
 
-  /** The trained DQN's greedy attempt — armed for playback when it solves, reported honestly when it doesn't. */
-  protected async solveAi(): Promise<void> {
+  /** The teacher-free EfficientCube policy net via beam search — the self-taught AI; honest on failure. */
+  protected async solveEfficient(): Promise<void> {
     if (this.locked() || !this.cube) return;
     this.busy.set(true);
-    this.status.set('Asking the trained AI…');
+    this.status.set('Asking the self-taught AI (beam search)…');
 
     try {
-      const result = await this.api.solveAi(this.cube.getState());
-      switch (result.kind) {
-        case 'done': {
-          const v = result.value;
-          const how = v.aiMode === 'search' ? 'AI (with lookahead)' : 'AI';
-          if (v.solved) {
-            this.armSolution(v.solution, `${how}: ${v.moveCount} quarter-turns (Kociemba reference: ${v.algorithmMoveCount})`);
-            this.status.set(`The ${how} solved it in ${v.moveCount} moves!`);
-          } else {
-            this.clearSolution();
-            this.status.set(`The AI gave up, even with lookahead (Kociemba needs ${v.algorithmMoveCount} moves) — ` +
-              'it is trained on shallow scrambles; try an easy scramble, or the algorithm.');
-          }
-          break;
-        }
-        case 'training':
-          this.modelStatus.set(result.status);
-          this.status.set('The AI model is still training — try again in a moment.');
-          this.pollStatus();
-          break;
-        case 'invalid':
-          this.status.set(result.error);
-          break;
-      }
-    } catch {
-      this.status.set('The solver is unreachable — is the backend running?');
-    } finally {
-      this.busy.set(false);
-    }
-  }
-
-  /** The teacher-free DAVI value net via batch-weighted A* — shortest-move search, honest on failure. */
-  protected async solveDavi(): Promise<void> {
-    if (this.locked() || !this.cube) return;
-    this.busy.set(true);
-    this.status.set('Asking the self-taught AI (shortest-move search)…');
-
-    try {
-      const result = await this.api.solveDavi(this.cube.getState());
+      const result = await this.api.solveEfficient(this.cube.getState());
       switch (result.kind) {
         case 'done': {
           const v = result.value;
@@ -289,12 +251,11 @@ export class Cube {
             const beats = v.moveCount <= v.algorithmMoveCount;
             this.armSolution(v.solution,
               `Self-taught AI: ${v.moveCount} quarter-turns (Kociemba QTM: ${v.algorithmMoveCount})` +
-              (beats ? ' — shorter than Kociemba!' : ''));
+              (beats ? ' — at most as long as Kociemba!' : ''));
             this.status.set(`The self-taught AI solved it in ${v.moveCount} quarter-turns!`);
           } else {
             this.clearSolution();
-            this.status.set(`The self-taught AI ran out of search budget (Kociemba needs ${v.algorithmMoveCount} QTM) — ` +
-              'it finds the shortest solution on shallower scrambles; try an easy scramble, or the algorithm.');
+            this.status.set(`The self-taught AI ran out of search budget (Kociemba needs ${v.algorithmMoveCount} QTM) — try again, or use the algorithm.`);
           }
           break;
         }
