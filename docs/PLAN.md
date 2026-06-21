@@ -817,26 +817,32 @@ on one 3060), which is out of scope.** Capacity ruled out. Full analysis in `doc
 itself is sound (the right machinery for such a run); the cheap real win was inference-side (the 15 s time-bounded
 solver). Status: branch open (PR #7); deployed net unchanged.
 
-## M25 — Reusable training-campaign harness  *(SDK breadth; inserted 2026-06-21; PRD §14)* ⏳
+## M25 — Reusable training-campaign harness  *(SDK breadth; inserted 2026-06-21; PRD §14)* — ✅ DONE 2026-06-21 (branch unpushed)
 
 The four campaign harnesses (`Program.cs` Rush Hour, `CubeLab`, `CubeDaviLab`, `CubePolicyLab`) copy-paste one
 loop. A 3-agent investigation (2026-06-21) confirmed two paradigms that must not share an interface, and a
 migration order easy→hard so the runner is validated before it meets CubeDavi (never design the interface around
 CubeDavi first, or it absorbs CubeDavi's specifics and stops being reusable).
 
-**Status (2026-06-21):** ⏳ in progress on branch `training-campaign-harness` (off master, NOT pushed; many small
-commits, one squashed PR). **DONE + verified:** the Core abstraction (deliverable 1); **all four
-`GoalReachingCampaign`-style games migrated** (deliverable 2 — CubeLab, CubePolicy, **RushHour**, **CubeDavi**); the
-**hosting/DI layer**; and **GPU-backend DI** (below). **REMAINING:** the **Snake** `ScoreMaximizingCampaign`
-(deliverable 3 — the original goal) and a **dedup** of the shared cube `TrainStep`/`Shuffle` (CubeImitationCampaign ↔
-CubeEfficientCampaign).
+**Status (2026-06-21):** ✅ **all deliverables done** on branch `training-campaign-harness` (off master, NOT pushed;
+many small commits, one squashed PR — push/PR when ready). **DONE + verified:** the Core abstraction (deliverable 1);
+**all four goal-reaching games migrated** (deliverable 2 — CubeLab, CubePolicy, RushHour, CubeDavi); the **Snake**
+score-maximizing campaign (deliverable 3 — the original goal); the **hosting/DI layer**; **GPU-backend DI**; and the
+**cube `TrainStep`/`Shuffle` dedup**. 264 tests green. **Design note:** the "two paradigms" live at the *eval* level
+(solve-rate vs mean-return) over one `ITrainingCampaign` interface — there is intentionally **no `GoalReachingCampaign`
+/`ScoreMaximizingCampaign` base class**: every game implements the interface directly, and future score games (2048
+n-tuple, SAC/PPO) use different trainers a DQN-shaped base wouldn't fit. **Possible follow-ups (not blocking):** wire
+RLDemo.Web onto AIHost DI; share the generic `Shuffle` with RushHour; a `ScoreMaximizingCampaign` base only if a 2nd
+score game reveals real shared shape.
 
 **Commits so far:** `ada3d76` docs · `ed1490e` Core `CampaignRunner`+`ITrainingCampaign` (+3 tests) · `102d64a`
 CubeLab migrated (eval-only gate 96/100) · `126ed72` CubePolicy migrated (smoke clean) · `2cc4673`
 `CampaignRunner`→instance+`TimeProvider` · `43ce002` AIHost + DI + `[Register]` source-gen · `4c60e1f` docs ·
 `5e39f8d` RushHour migrated (eval-only parity vs shipped net: cards 16/77/82/81, random30 29/30 g + 30/30 s) ·
 `07bb2ed` CubeDavi migrated (GPU stack + curriculum/auto-widen/grow + 5 eval-only modes + two CSVs; value-curve +
-fresh-net training smoke verified) · `24e2741` GPU-backend DI (new `Ilgpu.Hosting` `AddGpuBackend()`; 264 tests pass).
+fresh-net training smoke verified) · `24e2741` GPU-backend DI (new `Ilgpu.Hosting` `AddGpuBackend()`; 264 tests pass) ·
+`04b965c` docs · `982ca9d` Snake DQN campaign (score-maximizing; fresh→20k food@12 ~19.7, resume 20k→35k verified) ·
+`d658a9a` cube `TrainStep`/`Shuffle` dedup (`CubePolicyTraining`; gate 97/100, training smoke verified).
 
 **Hosting & DI (decided + built 2026-06-21).** `CampaignRunner` is an **instance** class (not static), taking an
 injected **`TimeProvider`** (BCL; system clock by default, a fake clock drives the deterministic tests). A new

@@ -531,11 +531,12 @@ package so that backend carries no DI dependency, and so Core stays backend-agno
 constructing their own. `CampaignRunner` + `ITrainingCampaign` live in Core (BCL `TimeProvider` only); `AIHost` + the
 DI extensions live in the Hosting package.
 
-**Gate:** (1) each migrated campaign's existing tests + CI stay green and its run behaves identically (same
-checkpoint ids + CSV columns); (2) a deterministic `CampaignRunner` unit test (fake campaign + fake clock +
-in-memory `IModelStore`) asserts the loop, eval cadence, resume, and checkpoint calls — sub-second, no wall-clock;
-(3) the Snake `ScoreMaximizingCampaign` resumes bitwise (reload `DqnTrainingState`) and reaches ≥ the shipped
-baseline (~22 food on the 12×12 grid).
+**Gate (✅ all met, 2026-06-21):** (1) each migrated campaign's existing tests + CI stay green and its run behaves
+identically (same checkpoint ids + CSV columns) — verified per game by eval-only parity (RushHour cards 16/77/82/81;
+cube gate 97/100) + 264 tests; (2) a deterministic `CampaignRunner` unit test (fake campaign + fake clock + in-memory
+`IModelStore`) asserts the loop, eval cadence, resume, and checkpoint calls — sub-second, no wall-clock; (3) the Snake
+score-maximizing campaign resumes bitwise (reload `DqnTrainingState` — verified 20k→35k) and reaches the shipped
+baseline (~20 food on the 12×12 grid by 20k steps, climbing to ~22).
 
 **Non-goals:** not a multi-trial hyperparameter sweep runner; not a single interface spanning both paradigms;
 CubeDavi's bespoke eval-only modes are not modeled as `CampaignEval` variants.
