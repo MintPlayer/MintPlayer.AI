@@ -26,10 +26,12 @@ is given; `Step` throws if `_done` / on an illegal action; keep **terminated vs 
 game logic + (if NN-trained) any oracle/generator/policy-net/search beside it. No DI needed (plain library).
 
 ## 2. Model service — `src/RLDemo.Web/Services/XGameModelService.cs`
-`sealed class XGameModelService(IModelStore store, ILogger<…> logger) : ITrainableModelService`. Constants
+`sealed class XGameModelService(IModelStore store, ILogger<…> logger) : IModelStartupService`. Constants
 `EnvironmentId="xgame"`, `AlgorithmId="dqn"|"ppo"|…`. `TryLoadFromStore()` (lazy, locked) → deserialize +
-build the agent; `EnsureModel(ct)` → load-or-train-and-save; status fields + `Error`. (Optional refreshing
-secondary net like `CubeModelService.PolicyNet`/`ValueNet`.)
+build the agent; `Initialize(ct)` → load the shipped checkpoint, or set `Status=Failed` if absent. **The web never
+trains** (PRD §14 / M26): produce the checkpoint on a dev machine (the Lab campaign — §8 — or the Console, §6) and
+commit it to `models/` via Git LFS. Status fields + `Error`. (Optional refreshing secondary net like
+`CubeModelService.PolicyNet`/`ValueNet`.)
 
 ## 3. Controller / WS handler — `src/RLDemo.Web/Controllers/XGameController.cs`
 **Principle A:** `[ApiController][Route("api/xgame")]`, inject `(XGameModelService model, GalleryStore gallery)`.
@@ -39,8 +41,9 @@ return the full trajectory DTO. **Principle B:** a WebSocket endpoint (`app.UseW
 an env + agent and streams `(state, action, done)` frames) instead of `POST /solve`.
 
 ## 4. DI + startup — `src/RLDemo.Web/Program.cs`
-`AddSingleton<XGameModelService>()` **and** `AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<XGameModelService>())`
-(concrete for the controller, interface for warmup). Principle B also adds `app.UseWebSockets()` + maps the WS route.
+`AddSingleton<XGameModelService>()` **and** `AddSingleton<IModelStartupService>(sp => sp.GetRequiredService<XGameModelService>())`
+(concrete for the controller, interface for the startup load via `ModelStartupHostedService`). Principle B also adds
+`app.UseWebSockets()` + maps the WS route.
 Seed-copy + hosted service are game-agnostic — no change.
 
 ## 5. Frontend — `src/RLDemo.Web/ClientApp/src/app/x-game/`

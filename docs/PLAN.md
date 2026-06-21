@@ -892,29 +892,32 @@ CubeDavi exercising every addition at once (migrate it LAST, after the runner is
 **Stretch:** migrate MountainCar / Pendulum / CartPole / 2048 onto campaigns; a DQN auto-grow hook
 only if a Snake plateau proves capacity-bound. *(→ M26.)*
 
-## M26 — Consolidate the web's training onto the campaign harness  *(planned, not started; PRD §14 stretch)* 🔭
+## M26 — Single training path: make RLDemo.Web load-only  — ✅ DONE 2026-06-22 (branch unpushed)
 
-**Problem.** After M25 there are two definitions of "how to train game X": the Lab's resumable `ITrainingCampaign`s,
-and the web's one-shot `EnsureModel` in each `*ModelService` (`SnakeModelService` etc. call `DqnTrainer.Train(...)`
-directly). The reusable harness is consumed by an internal dev tool but NOT by the production training path. M25's
-campaigns are also `internal` to the Lab exe — so they can't be shared (the M25 contract tests reach them only via
-`InternalsVisibleTo` + an `extern alias` to dodge the Lab's generated `Program`; that hack goes away once they move).
+**Problem.** After M25 there were two definitions of "how to train game X": the Lab's resumable
+`ITrainingCampaign`s, and the web's one-shot `EnsureModel` in each `*ModelService` (`DqnTrainer.Train(...)` etc.).
 
-**Plan (own branch — touches production training for every game):**
-1. **Promote campaigns to a shared library** `MintPlayer.AI.ReinforcementLearning.Campaigns` (refs Core +
-   Environments + Ilgpu): move the 5 campaign classes + `CubeIds`/`CubeDaviSettings`/`CubePolicyTraining` there,
-   make them `public`, give them a real namespace. `CampaignCli` (console/CSV IO) + `CubeDaviConfig` (appsettings)
-   + the `*Lab` arg-parsing entry points stay in the Lab. Drop the `extern alias`/`InternalsVisibleTo` test hack —
-   the Tests reference the library directly, and the contract suite can then cover all five campaigns.
-2. **Web `EnsureModel` runs the campaign** via `CampaignRunner` (time- or step-bounded) instead of its own trainer
-   call — one source of truth for training, and the web's first-run train becomes resumable/checkpointed for free.
-   Bridge `CampaignProgress` → the existing `ITrainableModelService` progress (`TrainingStep`/`LastEvalReturn`).
-3. **Write campaigns for the games that lack one** — 2048 (n-tuple TD) and MountainCar (PPO) — so every web-trained
-   game has a campaign. (These use non-DQN trainers — a good forcing function that confirms the no-base-class call.)
+**Key finding (reframed the milestone).** That web training was **vestigial**: every game's checkpoint
+(`snake.dqn`, `mountaincar.ppo`, … — 11 files) is committed to `models/` via **Git LFS** and seeded into the store
+at startup, so `EnsureModel`'s train branch never fired in production. So the fix isn't "make the web run campaigns"
+(my earlier plan) — it's **remove the web's training entirely**. Single path = train on a dev machine (Lab/Console),
+commit the checkpoint (LFS), the web loads it.
 
-**Gate:** each web game still trains to its shipped baseline from cold; the `WebApplicationFactory` API tests stay
-green; no duplicate training code path remains. **Risk:** this is production training for every game — do it on its
-own branch, one game at a time, not as a tail of the M25 branch.
+**Done (`9a15264`):**
+- `ITrainableModelService.EnsureModel` → **`IModelStartupService.Initialize`** (load checkpoint / warm caches, never
+  train); `ModelTrainingHostedService` → `ModelStartupHostedService`.
+- The 5 game services dropped their trainer calls, `TrainingOptions`, training consts and progress fields; a missing
+  checkpoint now reports `Failed` ("no model in the store") rather than training in-process.
+- `ModelStatus` lost `Training`; `StatusResponse`/`Status2048Response` slimmed to `(status, error)`; controllers
+  updated. Frontend: the now-impossible `'training'` state removed across all 5 games (api unions, progress fields,
+  the 503 `'training'` solve-variant → `'loading'`, banners + polling). Angular prod build clean.
+- The RushHour solve gate (which mirrored the service recipe) now **inlines** its own DQN recipe — a self-contained
+  recipe-regression check. **264 tests green**; the `WebApplicationFactory` API tests still boot the real `Program.cs`.
+
+**Not needed (vs the earlier plan):** no shared `Campaigns` library and no web↔`CampaignRunner` wiring — the web
+doesn't train at all, so the campaigns stay `internal` to the Lab (the contract tests keep the `extern alias` reach).
+**Net −284 lines.** If a contributor needs to (re)produce a checkpoint, that's a dev-side Lab/Console run + an LFS
+commit, documented in `ADDING_A_GAME.md`.
 
 ## Testing strategy (cross-cutting, from research)
 

@@ -552,7 +552,8 @@ is minimal and bakes in neither paradigm's eval shape.)
 **Non-goals:** not a multi-trial hyperparameter sweep runner; CubeDavi's bespoke eval-only modes are not modeled as
 `CampaignEval` variants (they go through `TryRunStandaloneEval`).
 
-**Stretch (→ folded into the M26 consolidation milestone):** have the web's per-game training run the campaigns via
-`CampaignRunner` instead of its own one-shot trainer calls (single source of "how to train game X"); migrate the
-remaining score games (MountainCar / 2048) onto campaigns; promote the campaigns from the Lab into a shared library
-so both the Lab and the web consume them.
+**Single training path (M26, done 2026-06-22).** The original "stretch" idea was to have the web run the campaigns
+via `CampaignRunner`. Investigation showed the web's `EnsureModel` training was **vestigial** — every checkpoint is
+committed to `models/` (Git LFS) and seeded at startup, so it never ran in production. So M26 instead made the web
+**load-only**: training lives solely on the dev side (Lab campaigns / Console) and is committed; the web loads and
+serves. The campaigns stay `internal` to the Lab (no shared library needed — the web doesn't train). See PLAN M26.
