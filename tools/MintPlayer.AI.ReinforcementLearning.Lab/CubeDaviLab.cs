@@ -37,7 +37,6 @@ internal static class CubeDaviLab
         float epsSync = 0.06f;        // ε-loss target sync threshold (P.9); 0 disables
         int targetSyncInterval = 200; // --target-sync-interval: steps between bootstrap-target syncs (gated by ε-sync)
         float beta2 = 0.999f;         // --beta2: Adam β₂ (DeepCubeA uses 0.9999 for depth-20+ stability)
-        int checkpointEvery = 1;      // --checkpoint-every N: superseded by the runner's time-cadenced checkpointing (kept for appsettings compat)
         bool frontierBias = false;    // --frontier-bias: sample scramble depth near the curriculum frontier (Gaussian) instead of uniform
         int growToWidth = 0;          // --grow-to W: Net2WiderNet-widen the residual trunk to W once --grow-at is reached (0 = never)
         long growAtSamples = 0;       // --grow-at S: sample count at which to widen (progressive growing: train cheap narrow, widen on demand)
@@ -69,7 +68,6 @@ internal static class CubeDaviLab
         epsSync = cfg.EpsSync ?? epsSync;
         targetSyncInterval = cfg.TargetSyncInterval ?? targetSyncInterval;
         beta2 = cfg.Beta2 ?? beta2;
-        checkpointEvery = Math.Max(1, cfg.CheckpointEvery ?? checkpointEvery);
         frontierBias = cfg.FrontierBias ?? frontierBias;
         growToWidth = cfg.GrowTo ?? growToWidth;
         growAtSamples = cfg.GrowAt ?? growAtSamples;
@@ -104,7 +102,6 @@ internal static class CubeDaviLab
             else if (args[i] == "--eps-sync" && i + 1 < args.Length) epsSync = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--target-sync-interval" && i + 1 < args.Length) targetSyncInterval = int.Parse(args[++i]);
             else if (args[i] == "--beta2" && i + 1 < args.Length) beta2 = float.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
-            else if (args[i] == "--checkpoint-every" && i + 1 < args.Length) checkpointEvery = Math.Max(1, int.Parse(args[++i]));
             else if (args[i] == "--frontier-bias") frontierBias = true;
             else if (args[i] == "--grow-to" && i + 1 < args.Length) growToWidth = int.Parse(args[++i]);
             else if (args[i] == "--grow-at" && i + 1 < args.Length) growAtSamples = long.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
@@ -139,7 +136,6 @@ internal static class CubeDaviLab
             EpsSync = epsSync,
             TargetSyncInterval = targetSyncInterval,
             Beta2 = beta2,
-            CheckpointEvery = checkpointEvery,
             FrontierBias = frontierBias,
             GrowToWidth = growToWidth,
             GrowAtSamples = growAtSamples,

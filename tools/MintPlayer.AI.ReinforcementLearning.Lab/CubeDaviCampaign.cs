@@ -24,7 +24,6 @@ internal sealed record CubeDaviSettings
     public required float EpsSync { get; init; }
     public required int TargetSyncInterval { get; init; }
     public required float Beta2 { get; init; }
-    public required int CheckpointEvery { get; init; }
     public required bool FrontierBias { get; init; }
     public required int GrowToWidth { get; init; }
     public required long GrowAtSamples { get; init; }
@@ -113,8 +112,6 @@ internal sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSetting
         // Route the autograd's GEMMs through the (DI-owned) adaptive backend; CPU-only hosts degrade gracefully.
         Backend.Current = _backend;
         Log($"compute backend: {_backend.Describe()}");
-        if (_s.CheckpointEvery > 1)
-            Log($"note: --checkpoint-every {_s.CheckpointEvery} is superseded by the runner's time-cadenced eval/checkpoint; checkpointing every eval");
 
         bool resumed;
         using (var existing = store.TryOpenRead(CubeIds.Environment, _valueId))
