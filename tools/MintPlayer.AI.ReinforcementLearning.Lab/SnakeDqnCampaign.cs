@@ -27,6 +27,11 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
 
     private DqnTrainingState? _state;
     private IValueNet? _warmNet; // the deployable net to warm-start from when there's no full resume state
+    // Save-best: DQN eval is noisy, so the deployable net is only overwritten when the 12×12 eval IMPROVES on the
+    // best seen (seeded from the starting net, so a noisy dip never regresses a good shipped model). The resume
+    // state always tracks the latest net.
+    private double _bestFood = double.NegativeInfinity;
+    private double _lastEvalFood = double.NegativeInfinity;
 
     public string Environment => "snake";
 
@@ -50,29 +55,42 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
 
     public bool Resume(IModelStore store)
     {
+        bool resumed = false;
         using (var s = store.TryOpenRead(Environment, StateId))
         {
             if (s is not null)
             {
                 _state = DqnTrainingState.Load(s);
                 Log($"resumed Snake DQN at {_state.StepsCompleted:N0} steps (last eval return {_state.LastEval:F2})");
-                return true;
+                resumed = true;
             }
         }
         // No full resume state, but the deployable net may be present (e.g. the shipped checkpoint, or one produced
         // by the old web one-shot trainer). Warm-start from it: a fresh optimizer/replay buffer continues the
         // trained net rather than throwing away its weights. Lets us further-train (and eval) the shipped model.
-        using (var net = store.TryOpenRead(Environment, NetId))
+        if (!resumed)
         {
+            using var net = store.TryOpenRead(Environment, NetId);
             if (net is not null)
             {
                 _warmNet = DuelingQNetCheckpoint.Load(net);
                 Log($"warm-starting from the deployable Snake net '{NetId}' (fresh optimizer + replay buffer)");
-                return true;
+                resumed = true;
             }
         }
-        Log($"starting fresh Snake DQN training (train {trainGrid}×{trainGrid}, eval {evalGrid}×{evalGrid})");
-        return false;
+
+        // Seed save-best from the starting net's score so training only ever ships a net that BEATS it.
+        var startNet = _state?.Online ?? _warmNet;
+        if (startNet is not null)
+        {
+            _bestFood = EvalNet(startNet).Food;
+            Log($"baseline food@{evalGrid}: {_bestFood:F2} (will only re-save the deployable net when an eval beats this)");
+        }
+        else
+        {
+            Log($"starting fresh Snake DQN training (train {trainGrid}×{trainGrid}, eval {evalGrid}×{evalGrid})");
+        }
+        return resumed;
     }
 
     public long TrainChunk()
@@ -101,8 +119,41 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
         if (net is null)
             return new CampaignEval([new("steps", 0, "0")], "no model yet (train first)");
 
-        // Mean food + return over fixed-seed greedy episodes on the DEPLOYED grid — food is the gate metric
-        // (M22: train 6×6 → ~22 food on the 12×12 demo grid), return is the optimization target.
+        var (food, meanReturn) = EvalNet(net);
+        _lastEvalFood = food; // Checkpoint() ships the net only when this beats the best seen
+
+        float loss = _state?.LastLoss ?? 0f;
+        var metrics = new List<CampaignMetric>
+        {
+            new("steps", steps, "0"),
+            new($"food{evalGrid}", food, "F2"),
+            new("return", meanReturn, "F2"),
+            new("loss", loss, "F4"),
+        };
+        return new CampaignEval(metrics,
+            $"steps {steps:N0} | food@{evalGrid} {food:F2} | return {meanReturn:F2} | loss {loss:F4}");
+    }
+
+    public void Checkpoint(IModelStore store)
+    {
+        if (_state is null) return;
+        // The resume state always tracks the latest net (so a continuation picks up where it left off).
+        store.Save(Environment, StateId, s => _state.Save(s));
+        // The DEPLOYABLE net is save-best: only overwrite it when this eval beat the best seen — DQN eval is
+        // noisy and the last net is often not the best (here the 270k net scored 23.3 but 300k fell to 19.5).
+        if (_lastEvalFood > _bestFood)
+        {
+            _bestFood = _lastEvalFood;
+            store.Save(Environment, NetId, s => DuelingQNetCheckpoint.Save((DuelingQNet)_state.Online, s));
+            Log($"new best food@{evalGrid} {_bestFood:F2} → saved deployable net '{NetId}'");
+        }
+    }
+
+    public void Dispose() { }
+
+    /// <summary>Mean food + return over fixed-seed greedy episodes on the DEPLOYED grid (food is the gate metric).</summary>
+    private (double Food, double Return) EvalNet(IValueNet net)
+    {
         var agent = new GreedyQAgent(net, SnakeEnv.ActionCount);
         double totalFood = 0, totalReturn = 0;
         for (int e = 0; e < evalEpisodes; e++)
@@ -120,29 +171,8 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
             totalFood += _evalEnv.FoodEaten;
             totalReturn += epReturn;
         }
-        double food = totalFood / evalEpisodes;
-        double meanReturn = totalReturn / evalEpisodes;
-
-        float loss = _state?.LastLoss ?? 0f;
-        var metrics = new List<CampaignMetric>
-        {
-            new("steps", steps, "0"),
-            new($"food{evalGrid}", food, "F2"),
-            new("return", meanReturn, "F2"),
-            new("loss", loss, "F4"),
-        };
-        return new CampaignEval(metrics,
-            $"steps {steps:N0} | food@{evalGrid} {food:F2} | return {meanReturn:F2} | loss {loss:F4}");
+        return (totalFood / evalEpisodes, totalReturn / evalEpisodes);
     }
-
-    public void Checkpoint(IModelStore store)
-    {
-        if (_state is null) return;
-        store.Save(Environment, NetId, s => DuelingQNetCheckpoint.Save((DuelingQNet)_state.Online, s));
-        store.Save(Environment, StateId, s => _state.Save(s));
-    }
-
-    public void Dispose() { }
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }
