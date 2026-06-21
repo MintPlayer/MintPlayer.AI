@@ -13,6 +13,18 @@ internal static class CampaignCli
     /// An <see cref="CampaignOptions.OnEval"/> callback: console summary + a generic CSV at <paramref name="csvPath"/>
     /// (header written from the first eval's metric names; each value formatted by its <see cref="CampaignMetric.Format"/>).
     /// </summary>
+    /// <summary>
+    /// A console-only <see cref="CampaignOptions.OnEval"/> callback — prints each eval's summary line verbatim
+    /// (the campaign already formats its own prefix). For campaigns that own a non-generic CSV themselves (e.g.
+    /// cube-davi's blank-celled depth columns), so the generic metric CSV below would be the wrong shape.
+    /// </summary>
+    public static Action<CampaignProgress> Console()
+        => progress => System.Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {progress.Eval.Summary}");
+
+    /// <summary>
+    /// An <see cref="CampaignOptions.OnEval"/> callback: console summary + a generic CSV at <paramref name="csvPath"/>
+    /// (header written from the first eval's metric names; each value formatted by its <see cref="CampaignMetric.Format"/>).
+    /// </summary>
     public static Action<CampaignProgress> ConsoleAndCsv(string csvPath)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(csvPath)!);
@@ -27,7 +39,7 @@ internal static class CampaignCli
             }
             File.AppendAllText(csvPath, $"{DateTime.UtcNow:u}," +
                 string.Join(',', metrics.Select(m => m.Value.ToString(m.Format ?? "G", CultureInfo.InvariantCulture))) + "\n");
-            Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} [eval] {progress.Eval.Summary}");
+            System.Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} [eval] {progress.Eval.Summary}");
         };
     }
 }
