@@ -10,7 +10,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Hosting;
 /// <c>WebApplication.CreateBuilder</c>. Returns a <see cref="HostApplicationBuilder"/> preconfigured with
 /// the default configuration sources (appsettings.json + environment) and console logging, plus the RL runtime
 /// services (model store, system clock, <c>CampaignRunner</c>), so Lab/Console training tools compose with
-/// dependency injection all the way down. Add the GPU compute backend with the Ilgpu package's
+/// dependency injection all the way down. Add the GPU compute backend with the Ilgpu.Hosting package's
 /// <c>services.AddGpuBackend()</c> on the returned builder.
 /// </summary>
 public static class AIHost

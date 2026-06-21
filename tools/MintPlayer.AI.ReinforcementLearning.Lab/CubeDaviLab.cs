@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Hosting;
+using MintPlayer.AI.ReinforcementLearning.Ilgpu;
+using MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting;
 
 /// <summary>
 /// `--game cube-davi` entry point: resolves the long-lived campaign config (code defaults → appsettings.json →
@@ -159,11 +161,15 @@ internal static class CubeDaviLab
             EvalEpisodes = evalEpisodes,
         };
 
-        // DI all the way: the model store, clock and CampaignRunner are resolved from the AIHost container.
-        using var host = AIHost.CreateBuilder(dataDir).Build();
+        // DI all the way: the model store, clock, GPU backend and CampaignRunner are resolved from the AIHost
+        // container. AddGpuBackend() registers the shared AdaptiveBackend (DAVI's wide value net wins on GPU).
+        var builder = AIHost.CreateBuilder(dataDir);
+        builder.Services.AddGpuBackend();
+        using var host = builder.Build();
         var store = host.Services.GetRequiredService<IModelStore>();
         var runner = host.Services.GetRequiredService<CampaignRunner>();
-        runner.Run(new CubeDaviCampaign(settings), store, new CampaignOptions
+        var backend = host.Services.GetRequiredService<AdaptiveBackend>();
+        runner.Run(new CubeDaviCampaign(backend, settings), store, new CampaignOptions
         {
             Duration = TimeSpan.FromHours(hours),
             EvalOnly = evalOnly,

@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Environments\MintPlayer.AI.ReinforcementLearning.Environments.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Hosting\MintPlayer.AI.ReinforcementLearning.Hosting.csproj" />
+    <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting\MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting.csproj" />
   </ItemGroup>
 
 </Project>

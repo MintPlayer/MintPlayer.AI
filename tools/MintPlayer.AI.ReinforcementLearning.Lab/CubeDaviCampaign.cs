@@ -62,7 +62,7 @@ internal sealed record CubeDaviSettings
 /// eval-only modes (greedy / A* / BWAS / time-budget / value-curve). The two depth-column CSVs are campaign-owned.
 /// </para>
 /// </summary>
-internal sealed class CubeDaviCampaign(CubeDaviSettings settings) : ITrainingCampaign
+internal sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSettings settings) : ITrainingCampaign
 {
     private const int TrainChunkIterations = 1000; // P.8: train in 1000-iter chunks so the GPU-idle eval runs less
     private const long ProbeEvery = 15_000;        // iters between in-loop BWAS capability probes
@@ -75,7 +75,7 @@ internal sealed class CubeDaviCampaign(CubeDaviSettings settings) : ITrainingCam
     private readonly string _capCsvPath = Path.Combine(settings.LogDirectory, settings.Residual ? "cube-davi-res-cap.csv" : "cube-davi-cap.csv");
     private readonly int[] _probeDepths = settings.ProbeOverride ?? [8, 10, 12, 14, 16];
 
-    private AdaptiveBackend _backend = null!;
+    private readonly AdaptiveBackend _backend = adaptive;
     private CubeModel _model = null!;
     private ValueIterationOptions _options = null!;
     private IValueNet _net = null!;
@@ -110,7 +110,7 @@ internal sealed class CubeDaviCampaign(CubeDaviSettings settings) : ITrainingCam
         if (!File.Exists(_capCsvPath))
             File.AppendAllText(_capCsvPath, "utc,iterations," + string.Join(',', _probeDepths.Select(d => $"d{d}")) + "\n");
 
-        _backend = new AdaptiveBackend();
+        // Route the autograd's GEMMs through the (DI-owned) adaptive backend; CPU-only hosts degrade gracefully.
         Backend.Current = _backend;
         Log($"compute backend: {_backend.Describe()}");
         if (_s.CheckpointEvery > 1)
@@ -255,9 +255,10 @@ internal sealed class CubeDaviCampaign(CubeDaviSettings settings) : ITrainingCam
 
     public void Dispose()
     {
+        // The device-resident stack is campaign-owned (rebuilt on every widen/grow), so it is torn down here.
+        // The AdaptiveBackend itself is owned by the DI container and disposed when the host is.
         (_targetForward as IDisposable)?.Dispose();
         _residentTrain?.Dispose();
-        _backend?.Dispose();
     }
 
     // ── training internals ───────────────────────────────────────────────────────────────────────

@@ -13,11 +13,11 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 /// <see cref="CampaignRunner"/> (PLAN M25). Teacher-FREE: the label is the cube's own scramble reversal (no
 /// Kociemba), trained into the two-headed <see cref="CubePolicyNet"/> (CE on the reversing move + Huber on path
 /// length) and solved by policy beam search. Eval routes the beam's bulk forwards through a GPU-resident
-/// <see cref="DeviceMlp"/> over the policy head (so the campaign owns an <see cref="AdaptiveBackend"/> and is
-/// disposed by the runner). Resumes net + Adam + a persisted (samples, round) counter under distinct
-/// `policy-efficient*` ids, so the imitation net is never touched.
+/// <see cref="DeviceMlp"/> over the policy head, using the injected <see cref="AdaptiveBackend"/> (registered via
+/// the Ilgpu.Hosting <c>AddGpuBackend()</c>; the container owns its lifetime). Resumes net + Adam + a persisted
+/// (samples, round) counter under distinct `policy-efficient*` ids, so the imitation net is never touched.
 /// </summary>
-internal sealed class CubeEfficientCampaign(ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes)
+internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes)
     : ITrainingCampaign
 {
     private const string PolicyId = "policy-efficient";
@@ -29,7 +29,7 @@ internal sealed class CubeEfficientCampaign(ulong seed, float learningRate, int 
 
     private readonly Xoshiro256StarStar _rng = new(seed);
     private readonly int _generators = Math.Max(1, System.Environment.ProcessorCount - 2);
-    private readonly AdaptiveBackend _adaptive = CreateBackend();
+    private readonly AdaptiveBackend _adaptive = adaptive;
 
     private CubePolicyNet _net = null!;
     private Adam _adam = null!;
@@ -37,18 +37,14 @@ internal sealed class CubeEfficientCampaign(ulong seed, float learningRate, int 
     private double _windowCe, _windowHuber, _windowAcc;
     private long _windowCount;
 
-    private static AdaptiveBackend CreateBackend()
-    {
-        var backend = new AdaptiveBackend();
-        Backend.Current = backend;
-        Log($"compute backend: {backend.Describe()}");
-        return backend;
-    }
-
     public string Environment => CubeIds.Environment;
 
     public bool Resume(IModelStore store)
     {
+        // Route the autograd's GEMMs through the (DI-owned) adaptive backend; CPU-only hosts degrade gracefully.
+        Backend.Current = _adaptive;
+        Log($"compute backend: {_adaptive.Describe()}");
+
         bool resumed;
         using (var existing = store.TryOpenRead(CubeIds.Environment, PolicyId))
         {
@@ -195,7 +191,9 @@ internal sealed class CubeEfficientCampaign(ulong seed, float learningRate, int 
         });
     }
 
-    public void Dispose() => _adaptive.Dispose();
+    // The AdaptiveBackend is owned by the DI container (disposed with the host), not the campaign. The per-eval
+    // device-resident DeviceMlp is created and disposed inside Evaluate, so there is nothing campaign-owned here.
+    public void Dispose() { }
 
     private static (double Ce, double Huber, double Acc) TrainStep(
         CubePolicyNet net, Adam adam, List<CubeOracle.LabeledState> samples, int offset, int batch)

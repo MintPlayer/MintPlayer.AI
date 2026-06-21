@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Hosting;
+using MintPlayer.AI.ReinforcementLearning.Ilgpu;
+using MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting;
 
 /// <summary>
 /// `--game cube-policy` entry point: parses the campaign flags and runs the EfficientCube
@@ -35,13 +37,17 @@ internal static class CubePolicyLab
             else if (args[i] == "--eval-only") evalOnly = true;
         }
 
-        // DI all the way: the model store, clock and CampaignRunner are resolved from the AIHost container.
-        using var host = AIHost.CreateBuilder(dataDir).Build();
+        // DI all the way: the model store, clock, GPU backend and CampaignRunner are resolved from the AIHost
+        // container. AddGpuBackend() registers the shared AdaptiveBackend (the cube nets are large enough to win on GPU).
+        var builder = AIHost.CreateBuilder(dataDir);
+        builder.Services.AddGpuBackend();
+        using var host = builder.Build();
         var store = host.Services.GetRequiredService<IModelStore>();
         var runner = host.Services.GetRequiredService<CampaignRunner>();
+        var backend = host.Services.GetRequiredService<AdaptiveBackend>();
         string csvPath = Path.Combine(dataDir, "logs", "cube-policy.csv");
         runner.Run(
-            new CubeEfficientCampaign(seed, learningRate, width, maxScramble, beamWidth, evalEpisodes),
+            new CubeEfficientCampaign(backend, seed, learningRate, width, maxScramble, beamWidth, evalEpisodes),
             store,
             new CampaignOptions
             {
