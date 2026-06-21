@@ -19,10 +19,7 @@ export interface CubeSolveAiResponse {
 }
 
 export interface CubeStatusResponse {
-  status: 'loading' | 'training' | 'ready' | 'failed';
-  trainingStep: number;
-  trainingMaxSteps: number;
-  lastEvalReturn: number;
+  status: 'loading' | 'ready' | 'failed';
   error: string | null;
 }
 
@@ -32,7 +29,7 @@ export type CubeSolveResult =
 
 export type CubeSolveAiResult =
   | { kind: 'done'; value: CubeSolveAiResponse }
-  | { kind: 'training'; status: CubeStatusResponse }
+  | { kind: 'loading'; status: CubeStatusResponse }
   | { kind: 'invalid'; error: string };
 
 @Injectable({ providedIn: 'root' })
@@ -67,7 +64,7 @@ export class CubeApi {
       return { kind: 'done', value: await response.json() };
     }
     if (response.status === 503) {
-      return { kind: 'training', status: await response.json() };
+      return { kind: 'loading', status: await response.json() };
     }
     const body: CubeSolveResponse = await response.json();
     return { kind: 'invalid', error: body.error ?? 'Invalid cube.' };

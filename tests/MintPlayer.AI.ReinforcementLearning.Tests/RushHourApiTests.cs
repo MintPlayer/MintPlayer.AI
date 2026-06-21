@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
+using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RushHour;
 using RLDemo.Web.Controllers;
@@ -202,11 +203,24 @@ public class TrainedPlaygroundFactory : PlaygroundFactory
 
     public TrainedPlaygroundFactory()
     {
-        // Exactly the service's recipe — shared statics so the gate can't drift from production.
-        Puzzles = RushHourModelService.TrainingPuzzles();
+        // The web no longer trains (PRD §14 — it loads a committed checkpoint); this gate trains the legacy
+        // Rush Hour DQN recipe in-test and asserts the API solves with it (a recipe-regression check, self-contained).
+        Puzzles = RushHourGenerator.Generate(seed: 99, count: 3000, minOptimal: 2, maxOptimal: 20,
+            minVehicles: 2, maxVehicles: 9, maxAttempts: 4_000_000, varyRedLength: true);
         var env = new RushHourEnv(Puzzles, RushHourModelService.MaxMoves);
-        var result = DqnTrainer.Train(env, RushHourModelService.TrainingOptions(),
-            new SeedSequence(RushHourModelService.TrainingMasterSeed));
+        var options = new DqnOptions
+        {
+            Hidden = [256, 256],
+            Gamma = 0.98,
+            LearningRate = 5e-4f,
+            MaxSteps = 600_000,
+            BufferCapacity = 100_000,
+            Epsilon = new LinearSchedule(1.0, 0.05, 200_000),
+            EvalEvery = 10_000,
+            EvalEpisodes = 40,
+            SolveThreshold = 90, // perfect play on this band averages ≈ 91 (return = 101 − moves)
+        };
+        var result = DqnTrainer.Train(env, options, new SeedSequence(42));
 
         var store = new FileModelStore(DataDirectory);
         store.Save(RushHourModelService.EnvironmentId, RushHourModelService.AlgorithmId,

@@ -4,13 +4,10 @@
 </p>
 
 @if (modelStatus(); as status) {
-  @if (status.status === 'training') {
-    <div class="banner training">
-      Model is training on the server ({{ status.trainingStep }} / {{ status.trainingMaxSteps }} steps,
-      eval {{ status.lastEvalReturn | number: '1.0-0' }}) — you can draw and play meanwhile.
-    </div>
+  @if (status.status === 'loading') {
+    <div class="banner training">Loading the model… — you can draw and play meanwhile.</div>
   } @else if (status.status === 'failed') {
-    <div class="banner error">Model training failed: {{ status.error }}</div>
+    <div class="banner error">Model unavailable: {{ status.error }}</div>
   }
 }
 

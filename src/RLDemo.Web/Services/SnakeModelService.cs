@@ -1,54 +1,23 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
-using MintPlayer.AI.ReinforcementLearning.Core.Nn;
-using MintPlayer.AI.ReinforcementLearning.Core.Random;
-using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 
 namespace RLDemo.Web.Services;
 
 /// <summary>
-/// Owns the Snake Q-network: loads it from the model store at startup, or trains one once with a
-/// masked Double+Dueling DQN (PLAN M22) and saves it. Same lifecycle as the other game services.
-/// The net is a <see cref="DuelingQNet"/> (the value/advantage split fits Snake — position value
-/// dominates the near-equivalent direction choice), so it persists via <see cref="DuelingQNetCheckpoint"/>.
+/// Owns the Snake Q-network: loads the shipped <see cref="DuelingQNet"/> checkpoint from the model store at
+/// startup (trained on a dev machine via the `--game snake` Lab campaign, PLAN M22, and committed to
+/// <c>models/</c> via Git LFS — the web never trains, PRD §14). Persists via <see cref="DuelingQNetCheckpoint"/>.
 /// </summary>
-public sealed class SnakeModelService(IModelStore store, ILogger<SnakeModelService> logger) : ITrainableModelService
+public sealed class SnakeModelService(IModelStore store, ILogger<SnakeModelService> logger) : IModelStartupService
 {
     public const string EnvironmentId = "snake";
     public const string AlgorithmId = "dqn";
-    public const ulong TrainingMasterSeed = 1;
-
-    /// <summary>Train on a small grid (fast, dense food); the compact size-invariant observation lets the
-    /// net transfer to the larger demo grid (<see cref="SnakeController"/> serves a full-size <c>SnakeEnv</c>).
-    /// Measured: train on 6×6 → eats ~22 food on the 12×12 demo grid (PLAN M22).</summary>
-    public const int TrainingGridSize = 6;
-
-    public static DqnOptions TrainingOptions(Action<DqnProgress>? onProgress = null) => new()
-    {
-        Dueling = true,
-        DoubleDqn = true,
-        Hidden = [128, 128],
-        Gamma = 0.99,
-        LearningRate = 5e-4f,
-        BufferCapacity = 100_000,
-        BatchSize = 128,
-        WarmupSteps = 2_000,
-        TargetSyncEvery = 1_000,
-        Epsilon = new LinearSchedule(1.0, 0.05, 30_000),
-        MaxSteps = 100_000, // the learning curve plateaus by ~30k; 100k is a safe margin
-        EvalEvery = 25_000,
-        EvalEpisodes = 20,
-        OnProgress = onProgress,
-    };
 
     private readonly object _lock = new();
     private GreedyQAgent? _agent;
 
     public ModelStatus Status { get; private set; } = ModelStatus.Loading;
-    public int TrainingStep { get; private set; }
-    public int TrainingMaxSteps { get; private set; }
-    public double LastEvalReturn { get; private set; }
     public string? Error { get; private set; }
 
     /// <summary>The greedy inference agent, or null while not ready. Loads lazily from the store.</summary>
@@ -76,41 +45,15 @@ public sealed class SnakeModelService(IModelStore store, ILogger<SnakeModelServi
         }
     }
 
-    public void EnsureModel(CancellationToken cancellationToken)
+    /// <summary>Loads the shipped checkpoint at startup. The web does not train (PRD §14).</summary>
+    public void Initialize(CancellationToken cancellationToken)
     {
-        try
-        {
-            if (TryLoadFromStore()) return;
-
-            logger.LogInformation("No Snake model in the store — training (a few minutes)...");
-            lock (_lock) Status = ModelStatus.Training;
-
-            var result = DqnTrainer.Train(new SnakeEnv(TrainingGridSize), TrainingOptions(p =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                lock (_lock)
-                {
-                    TrainingStep = p.Step;
-                    TrainingMaxSteps = p.MaxSteps;
-                    LastEvalReturn = p.EvalMeanReturn;
-                }
-                logger.LogInformation("Snake training: step {Step}/{Max}, eval {Eval:F2}", p.Step, p.MaxSteps, p.EvalMeanReturn);
-            }), new SeedSequence(TrainingMasterSeed));
-
-            store.Save(EnvironmentId, AlgorithmId, s => DuelingQNetCheckpoint.Save((DuelingQNet)result.Network, s));
-            _agent = new GreedyQAgent(result.Network, SnakeEnv.ActionCount);
-            Status = ModelStatus.Ready;
-            logger.LogInformation("Snake model trained ({Steps} steps) and saved.", result.StepsTrained);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
+        if (TryLoadFromStore()) return;
+        lock (_lock)
         {
             Status = ModelStatus.Failed;
-            Error = ex.Message;
-            logger.LogError(ex, "Snake model setup failed.");
+            Error = "No trained Snake model in the store.";
         }
+        logger.LogWarning("No Snake model in the store — game unavailable. Train it via `--game snake` in the Lab and commit the checkpoint to models/ (Git LFS).");
     }
 }

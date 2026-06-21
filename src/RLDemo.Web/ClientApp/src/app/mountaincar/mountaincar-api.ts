@@ -10,10 +10,7 @@ export interface MountainCarFrame {
 }
 
 export interface MountainCarStatus {
-  status: 'loading' | 'training' | 'ready' | 'failed';
-  trainingStep: number;
-  trainingMaxSteps: number;
-  lastEvalReturn: number;
+  status: 'loading' | 'ready' | 'failed';
   error: string | null;
 }
 

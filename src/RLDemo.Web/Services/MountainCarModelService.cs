@@ -1,45 +1,23 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
-using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
-using MintPlayer.AI.ReinforcementLearning.Environments;
 
 namespace RLDemo.Web.Services;
 
 /// <summary>
-/// Owns the MountainCar policy: loads it from the model store at startup, or trains one once with PPO
-/// (PLAN M22) and saves it. MountainCar is a sparse-reward swing-up — DQN's ε-greedy can't reach the goal,
-/// so PPO (entropy-held stochastic exploration) is used, trained against an extended episode horizon so a
-/// fresh policy ever sees the goal; eval/gate use the standard 200-step env.
+/// Owns the MountainCar policy: loads the shipped PPO actor from the model store at startup (trained on a dev
+/// machine, PLAN M22, and committed to <c>models/</c> via Git LFS — the web never trains, PRD §14).
 /// </summary>
-public sealed class MountainCarModelService(IModelStore store, ILogger<MountainCarModelService> logger) : ITrainableModelService
+public sealed class MountainCarModelService(IModelStore store, ILogger<MountainCarModelService> logger) : IModelStartupService
 {
     public const string EnvironmentId = "mountaincar";
     public const string AlgorithmId = "ppo";
-    public const ulong TrainingMasterSeed = 1;
-    public const int TrainingHorizon = 1_000; // extended during training only
-
-    public static PpoOptions TrainingOptions(Action<PpoProgress>? onProgress = null) => new()
-    {
-        Hidden = [64, 64],
-        NumEnvs = 16,
-        RolloutSteps = 256,
-        EntropyCoef = 0.01f,
-        LearningRate = 3e-4f,
-        ParallelEnvs = true,
-        TotalSteps = 600_000,
-        EvalEpisodes = 50,
-        SolveThreshold = -110.0,
-        OnProgress = onProgress,
-    };
+    public const ulong AgentSeed = 1; // seeds the loaded policy's sampling RNG
 
     private readonly object _lock = new();
     private PolicyAgent? _agent;
 
     public ModelStatus Status { get; private set; } = ModelStatus.Loading;
-    public int TrainingStep { get; private set; }
-    public int TrainingMaxSteps { get; private set; }
-    public double LastEvalReturn { get; private set; }
     public string? Error { get; private set; }
 
     /// <summary>The greedy policy agent, or null while not ready. Loads lazily from the store.</summary>
@@ -60,52 +38,22 @@ public sealed class MountainCarModelService(IModelStore store, ILogger<MountainC
             using var stream = store.TryOpenRead(EnvironmentId, AlgorithmId);
             if (stream is null) return false;
             var actor = MlpCheckpoint.Load(stream);
-            _agent = new PolicyAgent(actor, new Xoshiro256StarStar(TrainingMasterSeed));
+            _agent = new PolicyAgent(actor, new Xoshiro256StarStar(AgentSeed));
             Status = ModelStatus.Ready;
             logger.LogInformation("Loaded MountainCar policy from the store.");
             return true;
         }
     }
 
-    public void EnsureModel(CancellationToken cancellationToken)
+    /// <summary>Loads the shipped checkpoint at startup. The web does not train (PRD §14).</summary>
+    public void Initialize(CancellationToken cancellationToken)
     {
-        try
-        {
-            if (TryLoadFromStore()) return;
-
-            logger.LogInformation("No MountainCar model in the store — training with PPO (a few minutes)...");
-            lock (_lock) Status = ModelStatus.Training;
-
-            var result = PpoTrainer.Train(
-                _ => new MountainCarEnv(maxEpisodeSteps: TrainingHorizon, shapeReward: true), // shaping makes the swing-up learnable
-                new MountainCarEnv(), // gate on the standard 200-step, unshaped env
-                TrainingOptions(p =>
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    lock (_lock)
-                    {
-                        TrainingStep = p.EnvSteps;
-                        TrainingMaxSteps = p.TotalSteps;
-                        LastEvalReturn = p.EvalMeanReturn;
-                    }
-                    logger.LogInformation("MountainCar training: {Steps}/{Max}, eval {Eval:F1}", p.EnvSteps, p.TotalSteps, p.EvalMeanReturn);
-                }),
-                new SeedSequence(TrainingMasterSeed));
-
-            store.Save(EnvironmentId, AlgorithmId, s => MlpCheckpoint.Save(result.Actor, s));
-            _agent = result.Agent;
-            Status = ModelStatus.Ready;
-            logger.LogInformation("MountainCar model trained ({Steps} steps, eval {Eval:F1}) and saved.", result.StepsTrained, result.FinalEvalReturn);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
+        if (TryLoadFromStore()) return;
+        lock (_lock)
         {
             Status = ModelStatus.Failed;
-            Error = ex.Message;
-            logger.LogError(ex, "MountainCar model setup failed.");
+            Error = "No trained MountainCar model in the store.";
         }
+        logger.LogWarning("No MountainCar model in the store — game unavailable. Train it on a dev machine and commit the checkpoint to models/ (Git LFS).");
     }
 }

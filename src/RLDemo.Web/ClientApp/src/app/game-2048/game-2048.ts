@@ -218,9 +218,9 @@ export class Game2048 {
         case 'solved':
           this.startPlayback(result.value);
           break;
-        case 'training':
+        case 'loading':
           this.modelStatus.set(result.status);
-          this.message.set('The model is still training — try again in a moment.');
+          this.message.set('The model is still loading — try again in a moment.');
           this.pollStatus();
           break;
         case 'invalid':
@@ -316,7 +316,7 @@ export class Game2048 {
     void (async () => {
       const status = await this.api.status();
       this.modelStatus.set(status);
-      if (status.status === 'loading' || status.status === 'training') {
+      if (status.status === 'loading') {
         setTimeout(() => this.pollStatus(), 2000);
       }
     })();

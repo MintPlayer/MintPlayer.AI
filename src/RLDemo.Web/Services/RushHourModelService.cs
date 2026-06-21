@@ -1,66 +1,38 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
-using MintPlayer.AI.ReinforcementLearning.Core.Random;
-using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RushHour;
 
 namespace RLDemo.Web.Services;
 
-public enum ModelStatus { Loading, Training, Ready, Failed }
+public enum ModelStatus { Loading, Ready, Failed }
 
-/// <summary>A model that can load itself from the store or train once at startup.</summary>
-public interface ITrainableModelService
+/// <summary>
+/// A game service with startup work (load its trained checkpoint from the store, or warm a cache). The web does
+/// NOT train: models are produced on a dev machine (the Lab campaigns / Console) and committed to <c>models/</c>
+/// via Git LFS, so a single training path lives off the request path. A missing checkpoint = the game is
+/// unavailable, not a trigger to train in-process.
+/// </summary>
+public interface IModelStartupService
 {
-    void EnsureModel(CancellationToken cancellationToken);
+    void Initialize(CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// Owns the Rush Hour DQN: loads it from the model store at startup, or trains it once
-/// (same recipe that passed the M6 gate) and saves it — so the app never trains again
-/// across restarts (PRD §7.5). Thread-safe snapshot of training progress for /api/rushhour/status.
+/// Owns the Rush Hour DQN: loads it from the model store at startup (the checkpoint is trained on a dev machine
+/// and shipped in <c>models/</c> via Git LFS — the web never trains, PRD §14). Also serves the imitation policy
+/// net when present. Thread-safe readiness snapshot for /api/rushhour/status.
 /// </summary>
-public sealed class RushHourModelService(IModelStore store, ILogger<RushHourModelService> logger) : ITrainableModelService
+public sealed class RushHourModelService(IModelStore store, ILogger<RushHourModelService> logger) : IModelStartupService
 {
     public const string EnvironmentId = "rushhour";
     public const string AlgorithmId = "dqn";
     public const int MaxMoves = 60;
 
-    // Unlike the M6 gate (fixed 30-puzzle set), this model must handle ANYTHING a user
-    // draws — so it trains on a procedurally-scaled set: ~2,000 generated puzzles across
-    // the whole easy-medium band, sparse layouts (down to 2 vehicles) and both red
-    // lengths. A small fixed set gets memorized; variety is what buys generalization.
-    public const int PuzzleSetSeed = 99;
-    public const ulong TrainingMasterSeed = 42;
-
-    // Band up to 20 covers the official deck's beginner cards (e.g. card 1 = optimal 16);
-    // random generation can't reach expert depths (card 40 = 81) — that needs the M11
-    // imitation/search work, not a wider band.
-    public static List<RushHourPuzzle> TrainingPuzzles()
-        => RushHourGenerator.Generate(PuzzleSetSeed, count: 3000, minOptimal: 2, maxOptimal: 20,
-            minVehicles: 2, maxVehicles: 9, maxAttempts: 4_000_000, varyRedLength: true);
-
-    public static DqnOptions TrainingOptions(Action<DqnProgress>? onProgress = null) => new()
-    {
-        Hidden = [256, 256],
-        Gamma = 0.98,
-        LearningRate = 5e-4f,
-        MaxSteps = 600_000,
-        BufferCapacity = 100_000,
-        Epsilon = new LinearSchedule(1.0, 0.05, 200_000),
-        EvalEvery = 10_000,
-        EvalEpisodes = 40,
-        SolveThreshold = 90, // perfect play on this band averages ≈ 91 (return = 101 − moves)
-        OnProgress = onProgress,
-    };
-
     private readonly object _lock = new();
     private GreedyQAgent? _agent;
 
     public ModelStatus Status { get; private set; } = ModelStatus.Loading;
-    public int TrainingStep { get; private set; }
-    public int TrainingMaxSteps { get; private set; }
-    public double LastEvalReturn { get; private set; }
     public string? Error { get; private set; }
 
     /// <summary>The greedy inference agent, or null while the model is not ready. Loads lazily from the store.</summary>
@@ -127,53 +99,22 @@ public sealed class RushHourModelService(IModelStore store, ILogger<RushHourMode
         }
     }
 
-    /// <summary>Loads the model from the store, or trains + saves it. Called once at startup.</summary>
-    public void EnsureModel(CancellationToken cancellationToken)
+    /// <summary>Loads the shipped checkpoint at startup. The web does not train (PRD §14).</summary>
+    public void Initialize(CancellationToken cancellationToken)
     {
-        try
-        {
-            if (TryLoadFromStore()) return;
-
-            logger.LogInformation("No Rush Hour model in the store — training (~1 min)...");
-            lock (_lock) Status = ModelStatus.Training;
-
-            var env = new RushHourEnv(TrainingPuzzles(), MaxMoves);
-            var result = DqnTrainer.Train(env, TrainingOptions(p =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                lock (_lock)
-                {
-                    TrainingStep = p.Step;
-                    TrainingMaxSteps = p.MaxSteps;
-                    LastEvalReturn = p.EvalMeanReturn;
-                }
-                logger.LogInformation("Rush Hour training: step {Step}/{Max}, eval {Eval:F1}",
-                    p.Step, p.MaxSteps, p.EvalMeanReturn);
-            }), new SeedSequence(TrainingMasterSeed));
-
-            // This service trains a plain-MLP DQN (no Dueling), so the result is always an Mlp.
-            store.Save(EnvironmentId, AlgorithmId, s => MlpCheckpoint.Save((Mlp)result.Network, s));
-            _agent = new GreedyQAgent(result.Network, RushHourBoard.ActionCount);
-            Status = ModelStatus.Ready;
-            logger.LogInformation("Rush Hour model trained ({Steps} steps, eval {Eval:F1}) and saved.",
-                result.StepsTrained, result.FinalEvalReturn);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
+        if (TryLoadFromStore()) return;
+        lock (_lock)
         {
             Status = ModelStatus.Failed;
-            Error = ex.Message;
-            logger.LogError(ex, "Rush Hour model setup failed.");
+            Error = "No trained Rush Hour model in the store.";
         }
+        logger.LogWarning("No Rush Hour model in the store — game unavailable. Train it on a dev machine (Lab/Console) and commit the checkpoint to models/ (Git LFS).");
     }
 }
 
-/// <summary>Runs every model's load-or-train once, in parallel, off the request path, at startup.</summary>
-public sealed class ModelTrainingHostedService(IEnumerable<ITrainableModelService> models) : BackgroundService
+/// <summary>Runs every game's startup work (load checkpoint / warm caches) once, in parallel, off the request path.</summary>
+public sealed class ModelStartupHostedService(IEnumerable<IModelStartupService> models) : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
-        => Task.WhenAll(models.Select(m => Task.Run(() => m.EnsureModel(stoppingToken), stoppingToken)));
+        => Task.WhenAll(models.Select(m => Task.Run(() => m.Initialize(stoppingToken), stoppingToken)));
 }

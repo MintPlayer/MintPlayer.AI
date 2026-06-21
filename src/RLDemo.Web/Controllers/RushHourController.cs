@@ -25,7 +25,7 @@ public sealed record SolveResponse(
     TrajectoryStepDto[] OptimalTrajectory,
     string AiMode); // "greedy" (reactive policy) | "search" (policy-guided A*) | "dqn" (legacy fallback)
 
-public sealed record StatusResponse(string Status, int TrainingStep, int TrainingMaxSteps, double LastEvalReturn, string? Error);
+public sealed record StatusResponse(string Status, string? Error);
 
 [ApiController]
 [Route("api/rushhour")]
@@ -35,8 +35,7 @@ public sealed class RushHourController(RushHourModelService model, GalleryStore 
     public StatusResponse Status()
     {
         _ = model.Agent; // touch: lazily loads a stored checkpoint so status reflects it
-        return new(model.Status.ToString().ToLowerInvariant(),
-            model.TrainingStep, model.TrainingMaxSteps, model.LastEvalReturn, model.Error);
+        return new(model.Status.ToString().ToLowerInvariant(), model.Error);
     }
 
     /// <summary>Validates a drawn board and reports the BFS-optimal move count (no model needed).</summary>

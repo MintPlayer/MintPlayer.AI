@@ -37,7 +37,7 @@ export class MountainCar {
     const st = await this.api.status().catch(() => null);
     this.modelStatus.set(st);
     if (!st || st.status !== 'ready') {
-      this.status.set(st?.status === 'training' ? 'The agent is still training — try again shortly.' : 'AI unavailable.');
+      this.status.set(st?.status === 'loading' ? 'The agent is still loading — try again shortly.' : 'AI unavailable.');
       return;
     }
     this.mode.set('watch');
@@ -132,7 +132,7 @@ export class MountainCar {
       try {
         const s = await this.api.status();
         this.modelStatus.set(s);
-        if (s.status === 'loading' || s.status === 'training') setTimeout(() => this.pollStatus(), 3000);
+        if (s.status === 'loading') setTimeout(() => this.pollStatus(), 3000);
       } catch {
         // backend unreachable — leave status unknown
       }

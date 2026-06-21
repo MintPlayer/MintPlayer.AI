@@ -6,13 +6,10 @@
 </p>
 
 @if (modelStatus(); as ms) {
-  @if (ms.status === 'training') {
-    <div class="banner training">
-      The AI model is training on the server (step {{ ms.trainingStep }} / {{ ms.trainingMaxSteps }},
-      eval {{ ms.lastEvalReturn.toFixed(1) }}) — the algorithm button works meanwhile.
-    </div>
+  @if (ms.status === 'loading') {
+    <div class="banner training">Loading the AI model… — the algorithm button works meanwhile.</div>
   } @else if (ms.status === 'failed') {
-    <div class="banner error">AI model training failed: {{ ms.error }}</div>
+    <div class="banner error">AI model unavailable: {{ ms.error }}</div>
   }
 }
 
