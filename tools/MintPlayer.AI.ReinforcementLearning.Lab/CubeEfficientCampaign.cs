@@ -104,11 +104,11 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
             perWorker[worker] = local;
         });
         foreach (var local in perWorker) samples.AddRange(local);
-        Shuffle(samples, _rng);
+        CubePolicyTraining.Shuffle(samples, _rng);
 
         for (int offset = 0; offset + BatchSize <= samples.Count; offset += BatchSize)
         {
-            var (ce, huber, acc) = TrainStep(_net, _adam, samples, offset, BatchSize);
+            var (ce, huber, acc) = CubePolicyTraining.TrainStep(_net, _adam, samples, offset, BatchSize);
             _windowCe += ce;
             _windowHuber += huber;
             _windowAcc += acc;
@@ -194,53 +194,6 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     // The AdaptiveBackend is owned by the DI container (disposed with the host), not the campaign. The per-eval
     // device-resident DeviceMlp is created and disposed inside Evaluate, so there is nothing campaign-owned here.
     public void Dispose() { }
-
-    private static (double Ce, double Huber, double Acc) TrainStep(
-        CubePolicyNet net, Adam adam, List<CubeOracle.LabeledState> samples, int offset, int batch)
-    {
-        var obs = new float[batch * RubiksCubeEnv.ObservationSize];
-        var weights = new float[batch * RubiksCubeEnv.ActionCount];
-        var targets = new float[batch];
-        for (int i = 0; i < batch; i++)
-        {
-            var s = samples[offset + i];
-            RubiksCubeEnv.WriteObservation(FaceletCube.FromFacelets(s.Facelets),
-                obs.AsSpan(i * RubiksCubeEnv.ObservationSize, RubiksCubeEnv.ObservationSize));
-            weights[i * RubiksCubeEnv.ActionCount + s.Action] = 1f;
-            targets[i] = s.DistanceToGo / CubePolicyNet.DistanceScale;
-        }
-
-        var (logits, value) = net.Forward(new Tensor(obs, batch, RubiksCubeEnv.ObservationSize));
-        var logProbs = logits.LogSoftmax();
-        var ce = logProbs.Mul(new Tensor(weights, batch, RubiksCubeEnv.ActionCount)).Sum().MulScalar(-1f / batch);
-        var huber = value.Reshape(batch).HuberLoss(new Tensor(targets, batch));
-        var loss = ce.Add(huber);
-
-        adam.ZeroGrad();
-        loss.Backward();
-        adam.ClipGradNorm(5f);
-        adam.Step();
-
-        int correct = 0;
-        for (int i = 0; i < batch; i++)
-        {
-            int argmax = 0;
-            for (int a = 1; a < RubiksCubeEnv.ActionCount; a++)
-                if (logProbs.Data[i * RubiksCubeEnv.ActionCount + a] > logProbs.Data[i * RubiksCubeEnv.ActionCount + argmax])
-                    argmax = a;
-            if (argmax == samples[offset + i].Action) correct++;
-        }
-        return (ce.Data[0], huber.Data[0], correct / (double)batch);
-    }
-
-    private static void Shuffle<T>(IList<T> list, Xoshiro256StarStar rng)
-    {
-        for (int i = list.Count - 1; i > 0; i--)
-        {
-            int j = rng.NextInt(i + 1);
-            (list[i], list[j]) = (list[j], list[i]);
-        }
-    }
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }
