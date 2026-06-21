@@ -889,8 +889,32 @@ the `CampaignRunner` unit test passes deterministically; the Snake campaign resu
 **Risks:** `CampaignEval` becoming a god-struct (keep it minimal — the investigation's single biggest design risk);
 CubeDavi exercising every addition at once (migrate it LAST, after the runner is proven on the simple loops).
 
-**Stretch:** migrate MountainCar / Pendulum / CartPole / 2048 onto `ScoreMaximizingCampaign`; a DQN auto-grow hook
-only if a Snake plateau proves capacity-bound.
+**Stretch:** migrate MountainCar / Pendulum / CartPole / 2048 onto campaigns; a DQN auto-grow hook
+only if a Snake plateau proves capacity-bound. *(→ M26.)*
+
+## M26 — Consolidate the web's training onto the campaign harness  *(planned, not started; PRD §14 stretch)* 🔭
+
+**Problem.** After M25 there are two definitions of "how to train game X": the Lab's resumable `ITrainingCampaign`s,
+and the web's one-shot `EnsureModel` in each `*ModelService` (`SnakeModelService` etc. call `DqnTrainer.Train(...)`
+directly). The reusable harness is consumed by an internal dev tool but NOT by the production training path. M25's
+campaigns are also `internal` to the Lab exe — so they can't be shared (the M25 contract tests reach them only via
+`InternalsVisibleTo` + an `extern alias` to dodge the Lab's generated `Program`; that hack goes away once they move).
+
+**Plan (own branch — touches production training for every game):**
+1. **Promote campaigns to a shared library** `MintPlayer.AI.ReinforcementLearning.Campaigns` (refs Core +
+   Environments + Ilgpu): move the 5 campaign classes + `CubeIds`/`CubeDaviSettings`/`CubePolicyTraining` there,
+   make them `public`, give them a real namespace. `CampaignCli` (console/CSV IO) + `CubeDaviConfig` (appsettings)
+   + the `*Lab` arg-parsing entry points stay in the Lab. Drop the `extern alias`/`InternalsVisibleTo` test hack —
+   the Tests reference the library directly, and the contract suite can then cover all five campaigns.
+2. **Web `EnsureModel` runs the campaign** via `CampaignRunner` (time- or step-bounded) instead of its own trainer
+   call — one source of truth for training, and the web's first-run train becomes resumable/checkpointed for free.
+   Bridge `CampaignProgress` → the existing `ITrainableModelService` progress (`TrainingStep`/`LastEvalReturn`).
+3. **Write campaigns for the games that lack one** — 2048 (n-tuple TD) and MountainCar (PPO) — so every web-trained
+   game has a campaign. (These use non-DQN trainers — a good forcing function that confirms the no-base-class call.)
+
+**Gate:** each web game still trains to its shipped baseline from cold; the `WebApplicationFactory` API tests stay
+green; no duplicate training code path remains. **Risk:** this is production training for every game — do it on its
+own branch, one game at a time, not as a tail of the M25 branch.
 
 ## Testing strategy (cross-cutting, from research)
 

@@ -538,9 +538,21 @@ cube gate 97/100) + 264 tests; (2) a deterministic `CampaignRunner` unit test (f
 score-maximizing campaign resumes bitwise (reload `DqnTrainingState` — verified 20k→35k) and reaches the shipped
 baseline (~20 food on the 12×12 grid by 20k steps, climbing to ~22).
 
-**Non-goals:** not a multi-trial hyperparameter sweep runner; not a single interface spanning both paradigms;
-CubeDavi's bespoke eval-only modes are not modeled as `CampaignEval` variants.
+**Paradigm decision (settled 2026-06-21).** The two paradigms (goal-reaching vs score-maximizing) are NOT two
+interfaces or two base classes — they share one **minimal, paradigm-agnostic** `ITrainingCampaign`
+(`Resume`/`TrainChunk`/`IsComplete`/`Evaluate`/`Checkpoint`). The distinction lives only in each campaign's
+`Evaluate` (solve-rate vs mean episodic return, both expressed as generic `CampaignEval` metrics) and in whether
+`IsComplete` ever fires. A `…Campaign` base class per paradigm was considered and rejected: it would be a shallow
+wrapper (every goal-reaching game already implements the interface directly), and the obvious score-maximizing base
+shaped around `DqnTrainer` wouldn't fit future score games on different trainers (2048 n-tuple, SAC/PPO). The
+original "two harnesses" framing is honoured at the *behaviour* level, not as two types. (This supersedes an earlier
+non-goal that read "not a single interface spanning both paradigms" — the interface is shared precisely because it
+is minimal and bakes in neither paradigm's eval shape.)
 
-**Stretch:** migrate the other score games (MountainCar / Pendulum / CartPole / 2048) onto
-`ScoreMaximizingCampaign`; a `ScoreMaximizingCampaign` auto-grow hook (e.g. widen `DuelingQNet`) only if a Snake
-plateau proves capacity-bound — the M24 lesson is that capacity usually isn't the wall.
+**Non-goals:** not a multi-trial hyperparameter sweep runner; CubeDavi's bespoke eval-only modes are not modeled as
+`CampaignEval` variants (they go through `TryRunStandaloneEval`).
+
+**Stretch (→ folded into the M26 consolidation milestone):** have the web's per-game training run the campaigns via
+`CampaignRunner` instead of its own one-shot trainer calls (single source of "how to train game X"); migrate the
+remaining score games (MountainCar / 2048) onto campaigns; promote the campaigns from the Lab into a shared library
+so both the Lab and the web consume them.
