@@ -484,3 +484,49 @@ wall-clock until then.*
 **Realistic target on one 3060 (after M19+M20):** "Solves any cube; provably QTM-optimal to depth ~7,
 near-optimal and shorter than Kociemba to ~depth 15–20, teacher-free." Then it becomes the third
 **"self-taught AI"** solver on the web cube page, beside the Kociemba button and the imitation AI.
+
+## 14. Reusable training-campaign harness  *(PRD §14; inserted 2026-06-21; SDK breadth, see [PLAN.md](PLAN.md) M25)*
+
+The four long-running training campaigns — Rush Hour (`Program.cs`), `CubeLab`, `CubeDaviLab`, `CubePolicyLab` —
+copy-paste the same scaffold: flag parsing, `FileModelStore` + `logs/` + CSV-header-if-missing, resume-on-start,
+a `while (now < deadline)` loop with periodic eval + checkpoint, and an identical `Log`/`Shuffle`. The SDK goal
+("make the reusable assets first-class", PLAN → Immediate next step) wants this loop as first-class, *tested* Core
+surface, not per-game glue. A 3-agent investigation (2026-06-21) mapped the duplication and found the campaigns
+split into **two paradigms that must NOT share one interface** — forcing the self-driving DQN onto the cube
+"solve" shape, or unioning the five eval outputs into one struct, merely re-leaks the per-game complexity the
+harness is meant to hide.
+
+1. **Shared core** — `CampaignRunner` drives any `ITrainingCampaign` over a resumable, wall-clock-budgeted loop;
+   it owns eval/checkpoint cadence and emits results through an `Action<CampaignProgress>` callback. IO-agnostic:
+   Core does no `Console`/file writes (the Lab does CSV + console); `IModelStore` exposes no root dir.
+   `ITrainingCampaign : IDisposable` = `{ Environment; Resume(store); TrainChunk()→long; IsComplete;
+   Evaluate()→CampaignEval; Checkpoint(store); TryRunStandaloneEval(store) }`. The runner takes an **injectable
+   clock** (it gates on time → unit-testable). `CampaignEval` stays minimal (metric dict + report line + CSV cells).
+
+2. **`GoalReachingCampaign`** (final goal — reach a terminal "solved" state; eval = **solve-rate** on held-out
+   instances): the cube family (Kociemba imitation, DAVI value-iteration, EfficientCube policy) + Rush Hour.
+
+3. **`ScoreMaximizingCampaign`** (infinite goal — maximize cumulative return, no terminus; eval = **mean
+   return/score**): Snake (DQN), extensible to MountainCar / Pendulum / CartPole / 2048. Wraps a self-driving
+   trainer (`DqnTrainer`…) in resumable chunks (raise `MaxSteps`, persist `DqnTrainingState`).
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| One harness vs two | **Two** over one shared runner | Solve vs reward-maximize differ in training-driving and eval shape; one interface would bend the self-driving DQN or become a god-struct (the investigation's biggest risk). |
+| `CampaignEval` shape | **Minimal**; campaigns own auxiliary CSVs | CubeDavi writes two CSVs on two cadences + five disjoint eval-only formats — a union type re-leaks that into the runner. |
+| CubeDavi eval-only modes | `TryRunStandaloneEval(store)` escape hatch, run before training | value-curve / vs-kociemba / time-budget / search differ in *output structure*, not just metric values. |
+| Snake / DQN home | `ScoreMaximizingCampaign`, NOT the solver interface | `DqnTrainer` is self-driving with fat-state resume; the cube shape fights it. |
+| Location | `Core/Training/` (`…Core.Training`), IO-agnostic callback | Sibling to `DqnTrainer`/`Evaluator`; keeps Core packagable + free of Console/file IO. |
+
+**Gate:** (1) each migrated campaign's existing tests + CI stay green and its run behaves identically (same
+checkpoint ids + CSV columns); (2) a deterministic `CampaignRunner` unit test (fake campaign + fake clock +
+in-memory `IModelStore`) asserts the loop, eval cadence, resume, and checkpoint calls — sub-second, no wall-clock;
+(3) the Snake `ScoreMaximizingCampaign` resumes bitwise (reload `DqnTrainingState`) and reaches ≥ the shipped
+baseline (~22 food on the 12×12 grid).
+
+**Non-goals:** not a multi-trial hyperparameter sweep runner; not a single interface spanning both paradigms;
+CubeDavi's bespoke eval-only modes are not modeled as `CampaignEval` variants.
+
+**Stretch:** migrate the other score games (MountainCar / Pendulum / CartPole / 2048) onto
+`ScoreMaximizingCampaign`; a `ScoreMaximizingCampaign` auto-grow hook (e.g. widen `DuelingQNet`) only if a Snake
+plateau proves capacity-bound — the M24 lesson is that capacity usually isn't the wall.

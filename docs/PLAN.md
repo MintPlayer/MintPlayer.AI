@@ -817,6 +817,38 @@ on one 3060), which is out of scope.** Capacity ruled out. Full analysis in `doc
 itself is sound (the right machinery for such a run); the cheap real win was inference-side (the 15 s time-bounded
 solver). Status: branch open (PR #7); deployed net unchanged.
 
+## M25 — Reusable training-campaign harness  *(SDK breadth; inserted 2026-06-21; PRD §14)* ⏳
+
+The four campaign harnesses (`Program.cs` Rush Hour, `CubeLab`, `CubeDaviLab`, `CubePolicyLab`) copy-paste one
+loop. A 3-agent investigation (2026-06-21) confirmed two paradigms that must not share an interface, and a
+migration order easy→hard so the runner is validated before it meets CubeDavi (never design the interface around
+CubeDavi first, or it absorbs CubeDavi's specifics and stops being reusable).
+
+**Result:** ⏳ planned — design settled (PRD §14), not yet built. Phased below; many small commits, one squashed PR.
+
+1. **Core abstraction** — `Core/Training/`: `CampaignRunner` (+ injectable clock) drives `ITrainingCampaign :
+   IDisposable` (`Resume`/`TrainChunk`/`IsComplete`/`Evaluate`/`Checkpoint`/`TryRunStandaloneEval`); minimal
+   `CampaignEval`; `Action<CampaignProgress>` callback (all Console/CSV IO stays in the Lab). Unit-tested with a
+   fake campaign + fake clock + in-memory `IModelStore` (fast bucket, sub-second, no wall-clock).
+2. **`GoalReachingCampaign`** base + migrate easy→hard: **CubeLab → CubePolicyLab → RushHour → CubeDaviLab**, one
+   commit each, re-verifying tests + CI and keeping each game's existing checkpoint ids + CSV columns. CubeDavi
+   exercises every interface addition at once (dual stop via `IsComplete`; curriculum + auto-widen inside
+   `TrainChunk`; GPU resident stack via `IDisposable`; five eval-only modes via `TryRunStandaloneEval`; its two
+   CSVs stay campaign-owned).
+3. **`ScoreMaximizingCampaign`** base + **Snake** campaign — resumable DQN (chunk `DqnTrainer` by raising
+   `MaxSteps`, persist the full `DqnTrainingState`), eval = food eaten on the 12×12 grid. This is the `--game
+   snake` campaign that started this thread, now in its correct paradigm instead of bent onto the solver interface.
+
+**Gate (pre-registered):** each migrated game behaves identically (existing tests + CI green, same checkpoints/CSV);
+the `CampaignRunner` unit test passes deterministically; the Snake campaign resumes bitwise (reload
+`DqnTrainingState`) and reaches **≥ the shipped ~22 food / 12×12 baseline**.
+
+**Risks:** `CampaignEval` becoming a god-struct (keep it minimal — the investigation's single biggest design risk);
+CubeDavi exercising every addition at once (migrate it LAST, after the runner is proven on the simple loops).
+
+**Stretch:** migrate MountainCar / Pendulum / CartPole / 2048 onto `ScoreMaximizingCampaign`; a DQN auto-grow hook
+only if a Snake plateau proves capacity-bound.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
