@@ -517,6 +517,16 @@ harness is meant to hide.
 | CubeDavi eval-only modes | `TryRunStandaloneEval(store)` escape hatch, run before training | value-curve / vs-kociemba / time-budget / search differ in *output structure*, not just metric values. |
 | Snake / DQN home | `ScoreMaximizingCampaign`, NOT the solver interface | `DqnTrainer` is self-driving with fat-state resume; the cube shape fights it. |
 | Location | `Core/Training/` (`…Core.Training`), IO-agnostic callback | Sibling to `DqnTrainer`/`Evaluator`; keeps Core packagable + free of Console/file IO. |
+| Runner shape | **Instance class** (not static) with an injected `TimeProvider` (BCL) | DI-composable; the `TimeProvider` makes the time-budgeted loop deterministically testable and the system clock the default. |
+| DI registration | **MintPlayer.SourceGenerators `[Register]`** on `CampaignRunner` (dogfood) | The generator emits `AddReinforcementLearningCore()`; DI resolves `TimeProvider` via the ctor — no hand-written registration. |
+| Host builder | **`AIHost.CreateBuilder(dataDir)`** in a **new `…Hosting` package** | The AI counterpart to `WebApplication.CreateBuilder`; keeps `Microsoft.Extensions.*` deps out of Core. Takes a data dir (not raw `args` — the command-line config provider chokes on bare flags like `--eval-only`). |
+
+**Hosting & DI.** Training tools compose like an ASP.NET host: `AIHost.CreateBuilder(dataDir).Build()` →
+`services.GetRequiredService<CampaignRunner>()` + `<IModelStore>`. `AddReinforcementLearning(dataDir)` registers the
+`FileModelStore`, `TimeProvider.System`, and (via the Core source-generated `AddReinforcementLearningCore()`) the
+runner. The GPU compute backend registers separately via an Ilgpu-side `services.AddGpuBackend()` so Core stays
+backend-agnostic. `CampaignRunner` + `ITrainingCampaign` live in Core (BCL `TimeProvider` only); `AIHost` + the DI
+extensions live in the Hosting package.
 
 **Gate:** (1) each migrated campaign's existing tests + CI stay green and its run behaves identically (same
 checkpoint ids + CSV columns); (2) a deterministic `CampaignRunner` unit test (fake campaign + fake clock +

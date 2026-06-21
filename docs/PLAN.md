@@ -824,7 +824,31 @@ loop. A 3-agent investigation (2026-06-21) confirmed two paradigms that must not
 migration order easy→hard so the runner is validated before it meets CubeDavi (never design the interface around
 CubeDavi first, or it absorbs CubeDavi's specifics and stops being reusable).
 
-**Result:** ⏳ planned — design settled (PRD §14), not yet built. Phased below; many small commits, one squashed PR.
+**Status (2026-06-21):** ⏳ in progress on branch `training-campaign-harness` (off master, NOT pushed; many small
+commits, one squashed PR). **DONE + verified:** the Core abstraction (deliverable 1), the **CubeLab** and
+**CubePolicy** migrations (first half of 2), and the **hosting/DI layer** (below). **REMAINING:** migrate
+**RushHour** + **CubeDavi** (rest of 2), the **Snake** `ScoreMaximizingCampaign` (3), **GPU-backend DI**, and a
+**dedup** of the shared cube `TrainStep`/`Shuffle` (CubeImitationCampaign ↔ CubeEfficientCampaign).
+
+**Commits so far:** `ada3d76` docs · `ed1490e` Core `CampaignRunner`+`ITrainingCampaign` (+3 tests) · `102d64a`
+CubeLab migrated (eval-only gate 96/100) · `126ed72` CubePolicy migrated (smoke clean) · `2cc4673`
+`CampaignRunner`→instance+`TimeProvider` · `43ce002` AIHost + DI + `[Register]` source-gen.
+
+**Hosting & DI (decided + built 2026-06-21).** `CampaignRunner` is an **instance** class (not static), taking an
+injected **`TimeProvider`** (BCL; system clock by default, a fake clock drives the deterministic tests). A new
+package **`MintPlayer.AI.ReinforcementLearning.Hosting`** ships **`AIHost.CreateBuilder(string dataDirectory)`** →
+`HostApplicationBuilder` (the AI counterpart to `WebApplication.CreateBuilder`) plus
+`services.AddReinforcementLearning(dataDir)` (registers `IModelStore`=`FileModelStore`, `TimeProvider.System`, and
+`CampaignRunner`). `CampaignRunner` is DI-registered via **MintPlayer.SourceGenerators**
+`[Register(ServiceLifetime.Singleton, "ReinforcementLearningCore")]` — the generator emits
+`…Core.DependencyInjectionExtensionMethods.AddReinforcementLearningCore(IServiceCollection)` (which
+`AddReinforcementLearning` calls); DI resolves `TimeProvider` through the ctor. Core now references
+`MintPlayer.SourceGenerators`(`.Attributes`) `10.20.0`; all hosting / `Microsoft.Extensions.*` deps live in the
+Hosting package so Core stays lean. The Lab cube/cube-policy entry points resolve `IModelStore` + `CampaignRunner`
+from the host (DI all the way). **Why `dataDirectory`, not raw `args`:** the MS command-line config provider throws
+on bare flags like `--eval-only`, so each game parses its own args and passes the dir. **Not yet DI'd:** the GPU
+backend — `CubeEfficientCampaign` still `new`s its own `AdaptiveBackend`; a remaining item is an Ilgpu
+`services.AddGpuBackend()` + injecting it.
 
 1. **Core abstraction** — `Core/Training/`: `CampaignRunner` (+ injectable clock) drives `ITrainingCampaign :
    IDisposable` (`Resume`/`TrainChunk`/`IsComplete`/`Evaluate`/`Checkpoint`/`TryRunStandaloneEval`); minimal
