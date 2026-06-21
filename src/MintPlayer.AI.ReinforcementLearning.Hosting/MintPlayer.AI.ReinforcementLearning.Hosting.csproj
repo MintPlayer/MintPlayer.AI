@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>MintPlayer.AI.ReinforcementLearning.Hosting</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Package">
+    <Version>0.2.0</Version>
+    <Authors>Pieterjan De Clippel</Authors>
+    <Company>MintPlayer</Company>
+    <Description>Hosting + dependency-injection helpers for MintPlayer.AI.ReinforcementLearning: AIHost.CreateBuilder wires a Microsoft.Extensions.Hosting application builder (configuration, logging, DI) preconfigured with the RL model store, system clock and CampaignRunner, so training tools compose with dependency injection like an ASP.NET host.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>reinforcement-learning;dependency-injection;hosting;generic-host</PackageTags>
+    <RepositoryUrl>https://github.com/MintPlayer/MintPlayer.AI</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/MintPlayer/MintPlayer.AI</PackageProjectUrl>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
+  </ItemGroup>
+
+</Project>

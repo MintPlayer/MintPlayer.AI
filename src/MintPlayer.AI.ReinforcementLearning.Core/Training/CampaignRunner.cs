@@ -1,4 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.SourceGenerators.Attributes;
 
 namespace MintPlayer.AI.ReinforcementLearning.Core.Training;
 
@@ -40,6 +42,7 @@ public sealed record CampaignOptions
 /// host resolve the runner from its container.
 /// </para>
 /// </summary>
+[Register(ServiceLifetime.Singleton, "ReinforcementLearningCore")]
 public sealed class CampaignRunner(TimeProvider? timeProvider = null)
 {
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;

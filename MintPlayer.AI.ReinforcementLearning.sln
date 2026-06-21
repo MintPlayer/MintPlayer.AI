@@ -24,6 +24,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MintPlayer.AI.Reinforcement
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MintPlayer.AI.ReinforcementLearning.Ilgpu", "src\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj", "{9B24ED7C-8327-4E2E-AB13-EB004D1B3E66}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MintPlayer.AI.ReinforcementLearning.Hosting", "src\MintPlayer.AI.ReinforcementLearning.Hosting\MintPlayer.AI.ReinforcementLearning.Hosting.csproj", "{9B9E1861-8AFE-455C-895A-FB38A8489EFA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -130,6 +132,18 @@ Global
 		{9B24ED7C-8327-4E2E-AB13-EB004D1B3E66}.Release|x64.Build.0 = Release|Any CPU
 		{9B24ED7C-8327-4E2E-AB13-EB004D1B3E66}.Release|x86.ActiveCfg = Release|Any CPU
 		{9B24ED7C-8327-4E2E-AB13-EB004D1B3E66}.Release|x86.Build.0 = Release|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Debug|x64.Build.0 = Debug|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Debug|x86.Build.0 = Debug|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Release|x64.ActiveCfg = Release|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Release|x64.Build.0 = Release|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Release|x86.ActiveCfg = Release|Any CPU
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -143,5 +157,6 @@ Global
 		{C9196779-3F76-461B-BF11-F1C8BF8A9B78} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{C9844FB9-0FB2-4A28-805A-9F2F939EEAE2} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
 		{9B24ED7C-8327-4E2E-AB13-EB004D1B3E66} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{9B9E1861-8AFE-455C-895A-FB38A8489EFA} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

@@ -1,6 +1,8 @@
 using System.Globalization;
+using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
+using MintPlayer.AI.ReinforcementLearning.Hosting;
 
 /// <summary>
 /// `--game cube` entry point: parses the campaign flags and runs the <see cref="CubeImitationCampaign"/>
@@ -27,9 +29,12 @@ internal static class CubeLab
             else if (args[i] == "--eval-only") evalOnly = true;
         }
 
-        var store = new FileModelStore(dataDir);
-        string csvPath = Path.Combine(store.RootDirectory, "logs", "cube-imitation.csv");
-        new CampaignRunner().Run(new CubeImitationCampaign(seed, learningRate, width), store, new CampaignOptions
+        // DI all the way: the model store, clock and CampaignRunner are resolved from the AIHost container.
+        using var host = AIHost.CreateBuilder(dataDir).Build();
+        var store = host.Services.GetRequiredService<IModelStore>();
+        var runner = host.Services.GetRequiredService<CampaignRunner>();
+        string csvPath = Path.Combine(dataDir, "logs", "cube-imitation.csv");
+        runner.Run(new CubeImitationCampaign(seed, learningRate, width), store, new CampaignOptions
         {
             Duration = TimeSpan.FromHours(hours),
             EvalOnly = evalOnly,

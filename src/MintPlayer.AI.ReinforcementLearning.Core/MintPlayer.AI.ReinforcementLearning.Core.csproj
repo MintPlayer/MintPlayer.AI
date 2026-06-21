@@ -28,6 +28,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="MintPlayer.SourceGenerators" Version="10.20.0">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="MintPlayer.SourceGenerators.Attributes" Version="10.20.0" />
     <PackageReference Include="System.Numerics.Tensors" Version="10.0.9" />
   </ItemGroup>
 

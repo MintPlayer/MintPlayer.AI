@@ -1,6 +1,8 @@
 using System.Globalization;
+using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
+using MintPlayer.AI.ReinforcementLearning.Hosting;
 
 /// <summary>
 /// `--game cube-policy` entry point: parses the campaign flags and runs the EfficientCube
@@ -33,9 +35,12 @@ internal static class CubePolicyLab
             else if (args[i] == "--eval-only") evalOnly = true;
         }
 
-        var store = new FileModelStore(dataDir);
-        string csvPath = Path.Combine(store.RootDirectory, "logs", "cube-policy.csv");
-        new CampaignRunner().Run(
+        // DI all the way: the model store, clock and CampaignRunner are resolved from the AIHost container.
+        using var host = AIHost.CreateBuilder(dataDir).Build();
+        var store = host.Services.GetRequiredService<IModelStore>();
+        var runner = host.Services.GetRequiredService<CampaignRunner>();
+        string csvPath = Path.Combine(dataDir, "logs", "cube-policy.csv");
+        runner.Run(
             new CubeEfficientCampaign(seed, learningRate, width, maxScramble, beamWidth, evalEpisodes),
             store,
             new CampaignOptions
