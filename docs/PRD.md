@@ -524,9 +524,12 @@ harness is meant to hide.
 **Hosting & DI.** Training tools compose like an ASP.NET host: `AIHost.CreateBuilder(dataDir).Build()` →
 `services.GetRequiredService<CampaignRunner>()` + `<IModelStore>`. `AddReinforcementLearning(dataDir)` registers the
 `FileModelStore`, `TimeProvider.System`, and (via the Core source-generated `AddReinforcementLearningCore()`) the
-runner. The GPU compute backend registers separately via an Ilgpu-side `services.AddGpuBackend()` so Core stays
-backend-agnostic. `CampaignRunner` + `ITrainingCampaign` live in Core (BCL `TimeProvider` only); `AIHost` + the DI
-extensions live in the Hosting package.
+runner. The GPU compute backend registers separately via `services.AddGpuBackend()` (built 2026-06-21) — shipped in
+its **own** package `MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting`, kept apart from the lean Ilgpu *compute*
+package so that backend carries no DI dependency, and so Core stays backend-agnostic. It registers the shared
+`AdaptiveBackend` as a container-owned singleton; the two GPU-benefiting cube campaigns inject it instead of
+constructing their own. `CampaignRunner` + `ITrainingCampaign` live in Core (BCL `TimeProvider` only); `AIHost` + the
+DI extensions live in the Hosting package.
 
 **Gate:** (1) each migrated campaign's existing tests + CI stay green and its run behaves identically (same
 checkpoint ids + CSV columns); (2) a deterministic `CampaignRunner` unit test (fake campaign + fake clock +

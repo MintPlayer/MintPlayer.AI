@@ -825,14 +825,18 @@ migration order easy→hard so the runner is validated before it meets CubeDavi 
 CubeDavi first, or it absorbs CubeDavi's specifics and stops being reusable).
 
 **Status (2026-06-21):** ⏳ in progress on branch `training-campaign-harness` (off master, NOT pushed; many small
-commits, one squashed PR). **DONE + verified:** the Core abstraction (deliverable 1), the **CubeLab** and
-**CubePolicy** migrations (first half of 2), and the **hosting/DI layer** (below). **REMAINING:** migrate
-**RushHour** + **CubeDavi** (rest of 2), the **Snake** `ScoreMaximizingCampaign` (3), **GPU-backend DI**, and a
-**dedup** of the shared cube `TrainStep`/`Shuffle` (CubeImitationCampaign ↔ CubeEfficientCampaign).
+commits, one squashed PR). **DONE + verified:** the Core abstraction (deliverable 1); **all four
+`GoalReachingCampaign`-style games migrated** (deliverable 2 — CubeLab, CubePolicy, **RushHour**, **CubeDavi**); the
+**hosting/DI layer**; and **GPU-backend DI** (below). **REMAINING:** the **Snake** `ScoreMaximizingCampaign`
+(deliverable 3 — the original goal) and a **dedup** of the shared cube `TrainStep`/`Shuffle` (CubeImitationCampaign ↔
+CubeEfficientCampaign).
 
 **Commits so far:** `ada3d76` docs · `ed1490e` Core `CampaignRunner`+`ITrainingCampaign` (+3 tests) · `102d64a`
 CubeLab migrated (eval-only gate 96/100) · `126ed72` CubePolicy migrated (smoke clean) · `2cc4673`
-`CampaignRunner`→instance+`TimeProvider` · `43ce002` AIHost + DI + `[Register]` source-gen.
+`CampaignRunner`→instance+`TimeProvider` · `43ce002` AIHost + DI + `[Register]` source-gen · `4c60e1f` docs ·
+`5e39f8d` RushHour migrated (eval-only parity vs shipped net: cards 16/77/82/81, random30 29/30 g + 30/30 s) ·
+`07bb2ed` CubeDavi migrated (GPU stack + curriculum/auto-widen/grow + 5 eval-only modes + two CSVs; value-curve +
+fresh-net training smoke verified) · `24e2741` GPU-backend DI (new `Ilgpu.Hosting` `AddGpuBackend()`; 264 tests pass).
 
 **Hosting & DI (decided + built 2026-06-21).** `CampaignRunner` is an **instance** class (not static), taking an
 injected **`TimeProvider`** (BCL; system clock by default, a fake clock drives the deterministic tests). A new
@@ -846,9 +850,17 @@ package **`MintPlayer.AI.ReinforcementLearning.Hosting`** ships **`AIHost.Create
 `MintPlayer.SourceGenerators`(`.Attributes`) `10.20.0`; all hosting / `Microsoft.Extensions.*` deps live in the
 Hosting package so Core stays lean. The Lab cube/cube-policy entry points resolve `IModelStore` + `CampaignRunner`
 from the host (DI all the way). **Why `dataDirectory`, not raw `args`:** the MS command-line config provider throws
-on bare flags like `--eval-only`, so each game parses its own args and passes the dir. **Not yet DI'd:** the GPU
-backend — `CubeEfficientCampaign` still `new`s its own `AdaptiveBackend`; a remaining item is an Ilgpu
-`services.AddGpuBackend()` + injecting it.
+on bare flags like `--eval-only`, so each game parses its own args and passes the dir.
+
+**GPU-backend DI (done 2026-06-21, `24e2741`).** A new package **`MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting`**
+ships **`services.AddGpuBackend()`**, registering the shared **`AdaptiveBackend`** (CPU + CUDA-by-GEMM-size routing;
+pure CPU when no GPU) as a container-owned singleton. Kept **separate from the lean Ilgpu compute package** so that
+backend carries no DI dependency — the same Core↔Hosting split. The two GPU-benefiting cube campaigns
+(`CubeDaviCampaign`, `CubeEfficientCampaign`) now take the `AdaptiveBackend` by **constructor injection** and set it as
+`Backend.Current`, instead of each `new`-ing + disposing its own; the container owns its lifetime (disposed with the
+host), while the campaigns still own their per-eval / per-widen device-resident stacks. **No GPU added to
+RushHour/cube-imitation/Snake/2048** — their nets are too small to beat the multithreaded CPU at the routing
+threshold (it's ILGPU via the CUDA *driver*/PTX JIT, not the CUDA toolkit; ILGPU also targets OpenCL/CPU).
 
 1. **Core abstraction** — `Core/Training/`: `CampaignRunner` (+ injectable clock) drives `ITrainingCampaign :
    IDisposable` (`Resume`/`TrainChunk`/`IsComplete`/`Evaluate`/`Checkpoint`/`TryRunStandaloneEval`); minimal
