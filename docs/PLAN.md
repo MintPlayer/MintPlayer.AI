@@ -831,9 +831,10 @@ score-maximizing campaign (deliverable 3 — the original goal); the **hosting/D
 **cube `TrainStep`/`Shuffle` dedup**. 264 tests green. **Design note:** the "two paradigms" live at the *eval* level
 (solve-rate vs mean-return) over one `ITrainingCampaign` interface — there is intentionally **no `GoalReachingCampaign`
 /`ScoreMaximizingCampaign` base class**: every game implements the interface directly, and future score games (2048
-n-tuple, SAC/PPO) use different trainers a DQN-shaped base wouldn't fit. **Possible follow-ups (not blocking):** wire
-RLDemo.Web onto AIHost DI; share the generic `Shuffle` with RushHour; a `ScoreMaximizingCampaign` base only if a 2nd
-score game reveals real shared shape.
+n-tuple, SAC/PPO) use different trainers a DQN-shaped base wouldn't fit. **RLDemo.Web is now also wired onto the
+shared RL-runtime DI** (`71ed1ae` — `AddReinforcementLearning` + `AddGpuBackend` replace its hand-rolled store/backend
+registrations). **Possible follow-ups (not blocking):** share the generic `Shuffle` with RushHour; a
+`ScoreMaximizingCampaign` base only if a 2nd score game reveals real shared shape.
 
 **Commits so far:** `ada3d76` docs · `ed1490e` Core `CampaignRunner`+`ITrainingCampaign` (+3 tests) · `102d64a`
 CubeLab migrated (eval-only gate 96/100) · `126ed72` CubePolicy migrated (smoke clean) · `2cc4673`
