@@ -33,3 +33,17 @@ jobs:
 
     - name: Test
       run: dotnet test --configuration Release --no-build --filter "Category!=Slow" --verbosity normal
+
+    # The .NET steps skip the SPA (EnableSpaBuilder=false). Build the Angular app explicitly so a
+    # broken ClientApp fails the PR — not the post-merge Docker build. Same command prod ships
+    # (Dockerfile stage 1 `npm run build`), on the same Node major (node:22-alpine).
+    - name: Setup Node
+      uses: actions/setup-node@v5
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: src/RLDemo.Web/ClientApp/package-lock.json
+
+    - name: Build Angular app
+      working-directory: src/RLDemo.Web/ClientApp
+      run: npm ci && npm run build
