@@ -16,9 +16,13 @@
 	<ItemGroup>
 		<ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
 		<ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Environments\MintPlayer.AI.ReinforcementLearning.Environments.csproj" />
+		<!-- Shared RL runtime DI: AddReinforcementLearning(dataDir) registers the model store + clock (same
+		     surface the AIHost training tools use), so the web and the Lab wire the runtime identically. -->
+		<ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Hosting\MintPlayer.AI.ReinforcementLearning.Hosting.csproj" />
 		<!-- GPU backend: the self-taught cube solver uses a resident GPU forward when a CUDA device is
-		     present (local dev); ILGPU falls back cleanly to CPU when there is none (e.g. Hetzner). -->
-		<ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj" />
+		     present (local dev); ILGPU falls back cleanly to CPU when there is none (e.g. Hetzner).
+		     AddGpuBackend() lives in Ilgpu.Hosting; the compute package comes transitively. -->
+		<ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting\MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting.csproj" />
 	</ItemGroup>
 
 	<!-- Angular production build during publish (dev uses the SPA dev-server middleware).
