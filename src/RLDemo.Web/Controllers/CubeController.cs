@@ -19,11 +19,10 @@ public sealed record CubeSolveResponse(string[] Solution, int MoveCount, long So
 
 /// <summary>
 /// The AI's attempt, reported honestly (PRD §11): <paramref name="Solved"/> is false when
-/// even the lookahead ran out of budget — expected on scrambles deeper than the trained
-/// band. <paramref name="AiMode"/> says which mode produced the answer ("greedy" =
-/// reactive policy rollout, "search" = net-guided lookahead, "dqn" = legacy DQN
-/// fallback when no policy checkpoint exists — the M11 pattern).
-/// <paramref name="AlgorithmMoveCount"/> is the Kociemba reference for comparison.
+/// beam search exhausted its depth budget without solving. <paramref name="AiMode"/> is
+/// "efficient" — the teacher-free EfficientCube policy net solved by beam search (the
+/// website's only AI solver). <paramref name="AlgorithmMoveCount"/> is the Kociemba
+/// reference for comparison.
 /// </summary>
 public sealed record CubeSolveAiResponse(bool Solved, string[] Solution, int MoveCount, int AlgorithmMoveCount, string AiMode);
 
@@ -39,104 +38,37 @@ public sealed class CubeController(CubeModelService model, GalleryStore gallery)
             model.TrainingStep, model.TrainingMaxSteps, model.LastEvalReturn, model.Error);
     }
 
-    /// <summary>Runs the trained AI on the drawn cube; honest about failure.</summary>
-    [HttpPost("solve-ai")]
-    public ActionResult<CubeSolveAiResponse> SolveAi(CubeSolveRequest request)
-    {
-        if (!TryBuildCube(request, out var cube, out string? error))
-            return BadRequest(new CubeSolveResponse([], 0, 0, error));
-
-        var policy = model.PolicyNet;
-        var agent = model.Agent;
-        if (policy is null && agent is null)
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, Status());
-
-        // The Kociemba reference also vets the cube (orientation/parity errors that the
-        // structural check cannot see) — never let the AI loose on an unsolvable cube.
-        var reference = CubeSolver.Solve(cube);
-        if (!reference.Solved)
-            return BadRequest(new CubeSolveResponse([], 0, 0, reference.Error));
-
-        // Reactive play first; when that fails, the same net guides a best-first search —
-        // still "the AI", now with lookahead, and honest about which mode produced the
-        // answer (the Rush Hour M11 pattern). The imitation policy net is preferred;
-        // the masked DQN is the fallback when no policy checkpoint exists yet.
-        bool solved;
-        List<string> moves;
-        string aiMode;
-        if (policy is not null)
-        {
-            var greedy = CubePolicySearch.GreedyRollout(policy, cube);
-            if (greedy.Solved)
-            {
-                (solved, aiMode) = (true, "greedy");
-                moves = [.. greedy.Actions.Select(a => FaceletCube.QuarterTurnMoves[a])];
-            }
-            else
-            {
-                var search = CubePolicySearch.Solve(policy, cube);
-                (solved, aiMode) = (search.Solved, "search");
-                moves = search.Solved
-                    ? [.. search.Moves]
-                    : [.. greedy.Actions.Select(a => FaceletCube.QuarterTurnMoves[a])];
-            }
-        }
-        else
-        {
-            (solved, moves) = CubeModelService.Rollout(agent!, cube);
-            aiMode = "dqn";
-            if (!solved)
-            {
-                var search = CubeQSearch.Solve(agent!, cube);
-                aiMode = "search";
-                if (search.Solved)
-                    (solved, moves) = (true, [.. search.Moves]);
-            }
-        }
-        var response = new CubeSolveAiResponse(solved, [.. moves], moves.Count, reference.Moves.Length, aiMode);
-
-        // Only solved attempts are replayable from the gallery (replay reconstructs the
-        // submitted cube by inverting the solution), so failures are not persisted.
-        if (solved && moves.Count > 0)
-        {
-            string how = aiMode == "search" ? "AI (with lookahead)" : "AI";
-            gallery.Add("cube", $"{how} solved it in {moves.Count} moves (Kociemba reference {reference.Moves.Length})",
-                request, new CubeSolveResponse([.. moves], moves.Count, 0, null));
-        }
-        return response;
-    }
-
     /// <summary>
-    /// Runs the teacher-free DAVI value net (the "self-taught AI", PLAN M21) on the drawn cube via
-    /// batch-weighted A*: shortest-move search guided purely by the learned cost-to-go (no Kociemba).
-    /// Honest about failure — a scramble past the net's accurate band returns Solved = false.
+    /// Runs the teacher-free EfficientCube policy net (the website's only AI solver) on the drawn cube via
+    /// beam search ranked by cumulative move log-probability — self-supervised on scramble reversals, no
+    /// Kociemba and no value-iteration bootstrap. Honest about failure, though the trained net solves any
+    /// solvable scramble in practice. The DAVI value net (batch-weighted A*) and the Kociemba-imitation
+    /// policy remain in the repo (the <c>cube-davi</c> / <c>cube</c> Lab modes) but are no longer exposed here.
     /// </summary>
-    [HttpPost("solve-davi")]
-    public ActionResult<CubeSolveAiResponse> SolveDavi(CubeSolveRequest request)
+    [HttpPost("solve-efficient")]
+    public ActionResult<CubeSolveAiResponse> SolveEfficient(CubeSolveRequest request)
     {
         if (!TryBuildCube(request, out var cube, out string? error))
             return BadRequest(new CubeSolveResponse([], 0, 0, error));
 
-        var valueNet = model.ValueNet;
-        if (valueNet is null)
+        var net = model.EfficientPolicyNet;
+        if (net is null)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, Status());
 
-        // The Kociemba reference both vets the cube (orientation/parity errors the structural check
-        // misses) and gives the QTM baseline the self-taught solver is measured against.
+        // The Kociemba reference both vets the cube (orientation/parity errors the structural check misses)
+        // and gives the QTM baseline the self-taught solver is measured against.
         var reference = CubeSolver.Solve(cube);
         if (!reference.Solved)
             return BadRequest(new CubeSolveResponse([], 0, 0, reference.Error));
 
-        // Interactivity is bounded by the expansion budget, sized to the backend. A resident GPU forward
-        // (~0.3 ms/expansion) affords a 50k budget → optimal reach to ~depth 15 with a ~13 s worst case.
-        // The CPU fallback (~2 ms/expansion, e.g. a GPU-less Hetzner box) caps at 6k → a few seconds for a
-        // typical scramble, ~12 s worst case, shallower reach. Either way, too-deep cubes fail honestly.
-        var resident = model.ResidentValueForward;
+        // Beam search over the policy. The resident GPU forward (policy head on the device, weights uploaded
+        // once) runs each step's batch; the CPU autograd forward is the fallback on a GPU-less host.
+        var resident = model.ResidentEfficientForward;
         var search = resident is not null
-            ? CubeValueSearch.Solve(resident, cube, maxExpansions: 50_000)
-            : CubeValueSearch.Solve(valueNet, cube, maxExpansions: 6_000);
+            ? CubePolicySearch.BeamSearch(resident, cube, beamWidth: 2_000)
+            : CubePolicySearch.BeamSearch(net, cube, beamWidth: 2_000);
         var response = new CubeSolveAiResponse(
-            search.Solved, search.Moves, search.Moves.Length, reference.Moves.Length, "davi");
+            search.Solved, search.Moves, search.Moves.Length, reference.Moves.Length, "efficient");
 
         if (search.Solved && search.Moves.Length > 0)
             gallery.Add("cube",

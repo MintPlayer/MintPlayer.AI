@@ -39,7 +39,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7
       # Fetch the actual model checkpoints (Git LFS), not pointer files — the Dockerfile COPYs
       # models/ into the image as the seed, and .dockerignore excludes .git so LFS cannot be
       # resolved inside the build. Without this the self-taught net would ship as a 130-byte pointer.
@@ -52,10 +52,10 @@ jobs:
     # pull-request.yml (pre-merge) and build-master.yml (post-merge, runs in
     # parallel with this job).
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v4
 
     - name: Authenticate with GHCR
-      uses: docker/login-action@v3
+      uses: docker/login-action@v4
       with:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
@@ -63,14 +63,14 @@ jobs:
 
     - name: Extract tags/labels
       id: meta-ghcr
-      uses: docker/metadata-action@v5
+      uses: docker/metadata-action@v6
       with:
         github-token: ${{ github.token }}
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
     - name: Build and push Docker image
       id: push-ghcr
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@v7
       with:
         context: .
         file: ./Dockerfile
@@ -81,7 +81,7 @@ jobs:
         cache-to: type=gha,mode=max
 
     - name: Generate artifact attestation
-      uses: actions/attest-build-provenance@v1
+      uses: actions/attest-build-provenance@v4
       with:
         subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         subject-digest: ${{ steps.push-ghcr.outputs.digest }}

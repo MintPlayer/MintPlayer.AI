@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace MintPlayer.AI.ReinforcementLearning.Core.Planning;
 
 /// <summary>
@@ -23,7 +25,8 @@ public static class ValueGuidedSearch
     /// not reached within the budget. Empty list ⇒ start is already a goal.
     /// </summary>
     public static IReadOnlyList<int>? Solve<TState>(
-        IDeterministicModel<TState> model, Func<TState, float> costToGo, TState start, int maxExpansions, float weight = 1f)
+        IDeterministicModel<TState> model, Func<TState, float> costToGo, TState start, int maxExpansions,
+        float weight = 1f, TimeSpan? maxTime = null)
     {
         if (model.IsGoal(start)) return [];
 
@@ -32,9 +35,11 @@ public static class ValueGuidedSearch
         var open = new PriorityQueue<int, float>(); // node index, ordered by f = g + weight·h
         open.Enqueue(0, weight * costToGo(start));
 
+        long deadlineTicks = Deadline(maxTime);
         int expansions = 0;
         while (open.Count > 0 && expansions < maxExpansions)
         {
+            if (Stopwatch.GetTimestamp() >= deadlineTicks) break; // time budget exhausted
             int index = open.Dequeue();
             expansions++;
             var state = nodes[index].State;
@@ -81,42 +86,50 @@ public static class ValueGuidedSearch
     /// </summary>
     public static IReadOnlyList<int>? SolveBatched<TState>(
         IDeterministicModel<TState> model, Func<IReadOnlyList<TState>, float[]> batchCostToGo,
-        TState start, int maxExpansions, float weight = 1f, int expandBatch = 100)
+        TState start, int maxExpansions, float weight = 1f, int expandBatch = 100, TimeSpan? maxTime = null)
     {
         if (model.IsGoal(start)) return [];
 
-        var nodes = new List<(TState State, int Parent, int Action, int G)> { (start, -1, -1, 0) };
-        var bestG = new Dictionary<string, int> { [model.StateKey(start)] = 0 };
+        // The state key (computed once per node when it's first reached) is cached on the node: it's the
+        // SAME string the dedup map already holds, so caching costs one reference, not an allocation — and
+        // it spares the per-pop StateKey recompute (a 108-char hex string per popped node) on the hot path.
+        string startKey = model.StateKey(start);
+        var nodes = new List<(TState State, int Parent, int Action, int G, string Key)> { (start, -1, -1, 0, startKey) };
+        var bestG = new Dictionary<string, int> { [startKey] = 0 };
         var open = new PriorityQueue<int, float>(); // node index, ordered by f = g + weight·h
         open.Enqueue(0, weight * batchCostToGo([start])[0]);
 
+        long deadlineTicks = Deadline(maxTime);
         int expansions = 0;
         var batch = new List<int>(expandBatch);
-        // pending successors awaiting one batched value call: (parent node index, action, state, g)
+        // pending successors awaiting one batched value call: (parent node index, action, state, g, key)
         var pendingParent = new List<int>();
         var pendingAction = new List<int>();
         var pendingState = new List<TState>();
         var pendingG = new List<int>();
+        var pendingKey = new List<string>();
 
         while (open.Count > 0 && expansions < maxExpansions)
         {
+            if (Stopwatch.GetTimestamp() >= deadlineTicks) break; // time budget exhausted — honest fail
+
             // Pop up to expandBatch live nodes; a goal popped here is optimal (goal-on-pop).
             batch.Clear();
             while (batch.Count < expandBatch && open.Count > 0)
             {
                 int idx = open.Dequeue();
                 var node = nodes[idx];
-                if (node.G > bestG[model.StateKey(node.State)]) continue; // stale: a better path superseded it
+                if (node.G > bestG[node.Key]) continue; // stale: a better path superseded it (cached key, no recompute)
                 if (model.IsGoal(node.State)) return ReconstructPathG(nodes, node.Parent, node.Action);
                 batch.Add(idx);
             }
             if (batch.Count == 0) break;
 
-            pendingParent.Clear(); pendingAction.Clear(); pendingState.Clear(); pendingG.Clear();
+            pendingParent.Clear(); pendingAction.Clear(); pendingState.Clear(); pendingG.Clear(); pendingKey.Clear();
             foreach (int idx in batch)
             {
                 expansions++;
-                var (state, _, _, g) = nodes[idx];
+                var (state, _, _, g, _) = nodes[idx];
                 for (int action = 0; action < model.ActionCount; action++)
                 {
                     var next = model.Apply(state, action);
@@ -124,7 +137,7 @@ public static class ValueGuidedSearch
                     int tentativeG = g + 1;
                     if (bestG.TryGetValue(key, out int known) && known <= tentativeG) continue;
                     bestG[key] = tentativeG;
-                    pendingParent.Add(idx); pendingAction.Add(action); pendingState.Add(next); pendingG.Add(tentativeG);
+                    pendingParent.Add(idx); pendingAction.Add(action); pendingState.Add(next); pendingG.Add(tentativeG); pendingKey.Add(key);
                 }
             }
             if (pendingState.Count == 0) continue;
@@ -134,7 +147,7 @@ public static class ValueGuidedSearch
             for (int i = 0; i < pendingState.Count; i++)
             {
                 int childIndex = nodes.Count;
-                nodes.Add((pendingState[i], pendingParent[i], pendingAction[i], pendingG[i]));
+                nodes.Add((pendingState[i], pendingParent[i], pendingAction[i], pendingG[i], pendingKey[i]));
                 float hi = model.IsGoal(pendingState[i]) ? 0f : h[i]; // goal cost-to-go is exactly 0
                 open.Enqueue(childIndex, pendingG[i] + weight * hi);
             }
@@ -142,7 +155,12 @@ public static class ValueGuidedSearch
         return null;
     }
 
-    private static List<int> ReconstructPathG<TState>(List<(TState State, int Parent, int Action, int G)> nodes, int parentIndex, int finalAction)
+    /// <summary>Stopwatch-tick deadline for an optional wall-clock budget; <c>long.MaxValue</c> = unbounded.
+    /// Ticks are monotonic and allocation-free, so the per-round check is essentially free.</summary>
+    private static long Deadline(TimeSpan? maxTime)
+        => maxTime is { } t ? Stopwatch.GetTimestamp() + (long)(t.TotalSeconds * Stopwatch.Frequency) : long.MaxValue;
+
+    private static List<int> ReconstructPathG<TState>(List<(TState State, int Parent, int Action, int G, string Key)> nodes, int parentIndex, int finalAction)
     {
         var path = new List<int> { finalAction };
         for (int p = parentIndex; nodes[p].Action >= 0; p = nodes[p].Parent)

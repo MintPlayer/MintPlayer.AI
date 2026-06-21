@@ -10,6 +10,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Long-lived cube-davi campaign config; copied next to the exe so it's found via AppContext.BaseDirectory. -->
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Environments\MintPlayer.AI.ReinforcementLearning.Environments.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj" />

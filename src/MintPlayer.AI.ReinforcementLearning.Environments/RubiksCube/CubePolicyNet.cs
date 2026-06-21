@@ -60,6 +60,25 @@ public sealed class CubePolicyNet
         }
     }
 
+    /// <summary>
+    /// The policy path (trunk → trunk → policy head) as a standalone <see cref="Mlp"/>, so a GPU backend
+    /// can build a device-resident forward over it (the value head is irrelevant to beam search). Weights
+    /// are COPIED, so the result is a frozen snapshot — rebuild it after training to pick up new weights.
+    /// </summary>
+    public Mlp PolicyAsMlp()
+    {
+        int hidden = _trunk1.Weight.Cols;
+        var mlp = new Mlp([RubiksCubeEnv.ObservationSize, hidden, hidden, RubiksCubeEnv.ActionCount],
+            new Xoshiro256StarStar(0), Activation.Relu);
+        var source = new[] { _trunk1, _trunk2, _policyHead };
+        for (int i = 0; i < source.Length; i++)
+        {
+            source[i].Weight.Data.CopyTo(mlp.Layers[i].Weight.Data.AsSpan());
+            source[i].Bias.Data.CopyTo(mlp.Layers[i].Bias.Data.AsSpan());
+        }
+        return mlp;
+    }
+
     public void Save(Stream destination)
     {
         using var writer = new BinaryWriter(destination, Encoding.UTF8, leaveOpen: true);

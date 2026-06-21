@@ -12,7 +12,7 @@
   </PropertyGroup>
 
   <PropertyGroup Label="Package">
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>Pieterjan De Clippel</Authors>
     <Company>MintPlayer</Company>
     <Description>Ready-made environments for MintPlayer.AI.ReinforcementLearning: a bit-for-bit faithful CartPole-v1 port, GridWorld, FrozenLake, 2048 (with an n-tuple TD learner, ~84% win rate), and Rush Hour with a BFS oracle, puzzle generator, and an imitation-learning + policy-guided A* toolkit that solves official expert boards optimally.</Description>

@@ -34,3 +34,13 @@ Thumbs.db
 
 ## NuGet pack output
 artifacts/
+
+# scratch dir for the depth-consolidation training experiment
+data-deepen/
+
+# scratch dirs for the brute-force cube-davi campaigns
+cube-10b/
+cube-20b/
+
+# scratch dir for the EfficientCube (cube-policy) campaign
+cube-policy/
