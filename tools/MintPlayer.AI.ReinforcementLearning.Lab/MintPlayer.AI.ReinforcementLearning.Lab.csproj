@@ -10,6 +10,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The test project contract-tests the campaigns (Resume/TrainChunk/Checkpoint/IsComplete). -->
+    <InternalsVisibleTo Include="MintPlayer.AI.ReinforcementLearning.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Long-lived cube-davi campaign config; copied next to the exe so it's found via AppContext.BaseDirectory. -->
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
