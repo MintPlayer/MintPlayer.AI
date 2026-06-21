@@ -35,7 +35,7 @@ internal static class CubePolicyLab
 
         var store = new FileModelStore(dataDir);
         string csvPath = Path.Combine(store.RootDirectory, "logs", "cube-policy.csv");
-        CampaignRunner.Run(
+        new CampaignRunner().Run(
             new CubeEfficientCampaign(seed, learningRate, width, maxScramble, beamWidth, evalEpisodes),
             store,
             new CampaignOptions

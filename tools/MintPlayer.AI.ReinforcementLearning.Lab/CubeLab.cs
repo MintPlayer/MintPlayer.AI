@@ -29,7 +29,7 @@ internal static class CubeLab
 
         var store = new FileModelStore(dataDir);
         string csvPath = Path.Combine(store.RootDirectory, "logs", "cube-imitation.csv");
-        CampaignRunner.Run(new CubeImitationCampaign(seed, learningRate, width), store, new CampaignOptions
+        new CampaignRunner().Run(new CubeImitationCampaign(seed, learningRate, width), store, new CampaignOptions
         {
             Duration = TimeSpan.FromHours(hours),
             EvalOnly = evalOnly,

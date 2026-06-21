@@ -20,6 +20,13 @@ public class CampaignRunnerTests
         public bool Delete(string environmentId, string algorithmId) => false;
     }
 
+    /// <summary>A controllable clock — only advances when the fake campaign trains, so the loop is deterministic.</summary>
+    private sealed class FakeTime(DateTimeOffset start) : TimeProvider
+    {
+        public DateTimeOffset Current = start;
+        public override DateTimeOffset GetUtcNow() => Current;
+    }
+
     private sealed class FakeCampaign(Action advanceClock, int? completeAfter = null) : ITrainingCampaign
     {
         public int ResumeCalls, TrainChunkCalls, EvaluateCalls, CheckpointCalls, DisposeCalls;
@@ -35,19 +42,18 @@ public class CampaignRunnerTests
 
     private static (FakeCampaign Campaign, List<CampaignProgress> Events) RunWith(int? completeAfter)
     {
-        var now = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var time = new FakeTime(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
         var step = TimeSpan.FromMinutes(1);
         var events = new List<CampaignProgress>();
-        var campaign = new FakeCampaign(() => now += step, completeAfter);
+        var campaign = new FakeCampaign(() => time.Current += step, completeAfter);
         var options = new CampaignOptions
         {
             Duration = TimeSpan.FromMinutes(10),
             EvalEvery = TimeSpan.FromMinutes(3),
             FirstEvalAfter = TimeSpan.FromMinutes(2),
-            Now = () => now,
             OnEval = events.Add,
         };
-        CampaignRunner.Run(campaign, new StubStore(), options);
+        new CampaignRunner(time).Run(campaign, new StubStore(), options);
         return (campaign, events);
     }
 
@@ -89,10 +95,10 @@ public class CampaignRunnerTests
     [Fact]
     public void Run_EvalOnly_EvaluatesOnceAndTrainsNothing()
     {
-        var now = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var time = new FakeTime(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
         var events = new List<CampaignProgress>();
-        var campaign = new FakeCampaign(() => now += TimeSpan.FromMinutes(1));
-        CampaignRunner.Run(campaign, new StubStore(), new CampaignOptions { EvalOnly = true, Now = () => now, OnEval = events.Add });
+        var campaign = new FakeCampaign(() => time.Current += TimeSpan.FromMinutes(1));
+        new CampaignRunner(time).Run(campaign, new StubStore(), new CampaignOptions { EvalOnly = true, OnEval = events.Add });
 
         Assert.Equal(1, campaign.ResumeCalls);
         Assert.Equal(0, campaign.TrainChunkCalls);

@@ -14,7 +14,7 @@ public sealed record CampaignOptions
     /// <summary>Wall-clock budget. The loop stops once this elapses (or the campaign reports complete).</summary>
     public TimeSpan Duration { get; init; } = TimeSpan.FromHours(9);
 
-    /// <summary>How often to evaluate + checkpoint, measured against <see cref="Now"/>.</summary>
+    /// <summary>How often to evaluate + checkpoint, measured against the runner's <see cref="TimeProvider"/>.</summary>
     public TimeSpan EvalEvery { get; init; } = TimeSpan.FromMinutes(10);
 
     /// <summary>Delay before the first (baseline) evaluation.</summary>
@@ -25,11 +25,6 @@ public sealed record CampaignOptions
 
     /// <summary>Invoked after each evaluation (and the final one) — the host's hook for console + CSV. No-op if null.</summary>
     public Action<CampaignProgress>? OnEval { get; init; }
-
-    /// <summary>
-    /// Clock source. Injectable so the loop is unit-testable without real time; defaults to the system UTC clock.
-    /// </summary>
-    public Func<DateTime> Now { get; init; } = static () => DateTime.UtcNow;
 }
 
 /// <summary>
@@ -39,11 +34,18 @@ public sealed record CampaignOptions
 /// evaluation results flow to the host through <see cref="CampaignOptions.OnEval"/>, and all persistence goes
 /// through the campaign's own <see cref="ITrainingCampaign.Checkpoint"/> against the supplied
 /// <see cref="IModelStore"/>. The campaign is disposed on exit (it may hold a device-resident GPU stack).
+/// <para>
+/// An instance type so it composes with dependency injection: the <see cref="TimeProvider"/> is injected (the
+/// system clock by default), which both keeps the time-budgeted loop deterministically unit-testable and lets a
+/// host resolve the runner from its container.
+/// </para>
 /// </summary>
-public static class CampaignRunner
+public sealed class CampaignRunner(TimeProvider? timeProvider = null)
 {
+    private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+
     /// <summary>Run <paramref name="campaign"/> against <paramref name="store"/> under <paramref name="options"/>.</summary>
-    public static void Run(ITrainingCampaign campaign, IModelStore store, CampaignOptions options)
+    public void Run(ITrainingCampaign campaign, IModelStore store, CampaignOptions options)
     {
         ArgumentNullException.ThrowIfNull(campaign);
         ArgumentNullException.ThrowIfNull(store);
@@ -62,21 +64,22 @@ public static class CampaignRunner
                 return;
             }
 
-            DateTime deadline = options.Now() + options.Duration;
-            DateTime nextEval = options.Now() + options.FirstEvalAfter;
+            DateTime Now() => _time.GetUtcNow().UtcDateTime;
+            DateTime deadline = Now() + options.Duration;
+            DateTime nextEval = Now() + options.FirstEvalAfter;
             long progress = 0;
             bool trainedSinceEval = false;
 
-            while (options.Now() < deadline && !campaign.IsComplete)
+            while (Now() < deadline && !campaign.IsComplete)
             {
                 progress = campaign.TrainChunk();
                 trainedSinceEval = true;
 
-                if (options.Now() >= nextEval || campaign.IsComplete)
+                if (Now() >= nextEval || campaign.IsComplete)
                 {
                     Report(campaign, store, options, progress, isFinal: campaign.IsComplete);
                     trainedSinceEval = false;
-                    nextEval = options.Now() + options.EvalEvery;
+                    nextEval = Now() + options.EvalEvery;
                 }
             }
 
