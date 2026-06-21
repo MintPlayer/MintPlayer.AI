@@ -25,7 +25,7 @@ public class CampaignContractTests
             var store = new FileModelStore(dir.FullName);
             // Small grid + tiny step budget: this asserts the CONTRACT (advance/checkpoint/resume), not learning.
             // chunk 1500 → first chunk lands at 1500 (< target), the second continues to the 3000 cap (IsComplete).
-            SnakeDqnCampaign Fresh() => new(seed: 1, trainGrid: 5, evalGrid: 6, chunkSteps: 1500, targetSteps: 3000, evalEpisodes: 3, learningRate: 5e-4f);
+            SnakeDqnCampaign Fresh() => new(seed: 1, trainGrid: 5, evalGrid: 6, chunkSteps: 1500, targetSteps: 3000, evalEpisodes: 3, learningRate: 5e-4f, epsilonStart: 1.0f);
 
             var c1 = Fresh();
             Assert.False(c1.Resume(store));            // nothing in the store yet → fresh

@@ -23,6 +23,7 @@ internal static class SnakeLab
         long targetSteps = 100_000; // the proven M22 budget (curve plateaus ~30k); --steps 0 = time-bounded only
         int evalEpisodes = 20;
         float learningRate = 5e-4f;
+        float explore = 1.0f; // ε-start; pass a low value (e.g. 0.2) to refine a warm-started net rather than re-randomize it
         bool evalOnly = false;
         for (int i = 0; i < args.Length; i++)
         {
@@ -35,6 +36,7 @@ internal static class SnakeLab
             else if (args[i] == "--steps" && i + 1 < args.Length) targetSteps = long.Parse(args[++i], CultureInfo.InvariantCulture);
             else if (args[i] == "--episodes" && i + 1 < args.Length) evalEpisodes = int.Parse(args[++i]);
             else if (args[i] == "--lr" && i + 1 < args.Length) learningRate = float.Parse(args[++i], CultureInfo.InvariantCulture);
+            else if (args[i] == "--explore" && i + 1 < args.Length) explore = float.Parse(args[++i], CultureInfo.InvariantCulture);
             else if (args[i] == "--eval-only") evalOnly = true;
         }
 
@@ -44,7 +46,7 @@ internal static class SnakeLab
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         string csvPath = Path.Combine(dataDir, "logs", "snake-dqn.csv");
         runner.Run(
-            new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate),
+            new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore),
             store,
             new CampaignOptions
             {

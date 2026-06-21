@@ -15,7 +15,7 @@ using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 /// net under `snake`/`dqn` (the id the web's <c>SnakeModelService</c> loads) plus the full resume state under
 /// `snake`/`dqn-state`.
 /// </summary>
-internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate)
+internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart)
     : ITrainingCampaign
 {
     private const string NetId = "dqn";          // deployable DuelingQNet — the id the web loads
@@ -26,6 +26,7 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
     private readonly SeedSequence _seeds = new(seed);
 
     private DqnTrainingState? _state;
+    private IValueNet? _warmNet; // the deployable net to warm-start from when there's no full resume state
 
     public string Environment => "snake";
 
@@ -41,18 +42,34 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
         BatchSize = 128,
         WarmupSteps = 2_000,
         TargetSyncEvery = 1_000,
-        Epsilon = new LinearSchedule(1.0, 0.05, 30_000),
+        // Fresh runs explore from ε=1.0; a warm-start continuation passes a low ε (e.g. 0.2) so it refines the
+        // already-competent net instead of randomizing it away.
+        Epsilon = new LinearSchedule(epsilonStart, 0.05, 30_000),
         EvalEpisodes = 20,
     };
 
     public bool Resume(IModelStore store)
     {
-        using var s = store.TryOpenRead(Environment, StateId);
-        if (s is not null)
+        using (var s = store.TryOpenRead(Environment, StateId))
         {
-            _state = DqnTrainingState.Load(s);
-            Log($"resumed Snake DQN at {_state.StepsCompleted:N0} steps (last eval return {_state.LastEval:F2})");
-            return true;
+            if (s is not null)
+            {
+                _state = DqnTrainingState.Load(s);
+                Log($"resumed Snake DQN at {_state.StepsCompleted:N0} steps (last eval return {_state.LastEval:F2})");
+                return true;
+            }
+        }
+        // No full resume state, but the deployable net may be present (e.g. the shipped checkpoint, or one produced
+        // by the old web one-shot trainer). Warm-start from it: a fresh optimizer/replay buffer continues the
+        // trained net rather than throwing away its weights. Lets us further-train (and eval) the shipped model.
+        using (var net = store.TryOpenRead(Environment, NetId))
+        {
+            if (net is not null)
+            {
+                _warmNet = DuelingQNetCheckpoint.Load(net);
+                Log($"warm-starting from the deployable Snake net '{NetId}' (fresh optimizer + replay buffer)");
+                return true;
+            }
         }
         Log($"starting fresh Snake DQN training (train {trainGrid}×{trainGrid}, eval {evalGrid}×{evalGrid})");
         return false;
@@ -66,7 +83,8 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
         // EvalEvery == the chunk size so the trainer's own (6×6) eval fires at most once per chunk — the campaign's
         // authoritative eval is the 12×12 food in Evaluate(). MaxSteps is ABSOLUTE: resuming raises the ceiling.
         var options = BaseOptions with { MaxSteps = to, EvalEvery = Math.Max(1, chunkSteps) };
-        var result = DqnTrainer.Train(_env, options, _seeds, resume: _state);
+        // First chunk: resume the full state if present, else warm-start from the deployable net (if any).
+        var result = DqnTrainer.Train(_env, options, _seeds, resume: _state, warmStart: _state is null ? _warmNet : null);
         _state = result.State;
         return _state.StepsCompleted;
     }
@@ -77,12 +95,15 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
     public CampaignEval Evaluate()
     {
         int steps = _state?.StepsCompleted ?? 0;
-        if (_state is null)
+        // Eval the trained net if we've trained this run, else the warm-start net (so eval-only works on the
+        // shipped checkpoint too); only "no model at all" yields the placeholder.
+        var net = _state?.Online ?? _warmNet;
+        if (net is null)
             return new CampaignEval([new("steps", 0, "0")], "no model yet (train first)");
 
         // Mean food + return over fixed-seed greedy episodes on the DEPLOYED grid — food is the gate metric
         // (M22: train 6×6 → ~22 food on the 12×12 demo grid), return is the optimization target.
-        var agent = new GreedyQAgent(_state.Online, SnakeEnv.ActionCount);
+        var agent = new GreedyQAgent(net, SnakeEnv.ActionCount);
         double totalFood = 0, totalReturn = 0;
         for (int e = 0; e < evalEpisodes; e++)
         {
@@ -102,15 +123,16 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
         double food = totalFood / evalEpisodes;
         double meanReturn = totalReturn / evalEpisodes;
 
+        float loss = _state?.LastLoss ?? 0f;
         var metrics = new List<CampaignMetric>
         {
             new("steps", steps, "0"),
             new($"food{evalGrid}", food, "F2"),
             new("return", meanReturn, "F2"),
-            new("loss", _state.LastLoss, "F4"),
+            new("loss", loss, "F4"),
         };
         return new CampaignEval(metrics,
-            $"steps {steps:N0} | food@{evalGrid} {food:F2} | return {meanReturn:F2} | loss {_state.LastLoss:F4}");
+            $"steps {steps:N0} | food@{evalGrid} {food:F2} | return {meanReturn:F2} | loss {loss:F4}");
     }
 
     public void Checkpoint(IModelStore store)
