@@ -2,8 +2,11 @@ using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 
 namespace MintPlayer.AI.ReinforcementLearning.Core.Training;
 
-/// <summary>One named metric from a campaign evaluation — a stable CSV column and a console value.</summary>
-public readonly record struct CampaignMetric(string Name, double Value);
+/// <summary>
+/// One named metric from a campaign evaluation — a stable CSV column and a value. <paramref name="Format"/> is
+/// an optional numeric format string (e.g. "F4", "0") the host applies when writing the value; null = general.
+/// </summary>
+public readonly record struct CampaignMetric(string Name, double Value, string? Format = null);
 
 /// <summary>
 /// The result of one campaign evaluation: an ordered metric list (stable CSV columns) plus a preformatted
