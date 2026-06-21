@@ -2,7 +2,7 @@
 // Each `--game` dispatches to its ITrainingCampaign on the shared CampaignRunner (PLAN M25);
 // the runner owns the loop/resume/eval cadence/checkpointing, the per-game *Lab files own the flags.
 //
-// Usage: MintPlayer.AI.ReinforcementLearning.Lab [--game rushhour|cube|cube-policy|cube-davi]
+// Usage: MintPlayer.AI.ReinforcementLearning.Lab [--game rushhour|snake|cube|cube-policy|cube-davi]
 //                                                [--hours H] [--data DIR] [--seed S] [--lr LR] [--eval-only] ...
 // Default game: rushhour (the original Kociemba-free BFS-oracle imitation campaign, PLAN M16).
 
@@ -15,6 +15,7 @@ for (int i = 0; i < args.Length; i++)
         if (game.Equals("cube-policy", StringComparison.OrdinalIgnoreCase)) { CubePolicyLab.Run(args); return; }
         if (game.Equals("cube", StringComparison.OrdinalIgnoreCase)) { CubeLab.Run(args); return; }
         if (game.Equals("rushhour", StringComparison.OrdinalIgnoreCase)) { RushHourLab.Run(args); return; }
+        if (game.Equals("snake", StringComparison.OrdinalIgnoreCase)) { SnakeLab.Run(args); return; }
     }
 }
 
