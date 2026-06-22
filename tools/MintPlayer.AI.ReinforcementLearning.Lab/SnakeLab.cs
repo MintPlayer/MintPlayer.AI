@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
+using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 using MintPlayer.AI.ReinforcementLearning.Hosting;
 
 /// <summary>
@@ -29,6 +30,12 @@ internal static class SnakeLab
         float stepPenalty = -0.01f; // --step-penalty : per-step reward; ~0 removes the efficiency pressure that encourages safe starvation
         bool safeMask = false;     // --safe-mask : forbid moves that flood-fill into a region too small for the body (anti-self-trap shield)
         bool evalOnly = false;
+        bool search = false;       // --search : eval with net-guided multi-ply look-ahead (SnakeSearchAgent) instead of reactive greedy
+        int searchDepth = 6;       // --depth : look-ahead plies
+        int searchBeam = 32;       // --beam : live nodes carried per ply
+        int evalStarveCells = 2;   // --starve : eval/inference starvation window as a multiple of the board (training stays at 2)
+        var sw = new SnakeSearchOptions(); // search leaf-score weights (overridable for tuning sweeps)
+        float wFood = sw.FoodWeight, wTrap = sw.TrapPenalty, wNet = sw.NetWeight, wSpace = sw.SpaceWeight;
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], CultureInfo.InvariantCulture);
@@ -46,7 +53,16 @@ internal static class SnakeLab
             else if (args[i] == "--step-penalty" && i + 1 < args.Length) stepPenalty = float.Parse(args[++i], CultureInfo.InvariantCulture);
             else if (args[i] == "--safe-mask") safeMask = true;
             else if (args[i] == "--eval-only") evalOnly = true;
+            else if (args[i] == "--search") search = true;
+            else if (args[i] == "--depth" && i + 1 < args.Length) searchDepth = int.Parse(args[++i]);
+            else if (args[i] == "--beam" && i + 1 < args.Length) searchBeam = int.Parse(args[++i]);
+            else if (args[i] == "--starve" && i + 1 < args.Length) evalStarveCells = int.Parse(args[++i]);
+            else if (args[i] == "--w-food" && i + 1 < args.Length) wFood = float.Parse(args[++i], CultureInfo.InvariantCulture);
+            else if (args[i] == "--w-trap" && i + 1 < args.Length) wTrap = float.Parse(args[++i], CultureInfo.InvariantCulture);
+            else if (args[i] == "--w-net" && i + 1 < args.Length) wNet = float.Parse(args[++i], CultureInfo.InvariantCulture);
+            else if (args[i] == "--w-space" && i + 1 < args.Length) wSpace = float.Parse(args[++i], CultureInfo.InvariantCulture);
         }
+        var searchOptions = new SnakeSearchOptions { FoodWeight = wFood, TrapPenalty = wTrap, NetWeight = wNet, SpaceWeight = wSpace };
 
         // DI all the way: the model store, clock and CampaignRunner are resolved from the AIHost container.
         using var host = AIHost.CreateBuilder(dataDir).Build();
@@ -54,7 +70,7 @@ internal static class SnakeLab
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         string csvPath = Path.Combine(dataDir, "logs", "snake-dqn.csv");
         runner.Run(
-            new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, stepPenalty, safeMask),
+            new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, stepPenalty, safeMask, search, searchDepth, searchBeam, searchOptions, evalStarveCells),
             store,
             new CampaignOptions
             {

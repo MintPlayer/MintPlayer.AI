@@ -37,8 +37,10 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
 
     // Episode limits scale with the board so high-score games are possible: the snake dies only after this many
     // steps WITHOUT eating (a starvation timeout, not a flat cap that would hard-limit food); a generous absolute
-    // ceiling guards a true infinite loop that keeps eating just often enough to never starve.
-    private int StarveLimit => 2 * Cells;
+    // ceiling guards a true infinite loop that keeps eating just often enough to never starve. The starvation
+    // window is a multiple of the board (default 2): training keeps it tight to discourage aimless wandering, but
+    // a long snake under look-ahead inference legitimately needs long, food-less detours, so inference widens it.
+    private int StarveLimit => _starveLimitCells * Cells;
     private int MaxEpisodeSteps => 100 * Cells;
 
     // Action = absolute direction; (dRow, dCol) per action index.
@@ -59,6 +61,7 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
     private bool _done = true;
     private readonly float _stepPenalty;
     private readonly bool _safeMask;
+    private readonly int _starveLimitCells;
 
     /// <param name="stepPenalty">
     /// Per-non-eating-step reward (training only — inference is greedy and ignores reward). Defaults to
@@ -70,14 +73,22 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
     /// small to hold its body — a reactive flood-fill "shield" against self-trapping. Off by default (preserves
     /// the reversal-only mask). Can be enabled for both training and inference.
     /// </param>
-    public SnakeEnv(int size = 12, float stepPenalty = StepPenalty, bool safeMask = false)
+    /// <param name="starveLimitCells">
+    /// Starvation window as a multiple of the board area: the episode truncates after this many steps without
+    /// eating. Default 2 keeps training episodes from wandering aimlessly; raise it for look-ahead inference, where
+    /// a long snake must legitimately take board-spanning, food-less detours to stay safe.
+    /// </param>
+    public SnakeEnv(int size = 12, float stepPenalty = StepPenalty, bool safeMask = false, int starveLimitCells = 2)
     {
         if (size < 5)
             throw new ArgumentOutOfRangeException(nameof(size), "Grid must be at least 5×5 (the length-3 start needs room).");
+        if (starveLimitCells < 1)
+            throw new ArgumentOutOfRangeException(nameof(starveLimitCells), "Starvation window must be at least one board.");
         Size = size;
         Cells = size * size;
         _stepPenalty = stepPenalty;
         _safeMask = safeMask;
+        _starveLimitCells = starveLimitCells;
         ObservationSpace = new BoxSpace(0f, 1f, ObservationSize);
         ActionSpace = new DiscreteSpace(ActionCount);
     }
@@ -215,6 +226,21 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
     }
 
     public float[] CurrentObservation() => Observation();
+
+    /// <summary>
+    /// The largest open region the head can move into next: max over the four neighbours of the free cells reachable
+    /// from that neighbour (BFS, tail counts as free). A position where this is below <see cref="Length"/> is a
+    /// guaranteed self-trap — the snake can no longer fit its own body. Exposed for look-ahead search, which scores a
+    /// simulated leaf position by survivability (the signal a reactive value net is worst at). 0 means already boxed in.
+    /// </summary>
+    public int FreeSpaceAhead()
+    {
+        int head = _body.First!.Value, tail = _body.Last!.Value;
+        int hr = head / Size, hc = head % Size, best = 0;
+        foreach (var (dr, dc) in Deltas)
+            best = Math.Max(best, ReachableFreeSpace(hr + dr, hc + dc, tail));
+        return best;
+    }
 
     private float[] Observation()
     {

@@ -15,14 +15,14 @@ using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 /// net under `snake`/`dqn` (the id the web's <c>SnakeModelService</c> loads) plus the full resume state under
 /// `snake`/`dqn-state`.
 /// </summary>
-internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, float stepPenalty, bool safeMask)
+internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, float stepPenalty, bool safeMask, bool search = false, int searchDepth = 6, int searchBeam = 32, SnakeSearchOptions? searchOptions = null, int evalStarveCells = 2)
     : ITrainingCampaign
 {
     private const string NetId = "dqn";          // deployable DuelingQNet — the id the web loads
     private const string StateId = "dqn-state";  // full DqnTrainingState for lossless resume
 
     private readonly SnakeEnv _env = new(trainGrid, stepPenalty, safeMask);
-    private readonly SnakeEnv _evalEnv = new(evalGrid, stepPenalty, safeMask);
+    private readonly SnakeEnv _evalEnv = new(evalGrid, stepPenalty, safeMask, evalStarveCells);
     private readonly SeedSequence _seeds = new(seed);
 
     private DqnTrainingState? _state;
@@ -152,10 +152,16 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
 
     public void Dispose() { }
 
-    /// <summary>Mean food + return over fixed-seed greedy episodes on the DEPLOYED grid (food is the gate metric).</summary>
+    /// <summary>
+    /// Mean food + return over fixed-seed episodes on the DEPLOYED grid (food is the gate metric). The action is
+    /// chosen greedily by the net, or — when <c>search</c> is on — by the net-guided multi-ply look-ahead
+    /// (<see cref="SnakeSearchAgent"/>): same net, but search amplifies it past the reactive plateau.
+    /// </summary>
     private (double Food, double Return) EvalNet(IValueNet net)
     {
-        var agent = new GreedyQAgent(net, SnakeEnv.ActionCount);
+        var greedy = new GreedyQAgent(net, SnakeEnv.ActionCount);
+        var opts = (searchOptions ?? new SnakeSearchOptions()) with { MaxDepth = searchDepth, BeamWidth = searchBeam };
+        var planner = search ? new SnakeSearchAgent(_evalEnv, net, opts) : null;
         double totalFood = 0, totalReturn = 0;
         for (int e = 0; e < evalEpisodes; e++)
         {
@@ -163,7 +169,9 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
             double epReturn = 0;
             while (true)
             {
-                int action = agent.Act(obs, _evalEnv.CurrentActionMask(), greedy: true);
+                int action = planner is not null
+                    ? planner.Act()
+                    : greedy.Act(obs, _evalEnv.CurrentActionMask(), greedy: true);
                 var step = _evalEnv.Step(action);
                 epReturn += step.Reward;
                 obs = step.Observation;

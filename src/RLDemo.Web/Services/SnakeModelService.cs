@@ -1,4 +1,5 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 
@@ -16,6 +17,7 @@ public sealed class SnakeModelService(IModelStore store, ILogger<SnakeModelServi
 
     private readonly object _lock = new();
     private GreedyQAgent? _agent;
+    private IValueNet? _net;
 
     public ModelStatus Status { get; private set; } = ModelStatus.Loading;
     public string? Error { get; private set; }
@@ -27,6 +29,17 @@ public sealed class SnakeModelService(IModelStore store, ILogger<SnakeModelServi
         {
             if (_agent is null && Status == ModelStatus.Loading) TryLoadFromStore();
             return _agent;
+        }
+    }
+
+    /// <summary>The loaded value network (or null while not ready) — for building a per-connection
+    /// <see cref="SnakeSearchAgent"/>, the net-guided look-ahead that drives the live demo.</summary>
+    public IValueNet? Net
+    {
+        get
+        {
+            if (_net is null && Status == ModelStatus.Loading) TryLoadFromStore();
+            return _net;
         }
     }
 
@@ -48,6 +61,7 @@ public sealed class SnakeModelService(IModelStore store, ILogger<SnakeModelServi
                 logger.LogError("Snake model is incompatible ({Stored} vs {Expected} obs) — refusing to load it.", net.InputSize, SnakeEnv.ObservationSize);
                 return false;
             }
+            _net = net;
             _agent = new GreedyQAgent(net, SnakeEnv.ActionCount);
             Status = ModelStatus.Ready;
             logger.LogInformation("Loaded Snake model from the store.");

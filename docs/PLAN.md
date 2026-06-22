@@ -919,7 +919,7 @@ doesn't train at all, so the campaigns stay `internal` to the Lab (the contract 
 **Net −284 lines.** If a contributor needs to (re)produce a checkpoint, that's a dev-side Lab/Console run + an LFS
 commit, documented in `ADDING_A_GAME.md`.
 
-## M27 — Snake: stronger AI via better inputs (not more training)  ⏳ IN PROGRESS
+## M27 — Snake: stronger AI via better inputs + net-guided search  ⏳ SEARCH SHIPPING (100 stretch open)
 
 **Goal.** "Improve the Snake AI" — the user wants it toward **>100 food on the 12×12 demo grid** (max 141). The
 original shipped net plateaued at **~21 food**, and that was *structural*, not under-training.
@@ -953,28 +953,45 @@ kept the OLD 12-dim net vs the new obs — fixed by (a) seed now OVERWRITES ship
 `SnakeModelService` rejects a net whose `InputSize != SnakeEnv.ObservationSize` (clean 503, not a crash). Redeploy
 needed for prod; or delete `/data/snake.dqn.ckpt` + restart.
 
-**CURRENT pivot — lean ray-cast observation (branch `snake-ray-obs`, off master + #10; NOT yet trained/shipped).**
-Decision (with the user, after studying their cloned `C:\Repos\SnakeFusion` = CodeBullet's GA snake): the patch was
-**myopic** (±4 cells). Replaced the 9×9 patch (162 of 177 inputs, mostly zeros) with **8-direction ray-cast vision**
-(CodeBullet-style): per ray, food-on-line + 1/dist-to-body + 1/dist-to-wall = 24 inputs of *long-range* awareness.
-Kept the flood-fill (4, anti-trap) + food/tail bearing+dist (6) + heading (4) + length (1). **ObservationSize
-177 → 39**, size-invariant. This is the user's preferred path: better *inputs* for a genuinely *learned* net (the
-user explicitly rejected the Hamiltonian/brute-force route). Env tests green (8/8); not yet trained.
+**Lean ray-cast observation (branch `snake-ray-obs`, off master + #10) — DONE.** The 9×9 patch was **myopic**
+(±4 cells, 162 of 177 inputs mostly zeros). Replaced with **8-direction ray-cast vision** (CodeBullet-style, from
+the user's cloned `C:\Repos\SnakeFusion`): per ray, food-on-line + 1/dist-to-body + 1/dist-to-wall = 24 inputs of
+*long-range* awareness, + flood-fill (4) + food/tail bearing&dist (6) + heading (4) + length (1). **ObservationSize
+177 → 39**, size-invariant. Trained fresh 12×12 (`--hidden 256,256 --gamma 0.997 --step-penalty 0 --safe-mask`):
+peaked **food@12 ≈ 53 greedy** (vs the shipped 50.7) at ~240k steps, converging far faster than the patch obs. But
+~53 confirmed the **reactive-DQN plateau is structural** — better inputs alone don't reach 100.
 
-**NEXT (resume here after compaction):**
-1. Rebuild Release (the running build is stale re: the lean obs) and launch a fresh 12×12 lean-obs training run:
-   `--game snake --train-grid 12 --eval-grid 12 --hidden 256,256 --gamma 0.997 --step-penalty 0 --safe-mask`
-   (fresh scratch under `…/scratchpad/`). Compare food@12 to the shipped **50.7**.
-2. If it beats ~50: optionally layer the 7×7→9×9→12×12 curriculum on the ray obs (warm-start each stage). Then
-   ship: overwrite `models/snake.dqn.ckpt`, commit the lean `SnakeEnv` + net together (ObservationSize changed, so
-   the `#10` `InputSize` guard requires a matching net), full suite, PR `snake-ray-obs` → master.
-3. Branch map: `master` = #9+#10 (shipped ~50 net). `snake-ray-obs` (current) = master + eval-speedup + lean obs.
-   `snake-stream-hotfix` already merged (#10). Old `snake-curriculum`/`snake-spatial-obs` deleted/merged.
+**Multi-ply search (the user's chosen path; the EfficientCube pattern applied to Snake) — DONE, shipping.**
+Snake's dynamics are deterministic between food (the food RNG is in the env's saved state), so look-ahead is *exact*.
+New `SnakeSearchAgent` (Environments/Snake): receding-horizon beam search that simulates every legal line on a
+private env clone (`SaveState`/`RestoreState`), scores each leaf by **flood-fill survivability** (the new
+`SnakeEnv.FreeSpaceAhead`, a hard self-trap penalty) + food eaten + the trained net's value + tiebreaks, and plays
+the first move of the best line. Net-guided (the net is the leaf evaluator — the AlphaZero/EfficientCube idea), so
+it honors the user's "really trained AI, not brute force" preference. Lab eval gained `--search --depth --beam
+--w-* --starve`; `SnakeModelService` exposes the net; `SnakeController.Live` drives the demo via the planner.
 
-**Honest ceiling.** ~50 was the pure-learned (DQN + 1-ply shield + patch) plateau. The ray obs may push higher
-(long-range awareness is the missing piece), but a reactive learned policy likely still tops out short of a clean
-**100** — that needs **multi-ply planning/search** (the EfficientCube pattern: a learned net guiding a beam/lookahead,
-already in this repo). Offered as the follow-up if the ray obs plateaus; the user prefers staying with learning for now.
+**Search sweep (food@12 on 12×12; greedy baseline ≈ 50):**
+| lever | finding |
+|---|---|
+| depth | **the lever** — 65 (d6) → 71 (d10) → **84/79 (d20)**; d28/d36 no reliable gain (beam misranks deep lines). d20 = sweet spot |
+| beam width | wider **hurts** (d6: 65→59 at b64) — keeps greedy food-grabs that trap later |
+| space weight | helps, saturates (d6 65→69; d16 72→79; flat by ~50–100) |
+| net weight | **marginal** — net=0 ties net-on (search carries it); net forward skipped when weight 0 |
+| starvation window | **not the cap** — 2→4→8 saturates at ~80; the cap is self-traps, not truncation |
+| **SHIPPED: net-guided d20, beam 32, space 50** | **food@12 ≈ 78.6** (deployable net, 20-ep) — **greedy 50 → 78.6, old shipped 21 → 78.6 (3.7×)** |
+
+**Shipped artifacts (branch `snake-ray-obs`, local commit — PR pending user OK):** lean `SnakeEnv` (39-dim obs +
+`FreeSpaceAhead` + configurable `starveLimitCells`), `SnakeSearchAgent`/`SnakeSearchOptions`, Lab search flags,
+`SnakeModelService.Net`, `SnakeController` net-guided look-ahead, `SnakeSearchAgentTests` (3) + updated env test;
+`models/snake.dqn.ckpt` replaced with the lean-obs net (39-dim; the old 177-dim net is incompatible with this
+branch, so net + `SnakeEnv` must ship together for the #10 `InputSize` guard).
+
+**Honest ceiling.** ~50 was the reactive-DQN plateau; net-guided search lifts it to **~78** by guaranteeing the
+snake doesn't walk into a box within ~20 plies. The residual gap to a clean **100** is occasional self-traps that
+form *beyond* the horizon — the principled fix is a **tail-reachability** survival invariant (guarantee the head can
+always reach its own tail → it can follow the tail indefinitely) and/or explicit Hamiltonian-style endgame play.
+Offered as the next step; not yet built. Branch map: `master` = #9+#10. `snake-ray-obs` (current) = master +
+eval-speedup + lean obs + search.
 
 ## Testing strategy (cross-cutting, from research)
 

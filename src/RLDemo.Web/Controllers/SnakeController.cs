@@ -13,6 +13,12 @@ public sealed class SnakeController(SnakeModelService model) : ControllerBase
 {
     private static int _seedCounter;
 
+    // The live demo plays via net-guided multi-ply look-ahead (PLAN M27): the trained net evaluates leaf positions
+    // while a 20-ply beam search guarantees the snake never walks into a box it can't escape — the failure that caps
+    // a reactive policy. Depth 20 is the empirical sweet spot on the 12×12 grid (≈84 food vs ≈50 for the raw greedy
+    // net; deeper gives no reliable gain and costs more per tick). Each move searches in a few ms — well inside the tick.
+    private static readonly SnakeSearchOptions LiveSearch = new() { MaxDepth = 20, BeamWidth = 32, SpaceWeight = 50f };
+
     [HttpGet("status")]
     public StatusResponse Status()
     {
@@ -35,22 +41,21 @@ public sealed class SnakeController(SnakeModelService model) : ControllerBase
             Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
         }
-        var agent = model.Agent;
-        if (agent is null)
+        var net = model.Net;
+        if (net is null)
         {
             Response.StatusCode = StatusCodes.Status503ServiceUnavailable; // still training — reject the upgrade
             return;
         }
 
         using var socket = await HttpContext.WebSockets.AcceptWebSocketAsync();
-        // Shield on: the deployed net is trained with the anti-self-trap action mask (M27), so the live demo
-        // must use the same mask the policy expects (and it makes the snake visibly stronger regardless).
         var env = new SnakeEnv(safeMask: true);
+        var planner = new SnakeSearchAgent(env, net, LiveSearch); // net-guided look-ahead reads the env state directly
         ulong seed = (ulong)System.Threading.Interlocked.Increment(ref _seedCounter); // distinct game per connection
         await EpisodeStreamer.RunAsync(
             socket,
             env,
-            act: (obs, mask) => agent.Act(obs, mask, greedy: true),
+            act: (_, _) => planner.Act(), // obs/mask ignored — the planner searches from the live env's full state
             frame: (e, action, step) => new SnakeFrameDto(
                 [.. e.Body], e.Food, action, step.Reward, step.Done, e.FoodEaten, e.Length),
             tickMs: 120,
