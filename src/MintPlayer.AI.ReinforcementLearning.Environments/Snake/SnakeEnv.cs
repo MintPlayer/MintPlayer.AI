@@ -6,11 +6,11 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 
 /// <summary>
 /// Classic Snake on a configurable <see cref="Size"/>×<see cref="Size"/> grid, as an RL environment
-/// (PLAN M22; observation reworked in M27). The observation is <b>egocentric and grid-size-invariant</b>: a
-/// <see cref="PatchSide"/>×<see cref="PatchSide"/> obstacle+food patch centred on the head, plus food
-/// direction/distance, heading, length, and a flood-fill of the open space reachable through each move. The
-/// flood-fill is what lets a long snake avoid trapping itself — a fixed window alone can't see a coil beyond its
-/// radius. Four absolute-direction actions; the single illegal action (the 180° reversal onto the neck) is masked
+/// (PLAN M22; observation reworked in M27). The observation is <b>grid-size-invariant</b>: 8-direction ray-cast
+/// vision (food-on-ray, 1/distance to body, 1/distance to wall) for long-range awareness, plus a flood-fill of the
+/// open space reachable through each move (the anti-self-trap signal — a long snake can't see a coil beyond a fixed
+/// window, but it can be told which moves keep space reachable), food &amp; tail bearing + distance, heading, and
+/// length. Four absolute-direction actions; the single illegal action (the 180° reversal onto the neck) is masked
 /// via <see cref="IActionMaskProvider"/>. Walls and the snake's own body are NOT masked — death stays learnable.
 /// <para>
 /// Episodes end on death, a board-full win, a starvation timeout (<see cref="StarveLimit"/> steps without food),
@@ -21,17 +21,15 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
 {
     public const int ActionCount = 4;
 
-    // Egocentric, grid-size-invariant observation (PLAN M27). A (2R+1)×(2R+1) patch centred on the head — two
-    // channels (obstacle = wall or non-vacating body; food) so a CNN can read it spatially — followed by scalar
-    // features: food direction (2) + L1 distance (1), heading one-hot (4), normalized length (1), and the
-    // flood-fill count of free cells reachable through each of the 4 neighbours (4). The flood-fill is the
-    // anti-self-trap signal a fixed window can't give: it tells a long snake which moves keep open space reachable.
-    public const int PatchRadius = 4;
-    public const int PatchSide = 2 * PatchRadius + 1;                       // 9
-    public const int PatchChannels = 2;                                     // 0 = obstacle, 1 = food
-    public const int PatchSize = PatchSide * PatchSide * PatchChannels;     // 162
-    public const int ScalarFeatures = 15;                                   // foodΔ(2)+dist(1)+heading(4)+len(1)+free(4)+tailΔ(2)+tailDist(1)
-    public const int ObservationSize = PatchSize + ScalarFeatures;          // 177
+    // Grid-size-invariant observation (PLAN M27). 8-direction ray-cast vision (CodeBullet-style): per ray, whether
+    // food lies on it, 1/distance to the nearest body segment, and 1/distance to the wall — long-range awareness a
+    // fixed window can't give. Plus the flood-fill of open space reachable through each of the 4 neighbours (the
+    // anti-self-trap signal), food & tail bearing + distance, heading one-hot, and normalized length. Distances are
+    // 1/cells so the whole vector is size-invariant — a net trained on one grid transfers to another.
+    public const int RayDirections = 8;
+    public const int RayChannels = 3;                                   // food-on-ray, 1/dist-to-body, 1/dist-to-wall
+    public const int RayFeatures = RayDirections * RayChannels;         // 24
+    public const int ObservationSize = RayFeatures + 4 + 3 + 3 + 4 + 1; // 39: rays + flood(4) + food(3) + tail(3) + heading(4) + len(1)
 
     public const float FoodReward = 1f;
     public const float StepPenalty = -0.01f;
@@ -45,6 +43,10 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
 
     // Action = absolute direction; (dRow, dCol) per action index.
     private static readonly (int Dr, int Dc)[] Deltas = [(-1, 0), (1, 0), (0, -1), (0, 1)]; // Up, Down, Left, Right
+
+    // The 8 ray-cast directions for the vision features (4 cardinal + 4 diagonal), clockwise from North.
+    private static readonly (int Dr, int Dc)[] RayDeltas =
+        [(-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)];
 
     private Xoshiro256StarStar _rng = new(0);
     private readonly LinkedList<int> _body = new(); // head = First, tail = Last (cell indices)
@@ -221,55 +223,47 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
         int tail = _body.Last!.Value;
         int fr = _food / Size, fc = _food % Size;
 
-        // A cell is lethal to enter (an "obstacle") if it is off the board or holds a body segment that will NOT
-        // vacate this step. The tail cell vacates when the snake doesn't eat, so it is passable.
-        bool Obstacle(int r, int c)
-        {
-            if (r < 0 || r >= Size || c < 0 || c >= Size) return true;
-            int cell = r * Size + c;
-            return _occupied.Contains(cell) && cell != tail;
-        }
-
         var obs = new float[ObservationSize];
+        int s = 0;
 
-        // ── channels 0..1: a (2R+1)×(2R+1) egocentric patch centred on the head ──
-        // Layout is channel-major (all obstacle cells, then all food cells), row-major within each channel, so a
-        // CNN can reshape it to [PatchChannels, PatchSide, PatchSide]. Cells off the board read as obstacle.
-        const int plane = PatchSide * PatchSide;
-        for (int dr = -PatchRadius, i = 0; dr <= PatchRadius; dr++)
-            for (int dc = -PatchRadius; dc <= PatchRadius; dc++, i++)
-            {
-                int r = hr + dr, c = hc + dc;
-                if ((dr != 0 || dc != 0) && Obstacle(r, c)) obs[i] = 1f; // centre is the head itself, not an obstacle
-                if (r == fr && c == fc) obs[plane + i] = 1f; // food channel
-            }
-
-        // ── scalar features (start after the two patch planes) ──
-        int s = PatchSize;
-        obs[s++] = (fc - hc) / (float)Size;                       // food Δcol (signed, normalized)
-        obs[s++] = (fr - hr) / (float)Size;                       // food Δrow (signed, normalized)
-        obs[s++] = (Math.Abs(fr - hr) + Math.Abs(fc - hc)) / (2f * Size); // L1 distance to food
-        obs[s++] = _heading == 0 ? 1f : 0f;
-        obs[s++] = _heading == 1 ? 1f : 0f;
-        obs[s++] = _heading == 2 ? 1f : 0f;
-        obs[s++] = _heading == 3 ? 1f : 0f;
-        obs[s++] = _body.Count / (float)Cells;                    // normalized length
-
-        // Flood-fill the open space reachable through each neighbour of the head (normalized by board area). This
-        // is the key anti-trap signal: a move into a region that can only reach a few cells is about to seal the
-        // snake in, even when the immediate cell looks safe.
-        for (int a = 0; a < 4; a++)
+        // ── 8-direction ray-cast vision: per ray, food-on-line, 1/dist to nearest body, 1/dist to wall ──
+        foreach (var (dr, dc) in RayDeltas)
         {
-            var (dr, dc) = Deltas[a];
-            obs[s++] = ReachableFreeSpace(hr + dr, hc + dc, tail) / (float)Cells;
+            int r = hr + dr, c = hc + dc, dist = 1;
+            float food = 0f, body = 0f;
+            while (r >= 0 && r < Size && c >= 0 && c < Size)
+            {
+                int cell = r * Size + c;
+                if (food == 0f && cell == _food) food = 1f;
+                if (body == 0f && _occupied.Contains(cell)) body = 1f / dist; // nearest body segment along the ray
+                r += dr; c += dc; dist++;
+            }
+            obs[s++] = food;
+            obs[s++] = body;
+            obs[s++] = 1f / dist; // wall: closer wall ⇒ larger
         }
 
-        // Direction + distance to the tail: chasing the tail is the canonical way a long snake stays alive (the
-        // cell the tail vacates is always safe to follow), so giving the agent the tail's bearing helps it learn it.
+        // ── flood-fill of open space reachable through each neighbour (the anti-self-trap signal) ──
+        foreach (var (dr, dc) in Deltas)
+            obs[s++] = ReachableFreeSpace(hr + dr, hc + dc, tail) / (float)Cells;
+
+        // ── food bearing + L1 distance (precise, unlike the binary ray-food) ──
+        obs[s++] = (fc - hc) / (float)Size;
+        obs[s++] = (fr - hr) / (float)Size;
+        obs[s++] = (Math.Abs(fr - hr) + Math.Abs(fc - hc)) / (2f * Size);
+
+        // ── tail bearing + distance: chasing the tail (whose cell always vacates) is the canonical survival move ──
         int tr = tail / Size, tc = tail % Size;
         obs[s++] = (tc - hc) / (float)Size;
         obs[s++] = (tr - hr) / (float)Size;
         obs[s++] = (Math.Abs(tr - hr) + Math.Abs(tc - hc)) / (2f * Size);
+
+        // ── heading one-hot + normalized length ──
+        obs[s++] = _heading == 0 ? 1f : 0f;
+        obs[s++] = _heading == 1 ? 1f : 0f;
+        obs[s++] = _heading == 2 ? 1f : 0f;
+        obs[s++] = _heading == 3 ? 1f : 0f;
+        obs[s++] = _body.Count / (float)Cells;
         return obs;
     }
 

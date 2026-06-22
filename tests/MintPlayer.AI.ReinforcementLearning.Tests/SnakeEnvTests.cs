@@ -8,29 +8,31 @@ public class SnakeEnvTests
     private static int Head(SnakeEnv e) => (e.Size / 2) * e.Size + (e.Size / 2);
 
     [Fact]
-    public void Reset_StartsLength3_HeadCentred_EgocentricObservation()
+    public void Reset_StartsLength3_HeadCentred_RayObservation()
     {
         var env = new SnakeEnv();
         var (obs, _) = env.Reset(1);
 
-        Assert.Equal(SnakeEnv.ObservationSize, obs.Length); // patch (2 planes) + scalars
+        Assert.Equal(SnakeEnv.ObservationSize, obs.Length); // rays + flood + food + tail + heading + length
         Assert.Equal(3, env.Length);
         Assert.Equal(Head(env), env.Body.First());
 
-        // The patch centre (the head's own cell) is never an obstacle.
-        int side = SnakeEnv.PatchSide, centre = (side / 2) * side + (side / 2);
-        Assert.Equal(0f, obs[centre]);
+        // Every ray's wall channel (the 3rd of each triple) is a positive 1/distance — the head always sees walls.
+        for (int d = 0; d < SnakeEnv.RayDirections; d++)
+            Assert.InRange(obs[d * SnakeEnv.RayChannels + 2], 1f / env.Size, 1f);
 
-        // Heading one-hot lives in the scalar block: exactly one bit set, and it's Right.
-        var heading = obs[(SnakeEnv.PatchSize + 3)..(SnakeEnv.PatchSize + 7)];
+        // Heading one-hot (after rays + flood(4) + food(3) + tail(3)) = exactly one bit, Right (index 3).
+        int headingStart = SnakeEnv.RayFeatures + 4 + 3 + 3;
+        var heading = obs[headingStart..(headingStart + 4)];
         Assert.Equal(1, heading.Count(v => v == 1f));
-        Assert.Equal(1f, obs[SnakeEnv.PatchSize + 6]); // Right
+        Assert.Equal(1f, heading[3]); // Right
 
-        // Food Δ (signed, normalized) matches the food's position relative to the head.
+        // Food Δ (signed, normalized) sits right after the flood-fill block and matches the food's position.
+        int foodStart = SnakeEnv.RayFeatures + 4;
         int hr = Head(env) / env.Size, hc = Head(env) % env.Size;
         int fr = env.Food / env.Size, fc = env.Food % env.Size;
-        Assert.Equal((fc - hc) / (float)env.Size, obs[SnakeEnv.PatchSize + 0]);
-        Assert.Equal((fr - hr) / (float)env.Size, obs[SnakeEnv.PatchSize + 1]);
+        Assert.Equal((fc - hc) / (float)env.Size, obs[foodStart + 0]);
+        Assert.Equal((fr - hr) / (float)env.Size, obs[foodStart + 1]);
     }
 
     [Fact]
