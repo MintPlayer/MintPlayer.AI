@@ -919,37 +919,62 @@ doesn't train at all, so the campaigns stay `internal` to the Lab (the contract 
 **Net −284 lines.** If a contributor needs to (re)produce a checkpoint, that's a dev-side Lab/Console run + an LFS
 commit, documented in `ADDING_A_GAME.md`.
 
-## M27 — Snake: spatial observation + anti-self-trap shield  *(branch `snake-spatial-obs`, stacked on M25/M26)* ⏳
+## M27 — Snake: stronger AI via better inputs (not more training)  ⏳ IN PROGRESS
 
-**Problem.** "Improve the Snake AI" (it expects >100 food). The shipped net scored **~21 food on 12×12** and was
-stuck there structurally, not for lack of training: (1) the observation was **12 local features** (danger one cell
-out + a food compass) — the agent was *blind to its own body*, so a long snake inevitably trapped itself; (2)
-`MaxEpisodeSteps = 1000` was a flat truncation that *hard-capped* how much food was even reachable per episode.
+**Goal.** "Improve the Snake AI" — the user wants it toward **>100 food on the 12×12 demo grid** (max 141). The
+original shipped net plateaued at **~21 food**, and that was *structural*, not under-training.
 
-**Fixes (this milestone).** A grid-size-invariant **egocentric observation** — a 9×9 obstacle+food patch centred on
-the head + food/tail direction & distance + heading + length + a **flood-fill of reachable open space per move**
-(the anti-trap signal a fixed window can't give) — and a **starvation episode limit** (`StarveLimit ≈ 2·cells` with no
-food) replacing the flat cap. Plus an opt-in **`safeMask`**: the action mask also forbids moves that flood-fill into
-a region too small for the body (a reactive 1-ply shield), used in training and the live web demo.
+**Root causes found + fixed (all SHIPPED to master via #9, hotfixed by #10):**
+1. **Blind observation** — was 12 local features (danger one cell out + food compass); the agent couldn't see its
+   own body, so a long snake trapped itself. → reworked the observation (below).
+2. **Flat `MaxEpisodeSteps=1000` truncation** hard-capped reachable food. → replaced with a board-scaled
+   **starvation limit** (`StarveLimit ≈ 2·cells` without food) + a large absolute ceiling.
+3. **Self-trapping deaths** capped the score. → opt-in **`safeMask`**: the action mask also forbids moves that
+   flood-fill into a region smaller than the body (reactive 1-ply shield), used in training + the live demo.
+4. Reusable training mechanics added to the harness: `DqnTrainer.warmStart` (continue a deployable net-only
+   checkpoint), **save-best** (ship the best-eval net, not the noisy last), trainer internal-eval switched off in
+   the campaign (≈2× throughput), Lab knobs `--hidden/--gamma/--step-penalty/--safe-mask/--explore`.
 
-**Experiment ledger (food@12, 50-ep eval unless noted; all >> the old 21):**
+**Experiment ledger (food@12 on 12×12, 50-ep eval unless noted; all ≫ the old 21):**
 | config | food |
 |---|---|
-| egocentric obs, `[128,128]` | 39.9 |
+| egocentric 9×9 patch obs, `[128,128]` | 39.9 |
 | `[256,256]` (capacity) | 39.4 — capacity is *not* the bottleneck |
 | + tail feature + γ0.995 | 43.1 |
 | + step-penalty 0 + γ0.997 | 42.6 |
 | same net + post-hoc shield | 46.6 |
-| **shield-*trained*** (γ0.997, pen 0) | **52.3 peak / 50.7 @200-ep** |
+| **shield-trained** (γ0.997, pen 0) — **SHIPPED in #9** | **52.3 peak / 50.7 @200-ep** |
+| 7×7 curriculum (old patch obs, stopped early) | climbed to 26.5/46 on 7×7, abandoned for the ray pivot |
 
-Shipping the shield-trained net (**~50 food, ~2.4× the old 21**): `models/snake.dqn.ckpt` overwritten,
-`SnakeController` live demo uses `safeMask`. **In progress:** a small→large **grid curriculum** (7×7 → 9×9 → 12×12,
-warm-started) — train space-management where trapping is unavoidable-to-confront, then transfer up; may beat ~50.
+**Shipped (master):** `models/snake.dqn.ckpt` = the shield-trained net (**~50 food, ~2.4× the old 21**); web live
+demo uses `safeMask`. **#10 hotfix:** the live stream broke ("stream closed") because the persistent `/data` volume
+kept the OLD 12-dim net vs the new obs — fixed by (a) seed now OVERWRITES shipped checkpoints (load-only web ⇒
+`models/` is source of truth; this also means model updates finally propagate to the volume) and (b)
+`SnakeModelService` rejects a net whose `InputSize != SnakeEnv.ObservationSize` (clean 503, not a crash). Redeploy
+needed for prod; or delete `/data/snake.dqn.ckpt` + restart.
 
-**Honest ceiling.** ~50 is the **pure-learned (DQN + 1-ply shield)** plateau across capacity/feature/horizon/reward
-experiments. Reliable **100** (filling ~70% of the board) needs **multi-ply planning/search** — the EfficientCube
-pattern (learned net guiding a beam/lookahead, already in this repo) or a Hamiltonian planner — out of scope for
-this learning-only milestone, recommended as the follow-up.
+**CURRENT pivot — lean ray-cast observation (branch `snake-ray-obs`, off master + #10; NOT yet trained/shipped).**
+Decision (with the user, after studying their cloned `C:\Repos\SnakeFusion` = CodeBullet's GA snake): the patch was
+**myopic** (±4 cells). Replaced the 9×9 patch (162 of 177 inputs, mostly zeros) with **8-direction ray-cast vision**
+(CodeBullet-style): per ray, food-on-line + 1/dist-to-body + 1/dist-to-wall = 24 inputs of *long-range* awareness.
+Kept the flood-fill (4, anti-trap) + food/tail bearing+dist (6) + heading (4) + length (1). **ObservationSize
+177 → 39**, size-invariant. This is the user's preferred path: better *inputs* for a genuinely *learned* net (the
+user explicitly rejected the Hamiltonian/brute-force route). Env tests green (8/8); not yet trained.
+
+**NEXT (resume here after compaction):**
+1. Rebuild Release (the running build is stale re: the lean obs) and launch a fresh 12×12 lean-obs training run:
+   `--game snake --train-grid 12 --eval-grid 12 --hidden 256,256 --gamma 0.997 --step-penalty 0 --safe-mask`
+   (fresh scratch under `…/scratchpad/`). Compare food@12 to the shipped **50.7**.
+2. If it beats ~50: optionally layer the 7×7→9×9→12×12 curriculum on the ray obs (warm-start each stage). Then
+   ship: overwrite `models/snake.dqn.ckpt`, commit the lean `SnakeEnv` + net together (ObservationSize changed, so
+   the `#10` `InputSize` guard requires a matching net), full suite, PR `snake-ray-obs` → master.
+3. Branch map: `master` = #9+#10 (shipped ~50 net). `snake-ray-obs` (current) = master + eval-speedup + lean obs.
+   `snake-stream-hotfix` already merged (#10). Old `snake-curriculum`/`snake-spatial-obs` deleted/merged.
+
+**Honest ceiling.** ~50 was the pure-learned (DQN + 1-ply shield + patch) plateau. The ray obs may push higher
+(long-range awareness is the missing piece), but a reactive learned policy likely still tops out short of a clean
+**100** — that needs **multi-ply planning/search** (the EfficientCube pattern: a learned net guiding a beam/lookahead,
+already in this repo). Offered as the follow-up if the ray obs plateaus; the user prefers staying with learning for now.
 
 ## Testing strategy (cross-cutting, from research)
 

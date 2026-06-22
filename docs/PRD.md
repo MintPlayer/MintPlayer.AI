@@ -557,3 +557,11 @@ via `CampaignRunner`. Investigation showed the web's `EnsureModel` training was 
 committed to `models/` (Git LFS) and seeded at startup, so it never ran in production. So M26 instead made the web
 **load-only**: training lives solely on the dev side (Lab campaigns / Console) and is committed; the web loads and
 serves. The campaigns stay `internal` to the Lab (no shared library needed — the web doesn't train). See PLAN M26.
+
+**Snake AI — stronger via better inputs (M27, in progress).** Goal: push the Snake demo toward >100 food on 12×12
+(was ~21, structurally capped by a blind 12-feature observation + a flat episode cap). Reworked the observation
+(grid-size-invariant), added a starvation episode limit + an opt-in flood-fill **self-trap shield**, and shipped a
+**~50-food net** (≈2.4×) to master (#9; live-stream hotfix #10). Now pivoting (user-preferred, learning-only) to a
+**lean 8-direction ray-cast observation** (CodeBullet-style: food/body/wall per ray + flood-fill) for long-range
+awareness, on branch `snake-ray-obs` — not yet trained. Full ledger, branch map, and resume steps in **PLAN M27**
+(the authoritative resume point). Reliable 100 would need multi-ply planning/search (EfficientCube pattern) — deferred.
