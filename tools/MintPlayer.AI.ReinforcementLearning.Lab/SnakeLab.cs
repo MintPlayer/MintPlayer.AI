@@ -24,6 +24,10 @@ internal static class SnakeLab
         int evalEpisodes = 20;
         float learningRate = 5e-4f;
         float explore = 1.0f; // ε-start; pass a low value (e.g. 0.2) to refine a warm-started net rather than re-randomize it
+        int[] hidden = [128, 128]; // --hidden 256,256 : trunk widths for the Dueling Q-net
+        double gamma = 0.99;       // --gamma : discount; higher = longer planning horizon (needed for long-snake routing)
+        float stepPenalty = -0.01f; // --step-penalty : per-step reward; ~0 removes the efficiency pressure that encourages safe starvation
+        bool safeMask = false;     // --safe-mask : forbid moves that flood-fill into a region too small for the body (anti-self-trap shield)
         bool evalOnly = false;
         for (int i = 0; i < args.Length; i++)
         {
@@ -37,6 +41,10 @@ internal static class SnakeLab
             else if (args[i] == "--episodes" && i + 1 < args.Length) evalEpisodes = int.Parse(args[++i]);
             else if (args[i] == "--lr" && i + 1 < args.Length) learningRate = float.Parse(args[++i], CultureInfo.InvariantCulture);
             else if (args[i] == "--explore" && i + 1 < args.Length) explore = float.Parse(args[++i], CultureInfo.InvariantCulture);
+            else if (args[i] == "--hidden" && i + 1 < args.Length) hidden = args[++i].Split(',').Select(int.Parse).ToArray();
+            else if (args[i] == "--gamma" && i + 1 < args.Length) gamma = double.Parse(args[++i], CultureInfo.InvariantCulture);
+            else if (args[i] == "--step-penalty" && i + 1 < args.Length) stepPenalty = float.Parse(args[++i], CultureInfo.InvariantCulture);
+            else if (args[i] == "--safe-mask") safeMask = true;
             else if (args[i] == "--eval-only") evalOnly = true;
         }
 
@@ -46,7 +54,7 @@ internal static class SnakeLab
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         string csvPath = Path.Combine(dataDir, "logs", "snake-dqn.csv");
         runner.Run(
-            new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore),
+            new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, stepPenalty, safeMask),
             store,
             new CampaignOptions
             {

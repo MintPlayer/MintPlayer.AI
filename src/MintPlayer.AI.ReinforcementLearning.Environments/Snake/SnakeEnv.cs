@@ -30,8 +30,8 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
     public const int PatchSide = 2 * PatchRadius + 1;                       // 9
     public const int PatchChannels = 2;                                     // 0 = obstacle, 1 = food
     public const int PatchSize = PatchSide * PatchSide * PatchChannels;     // 162
-    public const int ScalarFeatures = 12;                                   // foodΔ(2)+dist(1)+heading(4)+len(1)+free(4)
-    public const int ObservationSize = PatchSize + ScalarFeatures;          // 174
+    public const int ScalarFeatures = 15;                                   // foodΔ(2)+dist(1)+heading(4)+len(1)+free(4)+tailΔ(2)+tailDist(1)
+    public const int ObservationSize = PatchSize + ScalarFeatures;          // 177
 
     public const float FoodReward = 1f;
     public const float StepPenalty = -0.01f;
@@ -55,13 +55,27 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
     private int _elapsedSteps;
     private int _stepsSinceFood;
     private bool _done = true;
+    private readonly float _stepPenalty;
+    private readonly bool _safeMask;
 
-    public SnakeEnv(int size = 12)
+    /// <param name="stepPenalty">
+    /// Per-non-eating-step reward (training only — inference is greedy and ignores reward). Defaults to
+    /// <see cref="StepPenalty"/>; pass ~0 to remove the efficiency pressure that makes pursuing distant food
+    /// (unavoidable for a long snake) barely net-positive and so encourages safe starvation.
+    /// </param>
+    /// <param name="safeMask">
+    /// When true, <see cref="CurrentActionMask"/> also forbids moves that would seal the snake into a region too
+    /// small to hold its body — a reactive flood-fill "shield" against self-trapping. Off by default (preserves
+    /// the reversal-only mask). Can be enabled for both training and inference.
+    /// </param>
+    public SnakeEnv(int size = 12, float stepPenalty = StepPenalty, bool safeMask = false)
     {
         if (size < 5)
             throw new ArgumentOutOfRangeException(nameof(size), "Grid must be at least 5×5 (the length-3 start needs room).");
         Size = size;
         Cells = size * size;
+        _stepPenalty = stepPenalty;
+        _safeMask = safeMask;
         ObservationSpace = new BoxSpace(0f, 1f, ObservationSize);
         ActionSpace = new DiscreteSpace(ActionCount);
     }
@@ -144,7 +158,7 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
             _occupied.Remove(tail);
             _body.RemoveLast();
             _stepsSinceFood++;
-            reward = StepPenalty;
+            reward = _stepPenalty;
         }
 
         _elapsedSteps++;
@@ -161,7 +175,13 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
         }
     }
 
-    /// <summary>Legal moves: every direction except the one stepping onto the neck (a 180° reversal).</summary>
+    /// <summary>
+    /// Legal moves: every direction except the 180° reversal onto the neck. When <see cref="_safeMask"/> is on,
+    /// ALSO forbids any move that would seal the snake into a region smaller than its own body (a flood-fill from
+    /// the entered cell reaching fewer than <see cref="Length"/> free cells = a guaranteed trap) — a reactive
+    /// 1-ply "shield" that eliminates the self-trapping deaths which otherwise cap a long snake. If that would
+    /// leave no legal move, the shield is dropped for this step (pick the least-bad move rather than no move).
+    /// </summary>
     public bool[] CurrentActionMask()
     {
         var mask = new[] { true, true, true, true };
@@ -175,7 +195,21 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
             if (r >= 0 && r < Size && c >= 0 && c < Size && r * Size + c == neck)
                 mask[a] = false;
         }
-        return mask;
+
+        if (!_safeMask) return mask;
+
+        int tail = _body.Last!.Value, length = _body.Count;
+        var safe = (bool[])mask.Clone();
+        bool any = false;
+        for (int a = 0; a < 4; a++)
+        {
+            if (!mask[a]) continue;
+            var (dr, dc) = Deltas[a];
+            // A move is "safe" only if the space reachable after entering it can still hold the whole body.
+            if (ReachableFreeSpace(headRow + dr, headCol + dc, tail) >= length) any = true;
+            else safe[a] = false;
+        }
+        return any ? safe : mask; // never return an all-false mask
     }
 
     public float[] CurrentObservation() => Observation();
@@ -229,6 +263,13 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
             var (dr, dc) = Deltas[a];
             obs[s++] = ReachableFreeSpace(hr + dr, hc + dc, tail) / (float)Cells;
         }
+
+        // Direction + distance to the tail: chasing the tail is the canonical way a long snake stays alive (the
+        // cell the tail vacates is always safe to follow), so giving the agent the tail's bearing helps it learn it.
+        int tr = tail / Size, tc = tail % Size;
+        obs[s++] = (tc - hc) / (float)Size;
+        obs[s++] = (tr - hr) / (float)Size;
+        obs[s++] = (Math.Abs(tr - hr) + Math.Abs(tc - hc)) / (2f * Size);
         return obs;
     }
 

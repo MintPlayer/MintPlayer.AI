@@ -15,14 +15,14 @@ using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 /// net under `snake`/`dqn` (the id the web's <c>SnakeModelService</c> loads) plus the full resume state under
 /// `snake`/`dqn-state`.
 /// </summary>
-internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart)
+internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, float stepPenalty, bool safeMask)
     : ITrainingCampaign
 {
     private const string NetId = "dqn";          // deployable DuelingQNet — the id the web loads
     private const string StateId = "dqn-state";  // full DqnTrainingState for lossless resume
 
-    private readonly SnakeEnv _env = new(trainGrid);
-    private readonly SnakeEnv _evalEnv = new(evalGrid);
+    private readonly SnakeEnv _env = new(trainGrid, stepPenalty, safeMask);
+    private readonly SnakeEnv _evalEnv = new(evalGrid, stepPenalty, safeMask);
     private readonly SeedSequence _seeds = new(seed);
 
     private DqnTrainingState? _state;
@@ -40,8 +40,8 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
     {
         Dueling = true,
         DoubleDqn = true,
-        Hidden = [128, 128],
-        Gamma = 0.99,
+        Hidden = hidden,
+        Gamma = gamma,
         LearningRate = learningRate,
         BufferCapacity = 100_000,
         BatchSize = 128,
