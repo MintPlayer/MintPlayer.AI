@@ -98,9 +98,10 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
         int from = _state?.StepsCompleted ?? 0;
         int to = from + chunkSteps;
         if (targetSteps > 0) to = (int)Math.Min(to, targetSteps);
-        // EvalEvery == the chunk size so the trainer's own (6×6) eval fires at most once per chunk — the campaign's
-        // authoritative eval is the 12×12 food in Evaluate(). MaxSteps is ABSOLUTE: resuming raises the ceiling.
-        var options = BaseOptions with { MaxSteps = to, EvalEvery = Math.Max(1, chunkSteps) };
+        // Switch OFF the trainer's internal eval (EvalEvery huge): the campaign runs its own authoritative 12×12
+        // eval + save-best in Evaluate(), and with the survival shield the trainer's on-policy eval episodes run
+        // very long — pure overhead that was ~halving throughput. MaxSteps is ABSOLUTE: resuming raises the ceiling.
+        var options = BaseOptions with { MaxSteps = to, EvalEvery = int.MaxValue };
         // First chunk: resume the full state if present, else warm-start from the deployable net (if any).
         var result = DqnTrainer.Train(_env, options, _seeds, resume: _state, warmStart: _state is null ? _warmNet : null);
         _state = result.State;
