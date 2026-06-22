@@ -69,3 +69,37 @@ public class SnakeApiTests(SnakeModelPlaygroundFactory factory) : IClassFixture<
         socket.Abort(); // the real teardown path: client drops, the server's next send fails and the handler exits
     }
 }
+
+/// <summary>Host fixture with a STALE Snake net in the store — wrong input width (pre-observation-rework).</summary>
+public class SnakeStaleModelFactory : PlaygroundFactory
+{
+    public SnakeStaleModelFactory()
+    {
+        // 12 inputs on purpose (the old observation); the current env produces SnakeEnv.ObservationSize (177).
+        var net = new DuelingQNet(12, [32], SnakeEnv.ActionCount, new Xoshiro256StarStar(7));
+        new FileModelStore(DataDirectory).Save(
+            SnakeModelService.EnvironmentId, SnakeModelService.AlgorithmId, s => DuelingQNetCheckpoint.Save(net, s));
+    }
+}
+
+/// <summary>A stale/incompatible net must degrade gracefully (status not ready, WS upgrade rejected) — never the
+/// "stream closed" crash that the live handler showed when it fed the current obs to an old net.</summary>
+public class SnakeStaleModelTests(SnakeStaleModelFactory factory) : IClassFixture<SnakeStaleModelFactory>
+{
+    [Fact]
+    public async Task Status_IsNotReady_WhenStoredNetIsIncompatible()
+    {
+        var status = await factory.CreateClient().GetFromJsonAsync<StatusResponse>("/api/snake/status");
+        Assert.NotNull(status);
+        Assert.NotEqual("ready", status.Status); // refused to load the crashing net
+    }
+
+    [Fact]
+    public async Task Live_RejectsUpgrade_WhenStoredNetIsIncompatible()
+    {
+        var ws = factory.Server.CreateWebSocketClient();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            ws.ConnectAsync(new Uri(factory.Server.BaseAddress, "api/snake/live"), cts.Token));
+    }
+}

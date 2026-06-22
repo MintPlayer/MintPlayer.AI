@@ -38,6 +38,16 @@ public sealed class SnakeModelService(IModelStore store, ILogger<SnakeModelServi
             using var stream = store.TryOpenRead(EnvironmentId, AlgorithmId);
             if (stream is null) return false;
             var net = DuelingQNetCheckpoint.Load(stream);
+            // Guard against a stale net whose input width no longer matches the observation (e.g. a persistent
+            // volume holding a pre-observation-rework checkpoint). Feeding it the current obs would throw deep in
+            // the live stream ("stream closed"); instead reject it cleanly so /status reports the game unavailable.
+            if (net.InputSize != SnakeEnv.ObservationSize)
+            {
+                Status = ModelStatus.Failed;
+                Error = $"Stored Snake net expects {net.InputSize} inputs but the environment produces {SnakeEnv.ObservationSize}; the checkpoint is stale.";
+                logger.LogError("Snake model is incompatible ({Stored} vs {Expected} obs) — refusing to load it.", net.InputSize, SnakeEnv.ObservationSize);
+                return false;
+            }
             _agent = new GreedyQAgent(net, SnakeEnv.ActionCount);
             Status = ModelStatus.Ready;
             logger.LogInformation("Loaded Snake model from the store.");

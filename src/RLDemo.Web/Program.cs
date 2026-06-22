@@ -9,19 +9,18 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 string dataDirectory = builder.Configuration["DataDirectory"] ?? "data";
 
-// Seed an empty model store from the shipped pre-trained checkpoints (models/ in the
-// repo, /app/models in the Docker image): fresh clones and fresh volumes start with
-// the trained AI instead of training from scratch. Existing files are never touched.
+// Seed the model store from the shipped pre-trained checkpoints (models/ in the repo, /app/models in the Docker
+// image). The web is load-only (PRD §14 — it never trains), so these shipped checkpoints are the single source of
+// truth: REFRESH them on every startup rather than skipping existing files. Skipping was the old behaviour (to
+// preserve on-the-fly-trained nets), but it meant a model update never reached a persistent /data volume — and a
+// shape change (e.g. the Snake observation rework) then loaded a stale, incompatible net and crashed the game.
+// Only same-named shipped .ckpt files are overwritten; the gallery (data/gallery) and any other data are untouched.
 string? seedDirectory = builder.Configuration["SeedModelsDirectory"];
 if (!string.IsNullOrEmpty(seedDirectory) && Directory.Exists(seedDirectory))
 {
     Directory.CreateDirectory(dataDirectory);
     foreach (string seed in Directory.EnumerateFiles(seedDirectory, "*.ckpt"))
-    {
-        string target = Path.Combine(dataDirectory, Path.GetFileName(seed));
-        if (!File.Exists(target))
-            File.Copy(seed, target);
-    }
+        File.Copy(seed, Path.Combine(dataDirectory, Path.GetFileName(seed)), overwrite: true);
 }
 // The shared RL runtime DI — the same surface the AIHost training tools use: registers the FileModelStore
 // over dataDirectory, the system TimeProvider, and the CampaignRunner. The web consumes the model store
