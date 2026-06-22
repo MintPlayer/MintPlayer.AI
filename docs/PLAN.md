@@ -919,6 +919,38 @@ doesn't train at all, so the campaigns stay `internal` to the Lab (the contract 
 **Net −284 lines.** If a contributor needs to (re)produce a checkpoint, that's a dev-side Lab/Console run + an LFS
 commit, documented in `ADDING_A_GAME.md`.
 
+## M27 — Snake: spatial observation + anti-self-trap shield  *(branch `snake-spatial-obs`, stacked on M25/M26)* ⏳
+
+**Problem.** "Improve the Snake AI" (it expects >100 food). The shipped net scored **~21 food on 12×12** and was
+stuck there structurally, not for lack of training: (1) the observation was **12 local features** (danger one cell
+out + a food compass) — the agent was *blind to its own body*, so a long snake inevitably trapped itself; (2)
+`MaxEpisodeSteps = 1000` was a flat truncation that *hard-capped* how much food was even reachable per episode.
+
+**Fixes (this milestone).** A grid-size-invariant **egocentric observation** — a 9×9 obstacle+food patch centred on
+the head + food/tail direction & distance + heading + length + a **flood-fill of reachable open space per move**
+(the anti-trap signal a fixed window can't give) — and a **starvation episode limit** (`StarveLimit ≈ 2·cells` with no
+food) replacing the flat cap. Plus an opt-in **`safeMask`**: the action mask also forbids moves that flood-fill into
+a region too small for the body (a reactive 1-ply shield), used in training and the live web demo.
+
+**Experiment ledger (food@12, 50-ep eval unless noted; all >> the old 21):**
+| config | food |
+|---|---|
+| egocentric obs, `[128,128]` | 39.9 |
+| `[256,256]` (capacity) | 39.4 — capacity is *not* the bottleneck |
+| + tail feature + γ0.995 | 43.1 |
+| + step-penalty 0 + γ0.997 | 42.6 |
+| same net + post-hoc shield | 46.6 |
+| **shield-*trained*** (γ0.997, pen 0) | **52.3 peak / 50.7 @200-ep** |
+
+Shipping the shield-trained net (**~50 food, ~2.4× the old 21**): `models/snake.dqn.ckpt` overwritten,
+`SnakeController` live demo uses `safeMask`. **In progress:** a small→large **grid curriculum** (7×7 → 9×9 → 12×12,
+warm-started) — train space-management where trapping is unavoidable-to-confront, then transfer up; may beat ~50.
+
+**Honest ceiling.** ~50 is the **pure-learned (DQN + 1-ply shield)** plateau across capacity/feature/horizon/reward
+experiments. Reliable **100** (filling ~70% of the board) needs **multi-ply planning/search** — the EfficientCube
+pattern (learned net guiding a beam/lookahead, already in this repo) or a Hamiltonian planner — out of scope for
+this learning-only milestone, recommended as the follow-up.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
