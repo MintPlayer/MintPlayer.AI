@@ -52,9 +52,6 @@ internal sealed class CubeDaviConfig
     /// <summary>Adam β₂ (second-moment decay). CLI <c>--beta2</c>.</summary>
     [JsonPropertyName("beta2")] public float? Beta2 { get; init; }
 
-    /// <summary>Write a checkpoint only every Nth eval (cuts I/O on slow storage); clamped to ≥ 1. CLI <c>--checkpoint-every</c>.</summary>
-    [JsonPropertyName("checkpoint-every")] public int? CheckpointEvery { get; init; }
-
     /// <summary>Sample scramble depth toward the curriculum frontier (triangular) instead of uniform <c>[1, depth]</c>. CLI <c>--frontier-bias</c>.</summary>
     [JsonPropertyName("frontier-bias")] public bool? FrontierBias { get; init; }
 

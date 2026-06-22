@@ -34,8 +34,7 @@ public sealed class CubeController(CubeModelService model, GalleryStore gallery)
     public StatusResponse Status()
     {
         _ = model.Agent; // touch: lazily loads a stored checkpoint so status reflects it
-        return new(model.Status.ToString().ToLowerInvariant(),
-            model.TrainingStep, model.TrainingMaxSteps, model.LastEvalReturn, model.Error);
+        return new(model.Status.ToString().ToLowerInvariant(), model.Error);
     }
 
     /// <summary>

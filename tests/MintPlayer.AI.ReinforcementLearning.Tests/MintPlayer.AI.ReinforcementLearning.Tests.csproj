@@ -30,6 +30,9 @@
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Environments\MintPlayer.AI.ReinforcementLearning.Environments.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj" />
     <ProjectReference Include="..\..\src\RLDemo.Web\RLDemo.Web.csproj" />
+    <!-- Contract-tests the training campaigns (internals exposed via InternalsVisibleTo in the Lab). Aliased so
+         the Lab exe's generated top-level `Program` doesn't collide with RLDemo.Web's in WebApplicationFactory. -->
+    <ProjectReference Include="..\..\tools\MintPlayer.AI.ReinforcementLearning.Lab\MintPlayer.AI.ReinforcementLearning.Lab.csproj" Aliases="Lab" />
   </ItemGroup>
 
   <ItemGroup>

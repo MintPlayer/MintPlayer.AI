@@ -6,13 +6,10 @@
 </p>
 
 @if (modelStatus(); as ms) {
-  @if (ms.status === 'training') {
-    <div class="banner training">
-      The MountainCar agent is training on the server ({{ ms.trainingStep }} / {{ ms.trainingMaxSteps }} steps) —
-      drive it yourself meanwhile.
-    </div>
+  @if (ms.status === 'loading') {
+    <div class="banner training">Loading the MountainCar agent… — drive it yourself meanwhile.</div>
   } @else if (ms.status === 'failed') {
-    <div class="banner error">AI training failed: {{ ms.error }}</div>
+    <div class="banner error">AI unavailable: {{ ms.error }}</div>
   }
 }
 

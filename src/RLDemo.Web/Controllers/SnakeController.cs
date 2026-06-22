@@ -17,8 +17,7 @@ public sealed class SnakeController(SnakeModelService model) : ControllerBase
     public StatusResponse Status()
     {
         _ = model.Agent; // touch: lazily loads a stored checkpoint so status reflects it
-        return new(model.Status.ToString().ToLowerInvariant(),
-            model.TrainingStep, model.TrainingMaxSteps, model.LastEvalReturn, model.Error);
+        return new(model.Status.ToString().ToLowerInvariant(), model.Error);
     }
 
     /// <summary>
@@ -44,7 +43,9 @@ public sealed class SnakeController(SnakeModelService model) : ControllerBase
         }
 
         using var socket = await HttpContext.WebSockets.AcceptWebSocketAsync();
-        var env = new SnakeEnv();
+        // Shield on: the deployed net is trained with the anti-self-trap action mask (M27), so the live demo
+        // must use the same mask the policy expects (and it makes the snake visibly stronger regardless).
+        var env = new SnakeEnv(safeMask: true);
         ulong seed = (ulong)System.Threading.Interlocked.Increment(ref _seedCounter); // distinct game per connection
         await EpisodeStreamer.RunAsync(
             socket,

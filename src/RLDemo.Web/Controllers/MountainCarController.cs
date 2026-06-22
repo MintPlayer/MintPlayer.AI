@@ -17,8 +17,7 @@ public sealed class MountainCarController(MountainCarModelService model) : Contr
     public StatusResponse Status()
     {
         _ = model.Agent; // touch: lazily loads a stored checkpoint
-        return new(model.Status.ToString().ToLowerInvariant(),
-            model.TrainingStep, model.TrainingMaxSteps, model.LastEvalReturn, model.Error);
+        return new(model.Status.ToString().ToLowerInvariant(), model.Error);
     }
 
     /// <summary>

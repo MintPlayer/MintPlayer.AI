@@ -484,3 +484,76 @@ wall-clock until then.*
 **Realistic target on one 3060 (after M19+M20):** "Solves any cube; provably QTM-optimal to depth ~7,
 near-optimal and shorter than Kociemba to ~depth 15–20, teacher-free." Then it becomes the third
 **"self-taught AI"** solver on the web cube page, beside the Kociemba button and the imitation AI.
+
+## 14. Reusable training-campaign harness  *(PRD §14; inserted 2026-06-21; SDK breadth, see [PLAN.md](PLAN.md) M25)*
+
+The four long-running training campaigns — Rush Hour (`Program.cs`), `CubeLab`, `CubeDaviLab`, `CubePolicyLab` —
+copy-paste the same scaffold: flag parsing, `FileModelStore` + `logs/` + CSV-header-if-missing, resume-on-start,
+a `while (now < deadline)` loop with periodic eval + checkpoint, and an identical `Log`/`Shuffle`. The SDK goal
+("make the reusable assets first-class", PLAN → Immediate next step) wants this loop as first-class, *tested* Core
+surface, not per-game glue. A 3-agent investigation (2026-06-21) mapped the duplication and found the campaigns
+split into **two paradigms that must NOT share one interface** — forcing the self-driving DQN onto the cube
+"solve" shape, or unioning the five eval outputs into one struct, merely re-leaks the per-game complexity the
+harness is meant to hide.
+
+1. **Shared core** — `CampaignRunner` drives any `ITrainingCampaign` over a resumable, wall-clock-budgeted loop;
+   it owns eval/checkpoint cadence and emits results through an `Action<CampaignProgress>` callback. IO-agnostic:
+   Core does no `Console`/file writes (the Lab does CSV + console); `IModelStore` exposes no root dir.
+   `ITrainingCampaign : IDisposable` = `{ Environment; Resume(store); TrainChunk()→long; IsComplete;
+   Evaluate()→CampaignEval; Checkpoint(store); TryRunStandaloneEval(store) }`. The runner takes an **injectable
+   clock** (it gates on time → unit-testable). `CampaignEval` stays minimal (metric dict + report line + CSV cells).
+
+2. **`GoalReachingCampaign`** (final goal — reach a terminal "solved" state; eval = **solve-rate** on held-out
+   instances): the cube family (Kociemba imitation, DAVI value-iteration, EfficientCube policy) + Rush Hour.
+
+3. **`ScoreMaximizingCampaign`** (infinite goal — maximize cumulative return, no terminus; eval = **mean
+   return/score**): Snake (DQN), extensible to MountainCar / Pendulum / CartPole / 2048. Wraps a self-driving
+   trainer (`DqnTrainer`…) in resumable chunks (raise `MaxSteps`, persist `DqnTrainingState`).
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| One harness vs two | **Two** over one shared runner | Solve vs reward-maximize differ in training-driving and eval shape; one interface would bend the self-driving DQN or become a god-struct (the investigation's biggest risk). |
+| `CampaignEval` shape | **Minimal**; campaigns own auxiliary CSVs | CubeDavi writes two CSVs on two cadences + five disjoint eval-only formats — a union type re-leaks that into the runner. |
+| CubeDavi eval-only modes | `TryRunStandaloneEval(store)` escape hatch, run before training | value-curve / vs-kociemba / time-budget / search differ in *output structure*, not just metric values. |
+| Snake / DQN home | `ScoreMaximizingCampaign`, NOT the solver interface | `DqnTrainer` is self-driving with fat-state resume; the cube shape fights it. |
+| Location | `Core/Training/` (`…Core.Training`), IO-agnostic callback | Sibling to `DqnTrainer`/`Evaluator`; keeps Core packagable + free of Console/file IO. |
+| Runner shape | **Instance class** (not static) with an injected `TimeProvider` (BCL) | DI-composable; the `TimeProvider` makes the time-budgeted loop deterministically testable and the system clock the default. |
+| DI registration | **MintPlayer.SourceGenerators `[Register]`** on `CampaignRunner` (dogfood) | The generator emits `AddReinforcementLearningCore()`; DI resolves `TimeProvider` via the ctor — no hand-written registration. |
+| Host builder | **`AIHost.CreateBuilder(dataDir)`** in a **new `…Hosting` package** | The AI counterpart to `WebApplication.CreateBuilder`; keeps `Microsoft.Extensions.*` deps out of Core. Takes a data dir (not raw `args` — the command-line config provider chokes on bare flags like `--eval-only`). |
+
+**Hosting & DI.** Training tools compose like an ASP.NET host: `AIHost.CreateBuilder(dataDir).Build()` →
+`services.GetRequiredService<CampaignRunner>()` + `<IModelStore>`. `AddReinforcementLearning(dataDir)` registers the
+`FileModelStore`, `TimeProvider.System`, and (via the Core source-generated `AddReinforcementLearningCore()`) the
+runner. The GPU compute backend registers separately via `services.AddGpuBackend()` (built 2026-06-21) — shipped in
+its **own** package `MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting`, kept apart from the lean Ilgpu *compute*
+package so that backend carries no DI dependency, and so Core stays backend-agnostic. It registers the shared
+`AdaptiveBackend` as a container-owned singleton; the two GPU-benefiting cube campaigns inject it instead of
+constructing their own. `CampaignRunner` + `ITrainingCampaign` live in Core (BCL `TimeProvider` only); `AIHost` + the
+DI extensions live in the Hosting package.
+
+**Gate (✅ all met, 2026-06-21):** (1) each migrated campaign's existing tests + CI stay green and its run behaves
+identically (same checkpoint ids + CSV columns) — verified per game by eval-only parity (RushHour cards 16/77/82/81;
+cube gate 97/100) + 264 tests; (2) a deterministic `CampaignRunner` unit test (fake campaign + fake clock + in-memory
+`IModelStore`) asserts the loop, eval cadence, resume, and checkpoint calls — sub-second, no wall-clock; (3) the Snake
+score-maximizing campaign resumes bitwise (reload `DqnTrainingState` — verified 20k→35k) and reaches the shipped
+baseline (~20 food on the 12×12 grid by 20k steps, climbing to ~22).
+
+**Paradigm decision (settled 2026-06-21).** The two paradigms (goal-reaching vs score-maximizing) are NOT two
+interfaces or two base classes — they share one **minimal, paradigm-agnostic** `ITrainingCampaign`
+(`Resume`/`TrainChunk`/`IsComplete`/`Evaluate`/`Checkpoint`). The distinction lives only in each campaign's
+`Evaluate` (solve-rate vs mean episodic return, both expressed as generic `CampaignEval` metrics) and in whether
+`IsComplete` ever fires. A `…Campaign` base class per paradigm was considered and rejected: it would be a shallow
+wrapper (every goal-reaching game already implements the interface directly), and the obvious score-maximizing base
+shaped around `DqnTrainer` wouldn't fit future score games on different trainers (2048 n-tuple, SAC/PPO). The
+original "two harnesses" framing is honoured at the *behaviour* level, not as two types. (This supersedes an earlier
+non-goal that read "not a single interface spanning both paradigms" — the interface is shared precisely because it
+is minimal and bakes in neither paradigm's eval shape.)
+
+**Non-goals:** not a multi-trial hyperparameter sweep runner; CubeDavi's bespoke eval-only modes are not modeled as
+`CampaignEval` variants (they go through `TryRunStandaloneEval`).
+
+**Single training path (M26, done 2026-06-22).** The original "stretch" idea was to have the web run the campaigns
+via `CampaignRunner`. Investigation showed the web's `EnsureModel` training was **vestigial** — every checkpoint is
+committed to `models/` (Git LFS) and seeded at startup, so it never ran in production. So M26 instead made the web
+**load-only**: training lives solely on the dev side (Lab campaigns / Console) and is committed; the web loads and
+serves. The campaigns stay `internal` to the Lab (no shared library needed — the web doesn't train). See PLAN M26.

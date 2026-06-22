@@ -96,8 +96,15 @@ public static class DqnTrainer
     /// seed must be passed as in the original run; on <see cref="IStatefulEnvironment"/>
     /// envs the resumed run is bitwise-identical to one that was never interrupted.
     /// </param>
+    /// <param name="warmStart">
+    /// When starting fresh (<paramref name="resume"/> is null), use this network as the initial online net (its
+    /// weights are copied into a fresh target) instead of a random init — i.e. continue training a previously
+    /// trained net with a fresh optimizer/replay buffer/step count. Its shape must match the one
+    /// <paramref name="options"/> would build (<see cref="DqnOptions.Dueling"/> + <see cref="DqnOptions.Hidden"/>).
+    /// Ignored when resuming. Lets a campaign pick up a deployable (net-only) checkpoint that has no resume state.
+    /// </param>
     public static DqnResult Train(IEnvironment<float[], int> env, DqnOptions options, SeedSequence seeds,
-        DqnTrainingState? resume = null)
+        DqnTrainingState? resume = null, IValueNet? warmStart = null)
     {
         int obsDim = ((BoxSpace)env.ObservationSpace).Dimensions;
         int actionCount = ((DiscreteSpace)env.ActionSpace).N;
@@ -110,9 +117,9 @@ public static class DqnTrainer
             IValueNet MakeNet() => options.Dueling
                 ? new DuelingQNet(obsDim, options.Hidden, actionCount, initRng)
                 : new Mlp([obsDim, .. options.Hidden, actionCount], initRng, Activation.Relu);
-            var online = MakeNet();
+            var online = warmStart ?? MakeNet();
             var target = MakeNet();
-            target.CopyFrom(online);
+            target.CopyFrom(online); // warm-start: copies the provided net's weights (shape must match options)
             state = new DqnTrainingState
             {
                 Online = online,

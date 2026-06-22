@@ -259,7 +259,7 @@ export class Cube {
           }
           break;
         }
-        case 'training':
+        case 'loading':
           this.modelStatus.set(result.status);
           this.status.set('The self-taught AI net is not loaded yet — try again in a moment.');
           break;
@@ -286,7 +286,7 @@ export class Cube {
       try {
         const status = await this.api.status();
         this.modelStatus.set(status);
-        if (status.status === 'loading' || status.status === 'training') {
+        if (status.status === 'loading') {
           setTimeout(() => this.pollStatus(), 2000);
         }
       } catch {

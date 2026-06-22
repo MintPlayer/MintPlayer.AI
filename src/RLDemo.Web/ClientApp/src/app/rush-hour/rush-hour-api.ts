@@ -31,17 +31,14 @@ export interface SolveResponse {
 }
 
 export interface StatusResponse {
-  status: 'loading' | 'training' | 'ready' | 'failed';
-  trainingStep: number;
-  trainingMaxSteps: number;
-  lastEvalReturn: number;
+  status: 'loading' | 'ready' | 'failed';
   error: string | null;
 }
 
 export type SolveResult =
   | { kind: 'solved'; value: SolveResponse }
   | { kind: 'invalid'; error: string }
-  | { kind: 'training'; status: StatusResponse };
+  | { kind: 'loading'; status: StatusResponse };
 
 /** A curated deck level: a named board plus its BFS-optimal move count. */
 export interface DeckLevel {
@@ -87,7 +84,7 @@ export class RushHourApi {
       return { kind: 'solved', value: await response.json() };
     }
     if (response.status === 503) {
-      return { kind: 'training', status: await response.json() };
+      return { kind: 'loading', status: await response.json() };
     }
     const body: AnalyzeResponse = await response.json();
     return { kind: 'invalid', error: body.error ?? 'Invalid board.' };

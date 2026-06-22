@@ -8,26 +8,29 @@ public class SnakeEnvTests
     private static int Head(SnakeEnv e) => (e.Size / 2) * e.Size + (e.Size / 2);
 
     [Fact]
-    public void Reset_StartsLength3_HeadCentred_CompactObservation()
+    public void Reset_StartsLength3_HeadCentred_EgocentricObservation()
     {
         var env = new SnakeEnv();
         var (obs, _) = env.Reset(1);
 
-        Assert.Equal(SnakeEnv.ObservationSize, obs.Length); // 12 engineered features
+        Assert.Equal(SnakeEnv.ObservationSize, obs.Length); // patch (2 planes) + scalars
         Assert.Equal(3, env.Length);
         Assert.Equal(Head(env), env.Body.First());
 
-        // Heading block (obs[8..12]) = exactly one bit, Right (index 3).
-        Assert.Equal(1, obs[8..12].Count(v => v == 1f));
-        Assert.Equal(1f, obs[11]);
+        // The patch centre (the head's own cell) is never an obstacle.
+        int side = SnakeEnv.PatchSide, centre = (side / 2) * side + (side / 2);
+        Assert.Equal(0f, obs[centre]);
 
-        // Food-direction block (obs[4..8]) matches the food's position relative to the head.
+        // Heading one-hot lives in the scalar block: exactly one bit set, and it's Right.
+        var heading = obs[(SnakeEnv.PatchSize + 3)..(SnakeEnv.PatchSize + 7)];
+        Assert.Equal(1, heading.Count(v => v == 1f));
+        Assert.Equal(1f, obs[SnakeEnv.PatchSize + 6]); // Right
+
+        // Food Δ (signed, normalized) matches the food's position relative to the head.
         int hr = Head(env) / env.Size, hc = Head(env) % env.Size;
         int fr = env.Food / env.Size, fc = env.Food % env.Size;
-        Assert.Equal(fr < hr ? 1f : 0f, obs[4]);
-        Assert.Equal(fr > hr ? 1f : 0f, obs[5]);
-        Assert.Equal(fc < hc ? 1f : 0f, obs[6]);
-        Assert.Equal(fc > hc ? 1f : 0f, obs[7]);
+        Assert.Equal((fc - hc) / (float)env.Size, obs[SnakeEnv.PatchSize + 0]);
+        Assert.Equal((fr - hr) / (float)env.Size, obs[SnakeEnv.PatchSize + 1]);
     }
 
     [Fact]
@@ -37,7 +40,7 @@ public class SnakeEnvTests
         var (obs, _) = small.Reset(1);
         Assert.Equal(6, small.Size);
         Assert.Equal(36, small.Cells);
-        Assert.Equal(SnakeEnv.ObservationSize, obs.Length); // still 12 — size-invariant → transfers across grids
+        Assert.Equal(SnakeEnv.ObservationSize, obs.Length); // egocentric patch + scalars → fixed size across grids
         Assert.Equal(3, small.Length);
         Assert.Equal(Head(small), small.Body.First()); // (3,3) = 21
     }

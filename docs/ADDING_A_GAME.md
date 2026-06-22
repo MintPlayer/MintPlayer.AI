@@ -26,10 +26,12 @@ is given; `Step` throws if `_done` / on an illegal action; keep **terminated vs 
 game logic + (if NN-trained) any oracle/generator/policy-net/search beside it. No DI needed (plain library).
 
 ## 2. Model service — `src/RLDemo.Web/Services/XGameModelService.cs`
-`sealed class XGameModelService(IModelStore store, ILogger<…> logger) : ITrainableModelService`. Constants
+`sealed class XGameModelService(IModelStore store, ILogger<…> logger) : IModelStartupService`. Constants
 `EnvironmentId="xgame"`, `AlgorithmId="dqn"|"ppo"|…`. `TryLoadFromStore()` (lazy, locked) → deserialize +
-build the agent; `EnsureModel(ct)` → load-or-train-and-save; status fields + `Error`. (Optional refreshing
-secondary net like `CubeModelService.PolicyNet`/`ValueNet`.)
+build the agent; `Initialize(ct)` → load the shipped checkpoint, or set `Status=Failed` if absent. **The web never
+trains** (PRD §14 / M26): produce the checkpoint on a dev machine (the Lab campaign — §8 — or the Console, §6) and
+commit it to `models/` via Git LFS. Status fields + `Error`. (Optional refreshing secondary net like
+`CubeModelService.PolicyNet`/`ValueNet`.)
 
 ## 3. Controller / WS handler — `src/RLDemo.Web/Controllers/XGameController.cs`
 **Principle A:** `[ApiController][Route("api/xgame")]`, inject `(XGameModelService model, GalleryStore gallery)`.
@@ -39,8 +41,9 @@ return the full trajectory DTO. **Principle B:** a WebSocket endpoint (`app.UseW
 an env + agent and streams `(state, action, done)` frames) instead of `POST /solve`.
 
 ## 4. DI + startup — `src/RLDemo.Web/Program.cs`
-`AddSingleton<XGameModelService>()` **and** `AddSingleton<ITrainableModelService>(sp => sp.GetRequiredService<XGameModelService>())`
-(concrete for the controller, interface for warmup). Principle B also adds `app.UseWebSockets()` + maps the WS route.
+`AddSingleton<XGameModelService>()` **and** `AddSingleton<IModelStartupService>(sp => sp.GetRequiredService<XGameModelService>())`
+(concrete for the controller, interface for the startup load via `ModelStartupHostedService`). Principle B also adds
+`app.UseWebSockets()` + maps the WS route.
 Seed-copy + hosted service are game-agnostic — no change.
 
 ## 5. Frontend — `src/RLDemo.Web/ClientApp/src/app/x-game/`
@@ -58,3 +61,39 @@ Run `RLDemo.Console xgame --save --data ../../models` to produce the seed `.ckpt
 ## 7. Tests — `tests/MintPlayer.AI.ReinforcementLearning.Tests/XGameApiTests.cs`
 Mirror `RushHourApiTests`/`CubeApiTests`: spin up the host in the `Testing` environment (skips SPA + warmup),
 control the store directly, assert the solve/status/503/400 contracts. Add env-level + (if applicable) gate tests.
+
+## 8. Long training — the campaign harness (`tools/…Lab/`, PLAN M25)
+For multi-hour/resumable training (vs. the web's one-shot `EnsureModel`), write an **`ITrainingCampaign`** instead of
+a bespoke loop. The shared **`CampaignRunner`** owns the wall-clock budget, eval/checkpoint cadence and resume; you
+implement only the game-specific parts:
+
+```csharp
+internal sealed class XGameCampaign(...) : ITrainingCampaign
+{
+    public string Environment => "xgame";
+    public bool Resume(IModelStore store) { /* load net+optimizer+state, or start fresh; return whether resumed */ }
+    public long TrainChunk()    { /* train one chunk; return cumulative progress (steps/samples) */ }
+    public CampaignEval Evaluate() { /* return CampaignMetrics + a one-line summary (solve-rate OR mean return) */ }
+    public void Checkpoint(IModelStore store) { /* persist the deployable net + full resume state */ }
+    public bool IsComplete => false;                       // score-maximizing: run to the time budget
+    // public bool IsComplete => samples >= target;        // goal-reaching: optional hard stop
+    public void Dispose() { }
+}
+```
+
+There is **one** interface for both paradigms (see PRD §14): the only difference is what `Evaluate` reports
+(solve-rate vs mean return) and whether `IsComplete` ever fires — no per-paradigm base class. Wire a `--game xgame`
+entry in the Lab that resolves the runtime from DI and runs the campaign:
+
+```csharp
+var builder = AIHost.CreateBuilder(dataDir);
+builder.Services.AddGpuBackend();                          // only if the net is large enough to win on GPU
+using var host = builder.Build();
+host.Services.GetRequiredService<CampaignRunner>().Run(
+    new XGameCampaign(...), host.Services.GetRequiredService<IModelStore>(),
+    new CampaignOptions { Duration = TimeSpan.FromHours(h), OnEval = CampaignCli.ConsoleAndCsv(csvPath) });
+```
+
+Keep all console/CSV IO in the `OnEval` callback (`CampaignCli`), not in the campaign — the runner does no IO itself.
+Add a Slow contract test (`CampaignContractTests`): fresh → `TrainChunk` advances → `Checkpoint` → a fresh instance
+`Resume`s and continues rather than restarting.

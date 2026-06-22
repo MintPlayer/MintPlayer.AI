@@ -17,17 +17,14 @@ export interface SolveResponse2048 {
 }
 
 export interface Status2048 {
-  status: 'loading' | 'training' | 'ready' | 'failed';
-  gamesPlayed: number;
-  trainingGames: number;
-  avgScore: number;
+  status: 'loading' | 'ready' | 'failed';
   error: string | null;
 }
 
 export type Solve2048Result =
   | { kind: 'solved'; value: SolveResponse2048 }
   | { kind: 'invalid'; error: string }
-  | { kind: 'training'; status: Status2048 };
+  | { kind: 'loading'; status: Status2048 };
 
 @Injectable({ providedIn: 'root' })
 export class Game2048Api {
@@ -43,7 +40,7 @@ export class Game2048Api {
       body: JSON.stringify({ cells }),
     });
     if (response.ok) return { kind: 'solved', value: await response.json() };
-    if (response.status === 503) return { kind: 'training', status: await response.json() };
+    if (response.status === 503) return { kind: 'loading', status: await response.json() };
     const body = await response.json();
     return { kind: 'invalid', error: body.error ?? 'Invalid board.' };
   }

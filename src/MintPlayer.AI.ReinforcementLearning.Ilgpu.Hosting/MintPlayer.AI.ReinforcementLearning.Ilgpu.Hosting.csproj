@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Package">
+    <Version>0.2.0</Version>
+    <Authors>Pieterjan De Clippel</Authors>
+    <Company>MintPlayer</Company>
+    <Description>Dependency-injection glue for the MintPlayer.AI.ReinforcementLearning ILGPU GPU backend: services.AddGpuBackend() registers the AdaptiveBackend (CPU + CUDA-by-size routing) as a singleton in an AIHost / Microsoft.Extensions.DependencyInjection container, so a training campaign can request the shared GPU backend instead of constructing its own. Kept separate from the compute package so the lean Ilgpu backend carries no DI dependency.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>reinforcement-learning;gpu;cuda;ilgpu;dependency-injection;hosting</PackageTags>
+    <RepositoryUrl>https://github.com/MintPlayer/MintPlayer.AI</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/MintPlayer/MintPlayer.AI</PackageProjectUrl>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
+  </ItemGroup>
+
+</Project>

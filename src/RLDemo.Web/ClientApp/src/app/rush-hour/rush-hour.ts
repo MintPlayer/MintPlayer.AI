@@ -1,4 +1,3 @@
-import { DecimalPipe } from '@angular/common';
 import { Component, DestroyRef, ElementRef, computed, effect, inject, isDevMode, signal, viewChild } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { AnalyzeResponse, DeckLevel, RushHourApi, SolveResponse, StatusResponse, VehicleDto } from './rush-hour-api';
@@ -19,7 +18,6 @@ const VEHICLE_COLORS = [
 
 @Component({
   selector: 'app-rush-hour',
-  imports: [DecimalPipe],
   templateUrl: './rush-hour.html',
   styleUrl: './rush-hour.scss',
   host: { '(window:keydown)': 'onKey($event)' },
@@ -304,9 +302,9 @@ export class RushHour {
           this.playbackIndex.set(0);
           this.mode.set('playback');
           break;
-        case 'training':
+        case 'loading':
           this.modelStatus.set(result.status);
-          this.editMessage.set('The model is still training — try again in a moment.');
+          this.editMessage.set('The model is still loading — try again in a moment.');
           this.pollStatus();
           break;
         case 'invalid':
@@ -366,7 +364,7 @@ export class RushHour {
     void (async () => {
       const status = await this.api.status();
       this.modelStatus.set(status);
-      if (status.status === 'loading' || status.status === 'training') {
+      if (status.status === 'loading') {
         setTimeout(() => this.pollStatus(), 2000);
       }
     })();

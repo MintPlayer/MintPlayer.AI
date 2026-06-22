@@ -1,7 +1,5 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
-using MintPlayer.AI.ReinforcementLearning.Core.Random;
-using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -9,44 +7,22 @@ using MintPlayer.AI.ReinforcementLearning.Ilgpu;
 namespace RLDemo.Web.Services;
 
 /// <summary>
-/// Owns the Rubik's Cube DQN: loads it from the model store at startup, or trains it
-/// once on the shallow-scramble curriculum (depths 1–6, the PRD §11 band — full
-/// 20-move scrambles are deliberately out of scope for v1 RL) and saves it. Same
-/// lifecycle as <see cref="RushHourModelService"/>.
+/// Owns the Rubik's Cube nets: loads the shipped DQN baseline plus the imitation-policy, teacher-free DAVI value,
+/// and EfficientCube policy nets from the model store (all trained on a dev machine via the Lab campaigns and
+/// committed to <c>models/</c> via Git LFS — the web never trains, PRD §14). Holds the device-resident GPU
+/// forwards for the deep solvers when a CUDA device is present.
 /// </summary>
-public sealed class CubeModelService(IModelStore store, AdaptiveBackend backend, ILogger<CubeModelService> logger) : ITrainableModelService, IDisposable
+public sealed class CubeModelService(IModelStore store, AdaptiveBackend backend, ILogger<CubeModelService> logger) : IModelStartupService, IDisposable
 {
     public const string EnvironmentId = "cube";
     public const string AlgorithmId = "dqn";
 
-    /// <summary>The trained band: scrambles this deep are the gate; deeper is honest failure.</summary>
-    public const int MaxScrambleDepth = 6;
     public const int MaxMoves = 20;
-    public const ulong TrainingMasterSeed = 42;
-
-    public static DqnOptions TrainingOptions(Action<DqnProgress>? onProgress = null) => new()
-    {
-        Hidden = [256, 256],
-        Gamma = 0.99,
-        LearningRate = 5e-4f,
-        MaxSteps = 600_000,
-        BufferCapacity = 200_000,
-        Epsilon = new LinearSchedule(1.0, 0.05, 200_000),
-        EvalEvery = 10_000,
-        EvalEpisodes = 100,
-        // Perfect play on the 1–6 band averages ≈ 97.5 (return = 101 − moves); 90%
-        // solved with the rest timing out (−20) sits near 85 — gate the run above that.
-        SolveThreshold = 88,
-        OnProgress = onProgress,
-    };
 
     private readonly object _lock = new();
     private GreedyQAgent? _agent;
 
     public ModelStatus Status { get; private set; } = ModelStatus.Loading;
-    public int TrainingStep { get; private set; }
-    public int TrainingMaxSteps { get; private set; }
-    public double LastEvalReturn { get; private set; }
     public string? Error { get; private set; }
 
     /// <summary>The greedy inference agent, or null while the model is not ready. Loads lazily from the store.</summary>
@@ -217,46 +193,17 @@ public sealed class CubeModelService(IModelStore store, AdaptiveBackend backend,
         }
     }
 
-    public void EnsureModel(CancellationToken cancellationToken)
+    /// <summary>Loads the shipped DQN baseline at startup. The web does not train (PRD §14); the deep solver
+    /// nets (policy / DAVI value / EfficientCube) load lazily through their getters.</summary>
+    public void Initialize(CancellationToken cancellationToken)
     {
-        try
-        {
-            if (TryLoadFromStore()) return;
-
-            logger.LogInformation("No Rubik's Cube model in the store — training (a few minutes)...");
-            lock (_lock) Status = ModelStatus.Training;
-
-            var env = new RubiksCubeEnv(MaxScrambleDepth, MaxMoves);
-            var result = DqnTrainer.Train(env, TrainingOptions(p =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                lock (_lock)
-                {
-                    TrainingStep = p.Step;
-                    TrainingMaxSteps = p.MaxSteps;
-                    LastEvalReturn = p.EvalMeanReturn;
-                }
-                logger.LogInformation("Rubik's Cube training: step {Step}/{Max}, eval {Eval:F1}",
-                    p.Step, p.MaxSteps, p.EvalMeanReturn);
-            }), new SeedSequence(TrainingMasterSeed));
-
-            // This service trains a plain-MLP DQN (no Dueling), so the result is always an Mlp.
-            store.Save(EnvironmentId, AlgorithmId, s => MlpCheckpoint.Save((Mlp)result.Network, s));
-            _agent = new GreedyQAgent(result.Network, RubiksCubeEnv.ActionCount);
-            Status = ModelStatus.Ready;
-            logger.LogInformation("Rubik's Cube model trained ({Steps} steps, eval {Eval:F1}) and saved.",
-                result.StepsTrained, result.FinalEvalReturn);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
+        if (TryLoadFromStore()) return;
+        lock (_lock)
         {
             Status = ModelStatus.Failed;
-            Error = ex.Message;
-            logger.LogError(ex, "Rubik's Cube model setup failed.");
+            Error = "No trained Rubik's Cube model in the store.";
         }
+        logger.LogWarning("No Rubik's Cube DQN model in the store — train it on a dev machine and commit the checkpoint to models/ (Git LFS).");
     }
 
     /// <summary>

@@ -817,6 +817,140 @@ on one 3060), which is out of scope.** Capacity ruled out. Full analysis in `doc
 itself is sound (the right machinery for such a run); the cheap real win was inference-side (the 15 s time-bounded
 solver). Status: branch open (PR #7); deployed net unchanged.
 
+## M25 — Reusable training-campaign harness  *(SDK breadth; inserted 2026-06-21; PRD §14)* — ✅ DONE 2026-06-21 (branch unpushed)
+
+The four campaign harnesses (`Program.cs` Rush Hour, `CubeLab`, `CubeDaviLab`, `CubePolicyLab`) copy-paste one
+loop. A 3-agent investigation (2026-06-21) confirmed two paradigms that must not share an interface, and a
+migration order easy→hard so the runner is validated before it meets CubeDavi (never design the interface around
+CubeDavi first, or it absorbs CubeDavi's specifics and stops being reusable).
+
+**Status (2026-06-21):** ✅ **all deliverables done** on branch `training-campaign-harness` (off master, NOT pushed;
+many small commits, one squashed PR — push/PR when ready). **DONE + verified:** the Core abstraction (deliverable 1);
+**all four goal-reaching games migrated** (deliverable 2 — CubeLab, CubePolicy, RushHour, CubeDavi); the **Snake**
+score-maximizing campaign (deliverable 3 — the original goal); the **hosting/DI layer**; **GPU-backend DI**; and the
+**cube `TrainStep`/`Shuffle` dedup**. 264 tests green. **Design note:** the "two paradigms" live at the *eval* level
+(solve-rate vs mean-return) over one `ITrainingCampaign` interface — there is intentionally **no `GoalReachingCampaign`
+/`ScoreMaximizingCampaign` base class**: every game implements the interface directly, and future score games (2048
+n-tuple, SAC/PPO) use different trainers a DQN-shaped base wouldn't fit. **RLDemo.Web is now also wired onto the
+shared RL-runtime DI** (`71ed1ae` — `AddReinforcementLearning` + `AddGpuBackend` replace its hand-rolled store/backend
+registrations). **Possible follow-ups (not blocking):** share the generic `Shuffle` with RushHour; a
+`ScoreMaximizingCampaign` base only if a 2nd score game reveals real shared shape.
+
+**Commits so far:** `ada3d76` docs · `ed1490e` Core `CampaignRunner`+`ITrainingCampaign` (+3 tests) · `102d64a`
+CubeLab migrated (eval-only gate 96/100) · `126ed72` CubePolicy migrated (smoke clean) · `2cc4673`
+`CampaignRunner`→instance+`TimeProvider` · `43ce002` AIHost + DI + `[Register]` source-gen · `4c60e1f` docs ·
+`5e39f8d` RushHour migrated (eval-only parity vs shipped net: cards 16/77/82/81, random30 29/30 g + 30/30 s) ·
+`07bb2ed` CubeDavi migrated (GPU stack + curriculum/auto-widen/grow + 5 eval-only modes + two CSVs; value-curve +
+fresh-net training smoke verified) · `24e2741` GPU-backend DI (new `Ilgpu.Hosting` `AddGpuBackend()`; 264 tests pass) ·
+`04b965c` docs · `982ca9d` Snake DQN campaign (score-maximizing; fresh→20k food@12 ~19.7, resume 20k→35k verified) ·
+`d658a9a` cube `TrainStep`/`Shuffle` dedup (`CubePolicyTraining`; gate 97/100, training smoke verified).
+
+**Hosting & DI (decided + built 2026-06-21).** `CampaignRunner` is an **instance** class (not static), taking an
+injected **`TimeProvider`** (BCL; system clock by default, a fake clock drives the deterministic tests). A new
+package **`MintPlayer.AI.ReinforcementLearning.Hosting`** ships **`AIHost.CreateBuilder(string dataDirectory)`** →
+`HostApplicationBuilder` (the AI counterpart to `WebApplication.CreateBuilder`) plus
+`services.AddReinforcementLearning(dataDir)` (registers `IModelStore`=`FileModelStore`, `TimeProvider.System`, and
+`CampaignRunner`). `CampaignRunner` is DI-registered via **MintPlayer.SourceGenerators**
+`[Register(ServiceLifetime.Singleton, "ReinforcementLearningCore")]` — the generator emits
+`…Core.DependencyInjectionExtensionMethods.AddReinforcementLearningCore(IServiceCollection)` (which
+`AddReinforcementLearning` calls); DI resolves `TimeProvider` through the ctor. Core now references
+`MintPlayer.SourceGenerators`(`.Attributes`) `10.20.0`; all hosting / `Microsoft.Extensions.*` deps live in the
+Hosting package so Core stays lean. The Lab cube/cube-policy entry points resolve `IModelStore` + `CampaignRunner`
+from the host (DI all the way). **Why `dataDirectory`, not raw `args`:** the MS command-line config provider throws
+on bare flags like `--eval-only`, so each game parses its own args and passes the dir.
+
+**GPU-backend DI (done 2026-06-21, `24e2741`).** A new package **`MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting`**
+ships **`services.AddGpuBackend()`**, registering the shared **`AdaptiveBackend`** (CPU + CUDA-by-GEMM-size routing;
+pure CPU when no GPU) as a container-owned singleton. Kept **separate from the lean Ilgpu compute package** so that
+backend carries no DI dependency — the same Core↔Hosting split. The two GPU-benefiting cube campaigns
+(`CubeDaviCampaign`, `CubeEfficientCampaign`) now take the `AdaptiveBackend` by **constructor injection** and set it as
+`Backend.Current`, instead of each `new`-ing + disposing its own; the container owns its lifetime (disposed with the
+host), while the campaigns still own their per-eval / per-widen device-resident stacks. **No GPU added to
+RushHour/cube-imitation/Snake/2048** — their nets are too small to beat the multithreaded CPU at the routing
+threshold (it's ILGPU via the CUDA *driver*/PTX JIT, not the CUDA toolkit; ILGPU also targets OpenCL/CPU).
+
+1. **Core abstraction** — `Core/Training/`: `CampaignRunner` (+ injectable clock) drives `ITrainingCampaign :
+   IDisposable` (`Resume`/`TrainChunk`/`IsComplete`/`Evaluate`/`Checkpoint`/`TryRunStandaloneEval`); minimal
+   `CampaignEval`; `Action<CampaignProgress>` callback (all Console/CSV IO stays in the Lab). Unit-tested with a
+   fake campaign + fake clock + in-memory `IModelStore` (fast bucket, sub-second, no wall-clock).
+2. **`GoalReachingCampaign`** base + migrate easy→hard: **CubeLab → CubePolicyLab → RushHour → CubeDaviLab**, one
+   commit each, re-verifying tests + CI and keeping each game's existing checkpoint ids + CSV columns. CubeDavi
+   exercises every interface addition at once (dual stop via `IsComplete`; curriculum + auto-widen inside
+   `TrainChunk`; GPU resident stack via `IDisposable`; five eval-only modes via `TryRunStandaloneEval`; its two
+   CSVs stay campaign-owned).
+3. **`ScoreMaximizingCampaign`** base + **Snake** campaign — resumable DQN (chunk `DqnTrainer` by raising
+   `MaxSteps`, persist the full `DqnTrainingState`), eval = food eaten on the 12×12 grid. This is the `--game
+   snake` campaign that started this thread, now in its correct paradigm instead of bent onto the solver interface.
+
+**Gate (pre-registered):** each migrated game behaves identically (existing tests + CI green, same checkpoints/CSV);
+the `CampaignRunner` unit test passes deterministically; the Snake campaign resumes bitwise (reload
+`DqnTrainingState`) and reaches **≥ the shipped ~22 food / 12×12 baseline**.
+
+**Risks:** `CampaignEval` becoming a god-struct (keep it minimal — the investigation's single biggest design risk);
+CubeDavi exercising every addition at once (migrate it LAST, after the runner is proven on the simple loops).
+
+**Stretch:** migrate MountainCar / Pendulum / CartPole / 2048 onto campaigns; a DQN auto-grow hook
+only if a Snake plateau proves capacity-bound. *(→ M26.)*
+
+## M26 — Single training path: make RLDemo.Web load-only  — ✅ DONE 2026-06-22 (branch unpushed)
+
+**Problem.** After M25 there were two definitions of "how to train game X": the Lab's resumable
+`ITrainingCampaign`s, and the web's one-shot `EnsureModel` in each `*ModelService` (`DqnTrainer.Train(...)` etc.).
+
+**Key finding (reframed the milestone).** That web training was **vestigial**: every game's checkpoint
+(`snake.dqn`, `mountaincar.ppo`, … — 11 files) is committed to `models/` via **Git LFS** and seeded into the store
+at startup, so `EnsureModel`'s train branch never fired in production. So the fix isn't "make the web run campaigns"
+(my earlier plan) — it's **remove the web's training entirely**. Single path = train on a dev machine (Lab/Console),
+commit the checkpoint (LFS), the web loads it.
+
+**Done (`9a15264`):**
+- `ITrainableModelService.EnsureModel` → **`IModelStartupService.Initialize`** (load checkpoint / warm caches, never
+  train); `ModelTrainingHostedService` → `ModelStartupHostedService`.
+- The 5 game services dropped their trainer calls, `TrainingOptions`, training consts and progress fields; a missing
+  checkpoint now reports `Failed` ("no model in the store") rather than training in-process.
+- `ModelStatus` lost `Training`; `StatusResponse`/`Status2048Response` slimmed to `(status, error)`; controllers
+  updated. Frontend: the now-impossible `'training'` state removed across all 5 games (api unions, progress fields,
+  the 503 `'training'` solve-variant → `'loading'`, banners + polling). Angular prod build clean.
+- The RushHour solve gate (which mirrored the service recipe) now **inlines** its own DQN recipe — a self-contained
+  recipe-regression check. **264 tests green**; the `WebApplicationFactory` API tests still boot the real `Program.cs`.
+
+**Not needed (vs the earlier plan):** no shared `Campaigns` library and no web↔`CampaignRunner` wiring — the web
+doesn't train at all, so the campaigns stay `internal` to the Lab (the contract tests keep the `extern alias` reach).
+**Net −284 lines.** If a contributor needs to (re)produce a checkpoint, that's a dev-side Lab/Console run + an LFS
+commit, documented in `ADDING_A_GAME.md`.
+
+## M27 — Snake: spatial observation + anti-self-trap shield  *(branch `snake-spatial-obs`, stacked on M25/M26)* ⏳
+
+**Problem.** "Improve the Snake AI" (it expects >100 food). The shipped net scored **~21 food on 12×12** and was
+stuck there structurally, not for lack of training: (1) the observation was **12 local features** (danger one cell
+out + a food compass) — the agent was *blind to its own body*, so a long snake inevitably trapped itself; (2)
+`MaxEpisodeSteps = 1000` was a flat truncation that *hard-capped* how much food was even reachable per episode.
+
+**Fixes (this milestone).** A grid-size-invariant **egocentric observation** — a 9×9 obstacle+food patch centred on
+the head + food/tail direction & distance + heading + length + a **flood-fill of reachable open space per move**
+(the anti-trap signal a fixed window can't give) — and a **starvation episode limit** (`StarveLimit ≈ 2·cells` with no
+food) replacing the flat cap. Plus an opt-in **`safeMask`**: the action mask also forbids moves that flood-fill into
+a region too small for the body (a reactive 1-ply shield), used in training and the live web demo.
+
+**Experiment ledger (food@12, 50-ep eval unless noted; all >> the old 21):**
+| config | food |
+|---|---|
+| egocentric obs, `[128,128]` | 39.9 |
+| `[256,256]` (capacity) | 39.4 — capacity is *not* the bottleneck |
+| + tail feature + γ0.995 | 43.1 |
+| + step-penalty 0 + γ0.997 | 42.6 |
+| same net + post-hoc shield | 46.6 |
+| **shield-*trained*** (γ0.997, pen 0) | **52.3 peak / 50.7 @200-ep** |
+
+Shipping the shield-trained net (**~50 food, ~2.4× the old 21**): `models/snake.dqn.ckpt` overwritten,
+`SnakeController` live demo uses `safeMask`. **In progress:** a small→large **grid curriculum** (7×7 → 9×9 → 12×12,
+warm-started) — train space-management where trapping is unavoidable-to-confront, then transfer up; may beat ~50.
+
+**Honest ceiling.** ~50 is the **pure-learned (DQN + 1-ply shield)** plateau across capacity/feature/horizon/reward
+experiments. Reliable **100** (filling ~70% of the board) needs **multi-ply planning/search** — the EfficientCube
+pattern (learned net guiding a beam/lookahead, already in this repo) or a Hamiltonian planner — out of scope for
+this learning-only milestone, recommended as the follow-up.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
