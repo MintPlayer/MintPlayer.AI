@@ -95,7 +95,14 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
 
     public float[] CurrentObservation() => Observation();
 
-    private float[] Observation()
+    private float[] Observation() => BuildObservation(_world, _current, _next);
+
+    /// <summary>
+    /// Builds the 41-dim observation from a board + the current/next droppable tiers. Static so the live
+    /// "Watch AI" serving handler (which drives a <see cref="FruitCakeWorld"/> directly, not a full env) can
+    /// feed the trained net the <b>exact same observation</b> the policy was trained on.
+    /// </summary>
+    public static float[] BuildObservation(FruitCakeWorld world, int current, int next)
     {
         const float W = FruitCakeWorld.Width, H = FruitCakeWorld.Height;
         float binW = W / ColumnCount;
@@ -106,7 +113,7 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
         for (int c = 0; c < ColumnCount; c++) topY[c] = H; // empty column => surface at the floor
 
         float fillArea = 0f;
-        foreach (var b in _world.Bodies)
+        foreach (var b in world.Bodies)
         {
             fillArea += MathF.PI * b.R * b.R;
             int c0 = Math.Clamp((int)((b.X - b.R) / binW), 0, ColumnCount - 1);
@@ -126,10 +133,10 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
             if (topY[c] < minTop) minTop = topY[c];
         }
 
-        for (int t = 1; t <= FruitCatalog.MaxDroppableTier; t++) obs[i++] = _current == t ? 1f : 0f;
-        for (int t = 1; t <= FruitCatalog.MaxDroppableTier; t++) obs[i++] = _next == t ? 1f : 0f;
+        for (int t = 1; t <= FruitCatalog.MaxDroppableTier; t++) obs[i++] = current == t ? 1f : 0f;
+        for (int t = 1; t <= FruitCatalog.MaxDroppableTier; t++) obs[i++] = next == t ? 1f : 0f;
 
-        obs[i++] = Math.Clamp(_world.Count / 100f, 0f, 1f);        // normalized fruit count
+        obs[i++] = Math.Clamp(world.Count / 100f, 0f, 1f);         // normalized fruit count
         obs[i++] = Math.Clamp(fillArea / (W * H), 0f, 1f);          // board fill ratio
         obs[i++] = Math.Clamp(minTop / H, 0f, 1f);                  // highest surface (0 = pile at the very top)
         return obs;

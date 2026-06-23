@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
+using RLDemo.Web.Services;
 
 namespace RLDemo.Web.Controllers;
 
@@ -25,7 +26,7 @@ public sealed record FruitCakeFrameDto(FruitDto[] Fruit, int HeldTier, int NextT
 /// </summary>
 [ApiController]
 [Route("api/fruitcake")]
-public sealed class FruitCakeController : ControllerBase
+public sealed class FruitCakeController(FruitCakeModelService model) : ControllerBase
 {
     private static int _seedCounter;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -56,7 +57,10 @@ public sealed class FruitCakeController : ControllerBase
         var ct = HttpContext.RequestAborted;
         var rng = new Xoshiro256StarStar((ulong)System.Threading.Interlocked.Increment(ref _seedCounter)); // distinct game per connection
         var heuristic = new FruitCakeHeuristic();
-        var world = new FruitCakeWorld(enableRotation: true); // rotation on so fruit visibly roll
+        var agent = model.Agent; // the trained net if a checkpoint shipped; otherwise null → heuristic fallback
+        // Rotation on so fruit visibly roll. The policy trained on rotation-off physics but transfers cleanly
+        // (eval: 706 rotation-off → 982 rotation-on), so serving rotation-on is both faithful and prettier.
+        var world = new FruitCakeWorld(enableRotation: true);
 
         try
         {
@@ -72,7 +76,11 @@ public sealed class FruitCakeController : ControllerBase
 
                 while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
                 {
-                    int col = heuristic.ChooseColumn(world, current);
+                    // The trained net picks the column from the same observation it trained on; without a
+                    // checkpoint we fall back to the greedy heuristic so the demo always plays.
+                    int col = agent is not null
+                        ? agent.Act(FruitCakeEnv.BuildObservation(world, current, next), null, greedy: true)
+                        : heuristic.ChooseColumn(world, current);
                     world.SpawnFruit(current, FruitCakeEnv.ColumnX(col, current), FruitCakeEnv.HeldY(current));
 
                     // Tick the physics in real time, streaming frames, until the drop settles.
