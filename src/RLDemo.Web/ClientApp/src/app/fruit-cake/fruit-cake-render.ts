@@ -95,7 +95,7 @@ export function render(ctx: CanvasRenderingContext2D, game: FruitCakeGame, surfa
     const def = byTier(f.tier);
     // Merge-born fruit pop in: scale 0→1 with an ease-out-back overshoot.
     const popScale = f.mergeBorn && f.ageSeconds < POP_SECONDS ? easeOutBack(f.ageSeconds / POP_SECONDS) : 1;
-    drawFruit(ctx, f.tier, f.xPx, f.yPx, def.radiusPx * popScale);
+    drawFruit(ctx, f.tier, f.xPx, f.yPx, def.radiusPx * popScale, f.angle);
     if (game.colorblindLabels) drawTierLabel(ctx, f.tier, f.xPx, f.yPx, def.radiusPx);
   }
 
@@ -147,8 +147,8 @@ function drawHeldFruitAndGuide(ctx: CanvasRenderingContext2D, game: FruitCakeGam
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // The held fruit (dimmed slightly during cooldown).
-  drawFruit(ctx, game.currentTier, x, y, def.radiusPx, game.cooldownRemaining > 0 ? 120 : 255);
+  // The held fruit (upright; dimmed slightly during cooldown).
+  drawFruit(ctx, game.currentTier, x, y, def.radiusPx, 0, game.cooldownRemaining > 0 ? 120 : 255);
 }
 
 function drawTierLabel(ctx: CanvasRenderingContext2D, tier: number, cx: number, cy: number, radius: number): void {
