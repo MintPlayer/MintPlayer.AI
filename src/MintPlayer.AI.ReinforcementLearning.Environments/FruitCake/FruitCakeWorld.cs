@@ -141,6 +141,63 @@ public sealed class FruitCakeWorld
         return false;
     }
 
+    /// <summary>True if any fruit's center is above the danger line (regardless of speed) — for the visual pulse.</summary>
+    public bool AnyAboveDangerLine()
+    {
+        foreach (var b in _bodies) if (b.Y < DangerLineY) return true;
+        return false;
+    }
+
+    /// <summary>Height of the tallest point of the pile above the floor (0 = empty board).</summary>
+    public float PileHeight()
+    {
+        float minTop = Height;
+        foreach (var b in _bodies) minTop = MathF.Min(minTop, b.Y - b.R);
+        return Height - minTop;
+    }
+
+    /// <summary>
+    /// Advance the sim until the just-dropped fruit (and any cascade) comes to rest, in pure compute (no
+    /// wall-clock). Returns the merge points scored. Early-settle: stop the instant the pile is quiet and
+    /// nothing merged this sub-step — but only after <paramref name="minSubsteps"/> so a fresh fruit has
+    /// time to accelerate and fall; <paramref name="maxSubsteps"/> is a safety cap. Shared by the training
+    /// env and the heuristic so they settle identically.
+    /// </summary>
+    public int SettleAfterDrop(float settleSpeedPx, int minSubsteps, int maxSubsteps, float dt = 1f / 60f)
+    {
+        int points = 0;
+        for (int sub = 0; sub < maxSubsteps; sub++)
+        {
+            int gained = Step(dt);
+            points += gained;
+            if (sub >= minSubsteps && gained == 0 && MaxSpeed() < settleSpeedPx) break;
+        }
+        return points;
+    }
+
+    /// <summary>
+    /// Deep copy for what-if planning (the heuristic tries each column on a clone). When
+    /// <paramref name="enableRotation"/> is given it overrides the copy's rotation mode — the heuristic
+    /// plans with rotation off (cheaper, deterministic; merges don't depend on orientation) even when the
+    /// live world has it on.
+    /// </summary>
+    public FruitCakeWorld Clone(bool? enableRotation = null)
+    {
+        bool rot = enableRotation ?? _rotation;
+        var copy = new FruitCakeWorld(rot);
+        foreach (var b in _bodies)
+            copy._bodies.Add(new FruitBody
+            {
+                X = b.X, Y = b.Y, Vx = b.Vx, Vy = b.Vy,
+                Angle = rot ? b.Angle : 0f,
+                AngularVel = rot ? b.AngularVel : 0f,
+                R = b.R, Tier = b.Tier,
+                InvMass = b.InvMass,
+                InvI = rot ? b.InvI : 0f,
+            });
+        return copy;
+    }
+
     // ── solver internals (ported 1:1 from fruit-cake-physics.ts) ───────────────────────────────
 
     private readonly struct Contact(FruitBody a, FruitBody? b, float nx, float ny, float pen)

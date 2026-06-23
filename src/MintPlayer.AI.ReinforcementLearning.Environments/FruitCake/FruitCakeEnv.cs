@@ -23,13 +23,12 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
 
     private const float RewardScale = 10f;       // normalize merge points
     private const float TerminalPenalty = -1f;
-    private const float SettleSpeedPx = 30f;     // early-settle: below this (and no merge) the drop is at rest
-    private const float RestSpeedPx = 40f;       // a fruit slower than this counts as "resting" for game-over
-    private const int MinSettleSubsteps = 8;     // let a just-dropped fruit accelerate before testing for rest
-    private const int MaxSubsteps = 600;         // safety cap (~10 s sim) — early-settle ends most drops far sooner
+    public const float SettleSpeedPx = 30f;      // early-settle: below this (and no merge) the drop is at rest
+    public const float RestSpeedPx = 40f;        // a fruit slower than this counts as "resting" for game-over
+    public const int MinSettleSubsteps = 8;      // let a just-dropped fruit accelerate before testing for rest
+    public const int MaxSubsteps = 600;          // safety cap (~10 s sim) — early-settle ends most drops far sooner
     private const int MaxDrops = 500;            // truncation cap
     private const float WallInset = 6f;
-    private const float SubstepDt = 1f / 60f;
 
     private Xoshiro256StarStar _rng = new(0);
     private FruitCakeWorld _world = new(enableRotation: false);
@@ -73,23 +72,10 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
         if (!ActionSpace.Contains(action))
             throw new ArgumentOutOfRangeException(nameof(action));
 
-        float r = FruitCatalog.ByTier(_current).RadiusPx;
-        float nominalX = (action + 0.5f) * (FruitCakeWorld.Width / ColumnCount);
-        float x = Math.Clamp(nominalX, r + WallInset, FruitCakeWorld.Width - r - WallInset);
-        float y = FruitCakeWorld.DangerLineY - r - 4f; // the held position, just above the danger line
+        _world.SpawnFruit(_current, ColumnX(action, _current), HeldY(_current));
 
-        _world.SpawnFruit(_current, x, y);
-
-        // Simulate to rest in pure compute — no real-time waiting. Early-settle the instant the pile is
-        // quiet and nothing merged this sub-step (a merge always perturbs the pile, so this never cuts a
-        // cascade short); the cap is only a safety net.
-        int points = 0;
-        for (int sub = 0; sub < MaxSubsteps; sub++)
-        {
-            int gained = _world.Step(SubstepDt);
-            points += gained;
-            if (sub >= MinSettleSubsteps && gained == 0 && _world.MaxSpeed() < SettleSpeedPx) break;
-        }
+        // Simulate to rest in pure compute — no real-time waiting (PRD §4.2). Shared with the heuristic.
+        int points = _world.SettleAfterDrop(SettleSpeedPx, MinSettleSubsteps, MaxSubsteps);
 
         _score += points;
         _drops++;
@@ -147,6 +133,17 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
     }
 
     private int RandomDroppable() => FruitCatalog.Droppable[_rng.NextInt(FruitCatalog.Droppable.Count)].Tier;
+
+    /// <summary>The clamped drop-x (px) for a column action and the current fruit's radius. Shared with the heuristic + serving.</summary>
+    public static float ColumnX(int action, int currentTier)
+    {
+        float r = FruitCatalog.ByTier(currentTier).RadiusPx;
+        float nominalX = (action + 0.5f) * (FruitCakeWorld.Width / ColumnCount);
+        return Math.Clamp(nominalX, r + WallInset, FruitCakeWorld.Width - r - WallInset);
+    }
+
+    /// <summary>The held drop height (px), just above the danger line, for the current fruit.</summary>
+    public static float HeldY(int currentTier) => FruitCakeWorld.DangerLineY - FruitCatalog.ByTier(currentTier).RadiusPx - 4f;
 
     public byte[] SaveState()
     {

@@ -1,7 +1,8 @@
 import { AfterViewInit, Component, DestroyRef, ElementRef, NgZone, inject, signal, viewChild } from '@angular/core';
+import { FruitCakeApi, FruitCakeFrame } from './fruit-cake-api';
 import { FruitCakeAudio } from './fruit-cake-audio';
 import { FruitCakeGame, GamePhase } from './fruit-cake-game';
-import { HudButton, hitTest, render, surfaceToContainerX } from './fruit-cake-render';
+import { HudButton, hitTest, render, renderFrame, surfaceToContainerX } from './fruit-cake-render';
 
 /**
  * FruitCake — a Suika-style drop-and-merge physics game, ported from the original .NET MAUI/Blazor
@@ -27,10 +28,15 @@ export class FruitCake implements AfterViewInit {
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('board');
   private readonly zone = inject(NgZone);
 
+  private readonly api = inject(FruitCakeApi);
   private readonly audio = new FruitCakeAudio();
   private readonly game = new FruitCakeGame(this.audio);
 
   protected readonly isFullscreen = signal(false);
+  /** 'human' = play locally; 'watch' = render the server-streamed AI game (PRD §4.6). */
+  protected readonly mode = signal<'human' | 'watch'>('human');
+  private socket: WebSocket | null = null;
+  private latestFrame: FruitCakeFrame | null = null;
 
   private ctx: CanvasRenderingContext2D | null = null;
   private rafId = 0;
@@ -54,17 +60,58 @@ export class FruitCake implements AfterViewInit {
   private teardown(): void {
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
+    this.disconnect();
     this.game.saveSnapshot();
     this.audio.dispose();
   }
 
+  // ── AI "Watch" mode ────────────────────────────────────────────────────────────────────────
+  protected setMode(mode: 'human' | 'watch'): void {
+    if (this.mode() === mode) return;
+    if (mode === 'watch') {
+      this.mode.set('watch');
+      this.latestFrame = null;
+      void this.connect();
+    } else {
+      this.disconnect();
+      this.mode.set('human');
+      this.lastMs = 0;
+      this.accumulator = 0;
+    }
+  }
+
+  private async connect(): Promise<void> {
+    // The heuristic is always ready; the status poll keeps parity with the other games (and a future
+    // trained net that may still be loading).
+    const status = await this.api.status();
+    if (this.mode() !== 'watch') return; // user switched away while polling
+    if (status.status !== 'ready') {
+      setTimeout(() => void this.connect(), 1500);
+      return;
+    }
+    this.socket = this.api.connectLive(
+      frame => (this.latestFrame = frame),
+      () => (this.socket = null),
+    );
+  }
+
+  private disconnect(): void {
+    this.socket?.close();
+    this.socket = null;
+    this.latestFrame = null;
+  }
+
   private readonly frame = (nowMs: number): void => {
-    const dt = this.lastMs ? Math.min(0.25, (nowMs - this.lastMs) / 1000) : 0; // clamp to avoid a spiral after a stall
-    this.lastMs = nowMs;
-    this.accumulator += dt;
-    while (this.accumulator >= FruitCake.Step) {
-      this.game.step(FruitCake.Step);
-      this.accumulator -= FruitCake.Step;
+    if (this.mode() === 'human') {
+      const dt = this.lastMs ? Math.min(0.25, (nowMs - this.lastMs) / 1000) : 0; // clamp to avoid a spiral after a stall
+      this.lastMs = nowMs;
+      this.accumulator += dt;
+      while (this.accumulator >= FruitCake.Step) {
+        this.game.step(FruitCake.Step);
+        this.accumulator -= FruitCake.Step;
+      }
+    } else {
+      this.lastMs = nowMs; // watch mode: the server drives the game; we only render streamed frames
     }
     this.draw();
     this.rafId = requestAnimationFrame(this.frame);
@@ -84,16 +131,25 @@ export class FruitCake implements AfterViewInit {
       canvas.height = bh;
     }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    render(this.ctx, this.game, cssW, cssH);
+    if (this.mode() === 'watch') {
+      if (this.latestFrame) renderFrame(this.ctx, this.latestFrame, this.game.themeIndex, cssW, cssH);
+      else {
+        this.ctx.fillStyle = '#1c0b2b';
+        this.ctx.fillRect(0, 0, cssW, cssH); // connecting…
+      }
+    } else {
+      render(this.ctx, this.game, cssW, cssH);
+    }
   }
 
   protected onPointerMove(event: PointerEvent): void {
-    if (this.game.phase !== GamePhase.Playing) return;
+    if (this.mode() !== 'human' || this.game.phase !== GamePhase.Playing) return;
     const { sx, w, h } = this.toSurface(event);
     this.game.aimTo(surfaceToContainerX(sx, w, h));
   }
 
   protected onPointerDown(event: PointerEvent): void {
+    if (this.mode() !== 'human') return;
     const { sx, sy, w, h } = this.toSurface(event);
 
     if (this.game.phase === GamePhase.GameOver) {

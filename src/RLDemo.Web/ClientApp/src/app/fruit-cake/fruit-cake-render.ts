@@ -1,6 +1,7 @@
+import type { FruitCakeFrame } from './fruit-cake-api';
 import { drawFruit } from './fruit-cake-art';
 import { PARTICLE_LIFE_SECONDS, POPUP_LIFE_SECONDS } from './fruit-cake-effects';
-import { byTier, cssColor } from './fruit-cake-fruits';
+import { byTier, cssColor, THEMES } from './fruit-cake-fruits';
 import { FruitCakeGame, GamePhase } from './fruit-cake-game';
 import { FruitWorld } from './fruit-cake-physics';
 
@@ -119,6 +120,79 @@ export function render(ctx: CanvasRenderingContext2D, game: FruitCakeGame, surfa
   }
 
   if (game.phase === GamePhase.GameOver) drawGameOver(ctx, game, surfaceWidth, surfaceHeight);
+}
+
+/**
+ * Draws one server-streamed AI frame (PRD §4.6) — the browser is a pure renderer in "Watch AI" mode. A
+ * trimmed version of {@link render}: background, danger line, the streamed fruit (with their orientation),
+ * the wall, the NEXT preview, the score, and a game-over overlay. No toolbar / held fruit / effects.
+ */
+export function renderFrame(
+  ctx: CanvasRenderingContext2D,
+  frame: FruitCakeFrame,
+  themeIndex: number,
+  surfaceWidth: number,
+  surfaceHeight: number,
+): void {
+  const theme = THEMES[Math.min(THEMES.length - 1, Math.max(0, themeIndex))];
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = cssColor(theme.background);
+  ctx.fillRect(0, 0, surfaceWidth, surfaceHeight);
+
+  const scale = fitScale(surfaceWidth, surfaceHeight);
+  const offsetX = (surfaceWidth - FruitWorld.ContainerWidthPx * scale) / 2;
+  const offsetY = (surfaceHeight - FruitWorld.ContainerHeightPx * scale) / 2;
+
+  ctx.save();
+  ctx.translate(offsetX, offsetY);
+  ctx.scale(scale, scale);
+
+  ctx.strokeStyle = frame.danger ? cssColor(DANGER) : cssColor(DANGER, 110);
+  ctx.lineWidth = frame.danger ? 4 : 2;
+  ctx.beginPath();
+  ctx.moveTo(0, FruitWorld.DangerLineYPx);
+  ctx.lineTo(FruitWorld.ContainerWidthPx, FruitWorld.DangerLineYPx);
+  ctx.stroke();
+
+  for (const f of frame.fruit) {
+    const def = byTier(f.tier);
+    drawFruit(ctx, f.tier, f.x, f.y, def.radiusPx, f.angle);
+  }
+
+  ctx.strokeStyle = cssColor(theme.wall);
+  ctx.lineWidth = 6;
+  ctx.strokeRect(0, 0, FruitWorld.ContainerWidthPx, FruitWorld.ContainerHeightPx);
+
+  const nd = byTier(frame.nextTier);
+  const ncx = FruitWorld.ContainerWidthPx - 70;
+  const ncy = 60;
+  drawFruit(ctx, frame.nextTier, ncx, ncy, Math.min(nd.radiusPx, 40));
+  ctx.fillStyle = cssColor(DIM);
+  ctx.font = `20px ${FONT}`;
+  ctx.textAlign = 'center';
+  ctx.fillText('NEXT', ncx, ncy - 48);
+  ctx.textAlign = 'start';
+  ctx.restore();
+
+  ctx.fillStyle = cssColor(HUD);
+  ctx.textAlign = 'left';
+  ctx.font = `30px ${FONT}`;
+  ctx.fillText(`${frame.score}`, 16, 36);
+  ctx.fillStyle = cssColor(DIM);
+  ctx.font = `14px ${FONT}`;
+  ctx.fillText('AI playing', 16, 56);
+
+  if (frame.done) {
+    ctx.fillStyle = cssColor(0xff000000, 170);
+    ctx.fillRect(0, 0, surfaceWidth, surfaceHeight);
+    ctx.fillStyle = cssColor(HUD);
+    ctx.textAlign = 'center';
+    ctx.font = `48px ${FONT}`;
+    ctx.fillText('Game Over', surfaceWidth / 2, surfaceHeight / 2 - 18);
+    ctx.font = `24px ${FONT}`;
+    ctx.fillText(`Score ${frame.score}`, surfaceWidth / 2, surfaceHeight / 2 + 20);
+    ctx.textAlign = 'start';
+  }
 }
 
 function drawDangerLine(ctx: CanvasRenderingContext2D, game: FruitCakeGame): void {

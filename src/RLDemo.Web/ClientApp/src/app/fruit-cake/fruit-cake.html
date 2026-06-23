@@ -5,6 +5,11 @@
   above the danger line. Runs entirely in your browser.
 </p>
 
+<div class="modes">
+  <button type="button" [class.active]="mode() === 'human'" (click)="setMode('human')">Play yourself</button>
+  <button type="button" [class.active]="mode() === 'watch'" (click)="setMode('watch')">Watch AI</button>
+</div>
+
 <div #stage class="fc-stage">
   <canvas #board (pointermove)="onPointerMove($event)" (pointerdown)="onPointerDown($event)"></canvas>
 
@@ -31,4 +36,8 @@
   </button>
 </div>
 
-<p class="hint">Aim and tap to drop. Toolbar (top-right of the board): sound · tier labels · theme · music.</p>
+@if (mode() === 'human') {
+  <p class="hint">Aim and tap to drop. Toolbar (top-right of the board): sound · tier labels · theme · music.</p>
+} @else {
+  <p class="hint">A greedy AI is playing — the server runs the game and streams it here. Switch back any time to play yourself.</p>
+}
