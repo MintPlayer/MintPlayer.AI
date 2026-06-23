@@ -1,3 +1,5 @@
+// Behaviour mirror: the C# training port is src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/FruitCakeWorld.cs
+// — keep the two ports in sync (PRD docs/prd/FRUITCAKE_AI_PRD.md §4.8).
 import { byTier, mergeResultTier } from './fruit-cake-fruits';
 
 /** A fruit in flight/at rest: center (px), orientation (rad), tier, speed (px/s), age, merge-born. */

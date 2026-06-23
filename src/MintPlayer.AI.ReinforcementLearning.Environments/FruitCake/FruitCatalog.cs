@@ -1,5 +1,8 @@
 namespace MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 
+// Behaviour mirror of: src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-fruits.ts
+// — keep the two ports in sync (PRD docs/prd/FRUITCAKE_AI_PRD.md §4.8).
+
 /// <summary>One link in the merge chain. Tier is 1-based (1 = cherry … 11 = watermelon).</summary>
 public readonly record struct FruitDef(int Tier, float RadiusPx, bool Droppable, int MergePoints);
 

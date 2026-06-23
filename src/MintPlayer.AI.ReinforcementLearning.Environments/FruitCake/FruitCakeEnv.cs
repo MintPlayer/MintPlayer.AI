@@ -4,6 +4,9 @@ using MintPlayer.AI.ReinforcementLearning.Core.Random;
 
 namespace MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 
+// Game rules mirror the web game's src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-game.ts
+// (training subset: no drop cooldown / effects / audio). Keep in sync (PRD docs/prd/FRUITCAKE_AI_PRD.md §4.8).
+
 /// <summary>
 /// FruitCake (Suika merge game) as an RL environment. One <see cref="Step"/> = <b>one drop</b>: place
 /// the current fruit in the chosen column, then simulate the physics to rest <b>in pure compute</b>

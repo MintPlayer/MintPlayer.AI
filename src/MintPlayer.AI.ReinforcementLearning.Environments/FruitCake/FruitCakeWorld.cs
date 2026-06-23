@@ -1,5 +1,8 @@
 namespace MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 
+// Behaviour mirror of the web game's solver: src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-physics.ts
+// — keep the two ports in sync (PRD docs/prd/FRUITCAKE_AI_PRD.md §4.8).
+
 /// <summary>A fruit body in the simulation. Mutable; positions/velocities in pixels, angle in radians.</summary>
 public sealed class FruitBody
 {

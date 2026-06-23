@@ -1,3 +1,5 @@
+// Behaviour mirror: the C# training env is src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/FruitCakeEnv.cs
+// (training subset of these rules) — keep in sync (PRD docs/prd/FRUITCAKE_AI_PRD.md §4.8).
 import { FruitCakeAudio } from './fruit-cake-audio';
 import { Effects } from './fruit-cake-effects';
 import { byTier, DROPPABLE, FruitTheme, THEMES } from './fruit-cake-fruits';
