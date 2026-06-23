@@ -16,24 +16,27 @@ const R = 124; // fill the collider
 
 const cache = new Map<number, HTMLCanvasElement>();
 
-/** Draw fruit `tier` centered at (cx,cy) filling a circle of `radius` px, at `alpha` (0..255). */
+/** Draw fruit `tier` centered at (cx,cy) filling a circle of `radius` px, rotated by `angle` (rad), at `alpha` (0..255). */
 export function drawFruit(
   ctx: CanvasRenderingContext2D,
   tier: number,
   cx: number,
   cy: number,
   radius: number,
+  angle = 0,
   alpha = 255,
 ): void {
   const img = image(tier);
-  if (alpha === 255) {
-    ctx.drawImage(img, cx - radius, cy - radius, radius * 2, radius * 2);
-  } else {
-    const prev = ctx.globalAlpha;
-    ctx.globalAlpha = alpha / 255;
-    ctx.drawImage(img, cx - radius, cy - radius, radius * 2, radius * 2);
-    ctx.globalAlpha = prev;
+  if (angle === 0 && alpha === 255) {
+    ctx.drawImage(img, cx - radius, cy - radius, radius * 2, radius * 2); // fast path: no transform
+    return;
   }
+  ctx.save();
+  if (alpha !== 255) ctx.globalAlpha = alpha / 255;
+  ctx.translate(cx, cy);
+  if (angle !== 0) ctx.rotate(angle);
+  ctx.drawImage(img, -radius, -radius, radius * 2, radius * 2);
+  ctx.restore();
 }
 
 function image(tier: number): HTMLCanvasElement {

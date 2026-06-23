@@ -1,9 +1,10 @@
 import { byTier, mergeResultTier } from './fruit-cake-fruits';
 
-/** A fruit in flight/at rest: center (px), tier, speed (px/s), age, and whether it was born from a merge. */
+/** A fruit in flight/at rest: center (px), orientation (rad), tier, speed (px/s), age, merge-born. */
 export interface FruitView {
   xPx: number;
   yPx: number;
+  angle: number;
   tier: number;
   speedPx: number;
   ageSeconds: number;
@@ -24,9 +25,12 @@ interface Body {
   y: number;
   vx: number;
   vy: number;
+  angle: number; // orientation (rad)
+  angularVel: number; // spin (rad/s)
   r: number;
   tier: number;
   invMass: number;
+  invI: number; // inverse moment of inertia (disc: I = ½·m·r²)
   spawnTime: number;
   mergeBorn: boolean;
   pendingMerge: boolean;
@@ -63,13 +67,14 @@ export class FruitWorld {
   private static readonly PixelsPerMeter = 64;
   private static readonly Gravity = 9.8 * FruitWorld.PixelsPerMeter; // px/s², +Y down
   private static readonly Restitution = 0.1; // very low bounce; fruit settles fast
-  private static readonly Friction = 0.006;
+  private static readonly Friction = 0.3; // grippy enough that contact torque makes fruit roll, not slide
   private static readonly RestitutionThresholdPx = 64; // below this approach speed, treat as inelastic (no jitter)
 
-  private static readonly VelocityIterations = 8;
+  private static readonly VelocityIterations = 12; // higher: friction+torque coupling needs more passes to settle
   private static readonly PositionIterations = 4;
   private static readonly Slop = 0.5; // allowed penetration before correcting
   private static readonly CorrectionPercent = 0.8;
+  private static readonly AngularDamping = 0.995; // gentle rolling resistance so spin decays and piles settle
 
   private static readonly LandThresholdPx = 130; // min impact speed to count as a "landing" thud
   private static readonly LandMaxPx = 900; // impact speed mapped to full volume
@@ -91,15 +96,20 @@ export class FruitWorld {
   /** Spawn a fruit of `tier` centered at the given pixel position. */
   spawnFruit(tier: number, xPx: number, yPx: number, mergeBorn = false): void {
     const def = byTier(tier);
-    const mass = Math.PI * def.radiusPx * def.radiusPx; // uniform density => area-proportional mass
+    const r = def.radiusPx;
+    const mass = Math.PI * r * r; // uniform density => area-proportional mass
+    const inertia = 0.5 * mass * r * r; // solid disc: I = ½·m·r²
     this.bodies.push({
       x: xPx,
       y: yPx,
       vx: 0,
       vy: 0,
-      r: def.radiusPx,
+      angle: 0, // spawns upright (matching the held fruit); spin builds up from rolling
+      angularVel: 0,
+      r,
       tier,
       invMass: 1 / mass,
+      invI: 1 / inertia,
       spawnTime: this.time,
       mergeBorn,
       pendingMerge: false,
@@ -123,6 +133,8 @@ export class FruitWorld {
     for (const b of this.bodies) {
       b.x += b.vx * dt;
       b.y += b.vy * dt;
+      b.angle += b.angularVel * dt;
+      b.angularVel *= FruitWorld.AngularDamping;
     }
 
     // Non-linear position correction: recompute penetration each pass and project bodies apart.
@@ -197,46 +209,68 @@ export class FruitWorld {
 
   private resolveVelocity(c: Contact): void {
     const { a, b, nx, ny } = c;
-    const invB = b ? b.invMass : 0;
-    const invSum = a.invMass + invB;
-    if (invSum === 0) return;
+    const invMa = a.invMass;
+    const invMb = b ? b.invMass : 0;
+    const invIa = a.invI;
+    const invIb = b ? b.invI : 0;
+    if (invMa + invMb === 0) return;
 
-    const bvx = b ? b.vx : 0;
-    const bvy = b ? b.vy : 0;
-    let relN = (bvx - a.vx) * nx + (bvy - a.vy) * ny;
+    // Lever arms from each center to the contact point (a circle touches along its own normal).
+    const rax = a.r * nx;
+    const ray = a.r * ny;
+    const rbx = b ? -b.r * nx : 0;
+    const rby = b ? -b.r * ny : 0;
+
+    // Relative velocity AT the contact point: v + ω × r  (2D: ω × r = (−ω·r.y, ω·r.x)).
+    const wa = a.angularVel;
+    const wb = b ? b.angularVel : 0;
+    let rvx = (b ? b.vx - wb * rby : 0) - (a.vx - wa * ray);
+    let rvy = (b ? b.vy + wb * rbx : 0) - (a.vy + wa * rax);
+
+    const relN = rvx * nx + rvy * ny;
     if (relN > 0) return; // separating
 
     const e = relN < -FruitWorld.RestitutionThresholdPx ? FruitWorld.Restitution : 0;
-    const jn = (-(1 + e) * relN) / invSum;
-    const inx = jn * nx;
-    const iny = jn * ny;
-    a.vx -= a.invMass * inx;
-    a.vy -= a.invMass * iny;
-    if (b) {
-      b.vx += b.invMass * inx;
-      b.vy += b.invMass * iny;
-    }
 
-    // Friction along the tangent, Coulomb-clamped to the normal impulse.
-    const rvx = (b ? b.vx : 0) - a.vx;
-    const rvy = (b ? b.vy : 0) - a.vy;
+    // Normal impulse — effective mass includes the rotational term (cross(r, n))².
+    const rnA = rax * ny - ray * nx;
+    const rnB = rbx * ny - rby * nx;
+    const kn = invMa + invMb + invIa * rnA * rnA + invIb * rnB * rnB;
+    if (kn <= 0) return;
+    const jn = (-(1 + e) * relN) / kn;
+    this.applyImpulse(a, b, rax, ray, rbx, rby, jn * nx, jn * ny);
+
+    // Recompute the contact-point relative velocity, then apply Coulomb friction along the tangent.
+    const wa2 = a.angularVel;
+    const wb2 = b ? b.angularVel : 0;
+    rvx = (b ? b.vx - wb2 * rby : 0) - (a.vx - wa2 * ray);
+    rvy = (b ? b.vy + wb2 * rbx : 0) - (a.vy + wa2 * rax);
     const rvn = rvx * nx + rvy * ny;
     let tx = rvx - rvn * nx;
     let ty = rvy - rvn * ny;
     const tlen = Math.sqrt(tx * tx + ty * ty);
-    if (tlen < 1e-4) return;
+    if (tlen < 1e-6) return;
     tx /= tlen;
     ty /= tlen;
-    let jt = (-(rvx * tx + rvy * ty)) / invSum;
+    const rtA = rax * ty - ray * tx;
+    const rtB = rbx * ty - rby * tx;
+    const kt = invMa + invMb + invIa * rtA * rtA + invIb * rtB * rtB;
+    if (kt <= 0) return;
+    let jt = (-(rvx * tx + rvy * ty)) / kt;
     const max = FruitWorld.Friction * jn;
     jt = Math.min(max, Math.max(-max, jt));
-    const ftx = jt * tx;
-    const fty = jt * ty;
-    a.vx -= a.invMass * ftx;
-    a.vy -= a.invMass * fty;
+    this.applyImpulse(a, b, rax, ray, rbx, rby, jt * tx, jt * ty);
+  }
+
+  /** Apply an impulse (jx,jy) at the contact, updating linear AND angular velocity of both bodies. */
+  private applyImpulse(a: Body, b: Body | null, rax: number, ray: number, rbx: number, rby: number, jx: number, jy: number): void {
+    a.vx -= a.invMass * jx;
+    a.vy -= a.invMass * jy;
+    a.angularVel -= a.invI * (rax * jy - ray * jx); // ω -= invI · cross(r, J)
     if (b) {
-      b.vx += b.invMass * ftx;
-      b.vy += b.invMass * fty;
+      b.vx += b.invMass * jx;
+      b.vy += b.invMass * jy;
+      b.angularVel += b.invI * (rbx * jy - rby * jx);
     }
   }
 
@@ -280,6 +314,7 @@ export class FruitWorld {
     return this.bodies.map(b => ({
       xPx: b.x,
       yPx: b.y,
+      angle: b.angle,
       tier: b.tier,
       speedPx: Math.sqrt(b.vx * b.vx + b.vy * b.vy),
       ageSeconds: this.time - b.spawnTime,
