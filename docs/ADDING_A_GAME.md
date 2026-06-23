@@ -1,8 +1,8 @@
 # Adding a new game end-to-end
 
 The mechanical, file-by-file checklist for adding a game to the playground, reverse-engineered from
-**Rush Hour** / **2048** / **Cube** (investigated 2026-06-15). Cross-refs: `PRD.md` §7 + §7.1 (interaction
-models), `PLAN.md` M8–M10 (web slices) + M22 (MountainCar/Snake).
+**Rush Hour** / **2048** / **Cube** (investigated 2026-06-15). Cross-refs: `prd/PRD.md` §7 + §7.1 (interaction
+models), `prd/PLAN.md` M8–M10 (web slices) + M22 (MountainCar/Snake).
 
 For a new game `X` (lowercase env id `xgame`, PascalCase `XGame`), pick the **interaction principle** first
 (PRD §7.1): **A — compute-and-return** (HTTP, like Cube/2048/RushHour/Snake) or **B — live control stream**

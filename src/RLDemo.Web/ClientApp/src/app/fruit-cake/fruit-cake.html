@@ -1,0 +1,34 @@
+<h1>FruitCake</h1>
+<p class="subtitle">
+  A Suika-style drop-and-merge physics game — <strong>aim with the pointer, tap to drop</strong>. Two fruit of the
+  same kind that touch merge into the next one up, all the way from cherry to watermelon. Don't let the pile settle
+  above the danger line. Runs entirely in your browser.
+</p>
+
+<div #stage class="fc-stage">
+  <canvas #board (pointermove)="onPointerMove($event)" (pointerdown)="onPointerDown($event)"></canvas>
+
+  <!-- Lives inside the stage so it stays reachable in fullscreen (no Esc key on touch devices). -->
+  <button
+    type="button"
+    class="fc-fullscreen"
+    (click)="toggleFullscreen()"
+    (pointerdown)="$event.stopPropagation()"
+    [attr.aria-label]="isFullscreen() ? 'Exit fullscreen' : 'Enter fullscreen'"
+    [title]="isFullscreen() ? 'Exit fullscreen' : 'Enter fullscreen'"
+  >
+    @if (isFullscreen()) {
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 8h3a2 2 0 0 0 2-2V3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M21 16h-3a2 2 0 0 0-2 2v3" />
+      </svg>
+    } @else {
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+      </svg>
+    }
+  </button>
+</div>
+
+<p class="hint">Aim and tap to drop. Toolbar (top-right of the board): sound · tier labels · theme · music.</p>

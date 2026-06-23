@@ -2,8 +2,8 @@
 
 A running ledger of every performance / capability optimization in the SDK, with measured impact
 and the milestone/commit it landed in. "Impact" numbers are measured on the dev machine
-(RTX 3060 Laptop GPU + Intel Iris Xe iGPU, 8-core CPU) unless noted. Cross-references: `PLAN.md`
-(milestones), `PRD.md` §4/§10 (compute seam & GPU strategy).
+(RTX 3060 Laptop GPU + Intel Iris Xe iGPU, 8-core CPU) unless noted. Cross-references: `prd/PLAN.md`
+(milestones), `prd/PRD.md` §4/§10 (compute seam & GPU strategy).
 
 Legend: ✅ done · 🔜 planned · ⏳ in progress
 
