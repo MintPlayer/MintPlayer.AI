@@ -150,24 +150,28 @@ public static class CubePolicySearch
                 var node = beam[i];
                 int off = i * RubiksCubeEnv.ActionCount;
                 int undo = RubiksCubeEnv.InverseAction(node.LastAction);
+                // Forbid a 3rd consecutive identical quarter-turn. U U is a legitimate half-turn, but U U U ≡ U'
+                // (always reducible to one opposite quarter), so cap same-move runs at 2 — with the immediate-inverse
+                // mask, the only same-face repeat left is the half-turn. This is what stops degenerate runs like U'×5.
+                int blockedRepeat = node.Path.Count >= 2 && node.Path[^1] == node.Path[^2] ? node.LastAction : -1;
 
-                // log-softmax over the 12 logits with the undo move excluded.
+                // log-softmax over the allowed moves (undo and the 3rd-repeat excluded).
                 float max = float.NegativeInfinity;
                 for (int a = 0; a < RubiksCubeEnv.ActionCount; a++)
-                    if (a != undo && logits[off + a] > max) max = logits[off + a];
+                    if (a != undo && a != blockedRepeat && logits[off + a] > max) max = logits[off + a];
                 double sumExp = 0;
                 for (int a = 0; a < RubiksCubeEnv.ActionCount; a++)
-                    if (a != undo) sumExp += Math.Exp(logits[off + a] - max);
+                    if (a != undo && a != blockedRepeat) sumExp += Math.Exp(logits[off + a] - max);
                 double logZ = max + Math.Log(sumExp);
 
                 for (int a = 0; a < RubiksCubeEnv.ActionCount; a++)
                 {
-                    if (a == undo) continue;
+                    if (a == undo || a == blockedRepeat) continue;
                     var child = node.Cube.Clone();
                     child.ApplyQuarterTurn(a);
                     var path = new List<int>(node.Path) { a };
                     if (child.IsSolved)
-                        return new(true, [.. path.Select(x => FaceletCube.QuarterTurnMoves[x])], expansions);
+                        return new(true, Canonicalize(path), expansions);
                     double cum = node.CumLogProb + (logits[off + a] - logZ);
                     candidates.Add(new BeamNode(child, a, path, cum, child.ToKociembaString()));
                 }
@@ -187,6 +191,43 @@ public static class CubePolicySearch
         }
 
         return new(false, [], expansions);
+    }
+
+    /// <summary>
+    /// Collapse a raw quarter-turn path into its canonical minimal form: fold each maximal run of same-face
+    /// turns modulo 4 (so U'×5 → U', U U U U → nothing, U U → a half-turn kept as two quarter-turns, X X' →
+    /// cancel — and cancellations re-expose neighbours so e.g. U F F' U → U U). The result is algebraically
+    /// identical, so it still solves; it just removes redundancy the beam could otherwise leave in (and so the
+    /// reported move count reflects real work). The action space is quarter-turns only, hence no U2 token.
+    /// </summary>
+    public static string[] Canonicalize(IReadOnlyList<int> path)
+    {
+        var runs = new List<(int Face, int Net)>(); // Net = net clockwise quarter-turns in 1..3
+        foreach (int a in path)
+        {
+            int face = a / 2;
+            int dir = a % 2 == 0 ? 1 : 3; // prime (odd action) = −1 ≡ +3 mod 4
+            if (runs.Count > 0 && runs[^1].Face == face)
+            {
+                int net = (runs[^1].Net + dir) % 4;
+                if (net == 0) runs.RemoveAt(runs.Count - 1); // a full turn / inverse pair — vanishes
+                else runs[^1] = (face, net);
+            }
+            else
+            {
+                runs.Add((face, dir));
+            }
+        }
+
+        var moves = new List<string>(runs.Count);
+        foreach (var (face, net) in runs)
+        {
+            int cw = face * 2, prime = face * 2 + 1;
+            if (net == 1) moves.Add(FaceletCube.QuarterTurnMoves[cw]);
+            else if (net == 3) moves.Add(FaceletCube.QuarterTurnMoves[prime]);
+            else { moves.Add(FaceletCube.QuarterTurnMoves[cw]); moves.Add(FaceletCube.QuarterTurnMoves[cw]); } // half-turn
+        }
+        return [.. moves];
     }
 
     private sealed record BeamNode(FaceletCube Cube, int LastAction, List<int> Path, double CumLogProb, string Key);
