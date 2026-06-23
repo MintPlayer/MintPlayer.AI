@@ -1,5 +1,6 @@
 extern alias Lab; // the Lab exe's campaigns; aliased so its generated `Program` doesn't clash with RLDemo.Web's
 using SnakeDqnCampaign = Lab::SnakeDqnCampaign;
+using FruitCakeDqnCampaign = Lab::FruitCakeDqnCampaign;
 using RushHourImitationCampaign = Lab::RushHourImitationCampaign;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 
@@ -48,6 +49,48 @@ public class CampaignContractTests
             long afterChunk2 = c2.TrainChunk();
             Assert.True(afterChunk2 > afterChunk1, $"resume continued to {afterChunk2}, expected past {afterChunk1}");
             Assert.Equal(3000, afterChunk2);            // reached the cap
+            Assert.True(c2.IsComplete);
+            c2.Dispose();
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public void FruitCakeCampaign_Trains_Checkpoints_AndResumesFromState()
+    {
+        var dir = Directory.CreateTempSubdirectory("fruitcake-campaign-contract");
+        try
+        {
+            var store = new FileModelStore(dir.FullName);
+            // Tiny drop budget: asserts the CONTRACT (advance/checkpoint/resume), not learning.
+            // chunk 40 → first chunk lands at 40 (< target); the second continues to the 80 cap (IsComplete).
+            FruitCakeDqnCampaign Fresh() => new(seed: 1, chunkSteps: 40, targetSteps: 80, evalEpisodes: 2, learningRate: 5e-4f, epsilonStart: 1.0f, hidden: [64, 64], gamma: 0.99);
+
+            var c1 = Fresh();
+            Assert.False(c1.Resume(store));            // nothing in the store yet → fresh
+            long afterChunk1 = c1.TrainChunk();
+            Assert.Equal(40, afterChunk1);             // advanced by exactly one chunk
+            Assert.False(c1.IsComplete);               // 40 < 80
+
+            var eval = c1.Evaluate();
+            Assert.Contains(eval.Metrics, m => m.Name == "score");
+            Assert.All(eval.Metrics, m => Assert.False(double.IsNaN(m.Value)));
+
+            c1.Checkpoint(store);
+            c1.Dispose();
+            using (var net = store.TryOpenRead("fruitcake", "dqn")) Assert.NotNull(net);          // deployable net (web id)
+            using (var state = store.TryOpenRead("fruitcake", "dqn-state")) Assert.NotNull(state); // full resume state
+
+            // A brand-new campaign instance must continue from the checkpoint, not start over.
+            var c2 = Fresh();
+            Assert.True(c2.Resume(store));             // resumed
+            long afterChunk2 = c2.TrainChunk();
+            Assert.True(afterChunk2 > afterChunk1, $"resume continued to {afterChunk2}, expected past {afterChunk1}");
+            Assert.Equal(80, afterChunk2);            // reached the cap
             Assert.True(c2.IsComplete);
             c2.Dispose();
         }

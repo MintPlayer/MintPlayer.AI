@@ -1,3 +1,6 @@
+// Behaviour mirror: the C# port is src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/FruitCatalog.cs
+// — keep the two ports in sync (PRD docs/prd/FRUITCAKE_AI_PRD.md §4.8).
+
 /** One link in the merge chain. Tier is 1-based (1 = cherry … 11 = watermelon). `color` is packed 0xAARRGGBB. */
 export interface FruitDef {
   tier: number;
