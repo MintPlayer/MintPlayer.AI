@@ -58,6 +58,15 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
+      <a class="card" routerLink="/fruitcake">
+        <h2>FruitCake</h2>
+        <p>
+          A Suika-style drop-and-merge physics game — aim, drop, and merge fruit from cherry to
+          watermelon. Runs entirely in your browser; no AI (yet). Play it fullscreen.
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
       <a class="card" routerLink="/gallery">
         <h2>Gallery</h2>
         <p>
