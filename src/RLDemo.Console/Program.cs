@@ -224,6 +224,12 @@ if (ShouldRun("2048"))
     Console.WriteLine($"final: 2048-rate {final.Rate2048:P0} over 100 games " +
                       $"({(final.Rate2048 >= 0.10 ? "SOLVED" : "not solved")}, target >= 10%)");
     Console.WriteLine();
+
+    // High-score lens: 2048 is a chase-the-largest-tile game, so compare the shipped 1-ply
+    // greedy policy against test-time expectimax over the SAME value tables (both reuse `agent`).
+    CompareExpectimax2048(agent, new SeedSequence(masterSeed).Derive(RngStreams.Evaluation), games: 100);
+    Console.WriteLine();
+
     if (animate) Animate2048(agent, new SeedSequence(masterSeed).Derive(RngStreams.Evaluation + 1));
     Console.WriteLine();
 }
@@ -476,6 +482,40 @@ static (double Rate2048, double Rate1024, double AvgScore, int BestTile) Eval204
         bestExp = Math.Max(bestExp, maxExp);
     }
     return (hits2048 / (double)games, hits1024 / (double)games, totalScore / games, 1 << bestExp);
+}
+
+static void CompareExpectimax2048(NTuple2048Agent agent, ulong seed, int games)
+{
+    Console.WriteLine($"  high-score A/B over {games} games (greedy 1-ply vs adaptive expectimax, same value tables):");
+    var greedy = RunPolicy2048(rng => agent.PlayGame(rng, learn: false), seed, games);
+    var emax = RunPolicy2048(new Expectimax2048(agent).PlayGame, seed, games);
+    Console.WriteLine($"    greedy    : avg {greedy.AvgScore,7:F0}  best {greedy.BestTile,6}  {greedy.Histogram}  ({greedy.MsPerGame:F1} ms/game)");
+    Console.WriteLine($"    expectimax: avg {emax.AvgScore,7:F0}  best {emax.BestTile,6}  {emax.Histogram}  ({emax.MsPerGame:F1} ms/game)");
+}
+
+static (double AvgScore, int BestTile, string Histogram, double MsPerGame) RunPolicy2048(
+    Func<Xoshiro256StarStar, (int Score, int MaxExponent)> play, ulong seed, int games)
+{
+    var scores = new int[games];
+    var maxExps = new int[games];
+    var perGameMs = new double[games];
+
+    // Games are independent and only READ the value tables, so fan them out across cores. Each
+    // game is timed on its own thread, so the reported ms/game stays a real single-playout cost
+    // (what matters for serving) even though wall-clock is divided by the core count.
+    Parallel.For(0, games, g =>
+    {
+        var rng = new Xoshiro256StarStar(seed + (ulong)g);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        (scores[g], maxExps[g]) = play(rng);
+        sw.Stop();
+        perGameMs[g] = sw.Elapsed.TotalMilliseconds;
+    });
+
+    var counts = new Dictionary<int, int>();
+    foreach (var e in maxExps) counts[e] = counts.GetValueOrDefault(e) + 1;
+    string histogram = string.Join(" ", counts.Keys.OrderByDescending(e => e).Select(e => $"{1 << e}×{counts[e]}"));
+    return (scores.Average(), 1 << maxExps.Max(), histogram, perGameMs.Average());
 }
 
 static void Animate2048(NTuple2048Agent agent, ulong seed)

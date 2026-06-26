@@ -48,6 +48,11 @@ public sealed class Game2048Controller(Game2048ModelService model, GalleryStore 
         if (agent is null)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, Status());
 
+        // Expectimax over the same value tables: averages V over the random spawn so the agent
+        // stops sliding tiles into harm's way (e.g. vacating its corner). Strictly stronger than
+        // the agent's 1-ply greedy, reuses the trained net unchanged, deterministic (no RNG).
+        var solver = new Expectimax2048(agent);
+
         // Deterministic spawns per drawn board, so gallery replays are reproducible.
         var rng = new Xoshiro256StarStar(BoardSeed(cells));
         int[] initialValues = (int[])board.Cells.Clone();
@@ -58,7 +63,7 @@ public sealed class Game2048Controller(Game2048ModelService model, GalleryStore 
 
         while (Board2048.AnyMoveAvailable(current))
         {
-            int action = agent.ChooseMove(current, out int gained, afterstate);
+            int action = solver.ChooseMove(current, out int gained, afterstate);
             if (action < 0) break; // defensive: AnyMoveAvailable said otherwise
 
             afterstate.CopyTo(current);
