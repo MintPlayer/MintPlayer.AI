@@ -353,10 +353,14 @@ the dominant per-step cost). **Negative result — ~3× SLOWER**, not faster:
   parallelism layer on top** — neither N vectorized envs nor an intra-`Step` `Parallel.For` (the latter is
   even worse: FruitCake physics is a small, *data-dependent* sequential-impulse solver, so fine-grained
   parallelism is pure dispatch overhead). There is no idle CPU headroom for env-parallelism to fill.
-- **To actually use more cores for data gen: run independent *processes*** (a multi-seed sweep), each with
-  the backend pinned to **1 thread** (N processes × 1 thread = N cores, no shared-thread-pool contention) —
-  perfect scaling, and a robust multi-seed comparison for free. That's a "run more experiments" pattern,
-  not a "make one run faster" knob.
+- **To actually use more cores for data gen: run N independent runs concurrently** (a multi-seed sweep),
+  with the backend made **single-threaded** for the duration — `Backend.Current = new ManagedBackend(maxDegreeOfParallelism: 1)`
+  — so the N runs *are* the parallelism (N tasks × 1 thread = N cores) instead of N tasks each spawning the
+  backend's own N-way `Parallel.For` (= N² threads, the same oversubscription). In-process `Task.WhenAll` /
+  `Parallel.ForEachAsync` suffices — `ManagedBackend` is stateless (only a `readonly int`, static methods on
+  caller spans) so concurrent calls are thread-safe, and `GradMode` is `[ThreadStatic]`. Separate OS processes
+  are **not** needed (only worth it for concurrent *GPU* runs — one CUDA context isn't concurrency-safe; the
+  tiny net runs on CPU anyway). It's a "run more experiments" pattern, not a "make one run faster" knob.
 - **Meta-lesson: profile before parallelizing.** "Env-bound" was asserted, not measured; the backend was
   already doing the parallelism that mattered.
 - The `DqnOptions.Actors` / vectorized-trainer prototype was **reverted** (no dead code); recoverable from
