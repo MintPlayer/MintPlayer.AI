@@ -19,18 +19,22 @@ namespace MintPlayer.AI.ReinforcementLearning.Core.Nn;
 public sealed class DuelingQNet : IValueNet
 {
     private readonly Linear[] _trunk;
-    private readonly Linear _valueHead;   // → [B,1]
-    private readonly Linear _advantageHead; // → [B,actions]
+    private readonly IModule _valueHead;     // → [B,1]       (Linear, or NoisyLinear when noisy)
+    private readonly IModule _advantageHead; // → [B,actions] (Linear, or NoisyLinear when noisy)
     private readonly int _actions;
     private readonly int[] _hidden;
-    private readonly Tensor _ones;         // constant [1,actions], broadcasts (V − meanA) across actions
+    private readonly int _inputSize;
+    private readonly bool _noisy;
+    private readonly Tensor _ones;           // constant [1,actions], broadcasts (V − meanA) across actions
 
-    public DuelingQNet(int inputSize, int[] hidden, int actions, Xoshiro256StarStar rng)
+    public DuelingQNet(int inputSize, int[] hidden, int actions, Xoshiro256StarStar rng, bool noisy = false)
     {
         if (hidden.Length < 1)
             throw new ArgumentException("A dueling Q-net needs at least one shared hidden layer for the two heads.");
+        _inputSize = inputSize;
         _actions = actions;
         _hidden = [.. hidden];
+        _noisy = noisy;
 
         _trunk = new Linear[hidden.Length];
         int prev = inputSize;
@@ -39,15 +43,19 @@ public sealed class DuelingQNet : IValueNet
             _trunk[i] = new Linear(prev, hidden[i], rng, Activation.Relu);
             prev = hidden[i];
         }
-        _valueHead = new Linear(prev, 1, rng, Activation.None);
-        _advantageHead = new Linear(prev, actions, rng, Activation.None);
+        // NoisyNets exploration lives on the heads (trunk stays plain — heads-only is standard and sufficient).
+        _valueHead = noisy ? new NoisyLinear(prev, 1, rng) : new Linear(prev, 1, rng, Activation.None);
+        _advantageHead = noisy ? new NoisyLinear(prev, actions, rng) : new Linear(prev, actions, rng, Activation.None);
 
         var ones = new float[actions];
         Array.Fill(ones, 1f);
         _ones = new Tensor(ones, 1, actions); // RequiresGrad = false (a constant)
     }
 
-    public int InputSize => _trunk[0].Weight.Rows;
+    public int InputSize => _inputSize;
+
+    /// <summary>True when the heads are <see cref="NoisyLinear"/> (learned exploration instead of ε-greedy).</summary>
+    public bool Noisy => _noisy;
     public int Actions => _actions;
     public int[] HiddenSizes => [.. _hidden];
 
@@ -73,7 +81,49 @@ public sealed class DuelingQNet : IValueNet
         foreach (var p in _advantageHead.Parameters()) yield return p;
     }
 
-    public IValueNet CloneStructure() => new DuelingQNet(InputSize, _hidden, _actions, new Xoshiro256StarStar(0));
+    public IValueNet CloneStructure() => new DuelingQNet(_inputSize, _hidden, _actions, new Xoshiro256StarStar(0), _noisy);
+
+    /// <summary>Draws fresh exploration noise on the noisy heads (no-op for a plain net).</summary>
+    public void ResampleNoise(Xoshiro256StarStar rng)
+    {
+        if (_valueHead is NoisyLinear v) v.ResampleNoise(rng);
+        if (_advantageHead is NoisyLinear a) a.ResampleNoise(rng);
+    }
+
+    /// <summary>Turns the heads' noise on (training) or off (deterministic eval/serving); no-op for a plain net.</summary>
+    public void SetNoiseEnabled(bool enabled)
+    {
+        if (_valueHead is NoisyLinear v) v.NoiseEnabled = enabled;
+        if (_advantageHead is NoisyLinear a) a.NoiseEnabled = enabled;
+    }
+
+    /// <summary>
+    /// Builds a noisy copy of this (plain) net: trunk + head weights are copied into the noisy net's MEANS
+    /// and σ is freshly initialized. With noise off the result is behaviorally identical, so a continued run
+    /// merely ADDS learnable exploration to the trained policy instead of cold-starting — the PRD's
+    /// "promote-plain→noisy" warm-start. Throws if this net is already noisy.
+    /// </summary>
+    public DuelingQNet ToNoisy(Xoshiro256StarStar rng)
+    {
+        if (_noisy)
+            throw new InvalidOperationException("This DuelingQNet is already noisy.");
+
+        var noisy = new DuelingQNet(_inputSize, _hidden, _actions, rng, noisy: true);
+        for (int i = 0; i < _trunk.Length; i++)
+        {
+            _trunk[i].Weight.Data.CopyTo(noisy._trunk[i].Weight.Data.AsSpan());
+            _trunk[i].Bias.Data.CopyTo(noisy._trunk[i].Bias.Data.AsSpan());
+        }
+        CopyMeans((Linear)_valueHead, (NoisyLinear)noisy._valueHead);
+        CopyMeans((Linear)_advantageHead, (NoisyLinear)noisy._advantageHead);
+        return noisy;
+
+        static void CopyMeans(Linear plain, NoisyLinear noisyHead)
+        {
+            plain.Weight.Data.CopyTo(noisyHead.MeanWeight.Data.AsSpan());
+            plain.Bias.Data.CopyTo(noisyHead.MeanBias.Data.AsSpan());
+        }
+    }
 
     /// <summary>Copies every parameter from a structurally identical net (target-network sync).</summary>
     public void CopyFrom(IValueNet source)

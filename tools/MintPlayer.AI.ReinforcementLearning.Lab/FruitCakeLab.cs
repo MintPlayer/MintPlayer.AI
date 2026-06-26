@@ -25,6 +25,7 @@ internal static class FruitCakeLab
         int[] hidden = [256, 256]; // --hidden : trunk widths for the Dueling Q-net
         double gamma = 0.99;       // --gamma : discount; high for the long drop horizon
         bool evalOnly = false;
+        bool noisy = false;        // --noisy : NoisyNets exploration (learned σ) instead of ε-greedy
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], CultureInfo.InvariantCulture);
@@ -38,6 +39,7 @@ internal static class FruitCakeLab
             else if (args[i] == "--hidden" && i + 1 < args.Length) hidden = args[++i].Split(',').Select(int.Parse).ToArray();
             else if (args[i] == "--gamma" && i + 1 < args.Length) gamma = double.Parse(args[++i], CultureInfo.InvariantCulture);
             else if (args[i] == "--eval-only") evalOnly = true;
+            else if (args[i] == "--noisy") noisy = true;
         }
 
         using var host = AIHost.CreateBuilder(dataDir).Build();
@@ -45,7 +47,7 @@ internal static class FruitCakeLab
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         string csvPath = Path.Combine(dataDir, "logs", "fruitcake-dqn.csv");
         runner.Run(
-            new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma),
+            new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, noisy),
             store,
             new CampaignOptions
             {

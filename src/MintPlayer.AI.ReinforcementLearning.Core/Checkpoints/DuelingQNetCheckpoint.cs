@@ -12,7 +12,9 @@ namespace MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 public static class DuelingQNetCheckpoint
 {
     public const string Kind = "dueling-q";
-    private const int Version = 1;
+    // v2 adds the bool Noisy flag (after Actions, before the parameters). v1 files have no flag and
+    // load as plain nets — every already-shipped checkpoint keeps loading unchanged.
+    private const int Version = 2;
 
     public static void Save(DuelingQNet network, Stream destination)
     {
@@ -32,18 +34,20 @@ public static class DuelingQNetCheckpoint
         writer.Write(network.InputSize);
         CheckpointFormat.WriteInts(writer, network.HiddenSizes);
         writer.Write(network.Actions);
+        writer.Write(network.Noisy);
         foreach (var p in network.Parameters())
             CheckpointFormat.WriteFloats(writer, p.Data);
     }
 
     public static DuelingQNet Read(BinaryReader reader)
     {
-        CheckpointFormat.ReadHeader(reader, Kind, Version);
+        int version = CheckpointFormat.ReadHeader(reader, Kind, Version);
         int inputSize = reader.ReadInt32();
         int[] hidden = CheckpointFormat.ReadInts(reader);
         int actions = reader.ReadInt32();
+        bool noisy = version >= 2 && reader.ReadBoolean(); // v1 had no flag → plain net
 
-        var network = new DuelingQNet(inputSize, hidden, actions, new Xoshiro256StarStar(0));
+        var network = new DuelingQNet(inputSize, hidden, actions, new Xoshiro256StarStar(0), noisy);
         foreach (var p in network.Parameters())
         {
             var stored = CheckpointFormat.ReadFloats(reader);

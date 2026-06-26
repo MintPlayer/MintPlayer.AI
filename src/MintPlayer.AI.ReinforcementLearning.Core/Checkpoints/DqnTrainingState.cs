@@ -15,7 +15,9 @@ namespace MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 public sealed class DqnTrainingState
 {
     public const string Kind = "dqn-state";
-    private const int Version = 2; // v2: networks are type-tagged (Mlp | DuelingQNet) via QNetCheckpoint
+    // v2: networks are type-tagged (Mlp | DuelingQNet) via QNetCheckpoint.
+    // v3: adds NoiseRng (NoisyNets). v2 states load with a default NoiseRng — harmless when not noisy.
+    private const int Version = 3;
 
     public required IValueNet Online { get; init; }
     public required IValueNet Target { get; init; }
@@ -23,6 +25,9 @@ public sealed class DqnTrainingState
     public required ReplayBuffer Buffer { get; init; }
     public required Xoshiro256StarStar PolicyRng { get; init; }
     public required Xoshiro256StarStar BufferRng { get; init; }
+
+    /// <summary>Exploration-noise RNG for NoisyNets resampling; unused (but serialized) when not noisy.</summary>
+    public Xoshiro256StarStar NoiseRng { get; init; } = new(0);
 
     public float[] CurrentObs { get; set; } = [];
     public int StepsCompleted { get; set; }
@@ -46,6 +51,7 @@ public sealed class DqnTrainingState
 
         CheckpointFormat.WriteRngState(writer, PolicyRng);
         CheckpointFormat.WriteRngState(writer, BufferRng);
+        CheckpointFormat.WriteRngState(writer, NoiseRng);
         CheckpointFormat.WriteFloats(writer, CurrentObs);
         writer.Write(StepsCompleted);
         writer.Write(LastLoss);
@@ -59,7 +65,7 @@ public sealed class DqnTrainingState
     public static DqnTrainingState Load(Stream source)
     {
         using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
-        CheckpointFormat.ReadHeader(reader, Kind, Version);
+        int version = CheckpointFormat.ReadHeader(reader, Kind, Version);
 
         var online = QNetCheckpoint.Read(reader);
         var target = QNetCheckpoint.Read(reader);
@@ -74,6 +80,7 @@ public sealed class DqnTrainingState
             Buffer = buffer,
             PolicyRng = CheckpointFormat.ReadRngState(reader),
             BufferRng = CheckpointFormat.ReadRngState(reader),
+            NoiseRng = version >= 3 ? CheckpointFormat.ReadRngState(reader) : new Xoshiro256StarStar(0),
             CurrentObs = CheckpointFormat.ReadFloats(reader),
             StepsCompleted = reader.ReadInt32(),
             LastLoss = reader.ReadSingle(),

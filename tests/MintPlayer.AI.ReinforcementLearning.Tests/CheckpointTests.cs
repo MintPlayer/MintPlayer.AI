@@ -45,6 +45,86 @@ public class CheckpointTests
         Assert.Throws<InvalidDataException>(() => MlpCheckpoint.Load(stream));
     }
 
+    // ---------- DuelingQNet (NoisyNets v2 checkpoint + back-compat) ----------
+
+    [Fact]
+    public void DuelingQNet_NoisyRoundTrip_PreservesFlagAndParameters()
+    {
+        var original = new DuelingQNet(6, [16, 16], 4, new Xoshiro256StarStar(123), noisy: true);
+
+        using var stream = new MemoryStream();
+        DuelingQNetCheckpoint.Save(original, stream);
+        stream.Position = 0;
+        var restored = DuelingQNetCheckpoint.Load(stream);
+
+        Assert.True(restored.Noisy);
+        Assert.Equal(original.InputSize, restored.InputSize);
+        Assert.Equal(original.HiddenSizes, restored.HiddenSizes);
+        Assert.Equal(original.Actions, restored.Actions);
+        AssertParametersBitwiseEqual(original, restored); // 4 tensors per noisy head stream back correctly
+
+        // Deterministic (noise-off) forward is identical.
+        var input = Tensor.RandomNormal(new Xoshiro256StarStar(7), 0f, 1f, 3, 6);
+        using (GradMode.NoGrad())
+            Assert.Equal(original.Forward(input).Data, restored.Forward(input).Data);
+    }
+
+    [Fact]
+    public void DuelingQNet_PlainRoundTrip_StaysPlain()
+    {
+        var original = new DuelingQNet(6, [16], 4, new Xoshiro256StarStar(1)); // noisy defaults false
+        using var stream = new MemoryStream();
+        DuelingQNetCheckpoint.Save(original, stream);
+        stream.Position = 0;
+        var restored = DuelingQNetCheckpoint.Load(stream);
+
+        Assert.False(restored.Noisy);
+        AssertParametersBitwiseEqual(original, restored);
+    }
+
+    [Fact]
+    public void DuelingQNet_V1Checkpoint_LoadsAsPlainNet()
+    {
+        // The hard back-compat gate: a v1 file (no Noisy flag) must still load — as a plain net —
+        // so every already-shipped *.dqn.ckpt keeps working unchanged.
+        var net = new DuelingQNet(5, [8, 8], 3, new Xoshiro256StarStar(2)); // plain
+        using var stream = new MemoryStream();
+        using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
+            WriteDuelingV1(net, writer); // emit the pre-v2 layout
+        stream.Position = 0;
+
+        var restored = DuelingQNetCheckpoint.Load(stream);
+        Assert.False(restored.Noisy);
+        AssertParametersBitwiseEqual(net, restored);
+    }
+
+    [Fact]
+    public void QNetCheckpoint_TaggedNoisyDueling_RoundTrips()
+    {
+        // The embedded resume-state stores the net through QNetCheckpoint; it must carry the noisy flag.
+        IValueNet original = new DuelingQNet(4, [8], 2, new Xoshiro256StarStar(9), noisy: true);
+        using var stream = new MemoryStream();
+        using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
+            QNetCheckpoint.Write(original, writer);
+        stream.Position = 0;
+        using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+        var restored = QNetCheckpoint.Read(reader);
+
+        Assert.True(Assert.IsType<DuelingQNet>(restored).Noisy);
+        AssertParametersBitwiseEqual(original, restored);
+    }
+
+    // The pre-v2 on-disk layout: header(version 1) → InputSize → hidden → actions → params (NO Noisy flag).
+    private static void WriteDuelingV1(DuelingQNet net, BinaryWriter writer)
+    {
+        CheckpointFormat.WriteHeader(writer, DuelingQNetCheckpoint.Kind, 1);
+        writer.Write(net.InputSize);
+        CheckpointFormat.WriteInts(writer, net.HiddenSizes);
+        writer.Write(net.Actions);
+        foreach (var p in net.Parameters())
+            CheckpointFormat.WriteFloats(writer, p.Data);
+    }
+
     // ---------- Adam ----------
 
     [Fact]

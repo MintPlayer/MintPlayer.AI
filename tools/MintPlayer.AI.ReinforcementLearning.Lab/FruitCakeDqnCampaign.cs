@@ -14,11 +14,13 @@ using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 /// <see cref="DqnOptions.MaxSteps"/> and continues. Persists the deployable net under `fruitcake`/`dqn` (the id
 /// the web's <c>FruitCakeModelService</c> will load, A3) plus the full resume state under `fruitcake`/`dqn-state`.
 /// </summary>
-internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma)
+internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false)
     : ITrainingCampaign
 {
-    private const string NetId = "dqn";         // deployable DuelingQNet — the id the web loads
-    private const string StateId = "dqn-state"; // full DqnTrainingState for lossless resume
+    private const string NetId = "dqn";         // deployable DuelingQNet — the id the web loads (shared by both lines)
+    // Noisy training is a SEPARATE line with its own resume state: it must never resume a PLAIN state as a plain
+    // net (which would then train with ε=0 and NO exploration). The deployable NetId is shared and keep-best gated.
+    private string StateId => noisy ? "dqn-noisy-state" : "dqn-state";
 
     private readonly FruitCakeEnv _env = new();
     private readonly FruitCakeEnv _evalEnv = new();
@@ -38,6 +40,8 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
     {
         Dueling = true,
         DoubleDqn = true,
+        NoisyNets = noisy, // learned exploration replaces ε-greedy; the trainer forces ε=0 and resamples noise
+
         Hidden = hidden,
         Gamma = gamma,
         LearningRate = learningRate,
@@ -70,8 +74,12 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
             using var net = store.TryOpenRead(Environment, NetId);
             if (net is not null)
             {
-                _warmNet = DuelingQNetCheckpoint.Load(net);
-                Log($"warm-starting from the deployable FruitCake net '{NetId}' (fresh optimizer + replay buffer)");
+                var loaded = DuelingQNetCheckpoint.Load(net);
+                // Promote-plain→noisy: the shipped net is plain, but a noisy run needs a noisy net. Copy its
+                // trained weights into the means + add fresh σ — behaviorally identical with noise off, so the
+                // run continues the ~current policy and merely adds learnable exploration.
+                _warmNet = noisy && !loaded.Noisy ? loaded.ToNoisy(_seeds.CreateRng(RngStreams.Init)) : loaded;
+                Log($"warm-starting from the deployable FruitCake net '{NetId}'{(noisy ? " (promoted to noisy)" : "")} (fresh optimizer + replay buffer)");
                 resumed = true;
             }
         }
