@@ -26,6 +26,7 @@ internal static class FruitCakeLab
         double gamma = 0.99;       // --gamma : discount; high for the long drop horizon
         bool evalOnly = false;
         bool noisy = false;        // --noisy : NoisyNets exploration (learned σ) instead of ε-greedy
+        int actors = 1;            // --actors : step N FruitCake envs in parallel to fill the buffer faster
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], CultureInfo.InvariantCulture);
@@ -40,6 +41,7 @@ internal static class FruitCakeLab
             else if (args[i] == "--gamma" && i + 1 < args.Length) gamma = double.Parse(args[++i], CultureInfo.InvariantCulture);
             else if (args[i] == "--eval-only") evalOnly = true;
             else if (args[i] == "--noisy") noisy = true;
+            else if (args[i] == "--actors" && i + 1 < args.Length) actors = int.Parse(args[++i]);
         }
 
         using var host = AIHost.CreateBuilder(dataDir).Build();
@@ -47,7 +49,7 @@ internal static class FruitCakeLab
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         string csvPath = Path.Combine(dataDir, "logs", "fruitcake-dqn.csv");
         runner.Run(
-            new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, noisy),
+            new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, noisy, actors),
             store,
             new CampaignOptions
             {

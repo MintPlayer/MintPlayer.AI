@@ -170,6 +170,52 @@ public class DuelingDqnTests
         Assert.True(eval.MeanReturn > 100, $"noisy DQN eval {eval.MeanReturn:F1} — expected > 100 (random ≈ 22)");
     }
 
+    private static DqnOptions VectorizedOptions(int steps, int actors) => new()
+    {
+        Dueling = true,
+        Actors = actors,
+        Hidden = [32, 32],
+        BufferCapacity = 5_000,
+        WarmupSteps = 200,
+        BatchSize = 32,
+        TargetSyncEvery = 200,
+        EvalEvery = int.MaxValue,
+        MaxSteps = steps,
+    };
+
+    [Fact]
+    public void Dqn_Vectorized_IsDeterministicAcrossRuns()
+    {
+        // The parallel actors must not introduce nondeterminism: each env owns its RNG, Step results are
+        // read back by index, and the learner is single-threaded — so two same-seed runs are bit-identical.
+        DqnResult Run() => DqnTrainer.Train(() => new CartPoleEnv(), VectorizedOptions(3_000, actors: 4), new SeedSequence(7));
+        var a = Run();
+        var b = Run();
+        AssertParamsEqual(a.Network, b.Network);
+        AssertParamsEqual(a.State.Target, b.State.Target);
+        Assert.True(a.StepsTrained >= 3_000);
+    }
+
+    [Fact]
+    public void Dqn_SingleEnvOverload_RejectsMultipleActors()
+    {
+        // Actors > 1 needs one env instance per actor, so the single-env overload must refuse it.
+        Assert.Throws<ArgumentException>(() =>
+            DqnTrainer.Train(new CartPoleEnv(), VectorizedOptions(100, actors: 2), new SeedSequence(1)));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public void Dqn_Vectorized_LearnsCartPole()
+    {
+        // End-to-end: 8 parallel actors fill the buffer and the single learner solves CartPole.
+        var seeds = new SeedSequence(3);
+        var result = DqnTrainer.Train(() => new CartPoleEnv(),
+            new DqnOptions { Dueling = true, Actors = 8, MaxSteps = 60_000 }, seeds);
+        var eval = Evaluator.Evaluate(new CartPoleEnv(), result.Agent, episodes: 30, seeds.Derive(RngStreams.Evaluation));
+        Assert.True(eval.MeanReturn > 100, $"vectorized DQN eval {eval.MeanReturn:F1} — expected > 100");
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public void Dqn_Dueling_SolvesCartPole_MedianOf3Seeds()

@@ -14,7 +14,7 @@ using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 /// <see cref="DqnOptions.MaxSteps"/> and continues. Persists the deployable net under `fruitcake`/`dqn` (the id
 /// the web's <c>FruitCakeModelService</c> will load, A3) plus the full resume state under `fruitcake`/`dqn-state`.
 /// </summary>
-internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false)
+internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false, int actors = 1)
     : ITrainingCampaign
 {
     private const string NetId = "dqn";         // deployable DuelingQNet — the id the web loads (shared by both lines)
@@ -41,6 +41,7 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
         Dueling = true,
         DoubleDqn = true,
         NoisyNets = noisy, // learned exploration replaces ε-greedy; the trainer forces ε=0 and resamples noise
+        Actors = actors,   // > 1 steps that many FruitCake envs in parallel (the physics is the bottleneck, not the net)
 
         Hidden = hidden,
         Gamma = gamma,
@@ -106,7 +107,10 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
         // EvalEvery == the chunk size so the trainer's own eval fires at most once per chunk — the campaign's
         // authoritative eval is the mean score in Evaluate(). MaxSteps is ABSOLUTE: resuming raises the ceiling.
         var options = BaseOptions with { MaxSteps = to, EvalEvery = Math.Max(1, chunkSteps) };
-        var result = DqnTrainer.Train(_env, options, _seeds, resume: _state, warmStart: _state is null ? _warmNet : null);
+        // Actors > 1 needs the env-factory overload (one FruitCake env per actor, stepped in parallel).
+        var result = actors > 1
+            ? DqnTrainer.Train(() => new FruitCakeEnv(), options, _seeds, resume: _state, warmStart: _state is null ? _warmNet : null)
+            : DqnTrainer.Train(_env, options, _seeds, resume: _state, warmStart: _state is null ? _warmNet : null);
         _state = result.State;
         return _state.StepsCompleted;
     }

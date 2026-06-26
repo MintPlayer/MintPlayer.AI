@@ -40,6 +40,15 @@ public sealed record DqnOptions
     /// </summary>
     public bool NoisyNets { get; init; }
 
+    /// <summary>
+    /// Number of environment instances stepped in parallel to fill the replay buffer faster (synchronous
+    /// vectorization). 1 (default) keeps the classic single-env loop, bitwise-resumable and unchanged.
+    /// &gt; 1 requires the env-factory <see cref="DqnTrainer.Train(System.Func{Environments.IEnvironment{float[],int}},DqnOptions,Random.SeedSequence,Checkpoints.DqnTrainingState?,Nn.IValueNet?)"/>
+    /// overload: the actors' expensive <c>Step</c> runs across cores while a single learner trains. Best
+    /// for env-bound games (e.g. FruitCake's physics-in-the-loop), where the net is cheap but stepping is slow.
+    /// </summary>
+    public int Actors { get; init; } = 1;
+
     public int EvalEvery { get; init; } = 5_000;
     public int EvalEpisodes { get; init; } = 20;
 
@@ -114,6 +123,23 @@ public static class DqnTrainer
     public static DqnResult Train(IEnvironment<float[], int> env, DqnOptions options, SeedSequence seeds,
         DqnTrainingState? resume = null, IValueNet? warmStart = null)
     {
+        if (options.Actors != 1)
+            throw new ArgumentException(
+                "DqnOptions.Actors > 1 needs the env-factory Train overload (it builds one env instance per actor).");
+        return Train(() => env, options, seeds, resume, warmStart);
+    }
+
+    /// <param name="envFactory">Builds an environment instance; called once per <see cref="DqnOptions.Actors"/>.</param>
+    /// <inheritdoc cref="Train(IEnvironment{float[],int},DqnOptions,SeedSequence,DqnTrainingState?,IValueNet?)"/>
+    public static DqnResult Train(Func<IEnvironment<float[], int>> envFactory, DqnOptions options, SeedSequence seeds,
+        DqnTrainingState? resume = null, IValueNet? warmStart = null)
+    {
+        if (options.Actors < 1)
+            throw new ArgumentException($"DqnOptions.Actors must be >= 1 (got {options.Actors}).");
+        if (options.Actors > 1)
+            return TrainVectorized(envFactory, options, seeds, resume, warmStart);
+
+        var env = envFactory();
         int obsDim = ((BoxSpace)env.ObservationSpace).Dimensions;
         int actionCount = ((DiscreteSpace)env.ActionSpace).N;
 
@@ -231,6 +257,157 @@ public static class DqnTrainer
 
         return Finish(options.MaxSteps);
     }
+
+    /// <summary>
+    /// Synchronous vectorized training (<see cref="DqnOptions.Actors"/> &gt; 1): N envs are stepped together,
+    /// the expensive <c>Step</c> calls fanning out across cores while a single learner trains. One action-
+    /// selection forward per actor per tick (the net is never touched concurrently — only <c>Step</c> is
+    /// parallel), transitions are added in actor order (deterministic given N; the per-actor RNGs make the
+    /// parallel steps reproducible), and the update:experience ratio is preserved by doing one TD update per
+    /// <see cref="DqnOptions.TrainEvery"/> env-steps. Resume keeps the net/optimizer/buffer/RNGs but restarts
+    /// the envs (no per-actor env snapshot), so unlike the scalar path it is not bitwise across an interruption.
+    /// </summary>
+    private static DqnResult TrainVectorized(Func<IEnvironment<float[], int>> envFactory, DqnOptions options,
+        SeedSequence seeds, DqnTrainingState? resume, IValueNet? warmStart)
+    {
+        int n = options.Actors;
+        var envs = new IEnvironment<float[], int>[n];
+        for (int i = 0; i < n; i++) envs[i] = envFactory();
+        int obsDim = ((BoxSpace)envs[0].ObservationSpace).Dimensions;
+        int actionCount = ((DiscreteSpace)envs[0].ActionSpace).N;
+
+        DqnTrainingState state;
+        if (resume is null)
+        {
+            var initRng = seeds.CreateRng(RngStreams.Init);
+            IValueNet MakeNet() => options.Dueling || options.NoisyNets
+                ? new DuelingQNet(obsDim, options.Hidden, actionCount, initRng, options.NoisyNets)
+                : new Mlp([obsDim, .. options.Hidden, actionCount], initRng, Activation.Relu);
+            var online = warmStart ?? MakeNet();
+            var target = MakeNet();
+            target.CopyFrom(online);
+            state = new DqnTrainingState
+            {
+                Online = online,
+                Target = target,
+                Optimizer = new Adam(online.Parameters(), options.LearningRate),
+                Buffer = new ReplayBuffer(options.BufferCapacity, obsDim, actionCount),
+                PolicyRng = seeds.CreateRng(RngStreams.Policy),
+                BufferRng = seeds.CreateRng(RngStreams.Buffer),
+                NoiseRng = seeds.CreateRng(RngStreams.Noise),
+            };
+        }
+        else
+        {
+            state = resume;
+            if (state.Buffer.Capacity != options.BufferCapacity)
+                throw new ArgumentException($"Resume state buffer capacity {state.Buffer.Capacity} != options {options.BufferCapacity}.");
+            if (state.CurrentObs.Length != 0 && state.CurrentObs.Length != obsDim)
+                throw new ArgumentException($"Resume state obs dim {state.CurrentObs.Length} != environment {obsDim}.");
+        }
+
+        // Each actor gets its own seed so the parallel Step calls are independent and reproducible.
+        ulong envSeedBase = seeds.Derive(RngStreams.Environment);
+        var obs = new float[n][];
+        var maskProviders = new IActionMaskProvider?[n];
+        for (int i = 0; i < n; i++)
+        {
+            (obs[i], _) = envs[i].Reset(envSeedBase + (ulong)i);
+            maskProviders[i] = envs[i] as IActionMaskProvider;
+        }
+        var evalEnv = envFactory(); // dedicated eval env — never disturbs the actors' in-flight episodes
+
+        var agent = new GreedyQAgent(state.Online, actionCount, state.PolicyRng);
+        float lastLoss = state.LastLoss;
+        double lastEval = state.LastEval;
+
+        void ResampleNoise(IValueNet net) { if (options.NoisyNets) ((DuelingQNet)net).ResampleNoise(state.NoiseRng); }
+        void SetNoiseEnabled(bool on)
+        {
+            if (!options.NoisyNets) return;
+            ((DuelingQNet)state.Online).SetNoiseEnabled(on);
+            ((DuelingQNet)state.Target).SetNoiseEnabled(on);
+        }
+
+        DqnResult Finish(int stepsTrained)
+        {
+            SetNoiseEnabled(false);
+            state.CurrentObs = obs[0];
+            state.StepsCompleted = stepsTrained;
+            state.LastLoss = lastLoss;
+            state.LastEval = lastEval;
+            state.EnvState = null; // vectorized: no per-actor env snapshot — resume restarts the envs
+            return new DqnResult(agent, state.Online, stepsTrained, lastEval, state);
+        }
+
+        SetNoiseEnabled(true);
+        int step = state.StepsCompleted;
+        int trainAccum = 0;
+        var actions = new int[n];
+        var nextMasks = new bool[n][];
+        var results = new StepResult<float[]>[n];
+
+        while (step < options.MaxSteps)
+        {
+            // Action selection (cheap; the net is read single-threaded here). One noise draw per tick.
+            ResampleNoise(state.Online);
+            double eps = options.NoisyNets ? 0 : options.Epsilon.Value(step + 1);
+            agent.Epsilon = eps;
+            for (int i = 0; i < n; i++)
+                actions[i] = agent.Act(obs[i], maskProviders[i]?.CurrentActionMask());
+
+            // The expensive part: step every actor in parallel. Each env owns its RNG, so results are
+            // independent of thread scheduling; we read them back by index for determinism.
+            Parallel.For(0, n, i =>
+            {
+                results[i] = envs[i].Step(actions[i]);
+                nextMasks[i] = maskProviders[i]?.CurrentActionMask();
+            });
+
+            for (int i = 0; i < n; i++)
+            {
+                state.Buffer.Add(obs[i], actions[i], results[i].Reward, results[i].Observation, results[i].Terminated, nextMasks[i]);
+                obs[i] = results[i].Done ? envs[i].Reset().Observation : results[i].Observation;
+            }
+            step += n;
+
+            // Keep ~one TD update per TrainEvery env-steps (so the update:experience ratio matches scalar).
+            if (state.Buffer.Count >= options.WarmupSteps)
+            {
+                trainAccum += n;
+                while (trainAccum >= options.TrainEvery)
+                {
+                    trainAccum -= options.TrainEvery;
+                    ResampleNoise(state.Online);
+                    ResampleNoise(state.Target);
+                    lastLoss = TrainStep(state.Online, state.Target, state.Optimizer,
+                        state.Buffer.Sample(options.BatchSize, state.BufferRng), options);
+                }
+            }
+
+            // step jumps by n, so fire cadence whenever the interval boundary is crossed within the tick.
+            if (Crossed(step - n, step, options.TargetSyncEvery))
+                state.Target.CopyFrom(state.Online);
+
+            if (Crossed(step - n, step, options.EvalEvery))
+            {
+                SetNoiseEnabled(false);
+                lastEval = Evaluator.Evaluate(evalEnv, (float[] o, bool[]? m) => agent.Act(o, m, greedy: true),
+                    options.EvalEpisodes, seeds.Derive(RngStreams.Evaluation)).MeanReturn;
+                SetNoiseEnabled(true);
+                options.OnProgress?.Invoke(new DqnProgress(step, options.MaxSteps, lastEval, eps, lastLoss));
+
+                if (options.SolveThreshold.HasValue && lastEval >= options.SolveThreshold.Value)
+                    return Finish(step);
+            }
+        }
+
+        return Finish(step);
+    }
+
+    /// <summary>True if a positive multiple of <paramref name="interval"/> lies in (<paramref name="from"/>, <paramref name="to"/>].</summary>
+    private static bool Crossed(int from, int to, int interval)
+        => interval > 0 && to / interval > from / interval;
 
     private static float TrainStep(IValueNet online, IValueNet target, Adam adam, ReplayBuffer.Batch batch, DqnOptions options)
     {
