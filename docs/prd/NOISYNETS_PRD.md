@@ -162,6 +162,17 @@ doesn't collapse to ~0 prematurely).
   `models/` via Git LFS (serving stays deterministic — `NoiseEnabled` false). Otherwise keep NoisyNets
   as a validated opt-in capability and leave the shipped model as-is.
 
+  **Result (2026-06-26): MATCHED, not beaten — did NOT ship.** A from-scratch noisy run peaked at a 959.7
+  *10-episode* eval (vs the baseline's 886.4 10-ep), but a **200-game paired A/B** (`FruitCakeAb`,
+  `--game fruitcake --ab`) showed it was a statistical tie: candidate **702.1 ± 259** vs baseline
+  **714.4** (paired Δ = **−12.3 ± 29.8 SE**, 49% win-rate), with the noisy net showing *higher variance*
+  (a tier-5 early-crash tail from late-training instability). The headline single-eval numbers (886/971)
+  were **seed-luck** — on a robust 200-game set both nets sit ~700–714. So NoisyNets *matches* ε-greedy
+  here (the PRD success bar) but yields no improvement worth shipping; `models/fruitcake.dqn.ckpt` is
+  unchanged. The capability (N0–N3) stands as a validated, tested opt-in. **Methodology note:** judge this
+  stochastic env with the multi-seed paired A/B, never a 10-episode eval. (Warm-start into full σ₀=0.5 was
+  tried first and *degraded* the strong policy — see [[fruitcake-game]]; from-scratch is the right use.)
+
 ---
 
 ## 6. Success criteria
