@@ -290,6 +290,10 @@ After the shipped DQN, two exploration paths were tried to push it further (deta
   seed-sensitive** — a 10-episode eval bounced 750–971 on the *same* net, and the campaign's "886" was
   seed-luck. Robustly, nets sit ~700–714. **Use the multi-seed paired A/B (`--ab`), never a 10-episode
   eval, to compare nets.** This supersedes any single-eval "score" cited earlier in this PRD.
-- **The proven lever for real gains remains continued ε-greedy training** (warm-start with low ε ≈ 0.2 to
-  refine, not randomize) — `--game fruitcake --data <dir> --explore 0.2`. A vectorized-envs speedup was
-  tried and reverted (the backend already parallelizes data-gen; see `docs/OPTIMIZATIONS.md`).
+- **Continued ε-greedy — the caveat that matters.** The historical 741→886 gain was a **full-state resume**
+  (preserved replay buffer + annealed optimizer + ε≈0.05) over a long run; that state is ephemeral and gone.
+  A short **net-only warm-start** (fresh buffer/optimizer, ε=0.2) instead **degrades the strong net first** —
+  a 20-min/134k-drop run dipped 882→557→571 and never beat the 886 gate. So continued ε-greedy only helps
+  with full-state resume **or** a *long* run at *near-greedy* ε (~0.05); a short moderate-ε warm-start is the
+  wrong shape. The shipped net (~700–714 robust) appears **plateaued for cheap continuation**. (A vectorized-
+  envs speedup was also tried and reverted — the backend already parallelizes data-gen; `docs/OPTIMIZATIONS.md`.)
