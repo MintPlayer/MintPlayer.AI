@@ -1,0 +1,13 @@
+<Project>
+
+  <!--
+    Single source of truth for the MintPlayer.AI.ReinforcementLearning SDK version. The five
+    published libraries (Core, Environments, Hosting, Ilgpu, Ilgpu.Hosting) set their <Version>
+    to $(RLNetVersion), so the whole SDK ships in LOCKSTEP — bump it here once per release.
+    The demo apps (RLDemo.*) under src/ don't declare <Version>, so they stay unversioned.
+  -->
+  <PropertyGroup>
+    <RLNetVersion>0.3.0</RLNetVersion>
+  </PropertyGroup>
+
+</Project>

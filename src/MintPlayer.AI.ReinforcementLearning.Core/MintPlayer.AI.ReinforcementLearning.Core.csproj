@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <PropertyGroup Label="Package">
-    <Version>0.3.0</Version>
+    <Version>$(RLNetVersion)</Version>
     <Authors>Pieterjan De Clippel</Authors>
     <Company>MintPlayer</Company>
     <Description>Reinforcement learning for .NET, from scratch in C# — tensors, SIMD matmul, tape-based autograd, Adam, Gymnasium-faithful environments (terminated/truncated split, spaces, action masking, bitwise-deterministic vectorized envs), and trainers from tabular Q-learning through Double DQN and PPO. No Python, no native dependencies.</Description>

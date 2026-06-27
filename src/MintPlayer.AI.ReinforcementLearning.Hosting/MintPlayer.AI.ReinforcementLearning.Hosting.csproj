@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <PropertyGroup Label="Package">
-    <Version>0.3.0</Version>
+    <Version>$(RLNetVersion)</Version>
     <Authors>Pieterjan De Clippel</Authors>
     <Company>MintPlayer</Company>
     <Description>Hosting + dependency-injection helpers for MintPlayer.AI.ReinforcementLearning: AIHost.CreateBuilder wires a Microsoft.Extensions.Hosting application builder (configuration, logging, DI) preconfigured with the RL model store, system clock and CampaignRunner, so training tools compose with dependency injection like an ASP.NET host.</Description>
