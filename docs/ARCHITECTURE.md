@@ -23,8 +23,11 @@ This file is the **code map**: the subsystems, the checkpoint/file formats, the 
 6. [Live "Watch AI" WebSocket protocol](#6-live-watch-ai-websocket-protocol)
 7. [Web playground & deployment](#7-web-playground--deployment)
 8. [Training & comparing models (workflow)](#8-training--comparing-models-workflow)
-9. [Tests & conventions](#9-tests--conventions)
-10. [Where to change things — quick map](#10-where-to-change-things--quick-map)
+9. [Game solving stacks — deep dives](#9-game-solving-stacks--deep-dives) (Rubik's Cube · Rush Hour · 2048)
+10. [Client-side game engines (human play)](#10-client-side-game-engines-human-play)
+11. [Console demo, Bench & source-generated DI](#11-console-demo-bench--source-generated-di)
+12. [Tests & conventions](#12-tests--conventions)
+13. [Where to change things — quick map](#13-where-to-change-things--quick-map)
 
 ---
 
@@ -279,6 +282,24 @@ _agent = new GreedyQAgent(net, SnakeEnv.ActionCount); Status = ModelStatus.Ready
 **Deploy flow:** PR (CI builds + tests + Angular build) → merge to `master` → `playground-docker` builds the
 image to GHCR and SSH-deploys it to the VPS (`docker compose pull && up -d`); Traefik routes the domain.
 
+### Gallery (submitted boards)
+
+When a solver route succeeds (Rush Hour / Cube / 2048), the controller auto-appends the board + the AI/solver
+response to a public, read-only **gallery**. `GalleryStore` (`Services/GalleryStore.cs`) writes one JSON file
+per entry under `<data>/gallery/` (id = timestamp + short hash; atomic temp-write; corrupt files skipped on
+read), so entries persist on the `playground-data` volume across deploys. `GalleryController` exposes
+`GET /api/gallery` (newest first) and `GET /api/gallery/{id}`; the Angular `gallery/` component lists them and
+links each to its game with a `?replay={id}` query param, which the game component loads to replay the solution.
+No moderation — every solved board is auto-admitted; ids are validated (alphanumeric/`-`) against path traversal.
+
+```csharp
+// e.g. RushHourController after a solve — board + response captured for replay
+gallery.Add("rushhour", $"{how} solved it in {trajectory.Length} moves (optimal {optimal})", board, response);
+```
+
+*Change it:* submission logic lives in each game's solve endpoint; storage format/location in `GalleryStore`;
+list/replay UI in `gallery.ts` + the game component's `?replay=` handling.
+
 ---
 
 ## 8. Training & comparing models (workflow)
@@ -321,7 +342,123 @@ Re-running continues bitwise-identically. The cube's self-taught DAVI campaign h
 
 ---
 
-## 9. Tests & conventions
+## 9. Game solving stacks — deep dives
+
+Beyond the high-level trainer/search map (§4), three games have substantial multi-stage solving pipelines
+worth their own walkthrough. (FruitCake's is in §4 + §6; CartPole / MountainCar / Snake are single-net.)
+
+### Rubik's Cube solving stack
+
+Three deployable solvers: a **Kociemba two-phase** C# port (always-available oracle, ≤22 HTM, also the
+imitation teacher), a **Kociemba-imitation policy net** + beam search, and a **teacher-free DAVI value net**
+(EfficientCube-style) + value-guided A\*. The website serves the teacher-free policy net by default.
+
+| Path (`Environments/RubiksCube/` unless noted) | Role |
+|---|---|
+| `RubiksCubeEnv.cs` | 324-dim one-hot sticker obs, 12 quarter-turns, inverse-move mask, curriculum scramble depth. |
+| `Kociemba/` + `CubeSolver.cs` | Two-phase oracle (pruning tables built once, thread-safe); ≤22 HTM. |
+| `FaceletCube.cs` | 54-sticker model + quarter-turn cycles + Kociemba-string conversion. |
+| `CubeOracle.cs` | Scramble → Kociemba solve → labeled `(state, action, dist)` trajectory for imitation. |
+| `CubePolicyNet.cs` + `CubePolicySearch.cs` | Two-headed net (move logits + distance); greedy / A\* / **beam search** (~2000 wide). |
+| `CubeQSearch.cs` | Q-guided A\* for the masked Double-DQN net. |
+| `CubeValueSearch.cs` (+ `Core/Planning/ValueGuidedSearch.cs`) | Batch-weighted A\* over a learned cost-to-go (~depth-15 optimal in budget). |
+| `Ilgpu/DeviceResidualMlp.cs` + `DeviceResidualTrainer.cs` | **GPU-resident** forward/train: weights stay on device, only batches cross the bus. |
+| `tools/…Lab/Cube{Davi,Efficient,Imitation}Campaign.cs` | The `--game cube-davi` / `cube-policy` / `cube` campaigns. |
+| `RLDemo.Web/Controllers/CubeController.cs` | `/solve` (Kociemba) and `/solve-efficient` (policy beam, GPU-resident forward w/ CPU fallback). |
+
+The cube is the only game heavy enough to use the GPU backend (the small game nets stay on CPU). Full recipe +
+wall-clock: [`tools/…/Lab/CUBE_CAMPAIGN.md`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CUBE_CAMPAIGN.md).
+*Change it:* representation in `FaceletCube`/`RubiksCubeEnv`; search budgets in `Cube*Search.cs`; curriculum/LR
+in the cube campaigns.
+
+### Rush Hour solving stack
+
+An exact **BFS oracle** labels states, an **imitation campaign** trains a two-headed policy/value net (with
+DAgger on-policy mixing), and inference solves user boards with **greedy rollout → policy-guided A\*** (the value
+head is the heuristic) — optimally on the boards tested.
+
+| Path | Role |
+|---|---|
+| `Environments/RushHour/RushHourEnv.cs` + `RushHour.cs` | 72-dim two-plane obs, 32 actions (vehicle×dir), masking, puzzle-per-episode. |
+| `RushHourSolver.cs` / `RushHourOracle.cs` | BFS optimal solver + full-graph labeler (forward + multi-source backward BFS → dist-to-goal + all-optimal-actions mask). |
+| `RushHourGenerator.cs` | Seeded solvable-puzzle generator within a difficulty band. |
+| `RushHourPolicyNet.cs` | Two-headed net (32 move logits + scalar distance), hidden 384. |
+| `RushHourPolicySearch.cs` | Greedy rollout (cycle-aware) + policy-guided A\* (`h` = value head). |
+| `tools/…Lab/RushHourImitationCampaign.cs` | Soft-CE over the optimal-action mask + Huber distance; ~50% on-policy DAgger; resumable. |
+| `RLDemo.Web/Services/RushHourRollout.cs` + `Controllers/RushHourController.cs` | `/analyze` (BFS optimal), `/solve` (greedy\|search\|dqn); returns AI + optimal trajectories for playback. |
+
+*Change it:* obs in `RushHourBoard.WriteObservation`; net capacity in `RushHourPolicyNet`; oracle budget + DAgger
+mix in the imitation campaign; A\* budget in `RushHourPolicySearch`.
+
+### 2048 — n-tuple afterstate TD + expectimax
+
+A classic **n-tuple TD(0)** learner (Szubert & Jaśkowski) over 17 lookup tables, paired with a test-time
+**expectimax** that averages the learned value over the random tile spawn (the chance node). A generic masked
+Double-DQN (`2048dqn`) is the NN baseline on the same env.
+
+| Path (`Environments/Game2048/`) | Role |
+|---|---|
+| `Game2048.cs` / `Env2048.cs` | 4×4 exponent grid + spawn (2@0.9 / 4@0.1); 16-dim obs, 4 actions, masking. |
+| `NTuple2048Agent.cs` | **Afterstate** TD(0): 17 tables (4 rows + 4 cols + 9 2×2, 65 536 entries each); `ChooseMove` = argmax `r + V(afterstate)`. |
+| `Expectimax2048.cs` | Search over `V`: max nodes (pick move) alternate with chance nodes (avg over spawn); depth-1 default (~1.9× greedy); transposition-memoized. |
+| `RLDemo.Web/{Services/Game2048ModelService, Controllers/Game2048Controller}.cs` | Loads the `2048/ntuple` table checkpoint; `/solve` runs expectimax on user boards. |
+
+**Afterstate vs state value:** the agent learns `V(after)` — the board *after* the slide/merge but *before* the
+random spawn — so the uncontrollable spawn is factored out; the TD target is `r + V(after)`, undiscounted (γ=1,
+total-score objective). Expectimax reintroduces the spawn as an explicit chance node at search time.
+*Change it:* tile patterns in `BuildTuples`; learning rate `Alpha`; depth/pruning in `Expectimax2048`; reward
+form in `Env2048.Step`.
+
+---
+
+## 10. Client-side game engines (human play)
+
+"Play yourself" runs **entirely in the browser** — a pure-TS engine per game ticks on `requestAnimationFrame`
+(canvas games) or `setInterval` (turn-based), no backend in the loop. The browser rules mirror the C# training
+env so human and AI obey identical mechanics. FruitCake is the richest (its own circle-physics solver); the
+others are thin logic modules.
+
+| Path (`RLDemo.Web/ClientApp/src/app/`) | Role |
+|---|---|
+| `fruit-cake/fruit-cake-physics.ts` | Custom sequential-impulse circle solver (12 velocity / 4 position iters; deferred same-tier merges; area-mass). |
+| `fruit-cake/{fruit-cake-game,-render,-audio,-fruits}.ts` | Rules + localStorage; Canvas 2D art + HUD + letterbox scaling; Web Audio; the 11-tier merge catalog (shared by physics/render/scoring). |
+| `fruit-cake/fruit-cake.ts` (component) | Fixed-timestep rAF loop, pointer aim/drop, `mode` signal (human ↔ watch), fullscreen. |
+| `snake/snake-logic.ts`, `mountaincar/mountaincar-logic.ts`, `game-2048/…-logic.ts`, `rush-hour/…-logic.ts` | Browser-side rules for human play, mirroring the C# envs. |
+| `cube/cube.ts` | Three.js scene + manual turns + Kociemba/AI solver playback. |
+| `screen-wake-lock.ts` | Shared service: holds a screen wake lock during watch-AI; re-acquires on foreground. |
+
+Each component has a `mode` signal: `'human'` (browser timer) vs `'watch'` (server WebSocket stream).
+Conventions: plain `fetch`/`WebSocket` (no `HttpClient`/`environment.ts`), standalone components + signals,
+canvas loops run **outside** Angular's zone.
+*Change it:* game rules → the `*-logic.ts` (keep the C# env in sync — see the PRD-sync comments); render/input →
+`*-render.ts` or the component; new game → add a folder + route (+ server controller/service).
+
+---
+
+## 11. Console demo, Bench & source-generated DI
+
+| Path | Role |
+|---|---|
+| `src/RLDemo.Console/Program.cs` | CLI demo: arg dispatch (`grid`/`lake`/`cartpole`/`ppo`/`2048`/`2048dqn`/`rushhour`/`cube` + seed + `--save`/`--load`/`--data`); trains then animates greedy console playback. |
+| `tools/…Bench/Program.cs` | Throughput harness: GEMM ops/s + GFLOP/s, full Adam train-step rate, thread-scaling sweep, GPU (ILGPU) host-span vs resident kernels; gates the CPU GEMM target. |
+| `…Core/Training/CampaignRunner.cs` | Carries `[Register(...)]` → source-generates `AddReinforcementLearningCore()`. |
+| `…Hosting/AIHost.cs` | `AddReinforcementLearning(dataDir)` composes the generated registration + `FileModelStore` + `TimeProvider`; `AIHost.CreateBuilder()` is the factory used by Lab/console. |
+| `…Ilgpu.Hosting/GpuBackendServiceCollectionExtensions.cs` | Optional `AddGpuBackend()` (AdaptiveBackend). |
+
+DI is **dogfooded via `MintPlayer.SourceGenerators`**: a `[Register(...)]` attribute on a class generates the
+`Add…Core()` extension, so Core carries no DI-framework dependency while Hosting / web / Lab compose it.
+
+```csharp
+[Register(ServiceLifetime.Singleton, "ReinforcementLearningCore")]   // → generated AddReinforcementLearningCore()
+public sealed class CampaignRunner(TimeProvider? timeProvider = null) { … }
+```
+
+*Change it:* add a console section to `knownSections`; bench targets in the Bench harness; a new DI service → add
+`[Register(...)]` to the class (the extension regenerates).
+
+---
+
+## 12. Tests & conventions
 
 - **Tests** (`tests/…Tests/`, xUnit + `Microsoft.AspNetCore.Mvc.Testing`): solve-threshold gates,
   determinism/round-trip tests, web API contract tests. Long-running tests carry `[Trait("Category","Slow")]`;
@@ -333,7 +470,7 @@ Re-running continues bitwise-identically. The cube's self-taught DAVI campaign h
 
 ---
 
-## 10. Where to change things — quick map
+## 13. Where to change things — quick map
 
 | I want to… | Touch |
 |---|---|
