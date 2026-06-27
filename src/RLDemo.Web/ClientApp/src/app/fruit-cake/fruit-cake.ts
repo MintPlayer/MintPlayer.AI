@@ -3,6 +3,7 @@ import { FruitCakeApi, FruitCakeFrame } from './fruit-cake-api';
 import { FruitCakeAudio } from './fruit-cake-audio';
 import { FruitCakeGame, GamePhase } from './fruit-cake-game';
 import { HudButton, hitTest, render, renderFrame, surfaceToContainerX } from './fruit-cake-render';
+import { ScreenWakeLock } from '../screen-wake-lock';
 
 /**
  * FruitCake — a Suika-style drop-and-merge physics game, ported from the original .NET MAUI/Blazor
@@ -21,6 +22,7 @@ import { HudButton, hitTest, render, renderFrame, surfaceToContainerX } from './
   host: {
     '(document:fullscreenchange)': 'onFullscreenChange()',
     '(document:webkitfullscreenchange)': 'onFullscreenChange()',
+    '(document:visibilitychange)': 'onVisibilityChange()',
   },
 })
 export class FruitCake implements AfterViewInit {
@@ -29,6 +31,7 @@ export class FruitCake implements AfterViewInit {
   private readonly zone = inject(NgZone);
 
   private readonly api = inject(FruitCakeApi);
+  private readonly wakeLock = inject(ScreenWakeLock);
   private readonly audio = new FruitCakeAudio();
   private readonly game = new FruitCakeGame(this.audio);
 
@@ -71,6 +74,7 @@ export class FruitCake implements AfterViewInit {
     if (mode === 'watch') {
       this.mode.set('watch');
       this.latestFrame = null;
+      void this.wakeLock.acquire(); // keep the phone screen on so the stream isn't frozen by an auto-lock
       void this.connect();
     } else {
       this.disconnect();
@@ -99,6 +103,14 @@ export class FruitCake implements AfterViewInit {
     this.socket?.close();
     this.socket = null;
     this.latestFrame = null;
+    void this.wakeLock.release();
+  }
+
+  // The OS freezes a backgrounded tab (screen lock / tab switch), which drops the stream socket. When we
+  // return to the foreground still in watch mode, reopen it so the AI keeps playing instead of staying dead.
+  protected onVisibilityChange(): void {
+    if (document.visibilityState !== 'visible' || this.mode() !== 'watch') return;
+    if (!this.socket || this.socket.readyState >= WebSocket.CLOSING) void this.connect();
   }
 
   private readonly frame = (nowMs: number): void => {

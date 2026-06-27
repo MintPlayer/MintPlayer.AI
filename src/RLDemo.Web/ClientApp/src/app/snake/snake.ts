@@ -1,6 +1,7 @@
 import { Component, DestroyRef, inject, signal } from '@angular/core';
 import { SnakeApi, SnakeStatus } from './snake-api';
 import { CELLS, Dir, SIZE, SnakeGame } from './snake-logic';
+import { ScreenWakeLock } from '../screen-wake-lock';
 
 /**
  * Snake page with the two interaction principles side by side (PRD §7.1):
@@ -12,10 +13,11 @@ import { CELLS, Dir, SIZE, SnakeGame } from './snake-logic';
   selector: 'app-snake',
   templateUrl: './snake.html',
   styleUrl: './snake.scss',
-  host: { '(window:keydown)': 'onKey($event)' },
+  host: { '(window:keydown)': 'onKey($event)', '(document:visibilitychange)': 'onVisibilityChange()' },
 })
 export class Snake {
   private readonly api = inject(SnakeApi);
+  private readonly wakeLock = inject(ScreenWakeLock);
 
   protected readonly size = SIZE;
   protected readonly cells = Array.from({ length: CELLS }, (_, i) => i);
@@ -54,6 +56,7 @@ export class Snake {
       return;
     }
     this.mode.set('watch');
+    void this.wakeLock.acquire(); // keep the phone screen on so an auto-lock doesn't freeze the stream
     this.status.set('Watching the AI play (the server drives the game)…');
     this.socket = this.api.connectLive(
       f => {
@@ -94,7 +97,15 @@ export class Snake {
     this.socket = null;
     this.clearTimer();
     this.game = null;
+    void this.wakeLock.release();
     if (this.mode() !== 'idle') this.mode.set('idle');
+  }
+
+  // A backgrounded tab (phone lock / tab switch) gets frozen and the stream socket drops; when we return to
+  // the foreground still in watch mode, reopen it so the AI resumes instead of staying stopped.
+  protected onVisibilityChange(): void {
+    if (document.visibilityState !== 'visible' || this.mode() !== 'watch') return;
+    if (!this.socket || this.socket.readyState >= WebSocket.CLOSING) void this.watchAi();
   }
 
   private render(body: number[], food: number, eaten: number): void {

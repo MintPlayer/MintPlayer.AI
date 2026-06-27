@@ -14,7 +14,7 @@ using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 /// <see cref="DqnOptions.MaxSteps"/> and continues. Persists the deployable net under `fruitcake`/`dqn` (the id
 /// the web's <c>FruitCakeModelService</c> will load, A3) plus the full resume state under `fruitcake`/`dqn-state`.
 /// </summary>
-internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false)
+internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false, int nStep = 1, bool shapeRewards = false)
     : ITrainingCampaign
 {
     private const string NetId = "dqn";         // deployable DuelingQNet — the id the web loads (shared by both lines)
@@ -22,7 +22,9 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
     // net (which would then train with ε=0 and NO exploration). The deployable NetId is shared and keep-best gated.
     private string StateId => noisy ? "dqn-noisy-state" : "dqn-state";
 
-    private readonly FruitCakeEnv _env = new();
+    // Training env carries the reward shaping (ShapingGamma matches the learner's γ for policy-invariance); the
+    // eval env stays a plain game so keep-best/A/B always judge real merge points, never the shaped signal.
+    private readonly FruitCakeEnv _env = new() { ShapeRewards = shapeRewards, ShapingGamma = gamma };
     private readonly FruitCakeEnv _evalEnv = new();
     private readonly SeedSequence _seeds = new(seed);
 
@@ -44,6 +46,7 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
 
         Hidden = hidden,
         Gamma = gamma,
+        NStep = nStep, // n-step returns: propagate the sparse high-tier reward backward faster (PRD §4.C C4)
         LearningRate = learningRate,
         BufferCapacity = 100_000,
         BatchSize = 128,
