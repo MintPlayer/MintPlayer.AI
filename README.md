@@ -1,10 +1,18 @@
 # MintPlayer.AI.ReinforcementLearning
 
 A reinforcement-learning library written from scratch in C#/.NET — no Python, no libtorch,
-no native dependencies. See [docs/prd/PRD.md](docs/prd/PRD.md) for the why and what,
-[docs/prd/PLAN.md](docs/prd/PLAN.md) for the milestone roadmap, and
+no native dependencies.
+
+**Contributing? Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the contributor code map:
+where each subsystem lives (Core math/NN/backends, environments, trainers, checkpoints, the web app),
+the checkpoint file formats and "Watch AI" wire protocol, how to train/compare models, and a
+"where to change things" table for common tasks.
+
+See also [docs/prd/PRD.md](docs/prd/PRD.md) for the why and what,
+[docs/prd/PLAN.md](docs/prd/PLAN.md) for the milestone roadmap,
 [docs/OPTIMIZATIONS.md](docs/OPTIMIZATIONS.md) for the performance/capability optimization ledger
-(CPU & GPU compute, residency, training efficiency — done and planned).
+(CPU & GPU compute, residency, training efficiency — done and planned), and
+[docs/ADDING_A_GAME.md](docs/ADDING_A_GAME.md) for the end-to-end "add a new game" checklist.
 
 ## Layout
 
