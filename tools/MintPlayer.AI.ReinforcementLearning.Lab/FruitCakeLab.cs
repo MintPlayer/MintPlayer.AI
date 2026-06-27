@@ -36,6 +36,10 @@ internal static class FruitCakeLab
         int topK = 5;              // --topk : depth-2 first-ply expansion width
         int topK2 = 3;             // --topk2 : deeper-ply expansion width (depth 3)
         string leaf = "net";       // --leaf : search leaf value (net | height | tierpot | blend)
+        bool distill = false;      // --distill : planner-distillation (train a policy/value net to imitate the search)
+        double dagger = 0.1;       // --dagger : DAgger exploration prob during teacher self-play (state coverage)
+        int epochs = 2;            // --epochs : supervised passes over the rolling buffer per round (data reuse)
+        bool distillEval = false;  // --distill-eval : compare dqn+search vs distilled policy (alone / +search)
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], CultureInfo.InvariantCulture);
@@ -60,6 +64,17 @@ internal static class FruitCakeLab
             else if (args[i] == "--topk" && i + 1 < args.Length) topK = int.Parse(args[++i]);
             else if (args[i] == "--topk2" && i + 1 < args.Length) topK2 = int.Parse(args[++i]);
             else if (args[i] == "--leaf" && i + 1 < args.Length) leaf = args[++i];
+            else if (args[i] == "--distill") distill = true;
+            else if (args[i] == "--dagger" && i + 1 < args.Length) dagger = double.Parse(args[++i], CultureInfo.InvariantCulture);
+            else if (args[i] == "--epochs" && i + 1 < args.Length) epochs = int.Parse(args[++i]);
+            else if (args[i] == "--distill-eval") distillEval = true;
+        }
+
+        if (distillEval)
+        {
+            // F6 verdict: dqn+search (current) vs the distilled policy (alone, and with its value head as the search leaf).
+            FruitCakeDistillEval.Run(dataDir, abEpisodes, depth, topK, topK2, seedBase: 20_000);
+            return;
         }
 
         if (searchEval)
@@ -79,6 +94,24 @@ internal static class FruitCakeLab
         using var host = AIHost.CreateBuilder(dataDir).Build();
         var store = host.Services.GetRequiredService<IModelStore>();
         var runner = host.Services.GetRequiredService<CampaignRunner>();
+
+        if (distill)
+        {
+            // Planner distillation (F6): train a policy/value net to imitate the depth-N search teacher.
+            // Recommended: --distill --depth 3 --topk 10 --topk2 3 --gamma 0.997 --lr 1e-3 --hours N.
+            string distCsv = Path.Combine(dataDir, "logs", "fruitcake-distill.csv");
+            runner.Run(
+                new FruitCakeImitationCampaign(seed, learningRate, hidden[0], gamma, depth, topK, topK2, dagger, epochs),
+                store,
+                new CampaignOptions
+                {
+                    Duration = TimeSpan.FromHours(hours),
+                    EvalOnly = evalOnly,
+                    OnEval = CampaignCli.ConsoleAndCsv(distCsv),
+                });
+            return;
+        }
+
         string csvPath = Path.Combine(dataDir, "logs", "fruitcake-dqn.csv");
         runner.Run(
             new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, noisy, nStep, shape),
