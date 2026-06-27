@@ -156,9 +156,14 @@ All shaping is an edit to `FruitCakeEnv.Step` (precedent: `RushHourEnv` already 
   5 contract tests green (n=1 single-step parity; discounted-sum target; terminal flush; truncation-drop;
   Save/Load round-trip). **Bitwise-resume preserved** — the in-flight window is persisted (`DqnTrainingState` v4;
   n=1 window is always empty at step boundaries ⇒ identical to v3).
-- **F5 — Train & ship (conditional).** Multi-seed training with F2–F4; **A/B vs the shipped net on the max-tier
-  distribution**; ship `models/fruitcake.dqn.ckpt` (LFS) **only if it beats baseline**. Otherwise keep the work
-  as a validated capability and leave the shipped model.
+- **F5 — Train & ship (conditional).** ✅ *Shipped 2026-06-27.* Trained from scratch at width 83 with
+  `--shape --nstep 3 --gamma 0.997` (stopped ~90 min in; run is resumable from `data/fruitcake-bundle`).
+  Robust 200-game greedy measurement: **mean 963.5 ±260 SD, median 961, meanTier 8.75, maxTier histogram
+  t10:15/t9:127/t8:53/t7:4/t5:1** vs recorded baseline ~707 / meanTier ~8.5 / watermelon ~never → **+36%
+  score, more frequent tier-10 play** ⇒ shipped `models/fruitcake.dqn.ckpt` (LFS) on PR #17. **Watermelon (11)
+  still 0/200** — the score win landed, the tier-ceiling breakthrough did not; that's the F1/B4/F6 work.
+  *Measurement note:* old (41-dim) vs new (83-dim) can't be paired in one build, so the gate was the new net's
+  absolute distribution vs the recorded baseline (same game/scoring, only the net's input changed).
 - **F6 — Stretch: planner-guided training / afterstate value.** Use the F1 planner as an expert (generate
   demonstrations / stronger behavior policy) or learn `V(simulated-afterstate)` and act by search over it — the
   2048/AlphaZero recipe; gated on F1–F5.
