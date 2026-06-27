@@ -110,6 +110,67 @@ public class DuelingDqnTests
     }
 
     [Fact]
+    public void DuelingQNet_ToNoisy_IsBehaviorallyIdenticalWithNoiseOff()
+    {
+        // Promote-plain→noisy must copy the trained weights into the means, so with noise off the noisy net
+        // is bit-for-bit the same policy — the warm-start property that lets a noisy run continue, not restart.
+        var plain = new DuelingQNet(5, [16, 8], 3, new Xoshiro256StarStar(11));
+        var noisy = plain.ToNoisy(new Xoshiro256StarStar(99));
+        Assert.True(noisy.Noisy);
+
+        var x = new Tensor([0.3f, -0.1f, 0.2f, 0.0f, 0.5f], 1, 5);
+        using (GradMode.NoGrad())
+            Assert.Equal(plain.Forward(x).Data, noisy.Forward(x).Data);
+    }
+
+    private static DqnOptions NoisyOptions(int steps) => new()
+    {
+        NoisyNets = true, // implies Dueling
+        Hidden = [32, 32],
+        BufferCapacity = 5_000,
+        WarmupSteps = 200,
+        BatchSize = 32,
+        TargetSyncEvery = 200,
+        EvalEvery = int.MaxValue, // no eval interruptions → clean determinism
+        MaxSteps = steps,
+    };
+
+    [Fact]
+    public void Dqn_Noisy_ResumesBitwiseIdentically()
+    {
+        // The noisy path must resume bitwise: the v3 state carries NoiseRng, and the per-step resample
+        // count is deterministic, so the noise sequence stays in lockstep across an interruption.
+        const ulong masterSeed = 321;
+        var resultA = DqnTrainer.Train(new CartPoleEnv(), NoisyOptions(4_000), new SeedSequence(masterSeed));
+        Assert.True(((DuelingQNet)resultA.Network).Noisy);
+
+        var resultB1 = DqnTrainer.Train(new CartPoleEnv(), NoisyOptions(2_000), new SeedSequence(masterSeed));
+        using var stream = new MemoryStream();
+        resultB1.State.Save(stream);
+        stream.Position = 0;
+        var restored = DqnTrainingState.Load(stream);
+        Assert.True(((DuelingQNet)restored.Online).Noisy); // noisy flag survived the checkpoint
+        var resultB2 = DqnTrainer.Train(new CartPoleEnv(), NoisyOptions(4_000), new SeedSequence(masterSeed), resume: restored);
+
+        AssertParamsEqual(resultA.Network, resultB2.Network);
+        AssertParamsEqual(resultA.State.Target, resultB2.State.Target);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public void Dqn_Noisy_LearnsCartPole_AboveRandom()
+    {
+        // End-to-end smoke for the NoisyNets path: exploration comes from learned noise (ε = 0), and the
+        // deterministic (means-only) greedy policy should clear well above random (~22) without diverging.
+        var seeds = new SeedSequence(7);
+        var result = DqnTrainer.Train(new CartPoleEnv(), new DqnOptions { NoisyNets = true, MaxSteps = 60_000 }, seeds);
+
+        var eval = Evaluator.Evaluate(new CartPoleEnv(), result.Agent, episodes: 30, seeds.Derive(RngStreams.Evaluation));
+        Assert.All(result.Network.Parameters(), p => Assert.All(p.Data, v => Assert.True(float.IsFinite(v))));
+        Assert.True(eval.MeanReturn > 100, $"noisy DQN eval {eval.MeanReturn:F1} — expected > 100 (random ≈ 22)");
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public void Dqn_Dueling_SolvesCartPole_MedianOf3Seeds()
     {

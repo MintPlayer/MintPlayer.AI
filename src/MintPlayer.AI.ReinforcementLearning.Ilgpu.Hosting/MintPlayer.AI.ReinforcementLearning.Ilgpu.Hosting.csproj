@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <PropertyGroup Label="Package">
-    <Version>0.2.0</Version>
+    <Version>$(RLNetVersion)</Version>
     <Authors>Pieterjan De Clippel</Authors>
     <Company>MintPlayer</Company>
     <Description>Dependency-injection glue for the MintPlayer.AI.ReinforcementLearning ILGPU GPU backend: services.AddGpuBackend() registers the AdaptiveBackend (CPU + CUDA-by-size routing) as a singleton in an AIHost / Microsoft.Extensions.DependencyInjection container, so a training campaign can request the shared GPU backend instead of constructing its own. Kept separate from the compute package so the lean Ilgpu backend carries no DI dependency.</Description>

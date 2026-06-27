@@ -32,6 +32,14 @@ public sealed record DqnOptions
     /// </summary>
     public bool Dueling { get; init; }
 
+    /// <summary>
+    /// Use NoisyNets exploration (learned, state-dependent noise on the Dueling heads) INSTEAD of
+    /// ε-greedy. Implies <see cref="Dueling"/>. The trainer resamples the online net's noise before
+    /// each action and the online+target before each TD update, forces ε to 0, and disables noise
+    /// during evaluation so greedy eval/serving stays deterministic.
+    /// </summary>
+    public bool NoisyNets { get; init; }
+
     public int EvalEvery { get; init; } = 5_000;
     public int EvalEpisodes { get; init; } = 20;
 
@@ -114,8 +122,9 @@ public static class DqnTrainer
         if (resume is null)
         {
             var initRng = seeds.CreateRng(RngStreams.Init);
-            IValueNet MakeNet() => options.Dueling
-                ? new DuelingQNet(obsDim, options.Hidden, actionCount, initRng)
+            // NoisyNets rides on the Dueling heads, so it implies a DuelingQNet.
+            IValueNet MakeNet() => options.Dueling || options.NoisyNets
+                ? new DuelingQNet(obsDim, options.Hidden, actionCount, initRng, options.NoisyNets)
                 : new Mlp([obsDim, .. options.Hidden, actionCount], initRng, Activation.Relu);
             var online = warmStart ?? MakeNet();
             var target = MakeNet();
@@ -128,6 +137,7 @@ public static class DqnTrainer
                 Buffer = new ReplayBuffer(options.BufferCapacity, obsDim, actionCount),
                 PolicyRng = seeds.CreateRng(RngStreams.Policy),
                 BufferRng = seeds.CreateRng(RngStreams.Buffer),
+                NoiseRng = seeds.CreateRng(RngStreams.Noise),
             };
             (obs, _) = env.Reset(seeds.Derive(RngStreams.Environment));
         }
@@ -156,8 +166,20 @@ public static class DqnTrainer
         float lastLoss = state.LastLoss;
         double lastEval = state.LastEval;
 
+        // NoisyNets plumbing (no-ops for a plain/ε-greedy run). Noise stays ON for the training loop and
+        // is switched OFF only around eval and on return, so a resumed run, eval, and the returned net are
+        // all deterministic; exploration during training is the resampled, greedy-argmax-over-noise policy.
+        void ResampleNoise(IValueNet net) { if (options.NoisyNets) ((DuelingQNet)net).ResampleNoise(state.NoiseRng); }
+        void SetNoiseEnabled(bool on)
+        {
+            if (!options.NoisyNets) return;
+            ((DuelingQNet)state.Online).SetNoiseEnabled(on);
+            ((DuelingQNet)state.Target).SetNoiseEnabled(on);
+        }
+
         DqnResult Finish(int stepsTrained)
         {
+            SetNoiseEnabled(false); // return a deterministic net (keep-best eval / serving use the means)
             state.CurrentObs = obs;
             state.StepsCompleted = stepsTrained;
             state.LastLoss = lastLoss;
@@ -166,9 +188,12 @@ public static class DqnTrainer
             return new DqnResult(agent, state.Online, stepsTrained, lastEval, state);
         }
 
+        SetNoiseEnabled(true);
+
         for (int step = state.StepsCompleted + 1; step <= options.MaxSteps; step++)
         {
-            agent.Epsilon = options.Epsilon.Value(step);
+            ResampleNoise(state.Online); // fresh per-action exploration noise (NoisyNets)
+            agent.Epsilon = options.NoisyNets ? 0 : options.Epsilon.Value(step); // noise replaces ε-greedy
             int action = agent.Act(obs, maskProvider?.CurrentActionMask());
             var result = env.Step(action);
             // Mask of the next state, captured BEFORE any autoreset (used by the TD-target max).
@@ -179,16 +204,23 @@ public static class DqnTrainer
             obs = result.Done ? env.Reset().Observation : result.Observation;
 
             if (state.Buffer.Count >= options.WarmupSteps && step % options.TrainEvery == 0)
+            {
+                // Independent fresh noise for the online and target nets used in the TD update.
+                ResampleNoise(state.Online);
+                ResampleNoise(state.Target);
                 lastLoss = TrainStep(state.Online, state.Target, state.Optimizer,
                     state.Buffer.Sample(options.BatchSize, state.BufferRng), options);
+            }
 
             if (step % options.TargetSyncEvery == 0)
                 state.Target.CopyFrom(state.Online);
 
             if (step % options.EvalEvery == 0)
             {
+                SetNoiseEnabled(false); // deterministic (means-only) greedy evaluation
                 lastEval = Evaluator.Evaluate(env, (float[] o, bool[]? m) => agent.Act(o, m, greedy: true),
                     options.EvalEpisodes, seeds.Derive(RngStreams.Evaluation)).MeanReturn;
+                SetNoiseEnabled(true);
                 options.OnProgress?.Invoke(new DqnProgress(step, options.MaxSteps, lastEval, agent.Epsilon, lastLoss));
                 (obs, _) = env.Reset(); // evaluation ended mid-episode; start fresh
 

@@ -293,3 +293,101 @@ public class NTuple2048Tests
         Assert.True(hits >= 10, $"2048 tile reached in {hits}/100 games (need >= 10)");
     }
 }
+
+public class Expectimax2048Tests
+{
+    // A handful of legal mid-game boards (exponents, row-major) to exercise the search on.
+    private static IEnumerable<byte[]> SampleBoards()
+    {
+        var rng = new Xoshiro256StarStar(7);
+        for (int n = 0; n < 40; n++)
+        {
+            var board = new byte[16];
+            Board2048.Spawn(board, rng);
+            Board2048.Spawn(board, rng);
+            // Walk a few random legal moves to reach varied, non-trivial positions.
+            for (int step = 0; step < 10 && Board2048.AnyMoveAvailable(board); step++)
+            {
+                var mask = Board2048.ValidMoves(board);
+                int legal = mask.Count(m => m);
+                int pick = rng.NextInt(legal);
+                int action = Array.FindIndex(mask, m => m && pick-- == 0);
+                Board2048.ApplyMove(board, action, out _, out _);
+                Board2048.Spawn(board, rng);
+            }
+            if (Board2048.AnyMoveAvailable(board)) yield return board;
+        }
+    }
+
+    [Fact]
+    public void DepthZero_ReproducesGreedyAgentChoice()
+    {
+        // Depth 0 is argmax [reward + V(afterstate)] with no spawn lookahead — identical to the
+        // agent's 1-ply selector, so the search is a faithful generalization of it.
+        var agent = new NTuple2048Agent();
+        var trainRng = new Xoshiro256StarStar(200);
+        for (int g = 0; g < 1000; g++) agent.PlayGame(trainRng, learn: true); // give V some shape
+
+        var solver = new Expectimax2048(agent) { MaxDepth = 0 };
+        Span<byte> greedyAfter = stackalloc byte[16];
+        Span<byte> solverAfter = stackalloc byte[16];
+
+        foreach (var board in SampleBoards())
+        {
+            int greedyAction = agent.ChooseMove(board, out int greedyReward, greedyAfter);
+            int solverAction = solver.ChooseMove(board, out int solverReward, solverAfter);
+            Assert.Equal(greedyAction, solverAction);
+            Assert.Equal(greedyReward, solverReward);
+        }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void NeverChoosesIllegalMove(int maxDepth)
+    {
+        var agent = new NTuple2048Agent();
+        var trainRng = new Xoshiro256StarStar(200);
+        for (int g = 0; g < 500; g++) agent.PlayGame(trainRng, learn: true);
+
+        var solver = new Expectimax2048(agent) { MaxDepth = maxDepth };
+        Span<byte> after = stackalloc byte[16];
+        Span<byte> check = stackalloc byte[16];
+
+        foreach (var board in SampleBoards())
+        {
+            int action = solver.ChooseMove(board, out _, after);
+            Assert.InRange(action, 0, Board2048.ActionCount - 1);
+            board.CopyTo(check);
+            Assert.True(Board2048.ApplyMove(check, action, out _, out _), "search picked an illegal move");
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public void Expectimax_OutscoresGreedy_OnTheSameValueFunction()
+    {
+        // The whole point: looking one+ spawn(s) ahead with the SAME tables beats 1-ply greedy.
+        var agent = new NTuple2048Agent();
+        var trainRng = new Xoshiro256StarStar(200);
+        for (int g = 0; g < 5000; g++) agent.PlayGame(trainRng, learn: true);
+
+        var solver = new Expectimax2048(agent); // adaptive depth
+        const int games = 40;
+
+        double greedyAvg = 0, emaxAvg = 0;
+        var greedyRng = new Xoshiro256StarStar(100);
+        var emaxRng = new Xoshiro256StarStar(100);
+        for (int g = 0; g < games; g++)
+        {
+            greedyAvg += agent.PlayGame(greedyRng, learn: false).Score;
+            emaxAvg += solver.PlayGame(emaxRng).Score;
+        }
+        greedyAvg /= games;
+        emaxAvg /= games;
+
+        Assert.True(emaxAvg > greedyAvg, $"expectimax {emaxAvg:F0} did not beat greedy {greedyAvg:F0}");
+    }
+}

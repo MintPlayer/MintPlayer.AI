@@ -6,6 +6,16 @@ namespace MintPlayer.AI.ReinforcementLearning.Core.Nn;
 public static class Init
 {
     /// <summary>
+    /// Fills a tensor with i.i.d. samples from the uniform distribution U[−limit, +limit] —
+    /// the NoisyNets mean-weight initializer (Fortunato et al. 2017, with limit = 1/√in).
+    /// </summary>
+    public static void Uniform(Tensor tensor, float limit, Xoshiro256StarStar rng)
+    {
+        for (int i = 0; i < tensor.Data.Length; i++)
+            tensor.Data[i] = (float)((rng.NextDouble() * 2.0 - 1.0) * limit);
+    }
+
+    /// <summary>
     /// Orthogonal initialization (Saxe et al. 2014) via modified Gram–Schmidt on a random
     /// Gaussian matrix — the PPO-standard scheme (hidden gain √2, policy head 0.01, value head 1).
     /// </summary>

@@ -331,6 +331,41 @@ hurts at higher weight (one solve, 1024×4 value net, weight 1.5, ≤20k exp):
   not a search-time policy. The prototype + the generic `SolveBatchedWithPolicy` were reverted (no dead
   code); recoverable from git history if a self-distilled policy is ever trained.
 
+## Investigated, not pursued — vectorized DQN envs (measured 2026-06-26)
+
+Tried speeding up FruitCake DQN data generation by stepping **N = ProcessorCount envs in parallel**
+(`DqnOptions.Actors`, a synchronous-vectorized loop fanning `env.Step` out over `Parallel.For` while a
+single learner trains), on the assumption the run is **env-bound** (FruitCake's physics-in-the-loop is
+the dominant per-step cost). **Negative result — ~3× SLOWER**, not faster:
+
+| | drops/min | avg cores |
+|---|---|---|
+| single-env (default) | ~5,400 | (backend uses multiple) |
+| 8 parallel envs | ~1,600 | **1.19** |
+
+- **Root cause: the compute backend already parallelizes data generation** — the GEMMs run across cores
+  via the multithreaded CPU GEMM (§1.2, `ManagedBackend.ForRowRanges`) / CUDA. The training loop and envs
+  run **single-threaded above it on purpose**. Stacking a *second* parallelism layer (N env threads ×
+  the backend's own `Parallel.For`) **oversubscribes** the thread pool — they fight for the same cores —
+  and the synchronous per-tick barrier + a serial learner doing N updates/tick make it net-negative. The
+  1.19-core average is the tell: the process is mostly *blocked*, not computing.
+- **Principle (the takeaway): data generation/compute is parallelized in the backend. Don't add a second
+  parallelism layer on top** — neither N vectorized envs nor an intra-`Step` `Parallel.For` (the latter is
+  even worse: FruitCake physics is a small, *data-dependent* sequential-impulse solver, so fine-grained
+  parallelism is pure dispatch overhead). There is no idle CPU headroom for env-parallelism to fill.
+- **To actually use more cores for data gen: run N independent runs concurrently** (a multi-seed sweep),
+  with the backend made **single-threaded** for the duration — `Backend.Current = new ManagedBackend(maxDegreeOfParallelism: 1)`
+  — so the N runs *are* the parallelism (N tasks × 1 thread = N cores) instead of N tasks each spawning the
+  backend's own N-way `Parallel.For` (= N² threads, the same oversubscription). In-process `Task.WhenAll` /
+  `Parallel.ForEachAsync` suffices — `ManagedBackend` is stateless (only a `readonly int`, static methods on
+  caller spans) so concurrent calls are thread-safe, and `GradMode` is `[ThreadStatic]`. Separate OS processes
+  are **not** needed (only worth it for concurrent *GPU* runs — one CUDA context isn't concurrency-safe; the
+  tiny net runs on CPU anyway). It's a "run more experiments" pattern, not a "make one run faster" knob.
+- **Meta-lesson: profile before parallelizing.** "Env-bound" was asserted, not measured; the backend was
+  already doing the parallelism that mattered.
+- The `DqnOptions.Actors` / vectorized-trainer prototype was **reverted** (no dead code); recoverable from
+  git history (`feat(dqn): vectorized envs` + its revert).
+
 ## Planned
 
 | # | Optimization | Milestone | Why / expected |

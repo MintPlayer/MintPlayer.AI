@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <PropertyGroup Label="Package">
-    <Version>0.2.0</Version>
+    <Version>$(RLNetVersion)</Version>
     <Authors>Pieterjan De Clippel</Authors>
     <Company>MintPlayer</Company>
     <Description>Optional GPU compute backend for MintPlayer.AI.ReinforcementLearning, implemented with ILGPU (CUDA / OpenCL / CPU accelerators). Implements IComputeBackend so it slots in under the autograd layer without touching algorithm code. Never a dependency of the Core package.</Description>

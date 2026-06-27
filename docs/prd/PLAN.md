@@ -951,6 +951,32 @@ experiments. Reliable **100** (filling ~70% of the board) needs **multi-ply plan
 pattern (learned net guiding a beam/lookahead, already in this repo) or a Hamiltonian planner — out of scope for
 this learning-only milestone, recommended as the follow-up.
 
+## M28 — 2048 expectimax · NoisyNets exploration · FruitCake A/B  *(PR #15, branch `fruitcake-more-training`)* ✅
+
+Three game-playing improvements plus a reusable exploration capability. Detail lives in
+`NOISYNETS_PRD.md` and `FRUITCAKE_AI_PRD.md`; this is the ledger entry.
+
+- **2048 expectimax** (`Expectimax2048`) — averages the n-tuple **afterstate value over the random spawn**,
+  fixing 1-ply greedy's spawn-blindness (it would slide the big tile out of a corner and let a stray 2 wreck
+  it). 100-game A/B on the shipped net: **avg ~44k → ~84k (~1.9×), best tile 4096 → 8192**, *no retrain*;
+  default depth-1 (~1.2 s/full playout — serving-viable; deeper is far slower for no reliable gain). 2048 is
+  scored as a high-score game, so it keeps optimizing past 2048. `Game2048Controller` serves it.
+- **NoisyNets (N0–N3)** — learned, state-dependent exploration (Fortunato 2017): `NoisyLinear` (factorized
+  Gaussian, noise sampled as autograd *constants* → grads reach μ/σ, never the noise — no new op),
+  `DuelingQNet` noisy heads + checkpoint **v2** (v1 files load as plain — every shipped `*.dqn.ckpt` keeps
+  working), `DqnTrainer` NoisyNets path (resample cadence, ε=0, eval noise-off, serialized `NoiseRng`),
+  FruitCake `--noisy` + `ToNoisy` promote-plain→noisy. **Serving unchanged** (noise off default →
+  deterministic means). 293/293 non-slow tests; noisy resume bitwise-identical.
+- **FruitCake N4 verdict — NoisyNets MATCHED ε-greedy, did NOT beat it → not shipped.** A 200-game paired
+  A/B (`FruitCakeAb`, `--game fruitcake --ab --baseline <dir>`) is a statistical tie: candidate **702.1** vs
+  baseline **714.4** (Δ **−12.3 ± 29.8 SE**, 49% wins), noisy net higher-variance. The eye-catching 886/971
+  single-evals were **seed-luck** — over 200 games both nets sit ~700–714. `models/fruitcake.dqn.ckpt`
+  unchanged. **Methodology lesson: judge this stochastic env with the multi-seed paired A/B, never a
+  10-episode eval.** Continued **ε-greedy** training remains the proven lever for real FruitCake gains.
+- **Vectorized DQN envs — tried & reverted** (~3× *slower*): the compute backend already parallelizes
+  data-gen (multithreaded GEMM / CUDA), so a second parallelism layer just oversubscribes the cores. To use
+  more cores, run N independent runs with the backend single-threaded. Writeup: `docs/OPTIMIZATIONS.md`.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -994,6 +1020,9 @@ this learning-only milestone, recommended as the follow-up.
 | Learning-curve levers P.7/P.8/P.9 (2026-06-14) | feed GPU, decouple pacing, per-update efficiency | parallel successor gen (GPU 0→95-100% util) + `--batch`; sample-paced curriculum + lighter eval; ε-loss target sync (freeze-proof) + `--lr`. Net: **~3,050 samples/s (~2× prior)**, GPU-bound at ~2 TFLOP/s |
 | General `IComputeBackend` port Phase 1 (2026-06-14) | every autograd op behind the seam; CPU bitwise-identical | all ops (Map/Zip/reductions/LogSoftmax/Gather/Huber/LayerNorm) routed through the backend; 224/224 green. Phase 2 (device-backed Tensor) parked far-future (no measured win at our scale) |
 | **M21 shortest-move solver — BWAS capability (2026-06-14, residual 1024×4, ~44k iters)** | **provably-optimal shallow; beat Kociemba's QTM mid-range** | batched A* (w=2.5, ≤40k exp, 12/depth): **12/12 & QTM-optimal through depth 10** (exactly d·qt), **100% solved through depth 12**, 83% d13, 75% d14; **every solve beats Kociemba's QTM, often ~2×** (d10 10 vs 19, d12 12.2 vs 29.3). Greedy (live curve) collapses ~d10-11 — search reads the net far deeper. Beats the earlier 1024×3 MLP at every deep level (d12 100% vs 80%). Full god's-number (26 QTM) NOT reached — honest two-tier story |
+| M28 2048 expectimax (2026-06-26) | beat the shipped n-tuple greedy on score, serving-viable | **~84k vs ~44k (1.9×)**, best tile 4096→8192 over 100 games, *no retrain*; ~1.2 s/playout at depth 1 |
+| M28 NoisyNets capability (2026-06-26) | learns, serializes, serves deterministically; no shipped checkpoint broken | 293/293; σ-grads flow; noisy resume bitwise; v1 ckpts load as plain; serving unchanged (noise off) |
+| M28 FruitCake NoisyNets empirical (2026-06-26) | match or beat ε-greedy at equal budget (multi-seed) | **matched** — 200-game paired A/B tie (702.1 vs 714.4, Δ −12.3 ± 29.8 SE); single-evals were seed-luck; not shipped |
 
 ## Shipped (2026-06-11) — release engineering
 

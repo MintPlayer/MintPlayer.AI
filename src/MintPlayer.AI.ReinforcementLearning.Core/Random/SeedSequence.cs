@@ -28,4 +28,5 @@ public static class RngStreams
     public const int Init = 2;
     public const int Buffer = 3;
     public const int Evaluation = 4;
+    public const int Noise = 5; // NoisyNets exploration-noise resampling
 }

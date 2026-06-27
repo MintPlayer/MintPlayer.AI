@@ -3,6 +3,7 @@ using SnakeDqnCampaign = Lab::SnakeDqnCampaign;
 using FruitCakeDqnCampaign = Lab::FruitCakeDqnCampaign;
 using RushHourImitationCampaign = Lab::RushHourImitationCampaign;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 
 namespace MintPlayer.AI.ReinforcementLearning.Tests;
 
@@ -91,6 +92,46 @@ public class CampaignContractTests
             long afterChunk2 = c2.TrainChunk();
             Assert.True(afterChunk2 > afterChunk1, $"resume continued to {afterChunk2}, expected past {afterChunk1}");
             Assert.Equal(80, afterChunk2);            // reached the cap
+            Assert.True(c2.IsComplete);
+            c2.Dispose();
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public void FruitCakeCampaign_Noisy_Trains_Checkpoints_AndResumesAsNoisy()
+    {
+        var dir = Directory.CreateTempSubdirectory("fruitcake-noisy-campaign-contract");
+        try
+        {
+            var store = new FileModelStore(dir.FullName);
+            FruitCakeDqnCampaign Fresh() => new(seed: 1, chunkSteps: 40, targetSteps: 80, evalEpisodes: 2, learningRate: 5e-4f, epsilonStart: 1.0f, hidden: [64, 64], gamma: 0.99, noisy: true);
+
+            var c1 = Fresh();
+            Assert.False(c1.Resume(store));
+            Assert.Equal(40, c1.TrainChunk());
+
+            var eval = c1.Evaluate();
+            Assert.All(eval.Metrics, m => Assert.False(double.IsNaN(m.Value)));
+
+            c1.Checkpoint(store);
+            c1.Dispose();
+            // The noisy line uses its OWN state id, and the saved net carries the noisy flag.
+            using (var state = store.TryOpenRead("fruitcake", "dqn-noisy-state"))
+            {
+                Assert.NotNull(state);
+                Assert.True(Assert.IsType<DuelingQNet>(DqnTrainingState.Load(state!).Online).Noisy);
+            }
+            using (var plainState = store.TryOpenRead("fruitcake", "dqn-state"))
+                Assert.Null(plainState); // didn't collide with the plain line
+
+            var c2 = Fresh();
+            Assert.True(c2.Resume(store)); // resumes the noisy state
+            Assert.Equal(80, c2.TrainChunk());
             Assert.True(c2.IsComplete);
             c2.Dispose();
         }

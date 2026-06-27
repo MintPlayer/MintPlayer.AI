@@ -276,3 +276,24 @@ required.**
    "minimum viable" bar?
 6. **Single-source physics (§4.8):** is the two-ports-plus-conformance-test approach enough long-term,
    or is C#→WASM worth revisiting later to guarantee exact human/AI parity?
+
+## 10. Follow-up — NoisyNets experiment + A/B harness (2026-06-26, PR #15)
+
+After the shipped DQN, two exploration paths were tried to push it further (detail in `NOISYNETS_PRD.md`):
+
+- **NoisyNets** (learned exploration instead of ε-greedy) — built as a library capability (N0–N3) and run
+  on FruitCake. Warm-starting the strong net into full σ₀=0.5 **degraded** it (too aggressive for a refined
+  policy); a **from-scratch** noisy run was the right use. A **200-game paired A/B** (`FruitCakeAb`,
+  `--game fruitcake --ab --baseline <dir>`) then showed it **matched but did not beat** ε-greedy (702.1 vs
+  714.4, Δ −12.3 ± 29.8 SE). **Not shipped**; `models/fruitcake.dqn.ckpt` unchanged.
+- **Methodology correction (answers a latent assumption in §7):** this env's eval is **extremely
+  seed-sensitive** — a 10-episode eval bounced 750–971 on the *same* net, and the campaign's "886" was
+  seed-luck. Robustly, nets sit ~700–714. **Use the multi-seed paired A/B (`--ab`), never a 10-episode
+  eval, to compare nets.** This supersedes any single-eval "score" cited earlier in this PRD.
+- **Continued ε-greedy — the caveat that matters.** The historical 741→886 gain was a **full-state resume**
+  (preserved replay buffer + annealed optimizer + ε≈0.05) over a long run; that state is ephemeral and gone.
+  A short **net-only warm-start** (fresh buffer/optimizer, ε=0.2) instead **degrades the strong net first** —
+  a 20-min/134k-drop run dipped 882→557→571 and never beat the 886 gate. So continued ε-greedy only helps
+  with full-state resume **or** a *long* run at *near-greedy* ε (~0.05); a short moderate-ε warm-start is the
+  wrong shape. The shipped net (~700–714 robust) appears **plateaued for cheap continuation**. (A vectorized-
+  envs speedup was also tried and reverted — the backend already parallelizes data-gen; `docs/OPTIMIZATIONS.md`.)
