@@ -1,6 +1,7 @@
 import { Component, DestroyRef, ElementRef, afterNextRender, inject, signal, viewChild } from '@angular/core';
 import { MountainCarApi, MountainCarStatus } from './mountaincar-api';
 import { GOAL, MAX_POS, MIN_POS, MountainCarGame } from './mountaincar-logic';
+import { ScreenWakeLock } from '../screen-wake-lock';
 
 /**
  * MountainCar page (PRD §7.1): **Watch AI** = principle B (backend drives the episode over a WebSocket,
@@ -10,10 +11,15 @@ import { GOAL, MAX_POS, MIN_POS, MountainCarGame } from './mountaincar-logic';
   selector: 'app-mountaincar',
   templateUrl: './mountaincar.html',
   styleUrl: './mountaincar.scss',
-  host: { '(window:keydown)': 'onKeyDown($event)', '(window:keyup)': 'onKeyUp($event)' },
+  host: {
+    '(window:keydown)': 'onKeyDown($event)',
+    '(window:keyup)': 'onKeyUp($event)',
+    '(document:visibilitychange)': 'onVisibilityChange()',
+  },
 })
 export class MountainCar {
   private readonly api = inject(MountainCarApi);
+  private readonly wakeLock = inject(ScreenWakeLock);
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('mcCanvas');
 
   protected readonly mode = signal<'idle' | 'watch' | 'human'>('idle');
@@ -41,6 +47,7 @@ export class MountainCar {
       return;
     }
     this.mode.set('watch');
+    void this.wakeLock.acquire(); // keep the phone screen on so an auto-lock doesn't freeze the stream
     this.status.set('Watching the PPO agent (the server drives the car)…');
     this.socket = this.api.connectLive(
       f => {
@@ -83,7 +90,15 @@ export class MountainCar {
     this.socket = null;
     this.clearTimer();
     this.game = null;
+    void this.wakeLock.release();
     if (this.mode() !== 'idle') this.mode.set('idle');
+  }
+
+  // A backgrounded tab (phone lock / tab switch) gets frozen and the stream socket drops; when we return to
+  // the foreground still in watch mode, reopen it so the agent resumes instead of staying stopped.
+  protected onVisibilityChange(): void {
+    if (document.visibilityState !== 'visible' || this.mode() !== 'watch') return;
+    if (!this.socket || this.socket.readyState >= WebSocket.CLOSING) void this.watchAi();
   }
 
   private clearTimer(): void {
