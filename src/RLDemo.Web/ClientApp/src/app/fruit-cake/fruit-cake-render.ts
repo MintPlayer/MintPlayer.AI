@@ -106,12 +106,12 @@ export function render(ctx: CanvasRenderingContext2D, game: FruitCakeGame, surfa
   ctx.lineWidth = 6;
   ctx.strokeRect(0, 0, FruitWorld.ContainerWidthPx, FruitWorld.ContainerHeightPx);
 
-  drawNextPreview(ctx, game);
   drawScorePopups(ctx, game);
   ctx.restore();
 
   drawHud(ctx, game);
   drawButtons(ctx, game, surfaceWidth);
+  drawNextCorner(ctx, game.nextTier, surfaceWidth, surfaceHeight);
 
   const flash = game.effects.flashAlpha;
   if (flash > 0) {
@@ -163,15 +163,6 @@ export function renderFrame(
   ctx.lineWidth = 6;
   ctx.strokeRect(0, 0, FruitWorld.ContainerWidthPx, FruitWorld.ContainerHeightPx);
 
-  const nd = byTier(frame.nextTier);
-  const ncx = FruitWorld.ContainerWidthPx - 70;
-  const ncy = 60;
-  drawFruit(ctx, frame.nextTier, ncx, ncy, Math.min(nd.radiusPx, 40));
-  ctx.fillStyle = cssColor(DIM);
-  ctx.font = `20px ${FONT}`;
-  ctx.textAlign = 'center';
-  ctx.fillText('NEXT', ncx, ncy - 48);
-  ctx.textAlign = 'start';
   ctx.restore();
 
   ctx.fillStyle = cssColor(HUD);
@@ -181,6 +172,8 @@ export function renderFrame(
   ctx.fillStyle = cssColor(DIM);
   ctx.font = `14px ${FONT}`;
   ctx.fillText('AI playing', 16, 56);
+
+  drawNextCorner(ctx, frame.nextTier, surfaceWidth, surfaceHeight);
 
   if (frame.done) {
     ctx.fillStyle = cssColor(0xff000000, 170);
@@ -262,17 +255,31 @@ function drawScorePopups(ctx: CanvasRenderingContext2D, game: FruitCakeGame): vo
   ctx.textAlign = 'start';
 }
 
-function drawNextPreview(ctx: CanvasRenderingContext2D, game: FruitCakeGame): void {
-  const def = byTier(game.nextTier);
-  const cx = FruitWorld.ContainerWidthPx - 70;
-  const cy = 60;
-  // Clamp the preview glyph so very large fruit don't dominate the corner.
-  drawFruit(ctx, game.nextTier, cx, cy, Math.min(def.radiusPx, 40));
+/**
+ * The "next fruit" preview, drawn in SURFACE (CSS) pixels as a HUD chip in the bottom-right, beside the
+ * fullscreen button. It used to sit at the top-right INSIDE the play field, where it overlapped the held
+ * fruit whenever the player aimed right — making current vs. next ambiguous. The held fruit only ever sits
+ * at the top, so the bottom corner is always clear of it; a translucent panel keeps the chip legible over
+ * the settled pile. Shared by human play and the AI "Watch" stream.
+ */
+function drawNextCorner(ctx: CanvasRenderingContext2D, nextTier: number, surfaceWidth: number, surfaceHeight: number): void {
+  const R = 18;
+  const cx = surfaceWidth - 80;   // just left of the 36px fullscreen button (right:10)
+  const cy = surfaceHeight - 28;  // aligned with the button, bottom-right
+
+  ctx.fillStyle = cssColor(WALL, 160);
+  ctx.beginPath();
+  ctx.roundRect(cx - 26, cy - 42, 52, 62, 8);
+  ctx.fill();
+
   ctx.fillStyle = cssColor(DIM);
-  ctx.font = `20px ${FONT}`;
+  ctx.font = `12px ${FONT}`;
   ctx.textAlign = 'center';
-  ctx.fillText('NEXT', cx, cy - 48);
+  ctx.fillText('NEXT', cx, cy - 24);
   ctx.textAlign = 'start';
+
+  // Clamp the glyph so very large fruit don't overflow the chip.
+  drawFruit(ctx, nextTier, cx, cy + 4, Math.min(byTier(nextTier).radiusPx, R));
 }
 
 function drawHud(ctx: CanvasRenderingContext2D, game: FruitCakeGame): void {
