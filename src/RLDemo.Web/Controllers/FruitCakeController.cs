@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -56,8 +57,22 @@ public sealed class FruitCakeController(FruitCakeModelService model) : Controlle
         using var socket = await HttpContext.WebSockets.AcceptWebSocketAsync();
         var ct = HttpContext.RequestAborted;
         var rng = new Xoshiro256StarStar((ulong)System.Threading.Interlocked.Increment(ref _seedCounter)); // distinct game per connection
-        var heuristic = new FruitCakeHeuristic();
-        var agent = model.Agent; // the trained net if a checkpoint shipped; otherwise null → heuristic fallback
+        var agent = model.Agent; // the trained net if a checkpoint shipped; otherwise null → heuristic leaf value
+
+        // F1: depth-2 forward-model search amplifies the net far past its reactive ceiling (headless eval: greedy
+        // ~990 score / 0% watermelon → search ~2260 / ~21% watermelon). The leaf board value is the net's max-Q,
+        // marginalized over the unknown upcoming fruit; with no net it falls back to a pile-height heuristic so the
+        // demo always plays. Search clones rotation-off (proven to transfer); the live world stays rotation-on.
+        Func<FruitCakeWorld, double> boardValue = agent is not null
+            ? w =>
+            {
+                double sum = 0;
+                foreach (var d in FruitCatalog.Droppable)
+                    sum += agent.QValues(FruitCakeEnv.BuildObservation(w, d.Tier, d.Tier)).Max();
+                return sum / FruitCatalog.Droppable.Count;
+            }
+            : FruitCakeSearch.HeuristicBoardValue;
+        var search = new FruitCakeSearch(boardValue) { MaxDepth = 2, TopK = 5 };
         // Rotation on so fruit visibly roll. The policy trained on rotation-off physics but transfers cleanly
         // (eval: 706 rotation-off → 982 rotation-on), so serving rotation-on is both faithful and prettier.
         var world = new FruitCakeWorld(enableRotation: true);
@@ -76,11 +91,9 @@ public sealed class FruitCakeController(FruitCakeModelService model) : Controlle
 
                 while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
                 {
-                    // The trained net picks the column from the same observation it trained on; without a
-                    // checkpoint we fall back to the greedy heuristic so the demo always plays.
-                    int col = agent is not null
-                        ? agent.Act(FruitCakeEnv.BuildObservation(world, current, next), null, greedy: true)
-                        : heuristic.ChooseColumn(world, current);
+                    // Plan the drop with depth-2 forward search (over the known current + next), valuing leaves
+                    // by the net (or the heuristic fallback). This is the single call site the policy lives at.
+                    int col = search.ChooseColumn(world, current, next);
                     world.SpawnFruit(current, FruitCakeEnv.ColumnX(col, current), FruitCakeEnv.HeldY(current));
 
                     // Tick the physics in real time, streaming frames, until the drop settles.
