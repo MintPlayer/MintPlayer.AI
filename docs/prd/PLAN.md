@@ -977,6 +977,29 @@ Three game-playing improvements plus a reusable exploration capability. Detail l
   data-gen (multithreaded GEMM / CUDA), so a second parallelism layer just oversubscribes the cores. To use
   more cores, run N independent runs with the backend single-threaded. Writeup: `docs/OPTIMIZATIONS.md`.
 
+## M29 — FruitCake: break the pineapple plateau  *(planned — see `FRUITCAKE_IMPROVE_PRD.md`)* 🔜
+
+The shipped FruitCake DQN plateaus at a **pineapple**, almost never a **watermelon**. A four-angle
+investigation (observation, reward/algorithm, serving-side search, external Suika SOTA) **all converged**:
+the plateau is **reward-design + perception bound, NOT capacity or exploration** (continued ε-greedy *and*
+NoisyNets both failed — M28), and the game **rewards planning with a forward model far more than a reactive
+net** (a 2025 Leiden thesis: DQN ≈ random + mode-collapse, while a Monte-Carlo forward-model planner *beat the
+human*). Two independent angles fingered the same gap — **adjacency of equal tiers**: perception can't see it,
+reward doesn't value it. Three levers, prioritized:
+
+- **A. Serving-side forward-model search (no retrain)** — `FruitCakeSearch`, depth-2 over the deterministic
+  physics (both pieces known ⇒ no chance node, *cleaner* than 2048's expectimax), leaf = merge points + the
+  trained net's max-Q. The literature's #1 lever; reuses the current net; ship first.
+- **B. Richer relational inputs (retrain)** — mergeable-adjacency per column, per-column danger margin, next-next,
+  then a tier-occupancy grid (the Snake-M27 "inputs > training" pattern; the user's steer).
+- **C. Dense reward shaping + n-step (retrain)** — max-tier-reached bonus + **potential-based** shaping toward
+  stackable adjacency (policy-invariant), + **n-step returns** (new `DqnOptions.NStep`) + γ→~0.997 for the
+  long-horizon credit assignment.
+
+Plan F0–F6 in the PRD; judge on the **≥200-game paired max-tier distribution** (never a 10-ep eval — M28 seed
+trap). Honest ceiling: even SOTA Suika agents reach strong-human, not "always watermelon." Recommended first
+session: F0 baseline → F1 search (no-retrain win) → training session F2+F3+F4 → F5 A/B + conditional ship.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
