@@ -31,6 +31,10 @@ jobs:
     name: Build and push Docker image
     runs-on: ubuntu-latest
 
+    # Expose the pushed image's sha256 digest so the deploy job can hand it to the container.
+    outputs:
+      digest: ${{ steps.push-ghcr.outputs.digest }}
+
     permissions:
       contents: read
       id-token: write
@@ -126,8 +130,12 @@ jobs:
           mkdir -p /var/www/${{ env.APP_NAME }}
           cd /var/www/${{ env.APP_NAME }}
 
-          # Generate .env from GitHub Secrets (ready for future secrets)
+          # Build identity for the SPA footer (commit + image digest + rollout time), then future secrets.
+          # github.* are substituted by Actions before this runs; $(date) expands here on the VPS.
           cat > .env << EOF
+          BUILD_SHA=${{ github.sha }}
+          IMAGE_DIGEST=${{ needs.build-and-push.outputs.digest }}
+          DEPLOY_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           # Future secrets go here, e.g.:
           # SECRET_KEY=value
           EOF
