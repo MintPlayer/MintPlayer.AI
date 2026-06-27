@@ -22,8 +22,9 @@ public sealed class FruitCakeSearch(Func<FruitCakeWorld, double> leafBoardValue)
     public int MaxDepth { get; set; } = 2;
 
     /// <summary>At depth&#160;2, only the top-K first-ply columns (by their one-drop value) are expanded — the
-    /// rest keep their one-drop value. Caps cost to ~ColumnCount + K·ColumnCount settles per decision.</summary>
-    public int TopK { get; set; } = 5;
+    /// rest keep their one-drop value. Caps cost to ~ColumnCount + K·ColumnCount settles per decision. Default 10
+    /// is the empirical depth-2 sweet spot (200-game eval: 30% watermelon, ties exhaustive K=14 at lower cost).</summary>
+    public int TopK { get; set; } = 10;
 
     /// <summary>Weight on realized merge points relative to the leaf board value (mirrors the heuristic's merge bias).</summary>
     public double MergeWeight { get; set; } = 1.0;

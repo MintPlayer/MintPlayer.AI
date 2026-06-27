@@ -34,6 +34,7 @@ internal static class FruitCakeLab
         bool searchEval = false;   // --search-eval : F1 forward-model search vs plain net greedy, on --data's net
         int depth = 2;             // --depth : search lookahead (1 or 2)
         int topK = 5;              // --topk : depth-2 first-ply expansion width
+        string leaf = "net";       // --leaf : search leaf value (net | height | tierpot | blend)
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], CultureInfo.InvariantCulture);
@@ -56,12 +57,13 @@ internal static class FruitCakeLab
             else if (args[i] == "--search-eval") searchEval = true;
             else if (args[i] == "--depth" && i + 1 < args.Length) depth = int.Parse(args[++i]);
             else if (args[i] == "--topk" && i + 1 < args.Length) topK = int.Parse(args[++i]);
+            else if (args[i] == "--leaf" && i + 1 < args.Length) leaf = args[++i];
         }
 
         if (searchEval)
         {
             // F1: does forward-model search beat the plain net on max-tier? No training/host needed.
-            FruitCakeSearchEval.Run(dataDir, abEpisodes, depth, topK, seedBase: 20_000);
+            FruitCakeSearchEval.Run(dataDir, abEpisodes, depth, topK, seedBase: 20_000, leaf);
             return;
         }
 

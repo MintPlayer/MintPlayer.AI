@@ -17,11 +17,11 @@ using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 /// </summary>
 internal static class FruitCakeSearchEval
 {
-    public static void Run(string netDir, int episodes, int depth, int topK, ulong seedBase)
+    public static void Run(string netDir, int episodes, int depth, int topK, ulong seedBase, string leaf = "net")
     {
         var net = Load(netDir);
 
-        Console.WriteLine($"FruitCake search eval — {episodes} paired games (seeds {seedBase}..{seedBase + (ulong)episodes - 1}), depth={depth}, topK={topK}:");
+        Console.WriteLine($"FruitCake search eval — {episodes} paired games (seeds {seedBase}..{seedBase + (ulong)episodes - 1}), depth={depth}, topK={topK}, leaf={leaf}:");
         Console.WriteLine($"  net: {netDir}");
 
         var greedyScore = new double[episodes];
@@ -35,7 +35,7 @@ internal static class FruitCakeSearchEval
         {
             ulong seed = seedBase + (ulong)i;
             (greedyScore[i], greedyTier[i]) = PlayGreedy(net, seed);
-            (searchScore[i], searchTier[i]) = PlaySearch(net, seed, depth, topK);
+            (searchScore[i], searchTier[i]) = PlaySearch(net, seed, depth, topK, leaf);
         });
         sw.Stop();
 
@@ -81,20 +81,37 @@ internal static class FruitCakeSearchEval
         return (env.Score, maxTier);
     }
 
-    private static (double Score, int MaxTier) PlaySearch(DuelingQNet net, ulong seed, int depth, int topK)
+    private static (double Score, int MaxTier) PlaySearch(DuelingQNet net, ulong seed, int depth, int topK, string leaf)
     {
         var env = new FruitCakeEnv();
         var agent = new GreedyQAgent(net, FruitCakeEnv.ColumnCount);
-        // Leaf board value = the net's sense of the board, marginalized over the (unknown) upcoming fruit by
-        // averaging max-Q across the droppable tiers — the board features dominate, the exact next is second-order.
-        double BoardValue(FruitCakeWorld w)
+
+        // Net leaf: the net's sense of the board, marginalized over the (unknown) upcoming fruit by averaging
+        // max-Q across the droppable tiers — board features dominate, the exact next is second-order.
+        double NetValue(FruitCakeWorld w)
         {
             double sum = 0;
             foreach (var d in FruitCatalog.Droppable)
                 sum += Max(agent.QValues(FruitCakeEnv.BuildObservation(w, d.Tier, d.Tier)));
             return sum / FruitCatalog.Droppable.Count;
         }
-        var search = new FruitCakeSearch(BoardValue) { MaxDepth = depth, TopK = topK };
+        // Tier potential: reward having big fruit on the board (geometric in tier) minus a pile-height penalty —
+        // a watermelon-SEEKING leaf, unlike the pineapple-capped net. Height term keeps it from hoarding into a loss.
+        static double TierPot(FruitCakeWorld w)
+        {
+            double v = 0;
+            foreach (var b in w.Bodies) v += Math.Pow(2, b.Tier);
+            return v - 8 * w.PileHeight();
+        }
+
+        Func<FruitCakeWorld, double> boardValue = leaf switch
+        {
+            "height" => FruitCakeSearch.HeuristicBoardValue,
+            "tierpot" => TierPot,
+            "blend" => w => NetValue(w) + 0.25 * TierPot(w),
+            _ => NetValue,
+        };
+        var search = new FruitCakeSearch(boardValue) { MaxDepth = depth, TopK = topK };
 
         env.Reset(seed);
         int maxTier = 0;
