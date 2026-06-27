@@ -25,9 +25,10 @@ public class FruitCakeSearchTests
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
+    [InlineData(3)] // depth 3 adds an expectimax chance node over the unknown 3rd fruit
     public void ChooseColumn_returns_a_legal_column(int depth)
     {
-        var search = new FruitCakeSearch(FruitCakeSearch.HeuristicBoardValue) { MaxDepth = depth };
+        var search = new FruitCakeSearch(FruitCakeSearch.HeuristicBoardValue) { MaxDepth = depth, TopK = 5, TopK2 = 2 };
         int col = search.ChooseColumn(PlayedBoard(7, 12), current: 1, next: 2);
         Assert.InRange(col, 0, FruitCakeEnv.ColumnCount - 1);
     }

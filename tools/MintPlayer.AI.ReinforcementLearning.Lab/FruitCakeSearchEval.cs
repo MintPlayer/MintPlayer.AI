@@ -17,11 +17,11 @@ using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 /// </summary>
 internal static class FruitCakeSearchEval
 {
-    public static void Run(string netDir, int episodes, int depth, int topK, ulong seedBase, string leaf = "net")
+    public static void Run(string netDir, int episodes, int depth, int topK, ulong seedBase, string leaf = "net", int topK2 = 3)
     {
         var net = Load(netDir);
 
-        Console.WriteLine($"FruitCake search eval — {episodes} paired games (seeds {seedBase}..{seedBase + (ulong)episodes - 1}), depth={depth}, topK={topK}, leaf={leaf}:");
+        Console.WriteLine($"FruitCake search eval — {episodes} paired games (seeds {seedBase}..{seedBase + (ulong)episodes - 1}), depth={depth}, topK={topK}, topK2={topK2}, leaf={leaf}:");
         Console.WriteLine($"  net: {netDir}");
 
         var greedyScore = new double[episodes];
@@ -35,7 +35,7 @@ internal static class FruitCakeSearchEval
         {
             ulong seed = seedBase + (ulong)i;
             (greedyScore[i], greedyTier[i]) = PlayGreedy(net, seed);
-            (searchScore[i], searchTier[i]) = PlaySearch(net, seed, depth, topK, leaf);
+            (searchScore[i], searchTier[i]) = PlaySearch(net, seed, depth, topK, leaf, topK2);
         });
         sw.Stop();
 
@@ -81,7 +81,7 @@ internal static class FruitCakeSearchEval
         return (env.Score, maxTier);
     }
 
-    private static (double Score, int MaxTier) PlaySearch(DuelingQNet net, ulong seed, int depth, int topK, string leaf)
+    private static (double Score, int MaxTier) PlaySearch(DuelingQNet net, ulong seed, int depth, int topK, string leaf, int topK2)
     {
         var env = new FruitCakeEnv();
         var agent = new GreedyQAgent(net, FruitCakeEnv.ColumnCount);
@@ -111,7 +111,7 @@ internal static class FruitCakeSearchEval
             "blend" => w => NetValue(w) + 0.25 * TierPot(w),
             _ => NetValue,
         };
-        var search = new FruitCakeSearch(boardValue) { MaxDepth = depth, TopK = topK };
+        var search = new FruitCakeSearch(boardValue) { MaxDepth = depth, TopK = topK, TopK2 = topK2 };
 
         env.Reset(seed);
         int maxTier = 0;

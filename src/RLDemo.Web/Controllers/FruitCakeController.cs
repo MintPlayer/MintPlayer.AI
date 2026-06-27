@@ -59,12 +59,13 @@ public sealed class FruitCakeController(FruitCakeModelService model) : Controlle
         var rng = new Xoshiro256StarStar((ulong)System.Threading.Interlocked.Increment(ref _seedCounter)); // distinct game per connection
         var agent = model.Agent; // the trained net if a checkpoint shipped; otherwise null → heuristic leaf value
 
-        // F1: depth-2 forward-model search amplifies the net far past its reactive ceiling. Headless 200-game eval
-        // (net leaf, depth 2): greedy 963 score / 0% watermelon → search 2278 / 30% watermelon at TopK=10 (vs 17%
-        // at TopK=5; TopK=14 exhaustive ties TopK=10, so 10 is the depth-2 sweet spot, ~11 ms/drop). The leaf board
-        // value is the net's max-Q, marginalized over the unknown upcoming fruit; with no net it falls back to a
-        // pile-height heuristic so the demo always plays. Search clones rotation-off (proven to transfer); the live
-        // world stays rotation-on. (Hand-crafted "tier-seeking" leaves were tried and lost to the net leaf.)
+        // F1: depth-3 forward-model search amplifies the net far past its reactive ceiling. Headless 100-game eval
+        // (net leaf, same seeds): greedy 994 / 0% watermelon → depth-2 search 2270 / 28% → depth-3 search 2505 /
+        // 50% watermelon (current+next are known, the 3rd ply is an expectimax chance node over the unknown fruit;
+        // ~45 ms/drop, inside the 250 ms budget). The leaf board value is the net's max-Q, marginalized over the
+        // unknown upcoming fruit; with no net it falls back to a pile-height heuristic so the demo always plays.
+        // Search clones rotation-off (proven to transfer); the live world stays rotation-on. (Hand-crafted
+        // "tier-seeking" leaves were tried and lost to the net leaf.)
         Func<FruitCakeWorld, double> boardValue = agent is not null
             ? w =>
             {
@@ -74,7 +75,7 @@ public sealed class FruitCakeController(FruitCakeModelService model) : Controlle
                 return sum / FruitCatalog.Droppable.Count;
             }
             : FruitCakeSearch.HeuristicBoardValue;
-        var search = new FruitCakeSearch(boardValue) { MaxDepth = 2, TopK = 10 };
+        var search = new FruitCakeSearch(boardValue) { MaxDepth = 3, TopK = 5, TopK2 = 2 };
         // Rotation on so fruit visibly roll. The policy trained on rotation-off physics but transfers cleanly
         // (eval: 706 rotation-off → 982 rotation-on), so serving rotation-on is both faithful and prettier.
         var world = new FruitCakeWorld(enableRotation: true);
