@@ -15,6 +15,11 @@ services:
       - "traefik.http.routers.rl-playground.entrypoints=websecure"
       - "traefik.http.routers.rl-playground.tls.certresolver=letsencrypt"
       - "traefik.http.services.rl-playground.loadbalancer.server.port=8080"
+    # Build identity for the SPA footer, substituted from the deploy .env (empty → the app shows "dev").
+    environment:
+      BUILD_SHA: ${BUILD_SHA:-}
+      IMAGE_DIGEST: ${IMAGE_DIGEST:-}
+      DEPLOY_TIME: ${DEPLOY_TIME:-}
     volumes:
       - playground-data:/data
     networks:

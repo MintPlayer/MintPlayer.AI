@@ -22,3 +22,16 @@
 <main>
   <router-outlet />
 </main>
+
+<footer class="buildinfo">
+  @if (version(); as v) {
+    @if (commitUrl(); as url) {
+      <a [href]="url" target="_blank" rel="noopener"
+         [title]="'commit ' + v.commitSha + ' · image ' + v.imageDigest + ' · deployed ' + v.deployTime">
+        build {{ shortSha(v.commitSha) }}
+      </a>
+    } @else {
+      <span [title]="'image ' + v.imageDigest">build {{ v.commitSha }}</span>
+    }
+  }
+</footer>
