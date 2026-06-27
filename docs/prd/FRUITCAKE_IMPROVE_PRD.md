@@ -145,10 +145,15 @@ All shaping is an edit to `FruitCakeEnv.Step` (precedent: `RushHourEnv` already 
   `FruitCakeSearch` (depth-2, lose-prune + top-K=5, leaf = realized merge points + injected board value =
   the net's max-Q marginalized over the unknown upcoming fruit; heuristic fallback) wired into
   `FruitCakeController` (the single policy call site). **Robust 200-game paired eval (`--search-eval`, same net
-  & seeds, search vs greedy):** greedy 963.5 / meanTier 8.75 / **watermelon 0/200** → search **2159.3 / meanTier
-  10.13 / watermelon 34/200 (17%)**, **wins 200/200**, Δ +1196 ±29 SE, **96% of games reach tier 10**. ~6 ms/drop
-  (well inside the 250 ms between-drops budget). **The watermelon breakthrough — pure amplification of the
-  shipped net, no retrain.** Reproduces the literature (forward-model search beats the reactive net at Suika).
+  & seeds, search vs greedy):** greedy 963.5 / meanTier 8.75 / **watermelon 0/200** → search **2278 / meanTier
+  10.25 / watermelon 60/200 (30%)** at the tuned **topK-10**, **wins 200/200**, **96% of games reach tier 10**.
+  ~11 ms/drop (well inside the 250 ms between-drops budget). **The watermelon breakthrough — pure amplification
+  of the shipped net, no retrain.** Reproduces the literature (forward-model search beats the reactive net at Suika).
+  - *Tuning (200-game sweep):* search **width** is the lever — topK 5→10 lifts watermelon **17% → 30%**; topK-14
+    (exhaustive depth-2) ties topK-10 (29.5%) at higher cost, so **topK-10 is the depth-2 sweet spot**. Hand-crafted
+    "tier-seeking" leaves (tierpot/blend) **lost** to the net leaf (they hoard big fruit and lose) — the net's
+    learned board sense is the better leaf despite being pineapple-capped. Leaf is the net's max-Q marginalized
+    over the unknown upcoming fruit; heuristic fallback (−pile height) when no net.
 - **F2 — Richer inputs (retrain).** ✅ *Observation built (2026-06-27):* B1+B2 in `BuildObservation`,
   `ObservationSize` 41→83, builds + all 8 FruitCake tests green. B3 deferred (see §4.B note). *Remaining gate:*
   trains end-to-end; A/B vs baseline (multi-seed) ≥ baseline on max-tier — folded into F5.
