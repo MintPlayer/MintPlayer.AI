@@ -23,7 +23,9 @@ internal static class FruitCakeLab
         float learningRate = 5e-4f;
         float explore = 1.0f;     // ε-start; pass a low value (e.g. 0.2) to refine a warm-started net
         int[] hidden = [256, 256]; // --hidden : trunk widths for the Dueling Q-net
-        double gamma = 0.99;       // --gamma : discount; high for the long drop horizon
+        double gamma = 0.99;       // --gamma : discount; high for the long drop horizon (PRD bundle uses 0.997)
+        int nStep = 1;             // --nstep : n-step return horizon (1 = single-step DQN)
+        bool shape = false;        // --shape : enable reward shaping (tier-reached bonus + potential-based adjacency/height)
         bool evalOnly = false;
         bool noisy = false;        // --noisy : NoisyNets exploration (learned σ) instead of ε-greedy
         bool ab = false;           // --ab : head-to-head eval of --data's net vs --baseline's net (no training)
@@ -41,6 +43,8 @@ internal static class FruitCakeLab
             else if (args[i] == "--explore" && i + 1 < args.Length) explore = float.Parse(args[++i], CultureInfo.InvariantCulture);
             else if (args[i] == "--hidden" && i + 1 < args.Length) hidden = args[++i].Split(',').Select(int.Parse).ToArray();
             else if (args[i] == "--gamma" && i + 1 < args.Length) gamma = double.Parse(args[++i], CultureInfo.InvariantCulture);
+            else if (args[i] == "--nstep" && i + 1 < args.Length) nStep = int.Parse(args[++i]);
+            else if (args[i] == "--shape") shape = true;
             else if (args[i] == "--eval-only") evalOnly = true;
             else if (args[i] == "--noisy") noisy = true;
             else if (args[i] == "--ab") ab = true;
@@ -60,7 +64,7 @@ internal static class FruitCakeLab
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         string csvPath = Path.Combine(dataDir, "logs", "fruitcake-dqn.csv");
         runner.Run(
-            new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, noisy),
+            new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, noisy, nStep, shape),
             store,
             new CampaignOptions
             {

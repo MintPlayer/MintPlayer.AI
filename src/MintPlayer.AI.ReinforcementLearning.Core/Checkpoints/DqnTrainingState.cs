@@ -17,7 +17,9 @@ public sealed class DqnTrainingState
     public const string Kind = "dqn-state";
     // v2: networks are type-tagged (Mlp | DuelingQNet) via QNetCheckpoint.
     // v3: adds NoiseRng (NoisyNets). v2 states load with a default NoiseRng — harmless when not noisy.
-    private const int Version = 3;
+    // v4: adds the in-flight n-step accumulator window. v<4 states load with no accumulator (the trainer
+    //     then creates a fresh one) — exact for the single-step runs those older checkpoints came from.
+    private const int Version = 4;
 
     public required IValueNet Online { get; init; }
     public required IValueNet Target { get; init; }
@@ -28,6 +30,13 @@ public sealed class DqnTrainingState
 
     /// <summary>Exploration-noise RNG for NoisyNets resampling; unused (but serialized) when not noisy.</summary>
     public Xoshiro256StarStar NoiseRng { get; init; } = new(0);
+
+    /// <summary>
+    /// In-flight n-step return accumulator (the transitions seen but not yet folded into the buffer). Owned by
+    /// the trainer; persisted so a resumed run is bitwise-identical even mid-window. Null on a v&lt;4 load — the
+    /// trainer then makes a fresh one (correct: those checkpoints are single-step, whose window is always empty).
+    /// </summary>
+    internal NStepAccumulator? Accumulator { get; set; }
 
     public float[] CurrentObs { get; set; } = [];
     public int StepsCompleted { get; set; }
@@ -60,6 +69,9 @@ public sealed class DqnTrainingState
         int envStateLength = EnvState?.Length ?? -1;
         writer.Write(envStateLength);
         if (EnvState is not null) writer.Write(EnvState);
+
+        writer.Write(Accumulator is not null);
+        Accumulator?.Save(writer);
     }
 
     public static DqnTrainingState Load(Stream source)
@@ -89,6 +101,9 @@ public sealed class DqnTrainingState
 
         int envStateLength = reader.ReadInt32();
         if (envStateLength >= 0) state.EnvState = reader.ReadBytes(envStateLength);
+
+        if (version >= 4 && reader.ReadBoolean())
+            state.Accumulator = NStepAccumulator.Load(reader, buffer.ObsDim, buffer.ActionCount);
         return state;
     }
 }

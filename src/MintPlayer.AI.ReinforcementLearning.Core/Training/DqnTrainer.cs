@@ -12,6 +12,14 @@ public sealed record DqnOptions
 {
     public int[] Hidden { get; init; } = [64, 64];
     public double Gamma { get; init; } = 0.99;
+
+    /// <summary>
+    /// n-step return horizon (Sutton &amp; Barto §7): a transition's stored reward is the discounted sum of the
+    /// next <c>NStep</c> rewards and its TD target bootstraps with <c>γ^NStep</c>. <c>1</c> (default) is plain
+    /// single-step DQN, bitwise-identical to before. Higher values propagate sparse, far-off rewards backward
+    /// faster — the algorithmic lever for long-horizon credit assignment.
+    /// </summary>
+    public int NStep { get; init; } = 1;
     public float LearningRate { get; init; } = 1e-3f;
     public int BufferCapacity { get; init; } = 50_000;
     public int BatchSize { get; init; } = 64;
@@ -138,6 +146,7 @@ public static class DqnTrainer
                 PolicyRng = seeds.CreateRng(RngStreams.Policy),
                 BufferRng = seeds.CreateRng(RngStreams.Buffer),
                 NoiseRng = seeds.CreateRng(RngStreams.Noise),
+                Accumulator = new NStepAccumulator(options.NStep, options.Gamma, obsDim, actionCount),
             };
             (obs, _) = env.Reset(seeds.Derive(RngStreams.Environment));
         }
@@ -148,6 +157,12 @@ public static class DqnTrainer
                 throw new ArgumentException($"Resume state buffer capacity {state.Buffer.Capacity} != options {options.BufferCapacity}.");
             if (state.CurrentObs.Length != obsDim)
                 throw new ArgumentException($"Resume state obs dim {state.CurrentObs.Length} != environment {obsDim}.");
+
+            // A v<4 checkpoint has no accumulator (it was single-step) — make a fresh one; otherwise the
+            // persisted n-step horizon must match the options, exactly like the buffer-capacity guard above.
+            state.Accumulator ??= new NStepAccumulator(options.NStep, options.Gamma, obsDim, actionCount);
+            if (state.Accumulator.N != options.NStep)
+                throw new ArgumentException($"Resume state n-step {state.Accumulator.N} != options {options.NStep}.");
 
             if (state.EnvState is not null && env is IStatefulEnvironment stateful)
             {
@@ -162,6 +177,7 @@ public static class DqnTrainer
         }
 
         var agent = new GreedyQAgent(state.Online, actionCount, state.PolicyRng);
+        var accumulator = state.Accumulator!; // set above for both fresh and resumed runs
         var maskProvider = env as IActionMaskProvider;
         float lastLoss = state.LastLoss;
         double lastEval = state.LastEval;
@@ -199,8 +215,10 @@ public static class DqnTrainer
             // Mask of the next state, captured BEFORE any autoreset (used by the TD-target max).
             var nextMask = maskProvider?.CurrentActionMask();
 
-            // Store terminated only — truncated transitions must still bootstrap.
-            state.Buffer.Add(obs, action, result.Reward, result.Observation, result.Terminated, nextMask);
+            // Fold into n-step returns before storing. Store terminated only — truncated transitions must still
+            // bootstrap. n=1 emits one transition per step, identical to a direct buffer Add.
+            foreach (var e in accumulator.Push(obs, action, result.Reward, result.Observation, result.Terminated, result.Truncated, nextMask))
+                state.Buffer.Add(e.Obs, e.Action, e.Reward, e.NextObs, e.Terminated, e.NextMask);
             obs = result.Done ? env.Reset().Observation : result.Observation;
 
             if (state.Buffer.Count >= options.WarmupSteps && step % options.TrainEvery == 0)
@@ -234,7 +252,9 @@ public static class DqnTrainer
 
     private static float TrainStep(IValueNet online, IValueNet target, Adam adam, ReplayBuffer.Batch batch, DqnOptions options)
     {
-        // TD targets, gradient-free: y = r + γ·(1−terminated)·Q_target(s', a*)
+        // TD targets, gradient-free: y = R_n + γ^n·(1−terminated)·Q_target(s_{t+n}, a*), where R_n is the n-step
+        // discounted reward already stored in the buffer (n=1 ⇒ γ^n = γ and R_n = r, the classic 1-step target).
+        double gammaN = Math.Pow(options.Gamma, options.NStep);
         var targets = new float[batch.Size];
         using (GradMode.NoGrad())
         {
@@ -255,7 +275,7 @@ public static class DqnTrainer
 
                 double bootstrap = batch.Terminated[i] || best < 0
                     ? 0
-                    : options.Gamma * targetQ.Data[i * actions + best];
+                    : gammaN * targetQ.Data[i * actions + best];
                 targets[i] = (float)(batch.Rewards[i] + bootstrap);
             }
         }

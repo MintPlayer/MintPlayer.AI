@@ -108,6 +108,15 @@ Prioritized:
 - *Sequence:* ship **B1+B2(+B3)** first (a handful of dims, fills the glaring blind spots, one retrain); escalate
   to **B4** if needed. Caveat: column-binning is lossy for large fruit — B4's grid is the true representational fix.
 
+> **Implemented (2026-06-27, F2 first cut): 41 → 83 dims.** `BuildObservation` now appends three per-column
+> (×14) relational blocks to the skyline: **danger margin** `clamp((topY−DangerLineY)/(H−DangerLineY),0,1)`
+> (1=floor/safe, 0=at/above the line) = B2; **merge-with-current** `topTier[c]==current` = B1 immediate-merge
+> map; **adjacent-equal-pair** `topTier[c]==topTier[c±1] (nonzero)` = B1 mergeable-adjacency. Layout:
+> 14 surface-h + 14 top-tier + 14 danger + 14 merge-cur + 14 adj-pair + 5 current + 5 next + 3 globals = **83**.
+> **B3 (next-next) deferred** — it needs new env preview state + a serving-DTO/`BuildObservation`-signature change,
+> whereas B1+B2 are a self-contained pure-function edit. Add B3/B4 only if the B1+B2 retrain underdelivers.
+> The old 41-dim checkpoint no longer loads (width guard refuses it) — F5 trains a fresh net at width 83.
+
 ### 4.C Dense reward shaping + n-step (retrain)
 All shaping is an edit to `FruitCakeEnv.Step` (precedent: `RushHourEnv` already does potential-based shaping):
 - **C1 — Max-tier-reached bonus:** a one-time, geometrically-scaled bonus the first time each new highest tier
@@ -117,9 +126,12 @@ All shaping is an edit to `FruitCakeEnv.Step` (precedent: `RushHourEnv` already 
   principled fix, and the perception-side mirror of B1. (The thesis's working reward = +merge, +no-height-
   increase, +next-tier-neighbor — the same idea.)
 - **C3 — Small danger/height penalty** as the pile nears the line (keep small; prefer the potential form).
-- **C4 — n-step returns:** add an `NStep` knob to `DqnOptions` + n-step accumulation in `ReplayBuffer`/
-  `DqnTrainer` (single-step today). Propagates the sparse watermelon reward backward fast — the best
-  *algorithmic* lever; **new library capability**, reusable.
+- **C4 — n-step returns:** add an `NStep` knob to `DqnOptions` + n-step accumulation in `DqnTrainer`. Propagates
+  the sparse watermelon reward backward fast — the best *algorithmic* lever; **new library capability**, reusable.
+  > *Implemented as `NStepAccumulator`* (folds transitions before they hit the buffer; the **buffer format is
+  > unchanged** — every non-terminal transition bootstraps with a single global `γ^n`). Truncation drops the
+  > ≤n−1 partial-window tails (a per-transition discount would otherwise be needed; negligible). The accumulator's
+  > window is persisted (state v4) so resume is bitwise-identical.
 - **C5 — γ → ~0.997** (trivial, `--gamma`); lengthens the effective horizon. PER is a later option if needed.
 
 ---
@@ -132,11 +144,18 @@ All shaping is an edit to `FruitCakeEnv.Step` (precedent: `RushHourEnv` already 
 - **F1 — Serving-side search (no retrain).** `FruitCakeSearch` (depth-2, leaf = merge points + net max-Q,
   lose+top-K pruning) wired into `FruitCakeController`; heuristic fallback. *Gate:* A/B vs the current 1-ply
   serving shows a higher max-tier distribution within the per-drop time budget. **Immediate win, reuses the net.**
-- **F2 — Richer inputs (retrain).** B1+B2(+B3) in `BuildObservation`; bump `ObservationSize`. *Gate:* trains
-  end-to-end; A/B vs baseline (multi-seed) ≥ baseline on max-tier.
-- **F3 — Reward shaping (retrain, with F2).** C1+C2(+C3). *Gate:* no reward-hacking regression; A/B improves.
-- **F4 — n-step + γ.** C4 (n-step in DqnOptions/ReplayBuffer/DqnTrainer) + C5. *Gate:* n-step unit/contract test
-  (single-step parity at n=1; correct n-step targets); bitwise-resume preserved.
+- **F2 — Richer inputs (retrain).** ✅ *Observation built (2026-06-27):* B1+B2 in `BuildObservation`,
+  `ObservationSize` 41→83, builds + all 8 FruitCake tests green. B3 deferred (see §4.B note). *Remaining gate:*
+  trains end-to-end; A/B vs baseline (multi-seed) ≥ baseline on max-tier — folded into F5.
+- **F3 — Reward shaping (retrain, with F2).** ✅ *Built (2026-06-27):* C1 one-time geometric tier-reached bonus
+  + C2/C3 potential-based shaping (`γ·Φ(s′)−Φ(s)`, Φ = tier-weighted same-tier near-pairs − normalized pile
+  height) in `FruitCakeEnv`, **opt-in (`ShapeRewards`, default off)** with configurable weights; the eval env
+  stays unshaped so keep-best/A/B judge real merge points. Φ(terminal)≡0. *Remaining gate:* A/B improves (F5).
+- **F4 — n-step + γ.** ✅ *Built (2026-06-27):* `DqnOptions.NStep` + `NStepAccumulator` (folds transitions
+  before the buffer; TD target bootstraps with `γ^n`); buffer format unchanged. C5 = `--gamma 0.997`. *Gate met:*
+  5 contract tests green (n=1 single-step parity; discounted-sum target; terminal flush; truncation-drop;
+  Save/Load round-trip). **Bitwise-resume preserved** — the in-flight window is persisted (`DqnTrainingState` v4;
+  n=1 window is always empty at step boundaries ⇒ identical to v3).
 - **F5 — Train & ship (conditional).** Multi-seed training with F2–F4; **A/B vs the shipped net on the max-tier
   distribution**; ship `models/fruitcake.dqn.ckpt` (LFS) **only if it beats baseline**. Otherwise keep the work
   as a validated capability and leave the shipped model.

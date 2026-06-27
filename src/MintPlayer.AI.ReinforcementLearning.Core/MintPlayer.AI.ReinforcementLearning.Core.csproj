@@ -28,6 +28,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Lets the test project contract-test internal mechanics (e.g. the n-step accumulator) directly. -->
+    <InternalsVisibleTo Include="MintPlayer.AI.ReinforcementLearning.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="MintPlayer.SourceGenerators" Version="10.20.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
