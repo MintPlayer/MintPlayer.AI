@@ -177,6 +177,13 @@ All shaping is an edit to `FruitCakeEnv.Step` (precedent: `RushHourEnv` already 
 - **F6 — Stretch: planner-guided training / afterstate value.** Use the F1 planner as an expert (generate
   demonstrations / stronger behavior policy) or learn `V(simulated-afterstate)` and act by search over it — the
   2048/AlphaZero recipe; gated on F1–F5.
+  - **ATTEMPTED 2026-06-28 — NEGATIVE RESULT, not shipped.** Distilled the depth-3 search into a two-headed
+    policy/value net (CE on the planner's column + Huber on return-to-go). 30-game paired A/B: dqn+search 43%
+    watermelon vs distilled-policy-alone 0% vs distilled-policy+search 3%. Column-imitation accuracy plateaued
+    at ~23% — a **reactive net cannot reproduce a planner's forward-simulation lookahead** (the same ceiling
+    that capped the DQN). Confirms the §7 thesis: the lever is the SEARCH, not the net. Full write-up +
+    principle in [`docs/OPTIMIZATIONS.md`](../OPTIMIZATIONS.md) ("Investigated, not pursued — FruitCake planner
+    distillation"). Code recoverable from branch `fruitcake-planner-distillation` (commit `7201dd5`).
 
 **Recommended first session (what to do after compacting):** F0 → F1 (banks the no-retrain win + validates the
 forward model) → then the training session F2+F3+F4 together → F5 A/B.

@@ -366,6 +366,37 @@ the dominant per-step cost). **Negative result — ~3× SLOWER**, not faster:
 - The `DqnOptions.Actors` / vectorized-trainer prototype was **reverted** (no dead code); recoverable from
   git history (`feat(dqn): vectorized envs` + its revert).
 
+## Investigated, not pursued — FruitCake planner distillation (F6, measured 2026-06-28)
+
+Tried to **lift the FruitCake net itself** by distilling the depth-3 forward search (the planner that gets
+~50% watermelon) *into* the net — a two-headed policy/value net (`FruitCakePolicyNet`) trained by imitation:
+CE on the planner's chosen column + Huber on the realized return-to-go, DAgger exploration, a rolling reuse
+buffer. The hope was (a) a strong *reactive* policy (cheap serving, no search) and (b) a planning-aware
+**value-head leaf** that beats the DQN's max-Q leaf, so search on top compounds past 50% (the AlphaZero
+recipe). **Negative result on every axis** — 30-game paired A/B (seeds 20000+, depth-3 topK5/topK2-2):
+
+| arm | mean score | meanTier | watermelon |
+|---|---|---|---|
+| dqn+search (shipped) | 2413 | 10.40 | **13/30 (43%)** |
+| distilled policy alone | 671 | 8.37 | 0/30 |
+| distilled policy + search (value leaf) | 1576 | 9.57 | 1/30 (3%) |
+
+- **Root cause: a reactive net cannot imitate a forward-search planner.** Column-imitation accuracy
+  **plateaued at ~23%** (vs ~7% chance) and would not climb with more data — the planner's choice depends on
+  simulating physics forward, which is *not* a function of the current observation alone. This is the SAME
+  ceiling that capped the reactive DQN at pineapple, and matches the Suika literature (reactive DQN ≈ random
+  + mode-collapse; planners win). The policy alone is even **worse than the DQN's own greedy** (~960), and the
+  distilled value head is a **worse search leaf** than the DQN's Q (3% vs 43%).
+- **Principle (the takeaway): on a game that rewards lookahead, the lever is the SEARCH, not the net.** Don't
+  retry reactive-policy/value distillation for FruitCake/Suika — and more generally, don't expect a one-pass
+  net to absorb a planner whose strength is forward simulation. The only paradigm with theoretical upside is
+  full AlphaZero *expert iteration* (search in the loop at train **and** inference), but distillation is one
+  step of that loop and it failed to produce even a value head beating the DQN leaf, so its ROI is poor given
+  the ~1.7 s/labeled-drop data cost.
+- The distillation code (`FruitCakePolicyNet`, `FruitCakeImitationCampaign` `--distill`, `FruitCakeDistillEval`
+  `--distill-eval`) was **not merged** (PR #21 closed; no dead code on `master`); recoverable from the
+  `fruitcake-planner-distillation` branch / commit `7201dd5`.
+
 ## Planned
 
 | # | Optimization | Milestone | Why / expected |
