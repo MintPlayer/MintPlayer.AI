@@ -1000,6 +1000,28 @@ Plan F0–F6 in the PRD; judge on the **≥200-game paired max-tier distribution
 trap). Honest ceiling: even SOTA Suika agents reach strong-human, not "always watermelon." Recommended first
 session: F0 baseline → F1 search (no-retrain win) → training session F2+F3+F4 → F5 A/B + conditional ship.
 
+## M30 — FruitCake: move the "Watch AI" to the client  *(planned — see `FRUITCAKE_CLIENT_AI_PRD.md`)* 🔜
+
+FruitCake "Watch AI" runs **entirely server-side** today: per-connection WebSocket loop running the C#
+physics + `DuelingQNet` + depth-3 search, streaming ~30 fps frames (`FruitCakeController.Live`). On the
+CPU-only Hetzner VPS that's a **persistent per-viewer CPU cost with no admission control** — N viewers
+saturate the cores and frame deadlines slip for everyone. This milestone moves the whole agent into the
+**browser** (net inference, observation, physics, search), collapsing the server to static-asset +
+checkpoint hosting. A three-angle investigation confirmed feasibility: the net is tiny (91k params /
+~356 KB, hand-portable forward pass — no ONNX/TF.js), and a **faithful TS twin of the physics already
+exists** (`fruit-cake-physics.ts` ↔ `FruitCakeWorld.cs`, built as mirrors).
+
+- **Reverses** the original server-authoritative serving decision (`FRUITCAKE_AI_PRD.md` §4.6/§4.8) **on
+  purpose** — the target shifted from "ship correctly" to "serve cheaply at concurrency."
+- **Central de-risk:** moving the search client-side makes C#↔TS physics parity load-bearing (the net's
+  leaf Q was trained on C# physics). Build the cross-language **golden-vector conformance test** §4.8
+  recommended-but-never-shipped; ship on **same-column-choice** parity, not bit-equality.
+- **Preserves the server engine** (owner's ask): `FruitCakeWorld`/`Env`/`Search`/`Controller` stay for
+  training + as the parity oracle; the WS just leaves the serving hot path (optionally flag-gated).
+- Plan G0–G7 in the PRD: TS net + `/api/fruitcake/weights` → TS observation → TS physics search surface
+  → conformance test → TS search → Web Worker + UI cutover → ≥200-game client-vs-server validation →
+  (stretch) generalize to Snake/MountainCar. Net relief: per-viewer standing CPU → ~0.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
