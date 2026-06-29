@@ -62,13 +62,17 @@ export class SnakeGame {
     if (this.occupied.has(newHead) && !(newHead === tail && !eating)) { this.dead = true; return; }
 
     this.body.unshift(newHead);
-    this.occupied.add(newHead);
     if (eating) {
+      this.occupied.add(newHead);
       this.foodEaten++;
       if (this.occupied.size < CELLS) this.spawnFood();
     } else {
+      // Remove the vacating tail BEFORE marking the new head occupied — on a tail-follow move (newHead === tail)
+      // adding first is a no-op and the removal would then drop the head's own cell, untracking it. Mirrors
+      // SnakeEnv.Step so human and AI obey the same collision rules.
       this.occupied.delete(tail);
       this.body.pop();
+      this.occupied.add(newHead);
     }
   }
 

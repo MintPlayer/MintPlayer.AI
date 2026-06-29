@@ -139,12 +139,12 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
             return Die();
 
         _body.AddFirst(newHead);
-        _occupied.Add(newHead);
         _heading = action;
         float reward;
         bool terminated = false;
         if (eating)
         {
+            _occupied.Add(newHead);
             _foodEaten++;
             _stepsSinceFood = 0;
             reward = FoodReward;
@@ -155,8 +155,14 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
         }
         else
         {
+            // Remove the vacating tail BEFORE marking the new head occupied. On a "tail-follow" move (the head
+            // steps onto the exact cell the tail is leaving — the snake's canonical survival move) newHead == tail,
+            // so adding first would be a no-op against the still-present tail and the subsequent removal would then
+            // drop the head's own cell, leaving it untracked in _occupied. Collision detection reads _occupied, so
+            // that phantom cell could later be entered again — the snake passing through its own body without dying.
             _occupied.Remove(tail);
             _body.RemoveLast();
+            _occupied.Add(newHead);
             _stepsSinceFood++;
             reward = _stepPenalty;
         }

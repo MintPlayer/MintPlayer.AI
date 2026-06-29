@@ -1,3 +1,4 @@
+using System.Reflection;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 
 namespace MintPlayer.AI.ReinforcementLearning.Tests;
@@ -6,6 +7,47 @@ public class SnakeEnvTests
 {
     private const int Up = 0, Down = 1, Left = 2, Right = 3;
     private static int Head(SnakeEnv e) => (e.Size / 2) * e.Size + (e.Size / 2);
+
+    // Build a SnakeEnv state buffer (RestoreState format) with an arbitrary body, so a tail-follow can be set
+    // up deterministically without depending on random food placement. rng state is unused (no food spawn).
+    private static byte[] State(int[] bodyHeadFirst, int food, int heading)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+        w.Write(0UL); w.Write(0UL); w.Write(0UL); w.Write(1UL); // rng (unused — we never eat)
+        w.Write(bodyHeadFirst.Length);
+        foreach (int c in bodyHeadFirst) w.Write(c);
+        w.Write(food);
+        w.Write(heading);
+        w.Write(0);     // foodEaten
+        w.Write(0);     // elapsedSteps
+        w.Write(0);     // stepsSinceFood
+        w.Write(false); // done
+        w.Flush();
+        return ms.ToArray();
+    }
+
+    private static HashSet<int> Occupied(SnakeEnv e) =>
+        (HashSet<int>)typeof(SnakeEnv).GetField("_occupied", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(e)!;
+
+    [Fact]
+    public void TailFollowMove_KeepsOccupiedTrackingInSyncWithBody()
+    {
+        // A length-4 snake coiled into the 2×2 square {(6,5),(6,6),(7,5),(7,6)}: head (7,5) facing Left,
+        // tail (6,5). Moving Up steps the head onto (6,5) — the exact cell the tail vacates this non-eating
+        // tick: the canonical "tail-follow" the AI does constantly to survive.
+        var env = new SnakeEnv();
+        int c65 = 6 * 12 + 5, c66 = 6 * 12 + 6, c75 = 7 * 12 + 5, c76 = 7 * 12 + 6;
+        env.RestoreState(State([c75, c76, c66, c65], food: 0, heading: Left));
+
+        var step = env.Step(Up); // head → (6,5), the vacating tail cell
+        Assert.False(step.Terminated);
+        Assert.Equal(4, env.Length);
+
+        // Collision detection reads _occupied (SnakeEnv.cs:138). Every body cell MUST be in it, or a later move
+        // onto an untracked cell passes through the snake's own body without dying — the reported AI-mode bug.
+        Assert.Equal(env.Body.ToHashSet(), Occupied(env));
+    }
 
     [Fact]
     public void Reset_StartsLength3_HeadCentred_EgocentricObservation()
