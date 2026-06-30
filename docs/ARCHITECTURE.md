@@ -76,10 +76,11 @@ bitwise-identical parallel row decomposition on CPU.
 | [`Numerics/IComputeBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Numerics/IComputeBackend.cs) | The seam: GEMM (+ transpose variants), elementwise `Map`/`MapBackward`, reductions (`Sum`, `LogSoftmax`, `Gather`, `HuberLoss`, `LayerNorm`). Forward ops **write**; backward ops **accumulate**. (`ManagedBackend`, the CPU impl, lives here.) |
 | `Numerics/ManagedBackend` (in [`IComputeBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Numerics/IComputeBackend.cs)) | Pure-managed CPU backend (`TensorPrimitives` SIMD). Large GEMMs partition output rows across `Parallel.For` workers (no reduction → bitwise-identical to sequential); `maxDegreeOfParallelism` caps it. |
 | [`Nn/Adam.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/Adam.cs) | Adam with bias correction; mutable `LearningRate`; `ClipGradNorm`. |
-| [`Nn/Modules.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/Modules.cs) | `IModule` (`Forward`/`Parameters`), `IValueNet` (`InputSize`/`CloneStructure`/`CopyFrom`), `Linear`, `Mlp`. |
-| [`Nn/DuelingQNet.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/DuelingQNet.cs) | Shared trunk → value + advantage heads, `Q = V + (A − mean A)`; optional noisy heads. |
+| [`Nn/Modules.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/Modules.cs) | `IModule` (`Forward`/`Parameters`), `IValueNet` (`InputSize`/`CloneStructure`/`CopyFrom`/`GrowInput`), `Linear`, `Mlp`. |
+| [`Nn/DuelingQNet.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/DuelingQNet.cs) | Shared trunk → value + advantage heads, `Q = V + (A − mean A)`; optional noisy heads; plain→noisy promotion (`ToNoisy`). |
 | [`Nn/NoisyLinear.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/NoisyLinear.cs) | Factorized-Gaussian noisy layer (μ + σ⊙ε; ε is a non-grad constant resampled per step — learned σ only). |
-| [`Nn/ResidualMlp.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/ResidualMlp.cs) | Deep residual value net (LayerNorm blocks) + Net2WiderNet growth (`WidenTo`). |
+| [`Nn/ResidualMlp.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/ResidualMlp.cs) | Deep residual value net (LayerNorm blocks) + Net2WiderNet hidden-width growth (`WidenTo`). |
+| [`Nn/NetTransfer.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/NetTransfer.cs) | Generic, function-preserving weight transfer: exact param copy (`CopyParameters`, behind every `CopyFrom`) + input-dimension growth (`TransferGrownInput`, behind `IValueNet.GrowInput`). |
 | [`Random/Xoshiro256StarStar.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Random/Xoshiro256StarStar.cs) | Version-stable PRNG (never `System.Random`); `GetState`/`SetState` for checkpointing. |
 | [`Random/SeedSequence.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Random/SeedSequence.cs) | One master seed → independent streams via `RngStreams` (`Environment`, `Policy`, `Init`, `Buffer`, `Evaluation`, `Noise`, …). |
 | [`src/…Ilgpu/`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/) | GPU backend: tiled shared-memory GEMM ([`IlgpuBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/IlgpuBackend.cs)); [`AdaptiveBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/AdaptiveBackend.cs) routes each GEMM to CPU or GPU by a MAC threshold and falls back to CPU when no device is present. Only large nets (cube) clear the threshold. |
@@ -97,6 +98,14 @@ public Tensor MatMul(Tensor other) {
 
 `Backend.Current` is a settable global (default `ManagedBackend`); set it once at startup to switch
 compute. Algorithm code never changes when you swap backends.
+
+**Weight transfer ("keep the work").** Four function-preserving transforms let a trained net carry over instead of
+retraining from scratch; the *generic* ones live in `NetTransfer`, the *structure-specific* ones on their nets:
+`IValueNet.GrowInput(n)` (wider input — new features zero-init, identical output on the old ones; for when an env's
+observation gains features), `ResidualMlp.WidenTo(w)` (wider hidden, Net2WiderNet), `DuelingQNet.ToNoisy()`
+(plain→noisy exploration), and `CubePolicyNet.PolicyAsMlp()` (extract the policy trunk). All transfer **weights
+only** — the caller rebuilds the optimizer (Adam moments are keyed to the parameter set) and, for `GrowInput`, starts
+from a fresh replay buffer (stored transitions hold old-width observations).
 
 ---
 

@@ -83,6 +83,15 @@ public sealed class DuelingQNet : IValueNet
 
     public IValueNet CloneStructure() => new DuelingQNet(_inputSize, _hidden, _actions, new Xoshiro256StarStar(0), _noisy);
 
+    /// <inheritdoc/>
+    public IValueNet GrowInput(int newInputSize)
+    {
+        // Only the trunk's first (plain) Linear consumes the input; the heads (noisy or plain) are untouched.
+        var grown = new DuelingQNet(newInputSize, _hidden, _actions, new Xoshiro256StarStar(0), _noisy);
+        NetTransfer.TransferGrownInput(grown, this);
+        return grown;
+    }
+
     /// <summary>Draws fresh exploration noise on the noisy heads (no-op for a plain net).</summary>
     public void ResampleNoise(Xoshiro256StarStar rng)
     {
@@ -126,11 +135,5 @@ public sealed class DuelingQNet : IValueNet
     }
 
     /// <summary>Copies every parameter from a structurally identical net (target-network sync).</summary>
-    public void CopyFrom(IValueNet source)
-    {
-        using var mine = Parameters().GetEnumerator();
-        using var theirs = source.Parameters().GetEnumerator();
-        while (mine.MoveNext() && theirs.MoveNext())
-            theirs.Current.Data.CopyTo(mine.Current.Data.AsSpan());
-    }
+    public void CopyFrom(IValueNet source) => NetTransfer.CopyParameters(this, source);
 }

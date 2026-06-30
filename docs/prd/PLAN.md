@@ -1000,6 +1000,20 @@ Plan F0–F6 in the PRD; judge on the **≥200-game paired max-tier distribution
 trap). Honest ceiling: even SOTA Suika agents reach strong-human, not "always watermelon." Recommended first
 session: F0 baseline → F1 search (no-retrain win) → training session F2+F3+F4 → F5 A/B + conditional ship.
 
+## M30 — FruitCake: big-fruit position inputs  *(planned — see `FRUITCAKE_BIGFRUIT_INPUTS_PRD.md`)* 🔜
+
+A focused input experiment (the user's steer): the current 83-dim observation is a per-column **skyline with
+no absolute fruit positions**, so the net can't see *where* its biggest fruit sits. Add the **(x, y, tier) of the
+two biggest fruits** to `BuildObservation` (→ ~89-dim). **Checkpoint reuse: no** — width change ⇒ the shipped
+83-dim `fruitcake.dqn.ckpt` won't load (strict shape check + `FruitCakeModelService` width guard; no
+weight-transfer util exists), so this is a **fresh retrain** (F5 precedent), not a resume — an optional ~50-line
+weight-pad warm-start util is the only alternative and isn't on the critical path. **Honest prior:** the reactive
+net is documented as **saturated** (F2 richer inputs already gave +36% score but 0 watermelon; the watermelon
+breakthrough was **search**, not the net; F6 distillation and curriculum both failed). So this is built to
+**falsify cheaply** and is judged on **net + forward-search** (the deployed system), not the greedy net. Plan
+G0–G4 in the PRD; ship `fruitcake.dqn.ckpt` **only if net+search beats the depth-3 ~50%-watermelon / ~2505 bar**
+by a seed-noise-beating margin — else record a negative result (NoisyNets/F6 style) and keep the capability.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -1164,6 +1178,14 @@ curriculum + lighter eval) and **✅ P.9** (LR scaling + ε-loss target sync). F
    - **Demonstration-dataset abstraction** — a uniform way for any algorithm to be seeded
      from oracle/expert data (DQfD-style), so the Kociemba/BFS oracles become reusable
      warm-start sources, not per-demo glue.
+   - **Function-preserving net transfer** ✅ *(done 2026-06-30 — see `NET_TRANSFER_PRD.md`)* —
+     `IValueNet.GrowInput(n)` grows a trained net's input dimension when an env's observation
+     gains features (new in-weights zero-init ⇒ identical output on the old features), so
+     enriching an observation warm-continues instead of retraining from scratch. Unifies the
+     generic transfer mechanics in `NetTransfer` (collapsing the duplicated `CopyFrom`), with
+     the structure-specific transforms staying on their nets (`ResidualMlp.WidenTo`,
+     `DuelingQNet.ToNoisy`, `CubePolicyNet.PolicyAsMlp`). Follow-up: trainer auto-grow on a
+     wider-obs resume (T4).
 4. **Slide-optimal AI answers**: search/compaction that minimizes official piece-moves,
    not just single-cell moves.
 5. **Stretch list (M11), once everything above is complete** — extras, not on the
