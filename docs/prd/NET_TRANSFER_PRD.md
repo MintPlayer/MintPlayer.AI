@@ -113,9 +113,11 @@ buffer-preserving resize. Stated in the XML doc so the constraint can't be misse
 - **T3 — Docs.** ARCHITECTURE.md §Nn: a short "weight transfer" paragraph (the four transforms + where each lives +
   the caller-rebuilds-optimizer/buffer note). Update `FRUITCAKE_BIGFRUIT_INPUTS_PRD.md` §4.B to reference
   `GrowInput` as the now-available optional warm-start path.
-- **T4 — (Follow-up, not this PR) trainer auto-grow on resume.** Document as the next consumer: on resume, if the
-  env's obs width exceeds the checkpoint's, `GrowInput` instead of refusing — turning "enrich obs ⇒ retrain" into
-  "enrich obs ⇒ warm-continue." Scoped separately so this PR stays a tested primitive.
+- **T4 — Trainer auto-grow on warm-start.** ✅ *Done.* `DqnTrainer.Train` now grows a `warmStart` net via
+  `GrowInput` when the env's observation is wider than the net's input (full-state `resume` still guards — its
+  replay buffer holds old-width obs). Integration test `Dqn_WarmStart_GrowsNetWhenObservationGained_Features`
+  (warm-start a narrower net into CartPole → grows + trains). This turns "enrich obs ⇒ retrain from scratch" into
+  "enrich obs ⇒ warm-continue" for every DQN campaign automatically.
 
 ## 6. Testing & verification
 `dotnet test` (non-slow) stays green; new `NetTransferTests` (or extend `NnTests`) cover T2. Function-preservation

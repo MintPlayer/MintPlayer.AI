@@ -110,6 +110,22 @@ public class DuelingDqnTests
     }
 
     [Fact]
+    public void Dqn_WarmStart_GrowsNetWhenObservationGained_Features()
+    {
+        // A net trained on a narrower observation warm-starts into an env whose observation has since gained a
+        // feature: the trainer grows its input via GrowInput (function-preserving) instead of refusing — the
+        // T4 auto-grow path that lets enriching an observation warm-continue rather than retrain from scratch.
+        var env = new CartPoleEnv();
+        int obsDim = ((Core.Environments.BoxSpace)env.ObservationSpace).Dimensions;
+        var narrow = new DuelingQNet(obsDim - 1, [32, 32], 2, new Xoshiro256StarStar(5));
+
+        var result = DqnTrainer.Train(env, Options(400), new SeedSequence(1), warmStart: narrow);
+
+        Assert.Equal(obsDim, result.Network.InputSize);
+        Assert.All(result.Network.Parameters(), p => Assert.All(p.Data, v => Assert.True(float.IsFinite(v))));
+    }
+
+    [Fact]
     public void DuelingQNet_ToNoisy_IsBehaviorallyIdenticalWithNoiseOff()
     {
         // Promote-plain→noisy must copy the trained weights into the means, so with noise off the noisy net
