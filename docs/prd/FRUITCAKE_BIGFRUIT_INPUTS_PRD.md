@@ -116,12 +116,16 @@ not on this experiment's critical path.
   **100-game paired** distribution via `FruitCakeSearchEval` — depth-3 (controller default `TopK=5, TopK2=2`) ≈
   **2505 score / 50% watermelon / meanTier 10.49**, depth-2 topK-10 ≈ **2278 / 30%**. *(These are the recorded
   numbers; re-run to confirm on the current build.)* This is what a new net must beat to ship.
-- **G1 — Add the inputs (pure-fn edit).** Extend `BuildObservation` with the §4.A big-fruit block; bump
-  `ObservationSize` 83→89; add a `(world)→top-2-by-tier` helper. **Unit tests:** correct two fruits chosen
-  (incl. a buried big fruit), tie-break determinism, normalization ranges, empty/one-fruit sentinel. Build clean +
-  all FruitCake tests green. *(No net trains yet; the width guard now refuses the shipped ckpt — expected.)*
-- **G2 — (Optional) weight-pad warm-start utility.** Only if chosen in §4.B. `Core/Checkpoints` util + toy-net
-  round-trip test (copy-exact for unchanged params, zero rows for the new inputs). **Skip by default.**
+- **G1 — Add the inputs (pure-fn edit).** ✅ *Done 2026-06-30.* `BuildObservation` appends the §4.A big-fruit block
+  (`(x/W, y/H, tier/11)` of the top-2 by tier, deterministic tie-break = lower-then-leftmost, neutral
+  floor-centre sentinel for empty slots); `ObservationSize` 83→89. Tests `BuildObservation_*` (correct two fruit
+  incl. a buried one, tie-break, empty-board sentinel). All FruitCake tests green; the model-service width guard
+  now refuses the stale 83-dim ckpt — expected, the web app falls back to heuristic until a 89-dim net ships.
+- **G2 — Warm-start via `GrowInput`.** ✅ *Done 2026-06-30 — no bespoke utility needed.* The
+  `NET_TRANSFER_PRD.md` feature supplies it: `FruitCakeDqnCampaign.Resume` grows the loaded 83-dim shipped net to
+  89 on load (function-preserving), and `DqnTrainer` auto-grows the warm-start net (T4) as a backstop. Smoke-run
+  validated: "growing the loaded net's input 83 → 89", baseline eval of the grown net succeeds (same policy on the
+  old features). So G3 can train *fresh* OR warm-start from the shipped net — both paths work.
 - **G3 — Train fresh at width 89.** `--game fruitcake --shape --nstep 3 --gamma 0.997 --data <fresh dir> --hours N`
   (same recipe as the shipped `fruitcake-bundle` net, so the *only* changed variable is the input block).
   Resumable (re-run the same command). Snapshot the best net by the campaign's greedy keep-best.

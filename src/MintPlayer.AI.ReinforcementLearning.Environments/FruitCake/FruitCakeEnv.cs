@@ -24,10 +24,11 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
 {
     public const int ColumnCount = 14;
     // Per column (×ColumnCount): surface height, top tier, danger margin, merge-with-current, adjacent-equal-pair.
-    // Plus current one-hot (5) + next one-hot (5) + 3 globals. The 3 relational per-column blocks (danger margin,
-    // merge-with-current, adjacent-equal-pair) are the B1+B2 fix for the pineapple plateau (PRD §4.B): they expose
-    // mergeable adjacency and per-column survival margin the bare skyline destroyed.
-    public const int ObservationSize = ColumnCount * 5 + 5 + 5 + 3; // 83
+    // Plus current one-hot (5) + next one-hot (5) + 3 globals + the two biggest fruit's (x, y, tier) = 6. The 3
+    // relational per-column blocks (danger margin, merge-with-current, adjacent-equal-pair) are the B1+B2 fix for
+    // the pineapple plateau (PRD §4.B); the big-fruit block is FRUITCAKE_BIGFRUIT_INPUTS_PRD §4.A — absolute
+    // positions the bare skyline collapses, so the net can locate where the (possibly buried) biggest fruit sits.
+    public const int ObservationSize = ColumnCount * 5 + 5 + 5 + 3 + 6; // 89
 
     private const float RewardScale = 10f;       // normalize merge points
     private const float TerminalPenalty = -1f;
@@ -132,7 +133,7 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
     private float[] Observation() => BuildObservation(_world, _current, _next);
 
     /// <summary>
-    /// Builds the 83-dim observation from a board + the current/next droppable tiers. Static so the live
+    /// Builds the 89-dim observation from a board + the current/next droppable tiers. Static so the live
     /// "Watch AI" serving handler (which drives a <see cref="FruitCakeWorld"/> directly, not a full env) can
     /// feed the trained net the <b>exact same observation</b> the policy was trained on.
     /// <para>Beyond the bare skyline (surface height + top tier per column), it carries three relational
@@ -140,6 +141,9 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
     /// line), <b>merge-with-current</b> (dropping the current fruit here scores an immediate merge), and
     /// <b>adjacent-equal-pair</b> (this surface fruit already has a same-tier neighbour — a half-built merge).
     /// The skyline alone exposed none of mergeable adjacency or survival margin.</para>
+    /// <para>Finally, the <b>(x, y, tier) of the two biggest fruit</b> (FRUITCAKE_BIGFRUIT_INPUTS_PRD §4.A):
+    /// absolute positions the per-column skyline collapses, so the policy (and the search leaf) can reason
+    /// about where the largest fruit — possibly buried below the surface — actually sits.</para>
     /// </summary>
     public static float[] BuildObservation(FruitCakeWorld world, int current, int next)
     {
@@ -198,7 +202,38 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
         obs[i++] = Math.Clamp(world.Count / 100f, 0f, 1f);         // normalized fruit count
         obs[i++] = Math.Clamp(fillArea / (W * H), 0f, 1f);          // board fill ratio
         obs[i++] = Math.Clamp(minTop / H, 0f, 1f);                  // highest surface (0 = pile at the very top)
+
+        // The two biggest fruit's (x, y, tier): "biggest" = highest tier, ties broken deterministically (lower on
+        // the board, then leftmost) so the observation is stable. Empty slots get a neutral sentinel (floor-centre,
+        // tier 0) so a near-empty board uses the same code path. These are absolute positions the skyline collapses.
+        FruitBody? big1 = null, big2 = null;
+        foreach (var b in world.Bodies)
+        {
+            if (big1 is null || IsLarger(b, big1)) (big1, big2) = (b, big1);
+            else if (big2 is null || IsLarger(b, big2)) big2 = b;
+        }
+        WriteBig(obs, ref i, big1);
+        WriteBig(obs, ref i, big2);
         return obs;
+
+        // Deterministic total order over fruit: higher tier first, then lower on the board, then leftmost.
+        static bool IsLarger(FruitBody cand, FruitBody cur)
+        {
+            if (cand.Tier != cur.Tier) return cand.Tier > cur.Tier;
+            if (cand.Y != cur.Y) return cand.Y > cur.Y;
+            return cand.X < cur.X;
+        }
+
+        static void WriteBig(float[] o, ref int idx, FruitBody? b)
+        {
+            if (b is not null)
+            {
+                o[idx++] = Math.Clamp(b.X / FruitCakeWorld.Width, 0f, 1f);
+                o[idx++] = Math.Clamp(b.Y / FruitCakeWorld.Height, 0f, 1f);
+                o[idx++] = Math.Clamp(b.Tier / 11f, 0f, 1f);
+            }
+            else { o[idx++] = 0.5f; o[idx++] = 1f; o[idx++] = 0f; } // floor-centre, no fruit
+        }
     }
 
     // One-time, geometrically-scaled bonus the first time each new highest tier (6→11) appears this episode.
