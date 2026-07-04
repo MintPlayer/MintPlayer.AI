@@ -19,12 +19,18 @@ single-source port of `FruitCakeWorld.cs` + `FruitCatalog.cs` (real 1-based 11-t
 | generated **TS** | ❌ **every body NaN from drop 1** (`nan == bodies`) |
 | cross-target byte-identity | ❌ integer outputs match for 6 drops, diverge at drop 7 |
 
-## The blocker — generated TS goes NaN, C# doesn't
+## The blocker — generated TS goes NaN, C# doesn't → ROOT-CAUSED
 Same type-checked `.pg`. The C# solver is clean; the TS solver produces NaN in **every** body's `x/y/vx/vy` from the
-**first** drop (a single tier-1 fruit settling). The upstream 6-tier `fruitcake_sketch.pg` does **not** trigger it —
-so something about the real catalog/params/paths this port exercises breaks the TS codegen (or is a §3.D-class
-target numerical divergence that reaches NaN). This must be root-caused/fixed **in the Polyglot repo** before the TS
-cutover (PG2). The generated C# path (PG1) looks viable.
+**first** drop (a single tier-1 fruit settling). **Root cause found (2026-07-04):** a Polyglot **codegen precedence
+bug** — the expression printer drops the parentheses around a `??` subexpression under `+`. `correctPosition`'s
+`invSum = a.invMass + (b?.invMass ?? 0.0)` is emitted as `a.invMass + b?.invMass ?? 0.0`, which reparses (since `??`
+binds looser than `+`) as `(a.invMass + b?.invMass) ?? 0.0` → for a wall (`b` null): **C# → 0.0** (early-returns, skips
+wall correction — finite but wrong) / **TS → NaN** (`invMass + undefined` = NaN, `NaN ?? 0` = NaN → all bodies NaN).
+
+Full write-up + minimal repro + fix location: **`POLYGLOT_BUG_HANDOFF.md`** (this folder) — to be referenced from the
+MintPlayer.Polyglot repo. The fix (parenthesize a child whose precedence is lower than its parent operator's) lives in
+the Polyglot emitter; **PG2 (TS cutover) is blocked until it lands**. PG1 (C#) is viable once the same fix corrects the
+skipped wall-correction.
 
 ## Minimal repro (drop one fruit → all TS bodies NaN)
 ```
