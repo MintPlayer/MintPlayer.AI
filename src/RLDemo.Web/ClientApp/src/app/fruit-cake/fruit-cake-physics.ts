@@ -1,6 +1,13 @@
-// Behaviour mirror: the C# training port is src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/FruitCakeWorld.cs
-// — keep the two ports in sync (PRD docs/prd/FRUITCAKE_AI_PRD.md §4.8).
-import { byTier, mergeResultTier } from './fruit-cake-fruits';
+// Thin host adapter over the SINGLE-SOURCE solver: the sequential-impulse circle physics now lives once in
+// src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/polyglot/fruitcake_solver.pg, transpiled to
+// this project's ./fruitcake_solver.ts (committed) and to C# for training/serving. Edit the .pg, not the physics.
+//
+// The generated core (PgFruitCakeWorld) is pure physics. This adapter re-creates the host-only surface the game
+// needs — merge/landing events for audio+effects and per-fruit age/merge-born for the pop animation — that the
+// shared solver deliberately doesn't model: onMerged is exact (from core.lastMerges); mergeBorn/age come from a
+// side-table keyed by the core body; onLanded is a host-side approximation (fires when a fast fruit's speed is
+// damped by an impact). Rotation is ON here so fruit visibly roll (the AI trains rotation-off; merges match).
+import { PgFruitCakeWorld, PgFruitBody } from './fruitcake_solver';
 
 /** A fruit in flight/at rest: center (px), orientation (rad), tier, speed (px/s), age, merge-born. */
 export interface FruitView {
@@ -22,68 +29,26 @@ export interface MergeEvent {
   points: number;
 }
 
-interface Body {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  angle: number; // orientation (rad)
-  angularVel: number; // spin (rad/s)
-  r: number;
-  tier: number;
-  invMass: number;
-  invI: number; // inverse moment of inertia (disc: I = ½·m·r²)
+interface HostMeta {
   spawnTime: number;
   mergeBorn: boolean;
-  pendingMerge: boolean;
   hasLanded: boolean;
-  removed: boolean;
-}
-
-interface Contact {
-  a: Body;
-  b: Body | null; // null => a static wall
-  nx: number; // unit normal, from A toward B (or toward the wall)
-  ny: number;
-  pen: number; // penetration depth (px)
 }
 
 /**
- * The fruit container as a physics simulation. The original game leaned on Aether.Physics2D;
- * the web port carries its own compact sequential-impulse solver instead — every collider here
- * is a circle and the walls are static, so a purpose-built solver is smaller and leaner than a
- * general engine while reproducing the qualities the game depends on: low-restitution settling,
- * stable stacks, and contact-driven merges.
- *
- * Same-tier merges use the original's deferred pattern — record touching pairs while resolving,
- * then add/remove bodies only after the solve — so a merge never mutates the set mid-iteration.
- *
- * Works entirely in pixels; mass is the disc area (uniform density), which keeps mass ratios
- * smooth and stacks stable.
+ * The fruit container as a physics simulation — a thin facade over the transpiled {@link PgFruitCakeWorld}.
+ * Preserves the API the game/render depend on so the single-source cutover needs no consumer changes.
  */
 export class FruitWorld {
   static readonly ContainerWidthPx = 620;
   static readonly ContainerHeightPx = 850;
   static readonly DangerLineYPx = 150;
 
-  private static readonly PixelsPerMeter = 64;
-  private static readonly Gravity = 9.8 * FruitWorld.PixelsPerMeter; // px/s², +Y down
-  private static readonly Restitution = 0.1; // very low bounce; fruit settles fast
-  private static readonly Friction = 0.3; // grippy enough that contact torque makes fruit roll, not slide
-  private static readonly RestitutionThresholdPx = 64; // below this approach speed, treat as inelastic (no jitter)
-
-  private static readonly VelocityIterations = 12; // higher: friction+torque coupling needs more passes to settle
-  private static readonly PositionIterations = 4;
-  private static readonly Slop = 0.5; // allowed penetration before correcting
-  private static readonly CorrectionPercent = 0.8;
-  private static readonly AngularDamping = 0.995; // gentle rolling resistance so spin decays and piles settle
-
   private static readonly LandThresholdPx = 130; // min impact speed to count as a "landing" thud
   private static readonly LandMaxPx = 900; // impact speed mapped to full volume
 
-  private readonly bodies: Body[] = [];
-  private readonly mergeQueue: Array<[Body, Body]> = [];
-  private readonly landQueue: number[] = [];
+  private readonly core = new PgFruitCakeWorld(true); // rotation on: fruit roll during human play
+  private readonly meta = new Map<PgFruitBody, HostMeta>();
   private time = 0;
 
   /** Raised once per resolved merge, after the body set is safely mutated. */
@@ -92,235 +57,70 @@ export class FruitWorld {
   onLanded: ((impact: number) => void) | null = null;
 
   get fruitCount(): number {
-    return this.bodies.length;
+    return this.core.count;
   }
 
   /** Spawn a fruit of `tier` centered at the given pixel position. */
-  spawnFruit(tier: number, xPx: number, yPx: number, mergeBorn = false): void {
-    const def = byTier(tier);
-    const r = def.radiusPx;
-    const mass = Math.PI * r * r; // uniform density => area-proportional mass
-    const inertia = 0.5 * mass * r * r; // solid disc: I = ½·m·r²
-    this.bodies.push({
-      x: xPx,
-      y: yPx,
-      vx: 0,
-      vy: 0,
-      angle: 0, // spawns upright (matching the held fruit); spin builds up from rolling
-      angularVel: 0,
-      r,
-      tier,
-      invMass: 1 / mass,
-      invI: 1 / inertia,
-      spawnTime: this.time,
-      mergeBorn,
-      pendingMerge: false,
-      hasLanded: false,
-      removed: false,
-    });
+  spawnFruit(tier: number, xPx: number, yPx: number): void {
+    const body = this.core.spawnFruit(tier, xPx, yPx);
+    this.meta.set(body, { spawnTime: this.time, mergeBorn: false, hasLanded: false });
   }
 
-  /** Advance one fixed step, then resolve any merges that the step's contacts queued. */
+  /** Advance one fixed step, then surface the merges/landings the step produced. */
   step(dt: number): void {
     this.time += dt;
 
-    for (const b of this.bodies) b.vy += FruitWorld.Gravity * dt;
-
-    // Build contacts once with side effects (queue merges, detect landings).
-    const contacts = this.buildContacts(true);
-
-    for (let it = 0; it < FruitWorld.VelocityIterations; it++)
-      for (const c of contacts) this.resolveVelocity(c);
-
-    for (const b of this.bodies) {
-      b.x += b.vx * dt;
-      b.y += b.vy * dt;
-      b.angle += b.angularVel * dt;
-      b.angularVel *= FruitWorld.AngularDamping;
+    // Pre-step approach speed of each not-yet-landed fruit (for the landing thud, below).
+    const preSpeed = new Map<PgFruitBody, number>();
+    for (const b of this.core.bodies) {
+      const m = this.meta.get(b);
+      if (m && !m.hasLanded) preSpeed.set(b, Math.hypot(b.vx, b.vy));
     }
 
-    // Non-linear position correction: recompute penetration each pass and project bodies apart.
-    for (let it = 0; it < FruitWorld.PositionIterations; it++) {
-      const pcs = this.buildContacts(false);
-      for (const c of pcs) this.correctPosition(c);
+    this.core.step(dt);
+
+    // Merges: exact, straight from the solver.
+    if (this.onMerged) {
+      for (const e of this.core.lastMerges)
+        this.onMerged({ sourceTier: e.sourceTier, resultTier: e.resultTier, xPx: e.x, yPx: e.y, points: e.points });
     }
 
-    this.flushMerges();
-    while (this.landQueue.length > 0) this.onLanded?.(this.landQueue.shift()!);
-  }
+    // Reconcile the side-table: drop merged-away bodies; any body the solver created this step (a merge
+    // product) is new here → merge-born, and doesn't thud.
+    const live = new Set(this.core.bodies);
+    for (const b of [...this.meta.keys()]) if (!live.has(b)) this.meta.delete(b);
+    for (const b of this.core.bodies)
+      if (!this.meta.has(b)) this.meta.set(b, { spawnTime: this.time, mergeBorn: true, hasLanded: true });
 
-  private buildContacts(detect: boolean): Contact[] {
-    const contacts: Contact[] = [];
-    const W = FruitWorld.ContainerWidthPx;
-    const H = FruitWorld.ContainerHeightPx;
-
-    for (const b of this.bodies) {
-      // Walls: left (x=0), right (x=W), floor (y=H). No ceiling — fruit may leave over the rim.
-      const left = b.r - b.x;
-      if (left > 0) {
-        contacts.push({ a: b, b: null, nx: -1, ny: 0, pen: left });
-        if (detect) this.tryLand(b);
-      }
-      const right = b.x + b.r - W;
-      if (right > 0) {
-        contacts.push({ a: b, b: null, nx: 1, ny: 0, pen: right });
-        if (detect) this.tryLand(b);
-      }
-      const floor = b.y + b.r - H;
-      if (floor > 0) {
-        contacts.push({ a: b, b: null, nx: 0, ny: 1, pen: floor });
-        if (detect) this.tryLand(b);
-      }
-    }
-
-    for (let i = 0; i < this.bodies.length; i++) {
-      const a = this.bodies[i];
-      for (let j = i + 1; j < this.bodies.length; j++) {
-        const b = this.bodies[j];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const rsum = a.r + b.r;
-        const d2 = dx * dx + dy * dy;
-        if (d2 >= rsum * rsum) continue;
-        const d = Math.sqrt(d2) || 0.0001;
-
-        if (detect && a.tier === b.tier && !a.pendingMerge && !b.pendingMerge) {
-          a.pendingMerge = b.pendingMerge = true;
-          this.mergeQueue.push([a, b]); // the merge pop covers this contact — no physical shove
-          continue;
-        }
-
-        contacts.push({ a, b, nx: dx / d, ny: dy / d, pen: rsum - d });
-        if (detect) {
-          this.tryLand(a);
-          this.tryLand(b);
+    // Landings (host-side approximation): a not-yet-landed fruit that came in fast and whose speed an impact
+    // just damped. Free fall (gravity still accelerating it) has now >= pre, so it won't false-fire.
+    if (this.onLanded) {
+      for (const b of this.core.bodies) {
+        const m = this.meta.get(b)!;
+        if (m.hasLanded) continue;
+        const pre = preSpeed.get(b);
+        if (pre === undefined || pre < FruitWorld.LandThresholdPx) continue;
+        if (Math.hypot(b.vx, b.vy) < pre) {
+          m.hasLanded = true;
+          this.onLanded(Math.min(1, Math.max(0, pre / FruitWorld.LandMaxPx)));
         }
       }
-    }
-    return contacts;
-  }
-
-  // A fruit's first hard impact → a one-time landing thud.
-  private tryLand(body: Body): void {
-    if (body.hasLanded) return;
-    const speed = Math.sqrt(body.vx * body.vx + body.vy * body.vy);
-    if (speed < FruitWorld.LandThresholdPx) return;
-    body.hasLanded = true;
-    this.landQueue.push(Math.min(1, Math.max(0, speed / FruitWorld.LandMaxPx)));
-  }
-
-  private resolveVelocity(c: Contact): void {
-    const { a, b, nx, ny } = c;
-    const invMa = a.invMass;
-    const invMb = b ? b.invMass : 0;
-    const invIa = a.invI;
-    const invIb = b ? b.invI : 0;
-    if (invMa + invMb === 0) return;
-
-    // Lever arms from each center to the contact point (a circle touches along its own normal).
-    const rax = a.r * nx;
-    const ray = a.r * ny;
-    const rbx = b ? -b.r * nx : 0;
-    const rby = b ? -b.r * ny : 0;
-
-    // Relative velocity AT the contact point: v + ω × r  (2D: ω × r = (−ω·r.y, ω·r.x)).
-    const wa = a.angularVel;
-    const wb = b ? b.angularVel : 0;
-    let rvx = (b ? b.vx - wb * rby : 0) - (a.vx - wa * ray);
-    let rvy = (b ? b.vy + wb * rbx : 0) - (a.vy + wa * rax);
-
-    const relN = rvx * nx + rvy * ny;
-    if (relN > 0) return; // separating
-
-    const e = relN < -FruitWorld.RestitutionThresholdPx ? FruitWorld.Restitution : 0;
-
-    // Normal impulse — effective mass includes the rotational term (cross(r, n))².
-    const rnA = rax * ny - ray * nx;
-    const rnB = rbx * ny - rby * nx;
-    const kn = invMa + invMb + invIa * rnA * rnA + invIb * rnB * rnB;
-    if (kn <= 0) return;
-    const jn = (-(1 + e) * relN) / kn;
-    this.applyImpulse(a, b, rax, ray, rbx, rby, jn * nx, jn * ny);
-
-    // Recompute the contact-point relative velocity, then apply Coulomb friction along the tangent.
-    const wa2 = a.angularVel;
-    const wb2 = b ? b.angularVel : 0;
-    rvx = (b ? b.vx - wb2 * rby : 0) - (a.vx - wa2 * ray);
-    rvy = (b ? b.vy + wb2 * rbx : 0) - (a.vy + wa2 * rax);
-    const rvn = rvx * nx + rvy * ny;
-    let tx = rvx - rvn * nx;
-    let ty = rvy - rvn * ny;
-    const tlen = Math.sqrt(tx * tx + ty * ty);
-    if (tlen < 1e-6) return;
-    tx /= tlen;
-    ty /= tlen;
-    const rtA = rax * ty - ray * tx;
-    const rtB = rbx * ty - rby * tx;
-    const kt = invMa + invMb + invIa * rtA * rtA + invIb * rtB * rtB;
-    if (kt <= 0) return;
-    let jt = (-(rvx * tx + rvy * ty)) / kt;
-    const max = FruitWorld.Friction * jn;
-    jt = Math.min(max, Math.max(-max, jt));
-    this.applyImpulse(a, b, rax, ray, rbx, rby, jt * tx, jt * ty);
-  }
-
-  /** Apply an impulse (jx,jy) at the contact, updating linear AND angular velocity of both bodies. */
-  private applyImpulse(a: Body, b: Body | null, rax: number, ray: number, rbx: number, rby: number, jx: number, jy: number): void {
-    a.vx -= a.invMass * jx;
-    a.vy -= a.invMass * jy;
-    a.angularVel -= a.invI * (rax * jy - ray * jx); // ω -= invI · cross(r, J)
-    if (b) {
-      b.vx += b.invMass * jx;
-      b.vy += b.invMass * jy;
-      b.angularVel += b.invI * (rbx * jy - rby * jx);
-    }
-  }
-
-  private correctPosition(c: Contact): void {
-    const { a, b, nx, ny } = c;
-    const invB = b ? b.invMass : 0;
-    const invSum = a.invMass + invB;
-    if (invSum === 0) return;
-    const corr = (Math.max(c.pen - FruitWorld.Slop, 0) / invSum) * FruitWorld.CorrectionPercent;
-    a.x -= a.invMass * corr * nx;
-    a.y -= a.invMass * corr * ny;
-    if (b) {
-      b.x += b.invMass * corr * nx;
-      b.y += b.invMass * corr * ny;
-    }
-  }
-
-  private flushMerges(): void {
-    let removed = false;
-    while (this.mergeQueue.length > 0) {
-      const [a, b] = this.mergeQueue.shift()!;
-      if (a.removed || b.removed) continue;
-      a.removed = b.removed = removed = true;
-
-      const tier = a.tier;
-      const xPx = (a.x + b.x) * 0.5;
-      const yPx = (a.y + b.y) * 0.5;
-      const resultTier = mergeResultTier(tier);
-      if (resultTier !== null) this.spawnFruit(resultTier, xPx, yPx, true);
-      // else: a top-tier pair vanishes.
-
-      this.onMerged?.({ sourceTier: tier, resultTier, xPx, yPx, points: byTier(tier).mergePoints });
-    }
-    if (removed) {
-      for (let i = this.bodies.length - 1; i >= 0; i--) if (this.bodies[i].removed) this.bodies.splice(i, 1);
     }
   }
 
   /** Snapshot of every fruit for rendering. */
   get fruits(): FruitView[] {
-    return this.bodies.map(b => ({
-      xPx: b.x,
-      yPx: b.y,
-      angle: b.angle,
-      tier: b.tier,
-      speedPx: Math.sqrt(b.vx * b.vx + b.vy * b.vy),
-      ageSeconds: this.time - b.spawnTime,
-      mergeBorn: b.mergeBorn,
-    }));
+    return this.core.bodies.map(b => {
+      const m = this.meta.get(b);
+      return {
+        xPx: b.x,
+        yPx: b.y,
+        angle: b.angle,
+        tier: b.tier,
+        speedPx: Math.hypot(b.vx, b.vy),
+        ageSeconds: this.time - (m ? m.spawnTime : this.time),
+        mergeBorn: m ? m.mergeBorn : false,
+      };
+    });
   }
 }

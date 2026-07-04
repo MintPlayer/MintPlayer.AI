@@ -9,7 +9,7 @@
        build-only transpiler OUT of this published package's dependencies. The 0.1.3+ CLI is bundled for
        win-x64/linux-x64/linux-arm64 (covers Windows dev + Linux CI/deploy); macOS dev must set $(PolyglotTool). -->
   <ItemGroup>
-    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.1.3" PrivateAssets="all" />
+    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.1.4" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- The generated solver types (PgFruitCakeWorld etc.) are internal; the public FruitCakeWorld facade wraps

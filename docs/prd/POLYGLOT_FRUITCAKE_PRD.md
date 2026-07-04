@@ -77,6 +77,7 @@ The twins are **not byte-identical today**: C# uses `float` (float32/`MathF`), T
 | C4 | Std surface is small: `List<T>` only, no Dict/Set | Core uses `List<>` + a `(a,b)` tuple + `removeAll` lambda — all supported | None needed; confirmed against the sketch. |
 | C5 | Host interop (canvas/DI/render) only via `expect`/`actual` + `extern` | The `.pg` must be **pure solver**; host drives it | Keep the boundary at §2; no host APIs in the `.pg`. |
 | C6 | Multi-`.pg` projects need a single import root (Option-prelude dup) | Only one `.pg` planned (the solver) | Non-issue at one file. |
+| **C7** | TS emitter emitted a runnable *script*, not an importable ES module (no `export`s) | Blocked PG2 (Angular `import` + `isolatedModules`) | ✅ **RESOLVED in Polyglot 0.1.4** (export emission). Confirmed: the real 0.1.4 TS runs the full adapter consumer AND type-checks clean under Angular-strict. *A full sweep found `export` was the SOLE gap — no further hiccups.* Lesson recorded: verify importability, not just script execution. |
 
 ## 6. Goals & Non-Goals
 
@@ -108,9 +109,13 @@ The twins are **not byte-identical today**: C# uses `float` (float32/`MathF`), T
   test now checks the facade delegates faithfully to the generated core); **net re-validated on double physics** —
   30-game eval: greedy 895/tier 8.57, net+search 2317/tier 10.33/**watermelon 33%**, all within seed noise of the
   float32 baselines ⇒ **no retrain needed.**
-- **PG2 — TS cutover.** Emit `fruit-cake-physics.ts` from the same `.pg` via `--out .../fruit-cake/`; wire dev
-  (`--watch` → the embedded Angular dev server live-reloads) and CI (**commit the generated `.ts`** per C2). Delete the
-  hand-written solver; keep the glue. *Gate:* human play verified in-browser (drops/merges/rolling), 0 console errors.
+- **PG2 — TS cutover.** ✅ *Unblocked by Polyglot 0.1.4 (export emission, C7) and implemented 2026-07-05.* The generated
+  TS core (`fruitcake_solver.ts`, committed in `ClientApp/.../fruit-cake/`) is imported by a thin `FruitWorld` facade
+  (`fruit-cake-physics.ts`): same public API (so game/render/component unchanged), `onMerged` exact from
+  `core.lastMerges`, `mergeBorn`/age via a side-table keyed on the core body, `onLanded` a host-side approximation,
+  rotation on. Adapter + core type-check clean under Angular-strict flags; C# stays on the same `.pg` (0.1.4). *Gate:*
+  human play verified in-browser (drops/merges/rolling, 0 console errors). **The AI stays server-side** (net inference
+  + depth-3 search are C#-only), so the watch-AI WebSocket remains regardless of PG2.
 - **PG3 — (Optional) byte-identity upgrade.** Move the `.pg` to `f64`, regenerate, re-validate/retrain the net. Only if
   exact human/AI parity becomes a goal. Deferred.
 
