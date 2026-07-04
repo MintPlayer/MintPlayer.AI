@@ -113,9 +113,13 @@ The twins are **not byte-identical today**: C# uses `float` (float32/`MathF`), T
   TS core (`fruitcake_solver.ts`, committed in `ClientApp/.../fruit-cake/`) is imported by a thin `FruitWorld` facade
   (`fruit-cake-physics.ts`): same public API (so game/render/component unchanged), `onMerged` exact from
   `core.lastMerges`, `mergeBorn`/age via a side-table keyed on the core body, `onLanded` a host-side approximation,
-  rotation on. Adapter + core type-check clean under Angular-strict flags; C# stays on the same `.pg` (0.1.4). *Gate:*
-  human play verified in-browser (drops/merges/rolling, 0 console errors). **The AI stays server-side** (net inference
-  + depth-3 search are C#-only), so the watch-AI WebSocket remains regardless of PG2.
+  rotation on. Adapter + core type-check clean under Angular-strict flags; C# stays on the same `.pg` (0.1.4).
+  **✅ Gate met — browser-verified** (host + Playwright, 2026-07-05): drops/stack/settle work; a forced same-tier
+  overlap fired `onMerged` with the exact event `{src 2 → res 3, 3 pts}` and the merge product was tagged
+  `mergeBorn`/age 0; natural 6-drop play merged (score 10, still playing); rendering correct; **0 console
+  errors/warnings**. Only `onLanded` (audio thud) is the documented host-side approximation, not browser-verifiable.
+  **The AI stays server-side** (net inference + depth-3 search are C#-only), so the watch-AI WebSocket remains
+  regardless of PG2. **PG2 DONE → FruitCake physics is fully single-source (one `.pg` → C# training/serving + TS human-play).**
 - **PG3 — (Optional) byte-identity upgrade.** Move the `.pg` to `f64`, regenerate, re-validate/retrain the net. Only if
   exact human/AI parity becomes a goal. Deferred.
 
