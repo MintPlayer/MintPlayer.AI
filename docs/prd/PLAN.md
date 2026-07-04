@@ -1014,6 +1014,27 @@ breakthrough was **search**, not the net; F6 distillation and curriculum both fa
 G0–G4 in the PRD; ship `fruitcake.dqn.ckpt` **only if net+search beats the depth-3 ~50%-watermelon / ~2505 bar**
 by a seed-noise-beating margin — else record a negative result (NoisyNets/F6 style) and keep the capability.
 
+## M31 — FruitCake: single-source physics via MintPlayer.Polyglot  *(planned — see `POLYGLOT_FRUITCAKE_PRD.md`)* 🔜
+
+The FruitCake circle-physics solver is duplicated by hand in C# (`FruitCakeWorld`, training + serving) and TS
+(`fruit-cake-physics.ts`, human play) — kept in sync only by discipline (the risk `FRUITCAKE_AI_PRD.md` §4.8 flagged).
+**MintPlayer.Polyglot 0.1.0 now exists** (a maintained C#↔TS transpiler; FruitCake is its north-star conformance
+sample), reopening §4.8's "not viable" verdict. A 3-agent investigation confirmed the fit: both cores are pure
+`+ − × ÷ √` with **no transcendentals** (rotation math is pure arithmetic; trig lives only in render/audio glue) and
+are already 1:1 ports — squarely inside Polyglot's byte-identical-safe op set. **Output dirs:** TS is configurable
+(CLI `--out` → `ClientApp/.../fruit-cake/`); C# is **not** (fixed `obj/.../polyglot/`, compiled in-assembly — so the
+`.pg` must live in the Environments project). **Precision:** the pilot uses `f32` in the `.pg` → reproduces today's
+C# float32 / TS float64 split exactly (**no retrain**, net stays valid); `f64`-everywhere byte-identity is a deferred
+optional upgrade (needs net re-validation). **v0.1.0 constraints to design around:** generated C# is *internal-by-default*
+(FruitCakeWorld is public + cross-assembly → facade/`InternalsVisibleTo` until Polyglot ships public-emission) and there's
+*no npm/Linux CLI* yet (commit the generated `.ts` for Linux CI). Plan **PG0–PG3**: PG0 = zero-risk validation → PG1 C# cutover → PG2 TS cutover → PG3 optional f64
+byte-identity. **PG0 DONE 2026-07-04 — found a blocker.** The real solver ports to a clean type-checking `.pg` and the
+**generated C# runs correct physics**, but the **generated TS produces NaN in every body from the first drop** (the
+upstream 6-tier sketch doesn't trigger it) — a reproducible cross-target divergence. `f32` proved impractical (cast per
+literal) → `f64` (so C# moves float32→double). Artifacts + minimal repro in `docs/prd/polyglot-pilot/`. **PG2 (TS
+cutover) is blocked** on root-causing the TS-NaN divergence **in the Polyglot repo**; PG1 (C#) looks viable. Do not cut
+FruitCake over until the TS path is clean. Strategic win (single source, dogfooding) stands.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
