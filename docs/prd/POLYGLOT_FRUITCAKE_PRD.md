@@ -99,10 +99,15 @@ The twins are **not byte-identical today**: C# uses `float` (float32/`MathF`), T
   clean: **byte-identical C#↔TS and NaN-free** across the 7-drop trace *and* a 28-drop varied cascade with a
   float-state checksum (`bodies=8 scored=63 fsum=39291` on both). So **cross-target byte-identity DOES hold** for this
   solver (my earlier "chaos-fragile" note was the NaN bug, not real chaos — corrected). **PG1/PG2 are unblocked.**
-- **PG1 — C# cutover.** Replace the hand-written `FruitCakeWorld` physics with the generated solver, exposed via a
-  public facade (or `InternalsVisibleTo` for Tests/Lab/Web) per C1. Re-run the full FruitCake suite **and a net A/B**
-  (`FruitCakeAb`) to confirm the trained policy is unaffected (physics identical at float32). *Gate:* suite green +
-  A/B within noise of the recorded baseline.
+- **PG1 — C# cutover.** ✅ **DONE (2026-07-04).** The hand-written `FruitCakeWorld` physics is replaced by a thin
+  **public facade** over the transpiled internal core (`PgFruitCakeWorld`, generated & **committed** — not built at
+  runtime, so Linux CI is unaffected). `FruitCakeWorld`/`FruitBody` keep their exact public API (float view over the
+  f64 core), so no consumer changed; host-only helpers (danger/eject/PileHeight/Clone/LoadBody) live in the facade,
+  and env Save/Restore delegates to `FruitCakeWorld.Write/ReadBodies` at full double precision (keeps bitwise resume).
+  Physics moved **float32 → double**. *Gates met:* full solution builds; 17 FruitCake + parity tests green (the parity
+  test now checks the facade delegates faithfully to the generated core); **net re-validated on double physics** —
+  30-game eval: greedy 895/tier 8.57, net+search 2317/tier 10.33/**watermelon 33%**, all within seed noise of the
+  float32 baselines ⇒ **no retrain needed.**
 - **PG2 — TS cutover.** Emit `fruit-cake-physics.ts` from the same `.pg` via `--out .../fruit-cake/`; wire dev
   (`--watch` → the embedded Angular dev server live-reloads) and CI (**commit the generated `.ts`** per C2). Delete the
   hand-written solver; keep the glue. *Gate:* human play verified in-browser (drops/merges/rolling), 0 console errors.

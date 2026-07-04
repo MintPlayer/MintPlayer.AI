@@ -1033,8 +1033,13 @@ byte-identity. **PG0 PASSED (on Polyglot 0.1.1), 2026-07-04.** The real solver p
 it was root-caused (handoff in `docs/prd/polyglot-pilot/`) and **fixed in Polyglot 0.1.1**. On 0.1.1 the pilot is
 **byte-identical C#↔TS and NaN-free** (7-drop trace + 28-drop varied cascade + float checksum) — so byte-identity holds
 for this solver. `f32` proved impractical (cast per literal) → `f64` (so the C# solver moves float32→double, gated by
-the PG1 net A/B). **PG1/PG2 unblocked;** remaining cutover constraints are packaging (internal-by-default C#, no
-npm/Linux CLI). Strategic win (single source, dogfooding) stands.
+the PG1 net A/B). **PG0 + PG1 DONE.** **PG1 cutover (2026-07-04):** `FruitCakeWorld` is now a thin **public facade**
+over the transpiled internal core (`PgFruitCakeWorld`, committed generated C# — not built at runtime, so Linux CI is
+unaffected); consumers unchanged; physics moved **float32→double**; env Save/Restore delegates at double precision
+(bitwise resume kept). Full build + 17 FruitCake/parity tests green; the trained net re-validated on double physics
+(30-game: greedy 895, net+search 2317 / 33% watermelon — within noise, **no retrain**). **Remaining: PG2** (TS cutover —
+emit the `.ts` from the same `.pg` into `ClientApp`, commit it for Linux CI, browser-verify human play) and optional
+**PG3** (f64 byte-identity). Strategic win (single source, dogfooding) delivered on the C# side.
 
 ## Testing strategy (cross-cutting, from research)
 
