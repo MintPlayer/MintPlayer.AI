@@ -306,14 +306,7 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
         writer.Write(_drops);
         writer.Write(_episodeMaxTier);
         writer.Write(_done);
-        writer.Write(_world.Count);
-        foreach (var b in _world.Bodies)
-        {
-            writer.Write(b.Tier);
-            writer.Write(b.X); writer.Write(b.Y);
-            writer.Write(b.Vx); writer.Write(b.Vy);
-            writer.Write(b.Angle); writer.Write(b.AngularVel);
-        }
+        _world.WriteBodies(writer); // full double precision (see FruitCakeWorld.WriteBodies)
         writer.Flush();
         return stream.ToArray();
     }
@@ -328,16 +321,7 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
         _drops = reader.ReadInt32();
         _episodeMaxTier = reader.ReadInt32();
         _done = reader.ReadBoolean();
-        int count = reader.ReadInt32();
-        _world.Clear();
-        for (int k = 0; k < count; k++)
-        {
-            int tier = reader.ReadInt32();
-            float x = reader.ReadSingle(), y = reader.ReadSingle();
-            float vx = reader.ReadSingle(), vy = reader.ReadSingle();
-            float angle = reader.ReadSingle(), angularVel = reader.ReadSingle();
-            _world.LoadBody(tier, x, y, vx, vy, angle, angularVel);
-        }
+        _world.ReadBodies(reader);
     }
 
     public string RenderString()

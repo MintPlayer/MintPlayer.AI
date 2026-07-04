@@ -3,11 +3,11 @@ using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 namespace MintPlayer.AI.ReinforcementLearning.Tests;
 
 /// <summary>
-/// PG1 fidelity gate for the single-source FruitCake solver (see docs/prd/POLYGLOT_FRUITCAKE_PRD.md):
-/// the transpiled <c>PgFruitCakeWorld</c> (generated from fruitcake_solver.pg, f64/double) must reproduce
-/// the hand-written <see cref="FruitCakeWorld"/> (float32). It runs identical scripted drops through both
-/// and compares the integer outcomes (merge score + body count). The generated type is internal
-/// (global namespace) — visible here via InternalsVisibleTo.
+/// PG1 gate for the single-source FruitCake solver (docs/prd/POLYGLOT_FRUITCAKE_PRD.md). The physics is
+/// transpiled once from fruitcake_solver.pg into the internal <c>PgFruitCakeWorld</c>; the public
+/// <see cref="FruitCakeWorld"/> is a thin facade over it. These pin (a) the facade delegates to the generated
+/// core faithfully — same outcomes through the public API as the raw core — and (b) the solver is deterministic.
+/// The generated core is internal (global namespace), visible here via InternalsVisibleTo.
 /// </summary>
 public class PolyglotSolverParityTests
 {
@@ -18,7 +18,7 @@ public class PolyglotSolverParityTests
         (1, 300), (3, 310), (1, 260), (2, 258), (1, 400), (1, 406),
     ];
 
-    private static (int Score, int Count) RunGenerated()
+    private static (int Score, int Count) RunCore()
     {
         var w = new PgFruitCakeWorld();
         int score = 0;
@@ -30,7 +30,7 @@ public class PolyglotSolverParityTests
         return (score, w.count);
     }
 
-    private static (int Score, int Count) RunHandWritten()
+    private static (int Score, int Count) RunFacade()
     {
         var w = new FruitCakeWorld();
         int score = 0;
@@ -43,17 +43,14 @@ public class PolyglotSolverParityTests
     }
 
     [Fact]
-    public void GeneratedSolver_IsDeterministic()
+    public void PublicFacade_DelegatesFaithfullyTo_GeneratedCore()
     {
-        Assert.Equal(RunGenerated(), RunGenerated());
+        Assert.Equal(RunCore(), RunFacade());
     }
 
     [Fact]
-    public void GeneratedSolver_MatchesHandWrittenSolver_OnScriptedCascade()
+    public void GeneratedSolver_IsDeterministic()
     {
-        // Faithfulness of the .pg port to the current physics. The generated solver is f64 and the
-        // hand-written one is float32, so this asserts the merge OUTCOMES agree on a well-separated
-        // cascade (not bit-exact float state — that gap is the PG3 f64-everywhere upgrade).
-        Assert.Equal(RunHandWritten(), RunGenerated());
+        Assert.Equal(RunFacade(), RunFacade());
     }
 }

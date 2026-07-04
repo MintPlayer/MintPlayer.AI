@@ -52,7 +52,6 @@ record PgContact(a: PgFruitBody, b: PgFruitBody?, nx: f64, ny: f64, pen: f64)
 class PgFruitCakeWorld {
   const Width: f64 = 620.0
   const Height: f64 = 850.0
-  const DangerLineY: f64 = 150.0
 
   const Gravity: f64 = 9.8 * 64.0
   const Restitution: f64 = 0.1
@@ -124,22 +123,6 @@ class PgFruitCakeWorld {
       if sub >= minSubsteps && gained == 0 && this.maxSpeed() < settleSpeedPx { break }
     }
     return points
-  }
-
-  fn pileHeight(): f64 {
-    var minTop = Height
-    for b in this.bodies { minTop = Math.min(minTop, b.y - b.r) }
-    return Height - minTop
-  }
-
-  fn anyEjected(): bool {
-    for b in this.bodies { if b.y - b.r > Height || b.x < 0.0 - b.r || b.x > Width + b.r { return true } }
-    return false
-  }
-
-  fn anyRestingAboveDangerLine(restSpeedPx: f64): bool {
-    for b in this.bodies { if b.y < DangerLineY && b.speed < restSpeedPx { return true } }
-    return false
   }
 
   fn buildContacts(detect: bool) {
