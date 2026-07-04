@@ -1037,9 +1037,21 @@ the PG1 net A/B). **PG0 + PG1 DONE.** **PG1 cutover (2026-07-04):** `FruitCakeWo
 over the transpiled internal core (`PgFruitCakeWorld`, committed generated C# — not built at runtime, so Linux CI is
 unaffected); consumers unchanged; physics moved **float32→double**; env Save/Restore delegates at double precision
 (bitwise resume kept). Full build + 17 FruitCake/parity tests green; the trained net re-validated on double physics
-(30-game: greedy 895, net+search 2317 / 33% watermelon — within noise, **no retrain**). **Remaining: PG2** (TS cutover —
-emit the `.ts` from the same `.pg` into `ClientApp`, commit it for Linux CI, browser-verify human play) and optional
-**PG3** (f64 byte-identity). Strategic win (single source, dogfooding) delivered on the C# side.
+(30-game: greedy 895, net+search 2317 / 33% watermelon — within noise, **no retrain**). **PG2 DONE + browser-verified
+(2026-07-05):** Polyglot **0.1.4** added TS `export` emission (the 4th fix — 0.1.2 Linux CI, 0.1.3 nullable, 0.1.4
+exports); switched C# to **build-time transpilation** (MSBuild PackageReference 0.1.4, no committed `.cs`); the web
+client's `fruit-cake-physics.ts` is now a thin `FruitWorld` facade over the committed generated TS core; verified via
+host + Playwright (drops/merges/`onMerged`-exact/`mergeBorn`/score, 0 console errors). **PG3 (byte-identity) done as a
+side-effect** (f64 both sides). **⇒ PG0–PG2 COMPLETE: FruitCake physics is fully single-source (one `.pg` → C#
+training/serving + TS human-play).** Optional **PG4** (not built): watch-AI could stream only the chosen column + animate
+client-side (byte-identical physics enables it) to cut streaming bandwidth — but the depth-3 search + net stay C#-only.
+
+> **Branch `net-transfer-input-grow` — merge readiness (2026-07-05).** This branch carries **three** initiatives:
+> M-series NetTransfer/`GrowInput` (SDK, self-contained), **M30** FruitCake big-fruit inputs (obs 83→89), and **M31**
+> Polyglot single-source. **Merge blocker:** the big-fruit obs (83→89) makes the shipped 83-dim `models/fruitcake.dqn.ckpt`
+> stale → the web AI falls back to heuristic. Before merging to master, either **finish M30/G4** (train+ship an 89-dim
+> model on the now-**double** physics, then the depth-3 A/B) **or revert** the big-fruit obs change. Recommended: **split
+> into separate PRs** (NetTransfer is independently mergeable; big-fruit + Polyglot are entangled via the obs width).
 
 ## Testing strategy (cross-cutting, from research)
 

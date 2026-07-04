@@ -126,10 +126,18 @@ not on this experiment's critical path.
   89 on load (function-preserving), and `DqnTrainer` auto-grows the warm-start net (T4) as a backstop. Smoke-run
   validated: "growing the loaded net's input 83 → 89", baseline eval of the grown net succeeds (same policy on the
   old features). So G3 can train *fresh* OR warm-start from the shipped net — both paths work.
-- **G3 — Train fresh at width 89.** `--game fruitcake --shape --nstep 3 --gamma 0.997 --data <fresh dir> --hours N`
-  (same recipe as the shipped `fruitcake-bundle` net, so the *only* changed variable is the input block).
-  Resumable (re-run the same command). Snapshot the best net by the campaign's greedy keep-best.
-- **G4 — Judge & decide (the gate).** Over **≥100–200 paired games, same seeds**:
+- **G3 — Train fresh at width 89.** 🟡 *Partially run (2026-06-30, on the then-float32 physics).* Trained fresh
+  `--game fruitcake --shape --nstep 3 --gamma 0.997 --seed 1 --data data/fruitcake-bigfruit`, **stopped ~98k drops
+  in** (best greedy **1019.5** @86k drops, maxTier 8.9); net + 73 MB resume state saved (resumable — re-run the same
+  command). **⚠️ The solver is now `double`** after the Polyglot PG1 cutover (`POLYGLOT_FRUITCAKE_PRD.md`), so a
+  continue/re-train runs on double physics; the saved net still evaluates fine on double (see G4).
+- **G4 — Judge & decide (the gate).** 🟡 **PARTIAL — verdict PENDING.** A 30-game **depth-2** net+search eval of the
+  G3 net on the **new double-physics build** (done during PG1 validation) gave greedy **895** / tier 8.57 and search
+  **2317 / tier 10.33 / 33% watermelon** — vs the recorded depth-2 baseline ~2278 / 30%: **within seed noise**
+  (consistent with the saturated-net prior — the big-fruit inputs did *not* clearly beat the bar). The full
+  **≥100-game depth-3** A/B (the real ~50% gate) was **never completed** (interrupted). So **no ship decision yet;
+  `models/fruitcake.dqn.ckpt` unchanged.** To finish: run `--search-eval --depth 3 --topk 5 --topk2 2 --ab-episodes
+  100 --data data/fruitcake-bigfruit` and compare to the G0 depth-3 bar. Original G4 plan:
   1. **Greedy net** A/B to isolate the *input contribution* (new 89-dim greedy vs recorded 83-dim greedy 963.5 /
      meanTier 8.75 / 0 watermelon — absolute comparison, since widths can't be paired in one build, per F5).
   2. **Net + search** A/B (depth-2 *and* depth-3) — **this is the decision metric**, because search is deployed.

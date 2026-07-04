@@ -120,8 +120,17 @@ The twins are **not byte-identical today**: C# uses `float` (float32/`MathF`), T
   errors/warnings**. Only `onLanded` (audio thud) is the documented host-side approximation, not browser-verifiable.
   **The AI stays server-side** (net inference + depth-3 search are C#-only), so the watch-AI WebSocket remains
   regardless of PG2. **PG2 DONE → FruitCake physics is fully single-source (one `.pg` → C# training/serving + TS human-play).**
-- **PG3 — (Optional) byte-identity upgrade.** Move the `.pg` to `f64`, regenerate, re-validate/retrain the net. Only if
-  exact human/AI parity becomes a goal. Deferred.
+- **PG3 — byte-identity.** ✅ *Effectively DONE as a side-effect of PG1/PG2.* `f32` proved impractical, so the `.pg`
+  was `f64` from the start → generated C# is `double` and TS is `number`/float64 → **C# and TS are byte-identical**
+  (verified at PG0: 28-drop cascade + float checksum identical). No separate upgrade needed.
+- **PG4 — (Follow-up, NOT built) watch-AI bandwidth optimization — *enabled by PG3's byte-identity*.** Today the
+  watch-AI WebSocket streams **every intra-drop frame** (all fruit positions) — unchanged by this PR; server load +
+  bandwidth are as before. Because the browser now runs **byte-identical** physics to the C# server, watch-AI *could*
+  instead stream only the AI's **chosen column** per drop (`{column, currentTier, nextTier}`, a few bytes) and let the
+  Angular watch-mode run the shared solver locally to animate + settle — cutting the per-frame streaming bandwidth.
+  **Keeps the WebSocket** (the server still computes the move). **Does NOT reduce the biggest *server compute*** — the
+  depth-3 forward search + net inference stay C#-only (the AI can't run in the browser). Scope: change
+  `FruitCakeController`'s streamer + the Angular watch-mode consumer. Worth doing only if watch-AI bandwidth matters.
 
 **Recommended first session:** PG0 only — it's the honest, reversible proof that the single source reproduces the twin,
 and it surfaces any real friction before touching production paths.
