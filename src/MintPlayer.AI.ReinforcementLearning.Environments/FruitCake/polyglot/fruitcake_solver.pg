@@ -49,6 +49,10 @@ class PgFruitBody {
 // A contact: transient immutable value. b == null => a static wall.
 record PgContact(a: PgFruitBody, b: PgFruitBody?, nx: f64, ny: f64, pen: f64)
 
+// A merge that resolved this step (resultTier null = a top-tier pair vanished). Solver output the host can
+// use for effects/audio; C# consumers ignore it and read the points return of step().
+record PgMergeEvent(sourceTier: i32, resultTier: i32?, x: f64, y: f64, points: i32)
+
 class PgFruitCakeWorld {
   const Width: f64 = 620.0
   const Height: f64 = 850.0
@@ -67,6 +71,7 @@ class PgFruitCakeWorld {
   var bodies: List<PgFruitBody> = List<PgFruitBody>()
   var mergeQueue: List<(PgFruitBody, PgFruitBody)> = List<(PgFruitBody, PgFruitBody)>()
   var contacts: List<PgContact> = List<PgContact>()
+  var lastMerges: List<PgMergeEvent> = List<PgMergeEvent>()   // merges resolved by the most recent step()
 
   init(enableRotation: bool = false) { this.rotation = enableRotation }
 
@@ -85,6 +90,7 @@ class PgFruitCakeWorld {
   fn clear() { this.bodies.clear(); this.mergeQueue.clear() }
 
   fn step(dt: f64): i32 {
+    this.lastMerges.clear()
     for b in this.bodies { b.vy += Gravity * dt }
 
     this.buildContacts(true)
@@ -244,7 +250,9 @@ class PgFruitCakeWorld {
       let cy = (a.y + b.y) * 0.5
       let rt = mergeResultTier(tier)
       if rt != null { this.spawnFruit(rt!, cx, cy) }
-      points += byTier(tier).mergePoints
+      let mp = byTier(tier).mergePoints
+      points += mp
+      this.lastMerges.add(PgMergeEvent(tier, rt, cx, cy, mp))
     }
     this.mergeQueue.clear()
     if removed { this.bodies.removeAll((b) => b.removed) }
