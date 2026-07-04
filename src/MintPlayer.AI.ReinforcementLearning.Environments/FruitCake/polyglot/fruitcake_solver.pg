@@ -1,0 +1,270 @@
+// fruitcake_solver.pg — single-source port of the FruitCake circle-physics solver
+// (FruitCakeWorld.cs + FruitCatalog.cs). ONE source, transpiled to C# and TS.
+//
+// Types are `Pg`-prefixed so the generated C# can coexist with the hand-written
+// FruitCakeWorld during the PG1 migration (a differential test pins them equal).
+// f64 by design: only + - * / sqrt are bit-exact across .NET and JS (Polyglot §3.D),
+// and this solver uses exactly those — so the C# and TS twins agree to the bit.
+//
+// The generated C# is committed alongside this file (fruitcake_solver.g.cs); it is
+// NOT transpiled during the build (the win-x64 CLI can't run in Linux CI). Regenerate
+// on Windows after editing:  polyglot build fruitcake_solver.pg --out .
+
+import { List } from "std.collections"
+import { Math } from "std.math"
+
+record PgFruitDef(radiusPx: f64, mergePoints: i32)
+
+// Index 0 = tier 1 … index 10 = tier 11. Tier N merges into N+1; tier 11 pair vanishes.
+let Catalog: List<PgFruitDef> = [
+  PgFruitDef(24.0, 1),  PgFruitDef(32.0, 3),  PgFruitDef(40.0, 6),
+  PgFruitDef(56.0, 10), PgFruitDef(64.0, 15), PgFruitDef(72.0, 21),
+  PgFruitDef(84.0, 28), PgFruitDef(96.0, 36), PgFruitDef(128.0, 45),
+  PgFruitDef(160.0, 55), PgFruitDef(192.0, 66),
+]
+
+fn byTier(tier: i32): PgFruitDef => Catalog[tier - 1]
+fn mergeResultTier(tier: i32): i32? => if tier < Catalog.count { tier + 1 } else { null }
+
+class PgFruitBody {
+  var x: f64;  var y: f64
+  var vx: f64; var vy: f64
+  var angle: f64; var angularVel: f64
+  var r: f64
+  var tier: i32
+  var invMass: f64; var invI: f64
+  var pendingMerge: bool
+  var removed: bool
+
+  init(x: f64, y: f64, r: f64, tier: i32, invMass: f64, invI: f64) {
+    this.x = x; this.y = y; this.r = r; this.tier = tier
+    this.invMass = invMass; this.invI = invI
+    this.vx = 0.0; this.vy = 0.0; this.angle = 0.0; this.angularVel = 0.0
+    this.pendingMerge = false; this.removed = false
+  }
+
+  let speed: f64 => Math.sqrt(this.vx * this.vx + this.vy * this.vy)
+}
+
+// A contact: transient immutable value. b == null => a static wall.
+record PgContact(a: PgFruitBody, b: PgFruitBody?, nx: f64, ny: f64, pen: f64)
+
+class PgFruitCakeWorld {
+  const Width: f64 = 620.0
+  const Height: f64 = 850.0
+  const DangerLineY: f64 = 150.0
+
+  const Gravity: f64 = 9.8 * 64.0
+  const Restitution: f64 = 0.1
+  const Friction: f64 = 0.3
+  const RestitutionThresholdPx: f64 = 64.0
+  const VelocityIterations: i32 = 12
+  const PositionIterations: i32 = 4
+  const Slop: f64 = 0.5
+  const CorrectionPercent: f64 = 0.8
+  const AngularDamping: f64 = 0.995
+
+  let rotation: bool
+  var bodies: List<PgFruitBody> = List<PgFruitBody>()
+  var mergeQueue: List<(PgFruitBody, PgFruitBody)> = List<(PgFruitBody, PgFruitBody)>()
+  var contacts: List<PgContact> = List<PgContact>()
+
+  init(enableRotation: bool = false) { this.rotation = enableRotation }
+
+  let count: i32 => this.bodies.count
+
+  fn spawnFruit(tier: i32, xPx: f64, yPx: f64): PgFruitBody {
+    let def = byTier(tier)
+    let r = def.radiusPx
+    let mass = Math.PI * r * r
+    let inertia = 0.5 * mass * r * r
+    let body = PgFruitBody(xPx, yPx, r, tier, 1.0 / mass, if this.rotation { 1.0 / inertia } else { 0.0 })
+    this.bodies.add(body)
+    return body
+  }
+
+  fn clear() { this.bodies.clear(); this.mergeQueue.clear() }
+
+  fn step(dt: f64): i32 {
+    for b in this.bodies { b.vy += Gravity * dt }
+
+    this.buildContacts(true)
+    for _it in 0..VelocityIterations {
+      for c in this.contacts { resolveVelocity(c) }
+    }
+
+    for b in this.bodies {
+      b.x += b.vx * dt
+      b.y += b.vy * dt
+      if this.rotation {
+        b.angle += b.angularVel * dt
+        b.angularVel *= AngularDamping
+      }
+    }
+
+    for _it in 0..PositionIterations {
+      this.buildContacts(false)
+      for c in this.contacts { correctPosition(c) }
+    }
+
+    return this.flushMerges()
+  }
+
+  fn maxSpeed(): f64 {
+    var m = 0.0
+    for b in this.bodies { m = Math.max(m, b.speed) }
+    return m
+  }
+
+  fn settleAfterDrop(settleSpeedPx: f64, minSubsteps: i32, maxSubsteps: i32, dt: f64 = 1.0 / 60.0): i32 {
+    var points = 0
+    for sub in 0..maxSubsteps {
+      let gained = this.step(dt)
+      points += gained
+      if sub >= minSubsteps && gained == 0 && this.maxSpeed() < settleSpeedPx { break }
+    }
+    return points
+  }
+
+  fn pileHeight(): f64 {
+    var minTop = Height
+    for b in this.bodies { minTop = Math.min(minTop, b.y - b.r) }
+    return Height - minTop
+  }
+
+  fn anyEjected(): bool {
+    for b in this.bodies { if b.y - b.r > Height || b.x < 0.0 - b.r || b.x > Width + b.r { return true } }
+    return false
+  }
+
+  fn anyRestingAboveDangerLine(restSpeedPx: f64): bool {
+    for b in this.bodies { if b.y < DangerLineY && b.speed < restSpeedPx { return true } }
+    return false
+  }
+
+  fn buildContacts(detect: bool) {
+    this.contacts.clear()
+
+    for b in this.bodies {
+      let left = b.r - b.x
+      if left > 0.0 { this.contacts.add(PgContact(b, null, -1.0, 0.0, left)) }
+      let right = b.x + b.r - Width
+      if right > 0.0 { this.contacts.add(PgContact(b, null, 1.0, 0.0, right)) }
+      let floor = b.y + b.r - Height
+      if floor > 0.0 { this.contacts.add(PgContact(b, null, 0.0, 1.0, floor)) }
+    }
+
+    for i in 0..this.bodies.count {
+      let a = this.bodies[i]
+      for j in (i + 1)..this.bodies.count {
+        let b = this.bodies[j]
+        let dx = b.x - a.x
+        let dy = b.y - a.y
+        let rsum = a.r + b.r
+        let d2 = dx * dx + dy * dy
+        if d2 >= rsum * rsum { continue }
+        var d = Math.sqrt(d2)
+        if d == 0.0 { d = 0.0001 }
+
+        if detect && a.tier == b.tier && !a.pendingMerge && !b.pendingMerge {
+          a.pendingMerge = true
+          b.pendingMerge = true
+          this.mergeQueue.add((a, b))
+          continue
+        }
+
+        this.contacts.add(PgContact(a, b, dx / d, dy / d, rsum - d))
+      }
+    }
+  }
+
+  static fn resolveVelocity(c: PgContact) {
+    let a = c.a
+    let b = c.b
+    let nx = c.nx; let ny = c.ny
+    let invMa = a.invMass; let invMb = b?.invMass ?? 0.0
+    let invIa = a.invI;    let invIb = b?.invI ?? 0.0
+    if invMa + invMb == 0.0 { return }
+
+    let rax = a.r * nx; let ray = a.r * ny
+    let rbx = if b == null { 0.0 } else { -b!.r * nx }
+    let rby = if b == null { 0.0 } else { -b!.r * ny }
+
+    let wa = a.angularVel; let wb = b?.angularVel ?? 0.0
+    var rvx = (if b == null { 0.0 } else { b!.vx - wb * rby }) - (a.vx - wa * ray)
+    var rvy = (if b == null { 0.0 } else { b!.vy + wb * rbx }) - (a.vy + wa * rax)
+
+    let relN = rvx * nx + rvy * ny
+    if relN > 0.0 { return }
+
+    let e = if relN < -RestitutionThresholdPx { Restitution } else { 0.0 }
+    let rnA = rax * ny - ray * nx
+    let rnB = rbx * ny - rby * nx
+    let kn = invMa + invMb + invIa * rnA * rnA + invIb * rnB * rnB
+    if kn <= 0.0 { return }
+    let jn = -(1.0 + e) * relN / kn
+    applyImpulse(a, b, rax, ray, rbx, rby, jn * nx, jn * ny)
+
+    let wa2 = a.angularVel; let wb2 = b?.angularVel ?? 0.0
+    rvx = (if b == null { 0.0 } else { b!.vx - wb2 * rby }) - (a.vx - wa2 * ray)
+    rvy = (if b == null { 0.0 } else { b!.vy + wb2 * rbx }) - (a.vy + wa2 * rax)
+    let rvn = rvx * nx + rvy * ny
+    var tx = rvx - rvn * nx
+    var ty = rvy - rvn * ny
+    let tlen = Math.sqrt(tx * tx + ty * ty)
+    if tlen < 0.000001 { return }
+    tx /= tlen; ty /= tlen
+    let rtA = rax * ty - ray * tx
+    let rtB = rbx * ty - rby * tx
+    let kt = invMa + invMb + invIa * rtA * rtA + invIb * rtB * rtB
+    if kt <= 0.0 { return }
+    var jt = -(rvx * tx + rvy * ty) / kt
+    let maxJt = Friction * jn
+    jt = Math.min(maxJt, Math.max(-maxJt, jt))
+    applyImpulse(a, b, rax, ray, rbx, rby, jt * tx, jt * ty)
+  }
+
+  static fn applyImpulse(a: PgFruitBody, b: PgFruitBody?, rax: f64, ray: f64, rbx: f64, rby: f64, jx: f64, jy: f64) {
+    a.vx -= a.invMass * jx
+    a.vy -= a.invMass * jy
+    a.angularVel -= a.invI * (rax * jy - ray * jx)
+    if b != null {
+      b!.vx += b!.invMass * jx
+      b!.vy += b!.invMass * jy
+      b!.angularVel += b!.invI * (rbx * jy - rby * jx)
+    }
+  }
+
+  static fn correctPosition(c: PgContact) {
+    let a = c.a
+    let b = c.b
+    let invSum = a.invMass + (b?.invMass ?? 0.0)
+    if invSum == 0.0 { return }
+    let corr = Math.max(c.pen - Slop, 0.0) / invSum * CorrectionPercent
+    a.x -= a.invMass * corr * c.nx
+    a.y -= a.invMass * corr * c.ny
+    if b != null {
+      b!.x += b!.invMass * corr * c.nx
+      b!.y += b!.invMass * corr * c.ny
+    }
+  }
+
+  fn flushMerges(): i32 {
+    var points = 0
+    var removed = false
+    for (a, b) in this.mergeQueue {
+      if a.removed || b.removed { continue }
+      a.removed = true; b.removed = true; removed = true
+
+      let tier = a.tier
+      let cx = (a.x + b.x) * 0.5
+      let cy = (a.y + b.y) * 0.5
+      let rt = mergeResultTier(tier)
+      if rt != null { this.spawnFruit(rt!, cx, cy) }
+      points += byTier(tier).mergePoints
+    }
+    this.mergeQueue.clear()
+    if removed { this.bodies.removeAll((b) => b.removed) }
+    return points
+  }
+}

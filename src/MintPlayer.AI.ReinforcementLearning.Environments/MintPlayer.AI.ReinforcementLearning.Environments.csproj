@@ -4,6 +4,12 @@
     <ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
   </ItemGroup>
 
+  <!-- The transpiled FruitCake solver (FruitCake/polyglot/fruitcake_solver.g.cs) emits internal types;
+       the parity test compares them against the hand-written FruitCakeWorld. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="MintPlayer.AI.ReinforcementLearning.Tests" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>MintPlayer.AI.ReinforcementLearning.Environments</RootNamespace>
