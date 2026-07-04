@@ -1028,12 +1028,13 @@ C# float32 / TS float64 split exactly (**no retrain**, net stays valid); `f64`-e
 optional upgrade (needs net re-validation). **v0.1.0 constraints to design around:** generated C# is *internal-by-default*
 (FruitCakeWorld is public + cross-assembly → facade/`InternalsVisibleTo` until Polyglot ships public-emission) and there's
 *no npm/Linux CLI* yet (commit the generated `.ts` for Linux CI). Plan **PG0–PG3**: PG0 = zero-risk validation → PG1 C# cutover → PG2 TS cutover → PG3 optional f64
-byte-identity. **PG0 DONE 2026-07-04 — found a blocker.** The real solver ports to a clean type-checking `.pg` and the
-**generated C# runs correct physics**, but the **generated TS produces NaN in every body from the first drop** (the
-upstream 6-tier sketch doesn't trigger it) — a reproducible cross-target divergence. `f32` proved impractical (cast per
-literal) → `f64` (so C# moves float32→double). Artifacts + minimal repro in `docs/prd/polyglot-pilot/`. **PG2 (TS
-cutover) is blocked** on root-causing the TS-NaN divergence **in the Polyglot repo**; PG1 (C#) looks viable. Do not cut
-FruitCake over until the TS path is clean. Strategic win (single source, dogfooding) stands.
+byte-identity. **PG0 PASSED (on Polyglot 0.1.1), 2026-07-04.** The real solver ports to a clean type-checking `.pg`.
+0.1.0 surfaced a blocker (a codegen precedence bug — dropped parens around `??` under `+` → generated TS went all-NaN);
+it was root-caused (handoff in `docs/prd/polyglot-pilot/`) and **fixed in Polyglot 0.1.1**. On 0.1.1 the pilot is
+**byte-identical C#↔TS and NaN-free** (7-drop trace + 28-drop varied cascade + float checksum) — so byte-identity holds
+for this solver. `f32` proved impractical (cast per literal) → `f64` (so the C# solver moves float32→double, gated by
+the PG1 net A/B). **PG1/PG2 unblocked;** remaining cutover constraints are packaging (internal-by-default C#, no
+npm/Linux CLI). Strategic win (single source, dogfooding) stands.
 
 ## Testing strategy (cross-cutting, from research)
 

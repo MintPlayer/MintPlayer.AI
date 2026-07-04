@@ -93,13 +93,12 @@ The twins are **not byte-identical today**: C# uses `float` (float32/`MathF`), T
 
 ## 7. Phased plan
 
-- **PG0 — Validation pilot.** ✅ *Done 2026-07-04 — and it did its job: it surfaced a blocker before any cutover.*
-  Ported the real solver to `fruitcake_solver.pg` (f64 — `f32` proved impractical, §4), generated C# + TS, ran both.
-  **Findings (§10, full detail in `polyglot-pilot/REPRO.md`):** the `.pg` type-checks; the **generated C# is correct**
-  (clean physics); but the **generated TS produces NaN in every body from the first drop** while C# stays clean — a
-  reproducible cross-target divergence the upstream 6-tier sketch doesn't trigger. So **cross-target byte-identity does
-  not hold for this solver**, and the TS path is blocked until the divergence is root-caused/fixed **in the Polyglot
-  repo**. PG1 (C#) looks viable; PG2 (TS) is gated on that fix.
+- **PG0 — Validation pilot.** ✅ **PASSED (on Polyglot 0.1.1).** Ported the real solver to `fruitcake_solver.pg`
+  (f64 — `f32` proved impractical, §4), generated C# + TS, ran both. **0.1.0 surfaced a blocker** (a codegen precedence
+  bug → generated TS went all-NaN; §10) — that was root-caused and **fixed in Polyglot 0.1.1**. On 0.1.1 the pilot is
+  clean: **byte-identical C#↔TS and NaN-free** across the 7-drop trace *and* a 28-drop varied cascade with a
+  float-state checksum (`bodies=8 scored=63 fsum=39291` on both). So **cross-target byte-identity DOES hold** for this
+  solver (my earlier "chaos-fragile" note was the NaN bug, not real chaos — corrected). **PG1/PG2 are unblocked.**
 - **PG1 — C# cutover.** Replace the hand-written `FruitCakeWorld` physics with the generated solver, exposed via a
   public facade (or `InternalsVisibleTo` for Tests/Lab/Web) per C1. Re-run the full FruitCake suite **and a net A/B**
   (`FruitCakeAb`) to confirm the trained policy is unaffected (physics identical at float32). *Gate:* suite green +
@@ -147,6 +146,14 @@ cutover) is blocked** on root-causing the TS-NaN divergence in Polyglot. Because
 (and per the owner's note, cross-repo build work shouldn't be driven from the other side), the honest next step is a
 **Polyglot-side bug fix using `polyglot-pilot/` as the minimal repro**, then resume at PG1/PG2. Do *not* cut over
 FruitCake to the generated solver until the TS path is clean.
+
+### ✅ RESOLVED in Polyglot 0.1.1 (2026-07-04)
+The precedence bug is fixed: `a.invMass + (b?.invMass ?? 0.0)` now emits **with** parentheses in both targets, the
+minimal repro prints `null=5` on both, and the full solver is **byte-identical and NaN-free** (7-drop trace + 28-drop
+varied cascade + float checksum). **Byte-identity holds** — so the earlier "not for this solver / chaos-fragile" caveat
+is retracted. **PG1 (C# cutover) and PG2 (TS cutover) are unblocked.** Remaining constraints for the cutover are the
+packaging ones in §5 (C1 internal-by-default C#, C2 no npm/Linux CLI) plus the §4 precision note (C# solver moves
+float32→double, gated by the PG1 net A/B).
 
 ## 9. Sources
 - Internal (this repo): `FRUITCAKE_AI_PRD.md` §4.8 (the now-reopened "single source" question), `FruitCakeWorld.cs`,
