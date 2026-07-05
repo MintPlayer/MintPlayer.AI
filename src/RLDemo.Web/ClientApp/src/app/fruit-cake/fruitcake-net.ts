@@ -23,7 +23,7 @@ const KIND = 'dueling-q';
 
 /** Fetch + parse the shipped checkpoint. Returns null if it's missing/unreadable/incompatible (the caller then
  *  falls back to the heuristic leaf, exactly as the server did with no net). */
-export async function loadFruitCakeNet(url = 'fruitcake-net.ckpt'): Promise<PgDuelingNet | null> {
+export async function loadFruitCakeNet(url = '/models/fruitcake-net.ckpt'): Promise<PgDuelingNet | null> {
   try {
     const resp = await fetch(url);
     if (!resp.ok) return null;

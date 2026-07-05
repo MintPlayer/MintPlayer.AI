@@ -10,7 +10,7 @@ const MAGIC = 0x434e4c52; // "RLNC"
 const KIND = 'mlp';
 
 /** Fetch + parse the shipped MountainCar policy. Returns null if missing/unreadable/incompatible. */
-export async function loadMountainCarNet(url = 'mountaincar-net.ckpt'): Promise<PgMlpNet | null> {
+export async function loadMountainCarNet(url = '/models/mountaincar-net.ckpt'): Promise<PgMlpNet | null> {
   try {
     const resp = await fetch(url);
     if (!resp.ok) return null;
