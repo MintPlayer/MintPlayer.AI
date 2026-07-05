@@ -1,5 +1,7 @@
 # Polyglot codegen bugs found porting the FruitCake inference path (v0.1.4)
 
+> Filed upstream: **MintPlayer.Polyglot#9** — https://github.com/MintPlayer/MintPlayer.Polyglot/issues/9
+
 Context: MintPlayer.AI M32 (`FRUITCAKE_CLIENT_SIDE_AI_PRD.md`) is single-sourcing the FruitCake **inference**
 path (observation + net + search) into `fruitcake_solver.pg`, on top of the already-single-sourced physics.
 While porting `buildObservation` (CS1) on **MintPlayer.Polyglot.MSBuild 0.1.4**, two codegen bugs surfaced.
