@@ -56,6 +56,7 @@ record PgMergeEvent(sourceTier: i32, resultTier: i32?, x: f64, y: f64, points: i
 class PgFruitCakeWorld {
   const Width: f64 = 620.0
   const Height: f64 = 850.0
+  const DangerLineY: f64 = 150.0
 
   const Gravity: f64 = 9.8 * 64.0
   const Restitution: f64 = 0.1
@@ -129,6 +130,44 @@ class PgFruitCakeWorld {
       if sub >= minSubsteps && gained == 0 && this.maxSpeed() < settleSpeedPx { break }
     }
     return points
+  }
+
+  // ── What-if / end-state queries (single-sourced so the search reuses them on both C# and TS) ─────────────
+  // These are pure functions of body state — no host concerns — so they live here, not in the platform facades.
+
+  // Deep copy for what-if planning (the search tries each column on a clone). enableRotation overrides the
+  // copy's rotation mode — planning runs rotation off (cheaper, deterministic) even when the live world has it on.
+  fn clone(enableRotation: bool): PgFruitCakeWorld {
+    let copy = PgFruitCakeWorld(enableRotation)
+    for b in this.bodies {
+      let nb = copy.spawnFruit(b.tier, b.x, b.y)
+      nb.vx = b.vx
+      nb.vy = b.vy
+      nb.angle = if enableRotation { b.angle } else { 0.0 }
+      nb.angularVel = if enableRotation { b.angularVel } else { 0.0 }
+    }
+    return copy
+  }
+
+  // True if any fruit has been pushed up over the rim (center above the top).
+  fn anyEjected(): bool {
+    for b in this.bodies { if b.y < 0.0 { return true } }
+    return false
+  }
+
+  // True if any fruit is settled (speed < restSpeedPx) above the danger line.
+  fn anyRestingAboveDangerLine(restSpeedPx: f64): bool {
+    for b in this.bodies {
+      if b.y < DangerLineY && b.speed < restSpeedPx { return true }
+    }
+    return false
+  }
+
+  // Height of the tallest point of the pile above the floor (0 = empty board).
+  fn pileHeight(): f64 {
+    var minTop = Height
+    for b in this.bodies { minTop = Math.min(minTop, b.y - b.r) }
+    return Height - minTop
   }
 
   fn buildContacts(detect: bool) {

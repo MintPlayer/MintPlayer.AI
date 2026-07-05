@@ -78,6 +78,7 @@ export class PgFruitBody {
 export class PgFruitCakeWorld {
     static readonly Width: number = 620.0;
     static readonly Height: number = 850.0;
+    static readonly DangerLineY: number = 150.0;
     static readonly Gravity: number = 9.8 * 64.0;
     static readonly Restitution: number = 0.1;
     static readonly Friction: number = 0.3;
@@ -155,6 +156,40 @@ export class PgFruitCakeWorld {
             }
         }
         return points;
+    }
+    clone(enableRotation: boolean): PgFruitCakeWorld {
+        const copy = new PgFruitCakeWorld(enableRotation);
+        for (const b of this.bodies) {
+            const nb = copy.spawnFruit(b.tier, b.x, b.y);
+            nb.vx = b.vx;
+            nb.vy = b.vy;
+            nb.angle = (enableRotation ? b.angle : 0.0);
+            nb.angularVel = (enableRotation ? b.angularVel : 0.0);
+        }
+        return copy;
+    }
+    anyEjected(): boolean {
+        for (const b of this.bodies) {
+            if (b.y < 0.0) {
+                return true;
+            }
+        }
+        return false;
+    }
+    anyRestingAboveDangerLine(restSpeedPx: number): boolean {
+        for (const b of this.bodies) {
+            if (b.y < PgFruitCakeWorld.DangerLineY && b.speed < restSpeedPx) {
+                return true;
+            }
+        }
+        return false;
+    }
+    pileHeight(): number {
+        let minTop = PgFruitCakeWorld.Height;
+        for (const b of this.bodies) {
+            minTop = ((a, b) => (a <= b ? a : b))(minTop, b.y - b.r);
+        }
+        return PgFruitCakeWorld.Height - minTop;
     }
     buildContacts(detect: boolean): void {
         this.contacts = [];

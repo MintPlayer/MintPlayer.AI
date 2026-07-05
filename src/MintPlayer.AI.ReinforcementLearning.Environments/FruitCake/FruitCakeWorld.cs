@@ -47,6 +47,8 @@ public sealed class FruitCakeWorld
     /// </param>
     public FruitCakeWorld(bool enableRotation = false) => _core = new PgFruitCakeWorld(enableRotation);
 
+    private FruitCakeWorld(PgFruitCakeWorld core) => _core = core;
+
     public IReadOnlyList<FruitBody> Bodies
     {
         get
@@ -84,23 +86,14 @@ public sealed class FruitCakeWorld
     /// the merge points scored. Early-settle once the pile is quiet and nothing merged, after
     /// <paramref name="minSubsteps"/>; <paramref name="maxSubsteps"/> is the safety cap.
     /// </summary>
-    public int SettleAfterDrop(float settleSpeedPx, int minSubsteps, int maxSubsteps, float dt = 1f / 60f)
+    public int SettleAfterDrop(float settleSpeedPx, int minSubsteps, int maxSubsteps, double dt = 1.0 / 60.0)
         => _core.settleAfterDrop(settleSpeedPx, minSubsteps, maxSubsteps, dt);
 
     /// <summary>True if any fruit has been pushed up over the rim (center above the top).</summary>
-    public bool AnyEjected()
-    {
-        foreach (var b in _core.bodies) if (b.y < 0.0) return true;
-        return false;
-    }
+    public bool AnyEjected() => _core.anyEjected();
 
     /// <summary>True if any fruit is settled (speed &lt; <paramref name="restSpeedPx"/>) above the danger line.</summary>
-    public bool AnyRestingAboveDangerLine(float restSpeedPx)
-    {
-        foreach (var b in _core.bodies)
-            if (b.y < DangerLineY && global::System.Math.Sqrt(b.vx * b.vx + b.vy * b.vy) < restSpeedPx) return true;
-        return false;
-    }
+    public bool AnyRestingAboveDangerLine(float restSpeedPx) => _core.anyRestingAboveDangerLine(restSpeedPx);
 
     /// <summary>True if any fruit's center is above the danger line (regardless of speed) — for the visual pulse.</summary>
     public bool AnyAboveDangerLine()
@@ -110,12 +103,7 @@ public sealed class FruitCakeWorld
     }
 
     /// <summary>Height of the tallest point of the pile above the floor (0 = empty board).</summary>
-    public float PileHeight()
-    {
-        double minTop = Height;
-        foreach (var b in _core.bodies) minTop = global::System.Math.Min(minTop, b.y - b.r);
-        return (float)(Height - minTop);
-    }
+    public float PileHeight() => (float)_core.pileHeight();
 
     /// <summary>Serialize every body's full state at native (double) precision — for env Save. Writes the count
     /// then, per body: tier, x, y, vx, vy, angle, angularVel. Double (not the facade's float view) so
@@ -154,17 +142,5 @@ public sealed class FruitCakeWorld
     /// world has it on.
     /// </summary>
     public FruitCakeWorld Clone(bool? enableRotation = null)
-    {
-        bool rot = enableRotation ?? _core.rotation;
-        var copy = new FruitCakeWorld(rot);
-        foreach (var b in _core.bodies)
-        {
-            var nb = copy._core.spawnFruit(b.tier, b.x, b.y);
-            nb.vx = b.vx;
-            nb.vy = b.vy;
-            nb.angle = rot ? b.angle : 0.0;
-            nb.angularVel = rot ? b.angularVel : 0.0;
-        }
-        return copy;
-    }
+        => new(_core.clone(enableRotation ?? _core.rotation));
 }
