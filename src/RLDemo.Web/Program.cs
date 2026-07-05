@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.StaticFiles;
 using MintPlayer.AspNetCore.SpaServices.Extensions;
 using MintPlayer.AI.ReinforcementLearning.Hosting;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting;
@@ -60,7 +61,13 @@ if (hostSpa)
 
 var app = builder.Build();
 
-app.UseStaticFiles();
+// Serve wwwroot, teaching the middleware the `.ckpt` type: the browser-side AI weights (wwwroot/*.ckpt) are an
+// unknown extension, which ASP.NET otherwise refuses to serve → the request falls through to the SPA index, the
+// client's checkpoint parser rejects the HTML, and the in-browser AI silently gets no net (the "Snake doesn't
+// move" bug). Same middleware in dev and prod, so this is verifiable locally.
+var contentTypes = new FileExtensionContentTypeProvider();
+contentTypes.Mappings[".ckpt"] = "application/octet-stream";
+app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = contentTypes });
 app.UseRouting();
 // No server WebSockets: every game's "watch AI" now runs client-side (M32/M33). The remaining controllers are
 // request/response REST (2048/RushHour/Cube solvers + /api/version).

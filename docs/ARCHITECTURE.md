@@ -235,7 +235,7 @@ Extended CONNECT, RFC 8441)** so the socket works under HTTP/1.1 and HTTP/2.
 - Snake / MountainCar use the **generic `EpisodeStreamer`** (`Reset → policy → Step → JSON frame`, paced by `tickMs`; one frame per env step).
 - **FruitCake no longer uses the server at all (M32).** Its entire AI — physics, observation, net forward pass,
   and depth-3 search — is single-sourced in `fruitcake_solver.pg` and runs **in the browser** (`FruitCakeDirector`
-  over the generated TS core + the shipped `ClientApp/public/fruitcake-net.ckpt`). There is **no** `FruitCakeController`,
+  over the generated TS core + the shipped `wwwroot/models/fruitcake-net.ckpt`). There is **no** `FruitCakeController`,
   no `/api/fruitcake` WebSocket, and no server-side FruitCake net — per-viewer server cost is zero. See §10.
 
 ```csharp
@@ -465,11 +465,18 @@ rendering hooks, RNG, state I/O). See `…/FruitCake/polyglot/README.md` and
 (the depth-3 expectimax search with the net-leaf inlined) — so the **entire FruitCake AI is single-sourced** and, f64
 on both sides, byte-identical in C# and the browser. Consequently **watch-AI runs fully client-side**
 ([`fruit-cake-director.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-director.ts) over the generated
-TS core + the shipped [`fruit-cake/…/public/fruitcake-net.ckpt`](../src/RLDemo.Web/ClientApp/public/fruitcake-net.ckpt),
+TS core + the shipped [`wwwroot/models/fruitcake-net.ckpt`](../src/RLDemo.Web/wwwroot/models/fruitcake-net.ckpt),
 parsed by [`fruitcake-net.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake-net.ts)); there is no
 FruitCake server controller or net. Training stays C#/SDK-only (autograd/GEMM/GPU) and *produces* the weights; the
 only per-platform inference piece is the binary `.ckpt` parser (C# `DuelingQNetCheckpoint`; TS `fruitcake-net.ts`).
 See [`prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md`](prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md).
+
+**Serving the browser weights.** The `.ckpt` files live in `src/RLDemo.Web/wwwroot/models/` (LFS) and are fetched
+by the browser from `/models/*-net.ckpt`. ASP.NET's static-file middleware refuses **unknown extensions**, so
+`Program.cs` registers a `.ckpt` → `application/octet-stream` mapping on `UseStaticFiles`; without it the request
+falls through to the SPA `index.html` (a 200 of HTML), the parser rejects it, and the in-browser AI silently gets
+no net. Any new browser-served extension needs the same mapping. (`wwwroot` is served identically in dev and prod,
+so this is testable with a local `curl /models/<net>.ckpt`.)
 
 ---
 

@@ -14,7 +14,7 @@ const MAGIC = 0x434e4c52; // "RLNC"
 const KIND = 'dueling-q';
 
 /** Fetch + parse the shipped Snake checkpoint. Returns null if missing/unreadable/incompatible. */
-export async function loadSnakeNet(url = 'snake-net.ckpt'): Promise<PgSnakeNet | null> {
+export async function loadSnakeNet(url = '/models/snake-net.ckpt'): Promise<PgSnakeNet | null> {
   try {
     const resp = await fetch(url);
     if (!resp.ok) return null;
