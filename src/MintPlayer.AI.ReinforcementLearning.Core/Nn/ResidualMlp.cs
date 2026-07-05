@@ -94,6 +94,15 @@ public sealed class ResidualMlp : IValueNet
 
     public IValueNet CloneStructure() => new ResidualMlp(_inputSize, _width, _block1.Length, new Xoshiro256StarStar(0));
 
+    /// <inheritdoc/>
+    public IValueNet GrowInput(int newInputSize)
+    {
+        // Only the input projection consumes the observation; blocks and head are width-bound and copy unchanged.
+        var grown = new ResidualMlp(newInputSize, _width, _block1.Length, new Xoshiro256StarStar(0));
+        NetTransfer.TransferGrownInput(grown, this);
+        return grown;
+    }
+
     /// <summary>
     /// Net2WiderNet (Chen et al. 2016) growth: a NEW residual net of width <paramref name="newWidth"/> whose
     /// learned function starts (near-)identical to this one, so a campaign can train cheap at a small width and
@@ -186,11 +195,5 @@ public sealed class ResidualMlp : IValueNet
         }
     }
 
-    public void CopyFrom(IValueNet source)
-    {
-        using var mine = Parameters().GetEnumerator();
-        using var theirs = source.Parameters().GetEnumerator();
-        while (mine.MoveNext() && theirs.MoveNext())
-            theirs.Current.Data.CopyTo(mine.Current.Data.AsSpan());
-    }
+    public void CopyFrom(IValueNet source) => NetTransfer.CopyParameters(this, source);
 }

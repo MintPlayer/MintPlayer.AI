@@ -115,9 +115,12 @@ public static class DqnTrainer
     /// <param name="warmStart">
     /// When starting fresh (<paramref name="resume"/> is null), use this network as the initial online net (its
     /// weights are copied into a fresh target) instead of a random init — i.e. continue training a previously
-    /// trained net with a fresh optimizer/replay buffer/step count. Its shape must match the one
+    /// trained net with a fresh optimizer/replay buffer/step count. Its hidden/head shape must match the one
     /// <paramref name="options"/> would build (<see cref="DqnOptions.Dueling"/> + <see cref="DqnOptions.Hidden"/>).
-    /// Ignored when resuming. Lets a campaign pick up a deployable (net-only) checkpoint that has no resume state.
+    /// If the environment's observation has since GAINED features (its dimension exceeds the net's input), the net
+    /// is grown to fit via <see cref="IValueNet.GrowInput"/> — the new inputs start at zero weight, so it's a
+    /// function-preserving continuation rather than a cold restart. Ignored when resuming (a full resume's replay
+    /// buffer holds old-width observations, so a width change there is an error, guarded below).
     /// </param>
     public static DqnResult Train(IEnvironment<float[], int> env, DqnOptions options, SeedSequence seeds,
         DqnTrainingState? resume = null, IValueNet? warmStart = null)
@@ -134,7 +137,11 @@ public static class DqnTrainer
             IValueNet MakeNet() => options.Dueling || options.NoisyNets
                 ? new DuelingQNet(obsDim, options.Hidden, actionCount, initRng, options.NoisyNets)
                 : new Mlp([obsDim, .. options.Hidden, actionCount], initRng, Activation.Relu);
-            var online = warmStart ?? MakeNet();
+            // Warm start, growing the net's input to fit if the observation gained features since it was trained.
+            IValueNet WarmStart(IValueNet w) => w.InputSize == obsDim ? w
+                : w.InputSize < obsDim ? w.GrowInput(obsDim)
+                : throw new ArgumentException($"Warm-start net input {w.InputSize} exceeds the environment's {obsDim}; cannot shrink.");
+            var online = warmStart is null ? MakeNet() : WarmStart(warmStart);
             var target = MakeNet();
             target.CopyFrom(online); // warm-start: copies the provided net's weights (shape must match options)
             state = new DqnTrainingState

@@ -87,6 +87,46 @@ public class FruitCakeEnvTests
     }
 
     [Fact]
+    public void BuildObservation_EncodesTwoBiggestFruitPositions()
+    {
+        var world = new FruitCakeWorld(enableRotation: false);
+        world.SpawnFruit(3, 496f, 765f);   // filler — lowest tier, must be ignored
+        world.SpawnFruit(10, 124f, 680f);  // biggest
+        world.SpawnFruit(8, 310f, 425f);   // second biggest
+
+        var obs = FruitCakeEnv.BuildObservation(world, current: 1, next: 2);
+        int b = FruitCakeEnv.ObservationSize - 6;
+
+        Assert.Equal(124f / FruitCakeWorld.Width, obs[b + 0], 1e-5f);
+        Assert.Equal(680f / FruitCakeWorld.Height, obs[b + 1], 1e-5f);
+        Assert.Equal(10f / 11f, obs[b + 2], 1e-5f);
+        Assert.Equal(310f / FruitCakeWorld.Width, obs[b + 3], 1e-5f);
+        Assert.Equal(425f / FruitCakeWorld.Height, obs[b + 4], 1e-5f);
+        Assert.Equal(8f / 11f, obs[b + 5], 1e-5f);
+    }
+
+    [Fact]
+    public void BuildObservation_EmptyBoard_UsesNeutralBigFruitSentinel()
+    {
+        var obs = FruitCakeEnv.BuildObservation(new FruitCakeWorld(enableRotation: false), current: 1, next: 2);
+        int b = FruitCakeEnv.ObservationSize - 6;
+        Assert.Equal<float[]>([0.5f, 1f, 0f, 0.5f, 1f, 0f], obs[b..(b + 6)]); // floor-centre, tier 0 for both slots
+    }
+
+    [Fact]
+    public void BuildObservation_BigFruitTie_BrokenByLowerThenLeftmost()
+    {
+        var world = new FruitCakeWorld(enableRotation: false);
+        world.SpawnFruit(9, 200f, 300f);   // same tier, higher up
+        world.SpawnFruit(9, 400f, 700f);   // same tier, lower on the board → ranks first
+
+        var obs = FruitCakeEnv.BuildObservation(world, 1, 2);
+        int b = FruitCakeEnv.ObservationSize - 6;
+        Assert.Equal(400f / FruitCakeWorld.Width, obs[b + 0], 1e-5f); // big1 = the lower fruit
+        Assert.Equal(200f / FruitCakeWorld.Width, obs[b + 3], 1e-5f); // big2 = the higher fruit
+    }
+
+    [Fact]
     public void World_SameTierContact_Merges_AndScores()
     {
         var world = new FruitCakeWorld(enableRotation: false);

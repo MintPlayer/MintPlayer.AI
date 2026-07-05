@@ -1,4 +1,4 @@
-import type { FruitCakeFrame } from './fruit-cake-api';
+import type { FruitCakeFrame } from './fruit-cake-frame';
 import { drawFruit } from './fruit-cake-art';
 import { PARTICLE_LIFE_SECONDS, POPUP_LIFE_SECONDS } from './fruit-cake-effects';
 import { byTier, cssColor, THEMES } from './fruit-cake-fruits';

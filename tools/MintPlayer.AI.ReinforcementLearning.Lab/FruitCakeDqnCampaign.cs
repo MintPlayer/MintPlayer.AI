@@ -81,7 +81,16 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
                 // Promote-plain→noisy: the shipped net is plain, but a noisy run needs a noisy net. Copy its
                 // trained weights into the means + add fresh σ — behaviorally identical with noise off, so the
                 // run continues the ~current policy and merely adds learnable exploration.
-                _warmNet = noisy && !loaded.Noisy ? loaded.ToNoisy(_seeds.CreateRng(RngStreams.Init)) : loaded;
+                IValueNet warm = noisy && !loaded.Noisy ? loaded.ToNoisy(_seeds.CreateRng(RngStreams.Init)) : loaded;
+                // If the observation has gained features since this net was trained (e.g. the big-fruit-position
+                // inputs), grow its input to fit — function-preserving (new inputs zero-init), so the baseline eval
+                // and warm-start continue the trained net rather than retraining from scratch.
+                if (warm.InputSize != FruitCakeEnv.ObservationSize)
+                {
+                    Log($"growing the loaded net's input {warm.InputSize} → {FruitCakeEnv.ObservationSize} (observation gained features; weights preserved)");
+                    warm = warm.GrowInput(FruitCakeEnv.ObservationSize);
+                }
+                _warmNet = warm;
                 Log($"warm-starting from the deployable FruitCake net '{NetId}'{(noisy ? " (promoted to noisy)" : "")} (fresh optimizer + replay buffer)");
                 resumed = true;
             }

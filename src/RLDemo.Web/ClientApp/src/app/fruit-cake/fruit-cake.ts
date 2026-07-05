@@ -1,6 +1,6 @@
 import { AfterViewInit, Component, DestroyRef, ElementRef, NgZone, inject, signal, viewChild } from '@angular/core';
-import { FruitCakeApi, FruitCakeFrame } from './fruit-cake-api';
 import { FruitCakeAudio } from './fruit-cake-audio';
+import { FruitCakeDirector } from './fruit-cake-director';
 import { FruitCakeGame, GamePhase } from './fruit-cake-game';
 import { HudButton, hitTest, render, renderFrame, surfaceToContainerX } from './fruit-cake-render';
 import { ScreenWakeLock } from '../screen-wake-lock';
@@ -30,16 +30,15 @@ export class FruitCake implements AfterViewInit {
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('board');
   private readonly zone = inject(NgZone);
 
-  private readonly api = inject(FruitCakeApi);
   private readonly wakeLock = inject(ScreenWakeLock);
   private readonly audio = new FruitCakeAudio();
   private readonly game = new FruitCakeGame(this.audio);
 
   protected readonly isFullscreen = signal(false);
-  /** 'human' = play locally; 'watch' = render the server-streamed AI game (PRD §4.6). */
+  /** 'human' = play locally; 'watch' = the AI plays — physics + net + search all run in the browser (M32). */
   protected readonly mode = signal<'human' | 'watch'>('human');
-  private socket: WebSocket | null = null;
-  private latestFrame: FruitCakeFrame | null = null;
+  // The client-side AI game (created on first watch; the trained net loads itself). No server, no WebSocket.
+  private director: FruitCakeDirector | null = null;
 
   private ctx: CanvasRenderingContext2D | null = null;
   private rafId = 0;
@@ -63,67 +62,43 @@ export class FruitCake implements AfterViewInit {
   private teardown(): void {
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
-    this.disconnect();
+    void this.wakeLock.release();
     this.game.saveSnapshot();
     this.audio.dispose();
   }
 
-  // ── AI "Watch" mode ────────────────────────────────────────────────────────────────────────
+  // ── AI "Watch" mode — the whole AI runs client-side (M32); no server, no WebSocket. ──────────
   protected setMode(mode: 'human' | 'watch'): void {
     if (this.mode() === mode) return;
+    this.lastMs = 0;
     if (mode === 'watch') {
       this.mode.set('watch');
-      this.latestFrame = null;
-      void this.wakeLock.acquire(); // keep the phone screen on so the stream isn't frozen by an auto-lock
-      void this.connect();
+      (this.director ??= new FruitCakeDirector()).reset(); // lazily create; the net loads itself
+      void this.wakeLock.acquire(); // keep the phone screen on so the game isn't frozen by an auto-lock
     } else {
-      this.disconnect();
       this.mode.set('human');
-      this.lastMs = 0;
       this.accumulator = 0;
+      void this.wakeLock.release();
     }
   }
 
-  private async connect(): Promise<void> {
-    // The heuristic is always ready; the status poll keeps parity with the other games (and a future
-    // trained net that may still be loading).
-    const status = await this.api.status();
-    if (this.mode() !== 'watch') return; // user switched away while polling
-    if (status.status !== 'ready') {
-      setTimeout(() => void this.connect(), 1500);
-      return;
-    }
-    this.socket = this.api.connectLive(
-      frame => (this.latestFrame = frame),
-      () => (this.socket = null),
-    );
-  }
-
-  private disconnect(): void {
-    this.socket?.close();
-    this.socket = null;
-    this.latestFrame = null;
-    void this.wakeLock.release();
-  }
-
-  // The OS freezes a backgrounded tab (screen lock / tab switch), which drops the stream socket. When we
-  // return to the foreground still in watch mode, reopen it so the AI keeps playing instead of staying dead.
+  // A backgrounded tab is throttled/frozen by the OS, which also drops the screen wake-lock. On return to the
+  // foreground still in watch mode, re-acquire it; the director just resumes on the next animation frame.
   protected onVisibilityChange(): void {
-    if (document.visibilityState !== 'visible' || this.mode() !== 'watch') return;
-    if (!this.socket || this.socket.readyState >= WebSocket.CLOSING) void this.connect();
+    if (document.visibilityState === 'visible' && this.mode() === 'watch') void this.wakeLock.acquire();
   }
 
   private readonly frame = (nowMs: number): void => {
+    const dt = this.lastMs ? Math.min(0.25, (nowMs - this.lastMs) / 1000) : 0; // clamp to avoid a spiral after a stall
+    this.lastMs = nowMs;
     if (this.mode() === 'human') {
-      const dt = this.lastMs ? Math.min(0.25, (nowMs - this.lastMs) / 1000) : 0; // clamp to avoid a spiral after a stall
-      this.lastMs = nowMs;
       this.accumulator += dt;
       while (this.accumulator >= FruitCake.Step) {
         this.game.step(FruitCake.Step);
         this.accumulator -= FruitCake.Step;
       }
     } else {
-      this.lastMs = nowMs; // watch mode: the server drives the game; we only render streamed frames
+      this.director?.update(dt); // watch mode: the browser runs the AI game locally
     }
     this.draw();
     this.rafId = requestAnimationFrame(this.frame);
@@ -144,10 +119,10 @@ export class FruitCake implements AfterViewInit {
     }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (this.mode() === 'watch') {
-      if (this.latestFrame) renderFrame(this.ctx, this.latestFrame, this.game.themeIndex, cssW, cssH);
+      if (this.director) renderFrame(this.ctx, this.director.toFrame(), this.game.themeIndex, cssW, cssH);
       else {
         this.ctx.fillStyle = '#1c0b2b';
-        this.ctx.fillRect(0, 0, cssW, cssH); // connecting…
+        this.ctx.fillRect(0, 0, cssW, cssH); // loading…
       }
     } else {
       render(this.ctx, this.game, cssW, cssH);

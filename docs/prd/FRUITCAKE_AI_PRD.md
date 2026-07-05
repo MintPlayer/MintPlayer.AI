@@ -182,7 +182,14 @@ in the TS solver.)
 
 ### 4.8 Single-source physics — can the solver be written once?
 
-Short answer: **not cleanly via transpilation, and with server-authoritative serving (§4.6) it isn't
+> **UPDATE 2026-07-04 — the premise below changed.** This section's "no maintained C#↔TS transpiler exists"
+> conclusion is now obsolete: **MintPlayer.Polyglot** ships (v0.1.0), and the FruitCake solver is its north-star
+> conformance sample (one `.pg` → byte-identical C#/TS). A 3-agent investigation confirmed the solver core is a
+> clean fit (pure `+ − × ÷ √`, no transcendentals, the two twins are already 1:1). Single-source is now viable and
+> planned — see **[`POLYGLOT_FRUITCAKE_PRD.md`](POLYGLOT_FRUITCAKE_PRD.md)** (PLAN M31). The analysis below is kept
+> for historical context (it was correct for the transpiler landscape at the time).
+
+Short answer (historical): **not cleanly via transpilation, and with server-authoritative serving (§4.6) it isn't
 required.**
 
 - **Generic C#↔TS transpilation is not a maintained, viable path.** C#→JS/TS tools (Bridge.NET,

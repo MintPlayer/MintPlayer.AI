@@ -76,10 +76,11 @@ bitwise-identical parallel row decomposition on CPU.
 | [`Numerics/IComputeBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Numerics/IComputeBackend.cs) | The seam: GEMM (+ transpose variants), elementwise `Map`/`MapBackward`, reductions (`Sum`, `LogSoftmax`, `Gather`, `HuberLoss`, `LayerNorm`). Forward ops **write**; backward ops **accumulate**. (`ManagedBackend`, the CPU impl, lives here.) |
 | `Numerics/ManagedBackend` (in [`IComputeBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Numerics/IComputeBackend.cs)) | Pure-managed CPU backend (`TensorPrimitives` SIMD). Large GEMMs partition output rows across `Parallel.For` workers (no reduction → bitwise-identical to sequential); `maxDegreeOfParallelism` caps it. |
 | [`Nn/Adam.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/Adam.cs) | Adam with bias correction; mutable `LearningRate`; `ClipGradNorm`. |
-| [`Nn/Modules.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/Modules.cs) | `IModule` (`Forward`/`Parameters`), `IValueNet` (`InputSize`/`CloneStructure`/`CopyFrom`), `Linear`, `Mlp`. |
-| [`Nn/DuelingQNet.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/DuelingQNet.cs) | Shared trunk → value + advantage heads, `Q = V + (A − mean A)`; optional noisy heads. |
+| [`Nn/Modules.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/Modules.cs) | `IModule` (`Forward`/`Parameters`), `IValueNet` (`InputSize`/`CloneStructure`/`CopyFrom`/`GrowInput`), `Linear`, `Mlp`. |
+| [`Nn/DuelingQNet.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/DuelingQNet.cs) | Shared trunk → value + advantage heads, `Q = V + (A − mean A)`; optional noisy heads; plain→noisy promotion (`ToNoisy`). |
 | [`Nn/NoisyLinear.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/NoisyLinear.cs) | Factorized-Gaussian noisy layer (μ + σ⊙ε; ε is a non-grad constant resampled per step — learned σ only). |
-| [`Nn/ResidualMlp.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/ResidualMlp.cs) | Deep residual value net (LayerNorm blocks) + Net2WiderNet growth (`WidenTo`). |
+| [`Nn/ResidualMlp.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/ResidualMlp.cs) | Deep residual value net (LayerNorm blocks) + Net2WiderNet hidden-width growth (`WidenTo`). |
+| [`Nn/NetTransfer.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/NetTransfer.cs) | Generic, function-preserving weight transfer: exact param copy (`CopyParameters`, behind every `CopyFrom`) + input-dimension growth (`TransferGrownInput`, behind `IValueNet.GrowInput`). |
 | [`Random/Xoshiro256StarStar.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Random/Xoshiro256StarStar.cs) | Version-stable PRNG (never `System.Random`); `GetState`/`SetState` for checkpointing. |
 | [`Random/SeedSequence.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Random/SeedSequence.cs) | One master seed → independent streams via `RngStreams` (`Environment`, `Policy`, `Init`, `Buffer`, `Evaluation`, `Noise`, …). |
 | [`src/…Ilgpu/`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/) | GPU backend: tiled shared-memory GEMM ([`IlgpuBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/IlgpuBackend.cs)); [`AdaptiveBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/AdaptiveBackend.cs) routes each GEMM to CPU or GPU by a MAC threshold and falls back to CPU when no device is present. Only large nets (cube) clear the threshold. |
@@ -97,6 +98,14 @@ public Tensor MatMul(Tensor other) {
 
 `Backend.Current` is a settable global (default `ManagedBackend`); set it once at startup to switch
 compute. Algorithm code never changes when you swap backends.
+
+**Weight transfer ("keep the work").** Four function-preserving transforms let a trained net carry over instead of
+retraining from scratch; the *generic* ones live in `NetTransfer`, the *structure-specific* ones on their nets:
+`IValueNet.GrowInput(n)` (wider input — new features zero-init, identical output on the old ones; for when an env's
+observation gains features), `ResidualMlp.WidenTo(w)` (wider hidden, Net2WiderNet), `DuelingQNet.ToNoisy()`
+(plain→noisy exploration), and `CubePolicyNet.PolicyAsMlp()` (extract the policy trunk). All transfer **weights
+only** — the caller rebuilds the optimizer (Adam moments are keyed to the parameter set) and, for `GrowInput`, starts
+from a fresh replay buffer (stored transitions hold old-width observations).
 
 ---
 
@@ -120,17 +129,19 @@ them is the classic silent DQN bug.
 | CartPole | 4 | 2 | Bit-exact Gymnasium port. |
 | MountainCar | 2 | 3 | Momentum-building control. |
 | Snake | 177 | 4 | Egocentric 9×9 patch + scalars + **flood-fill** free-cell reachability (anti-self-trap). |
-| FruitCake | 83 | 14 | Suika merge physics; reward shaping (training-only); see below. |
+| FruitCake | 89 | 14 | Suika merge physics (**single-source solver** — one `.pg` → C# + TS, see §10); reward shaping (training-only); big-fruit position inputs; see below. |
 | 2048 | 16 | 4 | Log-scaled tiles; action masking. |
 | RushHour | 72 | 32 | Two 6×6 planes; puzzle-per-episode; BFS oracle for imitation. |
 | RubiksCube | 324 | 12 | One-hot stickers; inverse-move masking; curriculum depth. |
 | GridWorld / FrozenLake | 16 | 4 | Tabular; value-iteration ground truth for tests. |
 
 **The static `BuildObservation` pattern.** Observation construction is a *static* method so the live
-serving path feeds the net the **byte-identical** observation the policy trained on (e.g.
-`FruitCakeEnv.BuildObservation(world, current, next)` is called by both `Step()` and the WebSocket frame
-builder). When you change an observation, you change it in exactly one place and bump the net's input width
-(the model-load guard rejects a stale-width checkpoint).
+serving path feeds the net the **byte-identical** observation the policy trained on. When you change an
+observation, you change it in exactly one place and bump the net's input width (the model-load guard rejects
+a stale-width checkpoint). **FruitCake goes further (M32):** its `BuildObservation` — plus the net forward
+pass and the depth-3 search — are single-sourced in `fruitcake_solver.pg` (see §10), so the *same* code runs
+in C# and, transpiled, in the browser. `FruitCakeEnv.BuildObservation` is now a thin delegate to the
+generated core.
 
 ---
 
@@ -222,7 +233,10 @@ browser is a pure renderer with no game timer (this avoids client/server timer r
 Extended CONNECT, RFC 8441)** so the socket works under HTTP/1.1 and HTTP/2.
 
 - Snake / MountainCar use the **generic `EpisodeStreamer`** (`Reset → policy → Step → JSON frame`, paced by `tickMs`; one frame per env step).
-- FruitCake uses a **bespoke intra-drop streamer** in `FruitCakeController` (the agent decides once per *drop*, but ~30 fps of falling/merging is streamed *between* decisions; the drop column is chosen by `FruitCakeSearch`).
+- **FruitCake no longer uses the server at all (M32).** Its entire AI — physics, observation, net forward pass,
+  and depth-3 search — is single-sourced in `fruitcake_solver.pg` and runs **in the browser** (`FruitCakeDirector`
+  over the generated TS core + the shipped `ClientApp/public/fruitcake-net.ckpt`). There is **no** `FruitCakeController`,
+  no `/api/fruitcake` WebSocket, and no server-side FruitCake net — per-viewer server cost is zero. See §10.
 
 ```csharp
 // e.g. SnakeController — 503 until the model is loaded, then stream
@@ -415,13 +429,17 @@ form in `Env2048.Step`.
 
 "Play yourself" runs **entirely in the browser** — a pure-TS engine per game ticks on `requestAnimationFrame`
 (canvas games) or `setInterval` (turn-based), no backend in the loop. The browser rules mirror the C# training
-env so human and AI obey identical mechanics. FruitCake is the richest (its own circle-physics solver); the
-others are thin logic modules.
+env so human and AI obey identical mechanics. FruitCake goes furthest: its **physics is literally the same code
+as the C# env** — one MintPlayer.Polyglot `.pg` transpiled to both (callout below) — while the others are thin
+logic modules mirroring the C# envs by hand.
 
 | Path (`RLDemo.Web/ClientApp/src/app/`) | Role |
 |---|---|
-| [`fruit-cake/fruit-cake-physics.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-physics.ts) | Custom sequential-impulse circle solver (12 velocity / 4 position iters; deferred same-tier merges; area-mass). |
-| `fruit-cake/` [`game`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-game.ts) · [`render`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-render.ts) · [`audio`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-audio.ts) · [`fruits`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-fruits.ts) | Rules + localStorage; Canvas 2D art + HUD + letterbox scaling; Web Audio; the 11-tier merge catalog (shared by physics/render/scoring). |
+| [`fruit-cake/fruitcake_solver.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake_solver.ts) | **Generated (committed) — do not edit.** TS transpilation of `fruitcake_solver.pg`: `PgFruitCakeWorld` physics **plus** the whole inference path — `buildObservation`, `PgDuelingNet.forward`, `chooseColumn` (depth-3 search). Edit the `.pg` + regenerate. |
+| [`fruit-cake/fruitcake-net.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake-net.ts) | Parses the shipped `.ckpt` binary (mirrors the C# `DuelingQNetCheckpoint` reader) → builds `PgDuelingNet`. The one inference piece that isn't Polyglot (binary I/O). |
+| [`fruit-cake/fruit-cake-director.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-director.ts) | **Client-side "watch AI"** (M32): a real-time state machine that runs the generated physics + `chooseColumn` over the loaded net locally — replaces the retired server WebSocket stream. Emits `FruitCakeFrame`s ([`fruit-cake-frame.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-frame.ts)) for `renderFrame`. |
+| [`fruit-cake/fruit-cake-physics.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-physics.ts) | Thin **`FruitWorld` facade** over the generated core — **not the physics**. Re-adds host-only surface: `onMerged` (exact, from the core's merge list), `onLanded` (host-side approximation), and per-fruit `mergeBorn`/age via a side-table. Edit the `.pg`, not this. |
+| `fruit-cake/` [`game`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-game.ts) · [`render`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-render.ts) · [`audio`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-audio.ts) · [`fruits`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-fruits.ts) | Rules + localStorage; Canvas 2D art + HUD + letterbox scaling; Web Audio; the 11-tier merge catalog (render/scoring; a second copy of the catalog also lives inside the `.pg`). |
 | [`fruit-cake/fruit-cake.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake.ts) (component) | Fixed-timestep rAF loop, pointer aim/drop, `mode` signal (human ↔ watch), fullscreen. |
 | [`snake-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/snake/snake-logic.ts), [`mountaincar-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/mountaincar/mountaincar-logic.ts), [`game-2048-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/game-2048/game-2048-logic.ts), [`rush-hour-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/rush-hour/rush-hour-logic.ts) | Browser-side rules for human play, mirroring the C# envs. |
 | [`cube/cube.ts`](../src/RLDemo.Web/ClientApp/src/app/cube/cube.ts) | Three.js scene + manual turns + Kociemba/AI solver playback. |
@@ -432,6 +450,26 @@ Conventions: plain `fetch`/`WebSocket` (no `HttpClient`/`environment.ts`), stand
 canvas loops run **outside** Angular's zone.
 *Change it:* game rules → the `*-logic.ts` (keep the C# env in sync — see the PRD-sync comments); render/input →
 `*-render.ts` or the component; new game → add a folder + route (+ server controller/service).
+
+**Single-source FruitCake physics (MintPlayer.Polyglot).** The FruitCake solver is written **once** in
+[`…/Environments/FruitCake/polyglot/fruitcake_solver.pg`](../src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/polyglot/fruitcake_solver.pg)
+and transpiled to **C#** (build-time via the `MintPlayer.Polyglot.MSBuild` PackageReference → `obj/`, wrapped by the
+public `FruitCakeWorld` **facade**) and to **TypeScript** (committed `fruitcake_solver.ts` here, wrapped by the
+`FruitWorld` **adapter**). Both targets are byte-identical (f64). **To change the physics, edit the `.pg` and
+regenerate** — never the generated `.cs`/`.ts` or the facades' physics; the facades hold only host glue (events,
+rendering hooks, RNG, state I/O). See `…/FruitCake/polyglot/README.md` and
+[`prd/POLYGLOT_FRUITCAKE_PRD.md`](prd/POLYGLOT_FRUITCAKE_PRD.md).
+
+**The `.pg` now holds the whole *inference* path too (M32).** Beyond physics, `fruitcake_solver.pg` also contains
+`buildObservation` (the 89-dim vector), `PgDuelingNet.forward` (f64 dueling-Q forward pass), and `chooseColumn`
+(the depth-3 expectimax search with the net-leaf inlined) — so the **entire FruitCake AI is single-sourced** and, f64
+on both sides, byte-identical in C# and the browser. Consequently **watch-AI runs fully client-side**
+([`fruit-cake-director.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-director.ts) over the generated
+TS core + the shipped [`fruit-cake/…/public/fruitcake-net.ckpt`](../src/RLDemo.Web/ClientApp/public/fruitcake-net.ckpt),
+parsed by [`fruitcake-net.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake-net.ts)); there is no
+FruitCake server controller or net. Training stays C#/SDK-only (autograd/GEMM/GPU) and *produces* the weights; the
+only per-platform inference piece is the binary `.ckpt` parser (C# `DuelingQNetCheckpoint`; TS `fruitcake-net.ts`).
+See [`prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md`](prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md).
 
 ---
 

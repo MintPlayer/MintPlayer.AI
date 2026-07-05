@@ -1000,6 +1000,110 @@ Plan F0–F6 in the PRD; judge on the **≥200-game paired max-tier distribution
 trap). Honest ceiling: even SOTA Suika agents reach strong-human, not "always watermelon." Recommended first
 session: F0 baseline → F1 search (no-retrain win) → training session F2+F3+F4 → F5 A/B + conditional ship.
 
+## M30 — FruitCake: big-fruit position inputs  *(planned — see `FRUITCAKE_BIGFRUIT_INPUTS_PRD.md`)* 🔜
+
+A focused input experiment (the user's steer): the current 83-dim observation is a per-column **skyline with
+no absolute fruit positions**, so the net can't see *where* its biggest fruit sits. Add the **(x, y, tier) of the
+two biggest fruits** to `BuildObservation` (→ ~89-dim). **Checkpoint reuse: no** — width change ⇒ the shipped
+83-dim `fruitcake.dqn.ckpt` won't load (strict shape check + `FruitCakeModelService` width guard; no
+weight-transfer util exists), so this is a **fresh retrain** (F5 precedent), not a resume — an optional ~50-line
+weight-pad warm-start util is the only alternative and isn't on the critical path. **Honest prior:** the reactive
+net is documented as **saturated** (F2 richer inputs already gave +36% score but 0 watermelon; the watermelon
+breakthrough was **search**, not the net; F6 distillation and curriculum both failed). So this is built to
+**falsify cheaply** and is judged on **net + forward-search** (the deployed system), not the greedy net. Plan
+G0–G4 in the PRD; ship `fruitcake.dqn.ckpt` **only if net+search beats the depth-3 ~50%-watermelon / ~2505 bar**
+by a seed-noise-beating margin — else record a negative result (NoisyNets/F6 style) and keep the capability.
+
+## M31 — FruitCake: single-source physics via MintPlayer.Polyglot  *(planned — see `POLYGLOT_FRUITCAKE_PRD.md`)* 🔜
+
+The FruitCake circle-physics solver is duplicated by hand in C# (`FruitCakeWorld`, training + serving) and TS
+(`fruit-cake-physics.ts`, human play) — kept in sync only by discipline (the risk `FRUITCAKE_AI_PRD.md` §4.8 flagged).
+**MintPlayer.Polyglot 0.1.0 now exists** (a maintained C#↔TS transpiler; FruitCake is its north-star conformance
+sample), reopening §4.8's "not viable" verdict. A 3-agent investigation confirmed the fit: both cores are pure
+`+ − × ÷ √` with **no transcendentals** (rotation math is pure arithmetic; trig lives only in render/audio glue) and
+are already 1:1 ports — squarely inside Polyglot's byte-identical-safe op set. **Output dirs:** TS is configurable
+(CLI `--out` → `ClientApp/.../fruit-cake/`); C# is **not** (fixed `obj/.../polyglot/`, compiled in-assembly — so the
+`.pg` must live in the Environments project). **Precision:** the pilot uses `f32` in the `.pg` → reproduces today's
+C# float32 / TS float64 split exactly (**no retrain**, net stays valid); `f64`-everywhere byte-identity is a deferred
+optional upgrade (needs net re-validation). **v0.1.0 constraints to design around:** generated C# is *internal-by-default*
+(FruitCakeWorld is public + cross-assembly → facade/`InternalsVisibleTo` until Polyglot ships public-emission) and there's
+*no npm/Linux CLI* yet (commit the generated `.ts` for Linux CI). Plan **PG0–PG3**: PG0 = zero-risk validation → PG1 C# cutover → PG2 TS cutover → PG3 optional f64
+byte-identity. **PG0 PASSED (on Polyglot 0.1.1), 2026-07-04.** The real solver ports to a clean type-checking `.pg`.
+0.1.0 surfaced a blocker (a codegen precedence bug — dropped parens around `??` under `+` → generated TS went all-NaN);
+it was root-caused (handoff in `docs/prd/polyglot-pilot/`) and **fixed in Polyglot 0.1.1**. On 0.1.1 the pilot is
+**byte-identical C#↔TS and NaN-free** (7-drop trace + 28-drop varied cascade + float checksum) — so byte-identity holds
+for this solver. `f32` proved impractical (cast per literal) → `f64` (so the C# solver moves float32→double, gated by
+the PG1 net A/B). **PG0 + PG1 DONE.** **PG1 cutover (2026-07-04):** `FruitCakeWorld` is now a thin **public facade**
+over the transpiled internal core (`PgFruitCakeWorld`, committed generated C# — not built at runtime, so Linux CI is
+unaffected); consumers unchanged; physics moved **float32→double**; env Save/Restore delegates at double precision
+(bitwise resume kept). Full build + 17 FruitCake/parity tests green; the trained net re-validated on double physics
+(30-game: greedy 895, net+search 2317 / 33% watermelon — within noise, **no retrain**). **PG2 DONE + browser-verified
+(2026-07-05):** Polyglot **0.1.4** added TS `export` emission (the 4th fix — 0.1.2 Linux CI, 0.1.3 nullable, 0.1.4
+exports); switched C# to **build-time transpilation** (MSBuild PackageReference 0.1.4, no committed `.cs`); the web
+client's `fruit-cake-physics.ts` is now a thin `FruitWorld` facade over the committed generated TS core; verified via
+host + Playwright (drops/merges/`onMerged`-exact/`mergeBorn`/score, 0 console errors). **PG3 (byte-identity) done as a
+side-effect** (f64 both sides). **⇒ PG0–PG2 COMPLETE: FruitCake physics is fully single-source (one `.pg` → C#
+training/serving + TS human-play).** Optional **PG4** (not built): watch-AI could stream only the chosen column + animate
+client-side (byte-identical physics enables it) to cut streaming bandwidth — but the depth-3 search + net stay C#-only.
+**⇒ PG4 is SUPERSEDED by M32** (full client-side inference removes the compute, the bandwidth, *and* the WebSocket).
+
+## M32 — FruitCake: fully client-side AI (zero server inference)  *(✅ CS0–CS7 DONE 2026-07-05 — see `FRUITCAKE_CLIENT_SIDE_AI_PRD.md`)*
+
+> **✅ DONE (2026-07-05) — the FruitCake AI runs entirely in the browser.** CS0 `e429cdf` (world-queries →
+> `.pg` + fixed a leaked-`float` timestep) · CS1 `19bd0b8` (`buildObservation` → `.pg`, obs reproduces legacy
+> float32 within 1e-5) · CS2 `e8e3c6b` (`PgDuelingNet.forward` → `.pg`, argmax-exact vs SDK) · CS4 `63213db`
+> (`chooseColumn` depth-3 → `.pg`, **same column** as C# `FruitCakeSearch`) · CS3+CS6 `d458311` (ship the 89-dim
+> net as `ClientApp/public/fruitcake-net.ckpt` (LFS) + TS `.ckpt` parser; client-side `FruitCakeDirector`
+> replaces the WebSocket watch mode) · CS7 `b54bfc5` (retire `FruitCakeController` / `FruitCakeModelService` /
+> `FruitCakeApi` / stale 83-dim `models/fruitcake.dqn.ckpt`). **Verified host + Playwright:** watch mode plays
+> (fruit fall/roll/merge, score climbs), **0 console errors**, weights fetched once from `/fruitcake-net.ckpt`,
+> **0 `/api/fruitcake` requests**. 22 FruitCake/Polyglot tests green. Three Polyglot 0.1.4 codegen bugs found +
+> worked around (filed **MintPlayer.Polyglot#9**; handoff `docs/prd/polyglot-pilot/POLYGLOT_BUG_HANDOFF_M32.md`).
+> **CS5 (quality A/B) — DONE, ship-as-is:** depth-3 net+search on the shipped G3 89-dim net (100 paired games)
+> = **2493 mean / 49% watermelon / meanTier 10.48**, wins 100/100 vs greedy — **on par with the prior live AI**
+> (83-dim was ~2505 / 50%, within noise). Browser f64 inference is argmax/column-equivalent (CS2/CS4), so this
+> is representative. No retrain needed. (Also = the **M30/G4 verdict**: big-fruit inputs are a *null result* for
+> net+search quality — the saturated-net prior holds; kept because they don't hurt.) **The canonical FruitCake
+> net now lives once at `ClientApp/public/fruitcake-net.ckpt`** (browser); the server loads no FruitCake net.
+> **Shipped in PR #23** (single PR: NetTransfer + M30 + M31 + M32).
+
+
+
+**Cost-driven (user's steer).** "Watch the AI play" runs the **entire** AI server-side (net forward pass + depth-3
+search) and streams every intra-drop frame over the `/api/fruitcake/live` WebSocket — so both server **CPU and
+bandwidth scale linearly with concurrent viewers** (100 viewers ≈ 100× load on the single Hetzner VPS, a real
+monthly-bill risk). A 4-agent analysis (2026-07-05) confirmed the AI is fully portable: the net is plain float32
+matmuls (**noise is off at inference ⇒ mean weights only**), the depth-3 search is **RNG-free deterministic**
+game-tree logic, the **physics is already in the browser** (M31 single-source solver), and `BuildObservation` is a
+pure function. Nothing is C#-specific — it was only *written* in C#. **Design pivot (user steer 2026-07-05):** rather
+than hand-port to TS + babysit golden fixtures, **single-source the inference path (observation + net forward + search)
+in the same `fruitcake_solver.pg` as the physics** → C# **and** TS byte-identical by construction. This also
+*dissolves* the float-parity problem: with the forward pass authored as **f64 on both sides**, no `Math.fround`
+emulation is needed — the deliberate consequence is serving inference moves from the SDK's f32 path to the Polyglot f64
+path (strictly more precise; PG1 already validated the net on f64 physics). Two hard boundaries stay per-platform:
+**training** (autograd/GEMM/GPU/Adam — Polyglot has no backprop, stays C#/SDK and *produces* the weights) and
+**checkpoint parsing** (binary I/O — a ~40-line TS `.ckpt` parser; C# already has one). **Plan CS0–CS7:** CS0 push
+`clone`/`anyEjected`/`anyRestingAboveDangerLine`/`pileHeight` into the `.pg` → CS1 `buildObservation` in the `.pg`
+(C# env delegates) → CS2 `duelingForward` in the `.pg` (f64 dense MLP) → CS3 checkpoint delivery (MSBuild copy to
+`ClientApp/public/`) + TS `.ckpt` parser → CS4 `chooseColumn` depth-3 expectimax in the `.pg` (inline leaf, top-k as an
+explicit loop) → CS5 point C# serving + Lab `--search-eval` at the f64 core + one A/B vs the ~50%/2505 bar → CS6
+collapse `watch` into a **local director loop** (drop the socket) → CS7 **retire** the server path (`Live` WebSocket +
+`FruitCakeModelService` net load + `FruitCakeApi` socket) and measure. **Correctness crux (cheaper than a hand-port):**
+per-block **Polyglot-C# == SDK-C#** equivalence tests (obs equality, argmax-exact forward, same-column search) + C#↔TS
+byte-identity **free from the transpiler** (no committed goldens, no tolerance); only D5's f32→f64 serving switch needs
+an end-to-end A/B. **Payoff:** per-viewer server cost → **0** (one ~370 KB CDN-cacheable weights download). **Depends
+on M30/G4** for a valid 89-dim net (client falls back to the heuristic leaf until it lands; CS0–CS2/CS4 are net-agnostic
+in parallel). **Supersedes PG4.** Also advances MintPlayer.Polyglot (FruitCake is its north-star conformance sample).
+
+> **Branch `net-transfer-input-grow` — merge readiness (updated 2026-07-05).** This branch carries **four** initiatives:
+> M-series NetTransfer/`GrowInput` (SDK, self-contained), **M30** FruitCake big-fruit inputs (obs 83→89), **M31**
+> Polyglot single-source physics, and **M32** fully client-side FruitCake AI. **The old merge blocker is RESOLVED:**
+> the stale 83-dim server model no longer matters — M32 removed the server's FruitCake net entirely; the browser now
+> runs the AI from the 89-dim `ClientApp/public/fruitcake-net.ckpt`. **Remaining pre-master judgement (quality, not
+> architecture):** the shipped browser net is the **G3** net; if its net+search play quality (G4 A/B vs the
+> ~50%-watermelon / ~2505 bar) is unsatisfying, retrain (M30/G4) and replace `ClientApp/public/fruitcake-net.ckpt`.
+> Still recommended: **split into separate PRs** (NetTransfer is independently mergeable; M30/M31/M32 are entangled).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -1164,6 +1268,14 @@ curriculum + lighter eval) and **✅ P.9** (LR scaling + ε-loss target sync). F
    - **Demonstration-dataset abstraction** — a uniform way for any algorithm to be seeded
      from oracle/expert data (DQfD-style), so the Kociemba/BFS oracles become reusable
      warm-start sources, not per-demo glue.
+   - **Function-preserving net transfer** ✅ *(done 2026-06-30 — see `NET_TRANSFER_PRD.md`)* —
+     `IValueNet.GrowInput(n)` grows a trained net's input dimension when an env's observation
+     gains features (new in-weights zero-init ⇒ identical output on the old features), so
+     enriching an observation warm-continues instead of retraining from scratch. Unifies the
+     generic transfer mechanics in `NetTransfer` (collapsing the duplicated `CopyFrom`), with
+     the structure-specific transforms staying on their nets (`ResidualMlp.WidenTo`,
+     `DuelingQNet.ToNoisy`, `CubePolicyNet.PolicyAsMlp`). Follow-up: trainer auto-grow on a
+     wider-obs resume (T4).
 4. **Slide-optimal AI answers**: search/compaction that minimizes official piece-moves,
    not just single-cell moves.
 5. **Stretch list (M11), once everything above is complete** — extras, not on the

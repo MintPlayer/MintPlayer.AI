@@ -26,6 +26,17 @@ public interface IValueNet : IModule
 
     /// <summary>Copies every parameter from a structurally identical net (target-network sync).</summary>
     void CopyFrom(IValueNet source);
+
+    /// <summary>
+    /// A function-preserving copy of this net with a larger input dimension: the existing in-weights are carried
+    /// over and the new inputs start with ZERO weight, so the result computes the identical function on the
+    /// original features (the new ones contribute nothing until trained). Use it to warm-start training after an
+    /// environment's observation gains features, instead of retraining from scratch.
+    /// <para>Transfers WEIGHTS ONLY: the caller must rebuild the optimizer (Adam moments are keyed to the parameter
+    /// set) and start from a fresh replay buffer (stored transitions hold old-width observations). Throws if
+    /// <paramref name="newInputSize"/> is not larger than <see cref="InputSize"/>.</para>
+    /// </summary>
+    IValueNet GrowInput(int newInputSize);
 }
 
 public enum Activation { None, Relu, Tanh }
@@ -89,6 +100,16 @@ public sealed class Mlp : IValueNet
     /// <summary>A same-shaped MLP (fresh init) — the DAVI bootstrap target; sync with <see cref="CopyFrom"/>.</summary>
     public IValueNet CloneStructure() => new Mlp(Sizes, new Xoshiro256StarStar(0), _hidden);
 
+    /// <inheritdoc/>
+    public IValueNet GrowInput(int newInputSize)
+    {
+        var sizes = Sizes;
+        sizes[0] = newInputSize;
+        var grown = new Mlp(sizes, new Xoshiro256StarStar(0), _hidden);
+        NetTransfer.TransferGrownInput(grown, this);
+        return grown;
+    }
+
     public Tensor Forward(Tensor input)
     {
         var x = input;
@@ -109,11 +130,5 @@ public sealed class Mlp : IValueNet
     public IEnumerable<Tensor> Parameters() => _layers.SelectMany(l => l.Parameters());
 
     /// <summary>Copies all parameters from a structurally identical net (target-network sync).</summary>
-    public void CopyFrom(IValueNet source)
-    {
-        using var mine = Parameters().GetEnumerator();
-        using var theirs = source.Parameters().GetEnumerator();
-        while (mine.MoveNext() && theirs.MoveNext())
-            theirs.Current.Data.CopyTo(mine.Current.Data.AsSpan());
-    }
+    public void CopyFrom(IValueNet source) => NetTransfer.CopyParameters(this, source);
 }

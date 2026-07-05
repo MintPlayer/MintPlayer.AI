@@ -1,0 +1,623 @@
+// fruitcake_solver.pg — single-source port of the FruitCake circle-physics solver
+// (FruitCakeWorld.cs + FruitCatalog.cs). ONE source, transpiled to C# and TS.
+//
+// Types are `Pg`-prefixed so the generated C# can coexist with the hand-written
+// FruitCakeWorld during the PG1 migration (a differential test pins them equal).
+// f64 by design: only + - * / sqrt are bit-exact across .NET and JS (Polyglot §3.D),
+// and this solver uses exactly those — so the C# and TS twins agree to the bit.
+//
+// The generated C# is committed alongside this file (fruitcake_solver.g.cs); it is
+// NOT transpiled during the build (the win-x64 CLI can't run in Linux CI). Regenerate
+// on Windows after editing:  polyglot build fruitcake_solver.pg --out .
+
+import { List } from "std.collections"
+import { Math } from "std.math"
+
+record PgFruitDef(radiusPx: f64, mergePoints: i32)
+
+// Index 0 = tier 1 … index 10 = tier 11. Tier N merges into N+1; tier 11 pair vanishes.
+let Catalog: List<PgFruitDef> = [
+  PgFruitDef(24.0, 1),  PgFruitDef(32.0, 3),  PgFruitDef(40.0, 6),
+  PgFruitDef(56.0, 10), PgFruitDef(64.0, 15), PgFruitDef(72.0, 21),
+  PgFruitDef(84.0, 28), PgFruitDef(96.0, 36), PgFruitDef(128.0, 45),
+  PgFruitDef(160.0, 55), PgFruitDef(192.0, 66),
+]
+
+fn byTier(tier: i32): PgFruitDef => Catalog[tier - 1]
+fn mergeResultTier(tier: i32): i32? => if tier < Catalog.count { tier + 1 } else { null }
+
+class PgFruitBody {
+  var x: f64;  var y: f64
+  var vx: f64; var vy: f64
+  var angle: f64; var angularVel: f64
+  var r: f64
+  var tier: i32
+  var invMass: f64; var invI: f64
+  var pendingMerge: bool
+  var removed: bool
+
+  init(x: f64, y: f64, r: f64, tier: i32, invMass: f64, invI: f64) {
+    this.x = x; this.y = y; this.r = r; this.tier = tier
+    this.invMass = invMass; this.invI = invI
+    this.vx = 0.0; this.vy = 0.0; this.angle = 0.0; this.angularVel = 0.0
+    this.pendingMerge = false; this.removed = false
+  }
+
+  let speed: f64 => Math.sqrt(this.vx * this.vx + this.vy * this.vy)
+}
+
+// A contact: transient immutable value. b == null => a static wall.
+record PgContact(a: PgFruitBody, b: PgFruitBody?, nx: f64, ny: f64, pen: f64)
+
+// A merge that resolved this step (resultTier null = a top-tier pair vanished). Solver output the host can
+// use for effects/audio; C# consumers ignore it and read the points return of step().
+record PgMergeEvent(sourceTier: i32, resultTier: i32?, x: f64, y: f64, points: i32)
+
+// One simulated drop's outcome (search node): the settled clone, its merge points, whether it lost, and the
+// one-drop value (weighted points + leaf board value, or points − LosePenalty when lost).
+record PgPlyResult(world: PgFruitCakeWorld, points: i32, lost: bool, oneDropValue: f64)
+
+// Clamp to [0,1] (matches C# Math.Clamp(v,0,1) for the non-NaN observation values).
+fn clamp01(v: f64): f64 => Math.min(1.0, Math.max(0.0, v))
+
+// Deterministic total order over fruit for the "biggest two" observation block: higher tier first,
+// then lower on the board (larger y), then leftmost (smaller x). Stable so the observation is stable.
+fn isLarger(cand: PgFruitBody, cur: PgFruitBody): bool {
+  if cand.tier != cur.tier { return cand.tier > cur.tier }
+  if cand.y != cur.y { return cand.y > cur.y }
+  return cand.x < cur.x
+}
+
+class PgFruitCakeWorld {
+  const Width: f64 = 620.0
+  const Height: f64 = 850.0
+  const DangerLineY: f64 = 150.0
+  const ColumnCount: i32 = 14        // RL: drop columns / observation width driver
+  const MaxDroppableTier: i32 = 5    // RL: player may drop tiers 1..5 (one-hot size)
+  // Search / serving params (mirror FruitCakeEnv's; the search is single-sourced here).
+  const WallInset: f64 = 6.0         // drop-x clamp margin from the walls
+  const SettleSpeedPx: f64 = 30.0    // early-settle speed threshold
+  const RestSpeedPx: f64 = 40.0      // "resting above the danger line" speed threshold (game-over)
+  const MinSettleSubsteps: i32 = 8
+  const MaxSubsteps: i32 = 600
+  const LosePenalty: f64 = 1000000000.0   // 1e9: dominates any board/merge diff so a losing line is chosen last
+  const NegInf: f64 = -1.0e18             // below every real line value (incl. losing = points − 1e9)
+
+  const Gravity: f64 = 9.8 * 64.0
+  const Restitution: f64 = 0.1
+  const Friction: f64 = 0.3
+  const RestitutionThresholdPx: f64 = 64.0
+  const VelocityIterations: i32 = 12
+  const PositionIterations: i32 = 4
+  const Slop: f64 = 0.5
+  const CorrectionPercent: f64 = 0.8
+  const AngularDamping: f64 = 0.995
+
+  let rotation: bool
+  var bodies: List<PgFruitBody> = List<PgFruitBody>()
+  var mergeQueue: List<(PgFruitBody, PgFruitBody)> = List<(PgFruitBody, PgFruitBody)>()
+  var contacts: List<PgContact> = List<PgContact>()
+  var lastMerges: List<PgMergeEvent> = List<PgMergeEvent>()   // merges resolved by the most recent step()
+
+  init(enableRotation: bool = false) { this.rotation = enableRotation }
+
+  let count: i32 => this.bodies.count
+
+  fn spawnFruit(tier: i32, xPx: f64, yPx: f64): PgFruitBody {
+    let def = byTier(tier)
+    let r = def.radiusPx
+    let mass = Math.PI * r * r
+    let inertia = 0.5 * mass * r * r
+    let body = PgFruitBody(xPx, yPx, r, tier, 1.0 / mass, if this.rotation { 1.0 / inertia } else { 0.0 })
+    this.bodies.add(body)
+    return body
+  }
+
+  fn clear() { this.bodies.clear(); this.mergeQueue.clear() }
+
+  fn step(dt: f64): i32 {
+    this.lastMerges.clear()
+    for b in this.bodies { b.vy += Gravity * dt }
+
+    this.buildContacts(true)
+    for _it in 0..VelocityIterations {
+      for c in this.contacts { resolveVelocity(c) }
+    }
+
+    for b in this.bodies {
+      b.x += b.vx * dt
+      b.y += b.vy * dt
+      if this.rotation {
+        b.angle += b.angularVel * dt
+        b.angularVel *= AngularDamping
+      }
+    }
+
+    for _it in 0..PositionIterations {
+      this.buildContacts(false)
+      for c in this.contacts { correctPosition(c) }
+    }
+
+    return this.flushMerges()
+  }
+
+  fn maxSpeed(): f64 {
+    var m = 0.0
+    for b in this.bodies { m = Math.max(m, b.speed) }
+    return m
+  }
+
+  fn settleAfterDrop(settleSpeedPx: f64, minSubsteps: i32, maxSubsteps: i32, dt: f64 = 1.0 / 60.0): i32 {
+    var points = 0
+    for sub in 0..maxSubsteps {
+      let gained = this.step(dt)
+      points += gained
+      if sub >= minSubsteps && gained == 0 && this.maxSpeed() < settleSpeedPx { break }
+    }
+    return points
+  }
+
+  // ── What-if / end-state queries (single-sourced so the search reuses them on both C# and TS) ─────────────
+  // These are pure functions of body state — no host concerns — so they live here, not in the platform facades.
+
+  // Deep copy for what-if planning (the search tries each column on a clone). enableRotation overrides the
+  // copy's rotation mode — planning runs rotation off (cheaper, deterministic) even when the live world has it on.
+  fn clone(enableRotation: bool): PgFruitCakeWorld {
+    let copy = PgFruitCakeWorld(enableRotation)
+    for b in this.bodies {
+      let nb = copy.spawnFruit(b.tier, b.x, b.y)
+      nb.vx = b.vx
+      nb.vy = b.vy
+      nb.angle = if enableRotation { b.angle } else { 0.0 }
+      nb.angularVel = if enableRotation { b.angularVel } else { 0.0 }
+    }
+    return copy
+  }
+
+  // True if any fruit has been pushed up over the rim (center above the top).
+  fn anyEjected(): bool {
+    for b in this.bodies { if b.y < 0.0 { return true } }
+    return false
+  }
+
+  // True if any fruit is settled (speed < restSpeedPx) above the danger line.
+  fn anyRestingAboveDangerLine(restSpeedPx: f64): bool {
+    for b in this.bodies {
+      if b.y < DangerLineY && b.speed < restSpeedPx { return true }
+    }
+    return false
+  }
+
+  // Height of the tallest point of the pile above the floor (0 = empty board).
+  fn pileHeight(): f64 {
+    var minTop = Height
+    for b in this.bodies { minTop = Math.min(minTop, b.y - b.r) }
+    return Height - minTop
+  }
+
+  // ── Observation (single-sourced RL feature vector; port of FruitCakeEnv.BuildObservation) ────────────────
+  // The 89-dim vector the trained net consumes, pure over (world, current, next): per-column skyline (surface
+  // height + top tier), three relational blocks (danger margin, merge-with-current, adjacent-equal-pair),
+  // current/next one-hots, three globals, and the two biggest fruit's (x, y, tier). f64 here (net inference is
+  // f64 both sides); the C# training env casts the result to float for the float32 net.
+  fn buildObservation(current: i32, next: i32): List<f64> {
+    let binW = Width / ColumnCount
+
+    // Per-column surface: the highest fruit top (smallest y) whose x-extent overlaps the column.
+    var topY: List<f64> = List<f64>()
+    var topTier: List<i32> = List<i32>()
+    for c in 0..ColumnCount { topY.add(Height); topTier.add(0) }
+
+    var fillArea = 0.0
+    for b in this.bodies {
+      fillArea += Math.PI * b.r * b.r
+      let bl = b.x - b.r
+      let br = b.x + b.r
+      let t = b.y - b.r
+      // Columns whose [c*binW,(c+1)*binW) span intersects the body's x-extent (matches the C# c0..c1 range).
+      for c in 0..ColumnCount {
+        if br > binW * c && bl < binW * (c + 1) {
+          if t < topY[c] { topY[c] = t; topTier[c] = b.tier }
+        }
+      }
+    }
+
+    var obs: List<f64> = List<f64>()
+
+    // Block A — per column: surface height (0 floor … 1 top), top-fruit tier (÷11). Track the highest surface.
+    var minTop = Height
+    for c in 0..ColumnCount {
+      obs.add(clamp01((Height - topY[c]) / Height))
+      obs.add(clamp01(topTier[c] / 11.0))
+      if topY[c] < minTop { minTop = topY[c] }
+    }
+
+    // Block B — danger margin: room between the surface and the danger line (1 = floor/safe, 0 = at/above).
+    for c in 0..ColumnCount {
+      obs.add(clamp01((topY[c] - DangerLineY) / (Height - DangerLineY)))
+    }
+
+    // Block C — merge-with-current: dropping the current fruit here scores an immediate merge.
+    for c in 0..ColumnCount {
+      obs.add(if topTier[c] == current { 1.0 } else { 0.0 })
+    }
+
+    // Block D — adjacent-equal-pair: this surface fruit already sits beside a same-tier surface fruit.
+    for c in 0..ColumnCount {
+      let hasLeft = c > 0 && topTier[c - 1] == topTier[c]
+      let hasRight = c < ColumnCount - 1 && topTier[c + 1] == topTier[c]
+      obs.add(if topTier[c] > 0 && (hasLeft || hasRight) { 1.0 } else { 0.0 })
+    }
+
+    // current / next one-hots (droppable tiers 1..MaxDroppableTier).
+    for t in 1..(MaxDroppableTier + 1) { obs.add(if current == t { 1.0 } else { 0.0 }) }
+    for t in 1..(MaxDroppableTier + 1) { obs.add(if next == t { 1.0 } else { 0.0 }) }
+
+    obs.add(clamp01(this.count / 100.0))                 // normalized fruit count
+    obs.add(clamp01(fillArea / (Width * Height)))        // board fill ratio
+    obs.add(clamp01(minTop / Height))                    // highest surface (0 = pile at the very top)
+
+    // The two biggest fruit's (x, y, tier) — absolute positions the skyline collapses (buried big fruit).
+    // Tracked by body index (-1 = none) rather than nullable refs (keeps the codegen on the safe path).
+    var big1: i32 = -1
+    var big2: i32 = -1
+    for i in 0..this.bodies.count {
+      let b = this.bodies[i]
+      if big1 < 0 || isLarger(b, this.bodies[big1]) {
+        big2 = big1
+        big1 = i
+      } else if big2 < 0 || isLarger(b, this.bodies[big2]) {
+        big2 = i
+      }
+    }
+    this.writeBig(obs, big1)
+    this.writeBig(obs, big2)
+    return obs
+  }
+
+  // Append the body at index idx as (x÷Width, y÷Height, tier÷11), or a neutral sentinel (floor-centre, tier 0)
+  // when idx < 0 (fewer than two fruit on the board).
+  fn writeBig(obs: List<f64>, idx: i32) {
+    if idx >= 0 {
+      let b = this.bodies[idx]
+      obs.add(clamp01(b.x / Width))
+      obs.add(clamp01(b.y / Height))
+      obs.add(clamp01(b.tier / 11.0))
+    } else {
+      obs.add(0.5)
+      obs.add(1.0)
+      obs.add(0.0)
+    }
+  }
+
+  // ── Depth-N forward-model search (single-source; port of FruitCakeSearch) ─────────────────────────────────
+  // For each column: clone, drop, settle, prune losing lines, recurse. current+next are known (maximize); the
+  // 3rd ply (maxDepth 3) is an expectimax chance node over the unknown upcoming fruit (average over droppable
+  // tiers). A line's value = realized merge points + leaf board value. The leaf is INLINED here (net's max-Q
+  // marginalized over the unknown next fruit) — no injected delegate — so the whole decision is single-sourced.
+
+  // The drop-x (px) for a column + fruit radius; clamped inside the walls. (FruitCakeEnv.ColumnX.)
+  static fn columnX(action: i32, tier: i32): f64 {
+    let r = byTier(tier).radiusPx
+    let nominalX = (action + 0.5) * (Width / ColumnCount)
+    return Math.min(Width - r - WallInset, Math.max(r + WallInset, nominalX))
+  }
+
+  // The held drop height (px), just above the danger line. (FruitCakeEnv.HeldY.)
+  static fn heldY(tier: i32): f64 => DangerLineY - byTier(tier).radiusPx - 4.0
+
+  // Leaf board value = (1/MaxDroppableTier) Σ_d max_a net.forward(obs(this, d, d)) — the net's sense of this
+  // board, marginalized over the unknown next droppable fruit (mirrors the C# serving leaf).
+  fn leafValue(net: PgDuelingNet): f64 {
+    var sum = 0.0
+    for d in 1..(MaxDroppableTier + 1) {
+      let q = net.forward(this.buildObservation(d, d))
+      var mx = q[0]
+      for k in 1..q.count { mx = Math.max(mx, q[k]) }
+      sum += mx
+    }
+    return sum / MaxDroppableTier
+  }
+
+  // One simulated drop: clone (rotation off), spawn, settle, score. Value = points − LosePenalty if it lost,
+  // else points + leaf board value.
+  fn dropAndScore(net: PgDuelingNet, tier: i32, col: i32): PgPlyResult {
+    let sim = this.clone(false)
+    sim.spawnFruit(tier, columnX(col, tier), heldY(tier))
+    let points = sim.settleAfterDrop(SettleSpeedPx, MinSettleSubsteps, MaxSubsteps, 1.0 / 60.0)
+    let lost = sim.anyEjected() || sim.anyRestingAboveDangerLine(RestSpeedPx)
+    let value = if lost { points - LosePenalty } else { points + sim.leafValue(net) }
+    return PgPlyResult(sim, points, lost, value)
+  }
+
+  // Pick the best column (0..ColumnCount-1) to drop `current` into, planning ahead with `next`.
+  fn chooseColumn(net: PgDuelingNet, current: i32, next: i32, maxDepth: i32, topK: i32, topK2: i32): i32 {
+    var first: List<PgPlyResult> = List<PgPlyResult>()
+    for col in 0..ColumnCount { first.add(this.dropAndScore(net, current, col)) }
+
+    if maxDepth <= 1 { return argMaxOneDrop(first) }
+
+    let keep = selectTopK(first, topK)
+    var bestValue = NegInf
+    var bestCol = ColumnCount / 2
+    for col in 0..ColumnCount {
+      let f = first[col]
+      // A lost or non-top-K column keeps its one-drop value; only a surviving top-K column is recursed.
+      var value = f.oneDropValue
+      if !f.lost && keep[col] {
+        value = f.points + f.world.bestContinuation(net, next, maxDepth - 1, topK2)
+      }
+      if value > bestValue { bestValue = value; bestCol = col }
+    }
+    return bestCol
+  }
+
+  // Best achievable value over `pliesLeft` more drops. `fruit` known ⇒ maximize over columns; null ⇒ expectimax
+  // chance node over the droppable tiers.
+  fn bestContinuation(net: PgDuelingNet, fruit: i32?, pliesLeft: i32, topK2: i32): f64 {
+    if pliesLeft == 0 { return this.leafValue(net) }
+
+    if fruit == null {
+      var sum = 0.0
+      for d in 1..(MaxDroppableTier + 1) { sum += this.bestContinuation(net, d, pliesLeft, topK2) }
+      return sum / MaxDroppableTier
+    }
+
+    let f = fruit!
+    var plies: List<PgPlyResult> = List<PgPlyResult>()
+    for c in 0..ColumnCount { plies.add(this.dropAndScore(net, f, c)) }
+
+    // Last simulated drop: the one-drop value is already the full value — take the max.
+    if pliesLeft == 1 {
+      var best = NegInf
+      for c in 0..ColumnCount { best = Math.max(best, plies[c].oneDropValue) }
+      return best
+    }
+
+    // Deeper: expand only the top-K columns into the next (unknown) fruit; the rest keep their one-drop value.
+    let keep = selectTopK(plies, topK2)
+    var bestDeep = NegInf
+    for c in 0..ColumnCount {
+      let p = plies[c]
+      var v = p.oneDropValue
+      if !p.lost && keep[c] {
+        v = p.points + p.world.bestContinuation(net, null, pliesLeft - 1, topK2)
+      }
+      bestDeep = Math.max(bestDeep, v)
+    }
+    return bestDeep
+  }
+
+  // Mark the K highest-one-drop-value non-losing columns (all survivors if fewer than K; always ≥ 1 unless all lost).
+  static fn selectTopK(plies: List<PgPlyResult>, k: i32): List<bool> {
+    var keep: List<bool> = List<bool>()
+    for i in 0..plies.count { keep.add(false) }
+    let target = if k > 1 { k } else { 1 }
+    for _iter in 0..target {
+      var bestIdx = -1
+      var bestVal = NegInf
+      for i in 0..plies.count {
+        if !plies[i].lost && !keep[i] && plies[i].oneDropValue > bestVal {
+          bestVal = plies[i].oneDropValue
+          bestIdx = i
+        }
+      }
+      if bestIdx < 0 { break }
+      keep[bestIdx] = true
+    }
+    return keep
+  }
+
+  // Argmax over one-drop value (strict >, lowest index wins ties); default to the middle column.
+  static fn argMaxOneDrop(plies: List<PgPlyResult>): i32 {
+    var best = NegInf
+    var bestCol = plies.count / 2
+    for i in 0..plies.count {
+      if plies[i].oneDropValue > best { best = plies[i].oneDropValue; bestCol = i }
+    }
+    return bestCol
+  }
+
+  fn buildContacts(detect: bool) {
+    this.contacts.clear()
+
+    for b in this.bodies {
+      let left = b.r - b.x
+      if left > 0.0 { this.contacts.add(PgContact(b, null, -1.0, 0.0, left)) }
+      let right = b.x + b.r - Width
+      if right > 0.0 { this.contacts.add(PgContact(b, null, 1.0, 0.0, right)) }
+      let floor = b.y + b.r - Height
+      if floor > 0.0 { this.contacts.add(PgContact(b, null, 0.0, 1.0, floor)) }
+    }
+
+    for i in 0..this.bodies.count {
+      let a = this.bodies[i]
+      for j in (i + 1)..this.bodies.count {
+        let b = this.bodies[j]
+        let dx = b.x - a.x
+        let dy = b.y - a.y
+        let rsum = a.r + b.r
+        let d2 = dx * dx + dy * dy
+        if d2 >= rsum * rsum { continue }
+        var d = Math.sqrt(d2)
+        if d == 0.0 { d = 0.0001 }
+
+        if detect && a.tier == b.tier && !a.pendingMerge && !b.pendingMerge {
+          a.pendingMerge = true
+          b.pendingMerge = true
+          this.mergeQueue.add((a, b))
+          continue
+        }
+
+        this.contacts.add(PgContact(a, b, dx / d, dy / d, rsum - d))
+      }
+    }
+  }
+
+  static fn resolveVelocity(c: PgContact) {
+    let a = c.a
+    let b = c.b
+    let nx = c.nx; let ny = c.ny
+    let invMa = a.invMass; let invMb = b?.invMass ?? 0.0
+    let invIa = a.invI;    let invIb = b?.invI ?? 0.0
+    if invMa + invMb == 0.0 { return }
+
+    let rax = a.r * nx; let ray = a.r * ny
+    let rbx = if b == null { 0.0 } else { -b!.r * nx }
+    let rby = if b == null { 0.0 } else { -b!.r * ny }
+
+    let wa = a.angularVel; let wb = b?.angularVel ?? 0.0
+    var rvx = (if b == null { 0.0 } else { b!.vx - wb * rby }) - (a.vx - wa * ray)
+    var rvy = (if b == null { 0.0 } else { b!.vy + wb * rbx }) - (a.vy + wa * rax)
+
+    let relN = rvx * nx + rvy * ny
+    if relN > 0.0 { return }
+
+    let e = if relN < -RestitutionThresholdPx { Restitution } else { 0.0 }
+    let rnA = rax * ny - ray * nx
+    let rnB = rbx * ny - rby * nx
+    let kn = invMa + invMb + invIa * rnA * rnA + invIb * rnB * rnB
+    if kn <= 0.0 { return }
+    let jn = -(1.0 + e) * relN / kn
+    applyImpulse(a, b, rax, ray, rbx, rby, jn * nx, jn * ny)
+
+    let wa2 = a.angularVel; let wb2 = b?.angularVel ?? 0.0
+    rvx = (if b == null { 0.0 } else { b!.vx - wb2 * rby }) - (a.vx - wa2 * ray)
+    rvy = (if b == null { 0.0 } else { b!.vy + wb2 * rbx }) - (a.vy + wa2 * rax)
+    let rvn = rvx * nx + rvy * ny
+    var tx = rvx - rvn * nx
+    var ty = rvy - rvn * ny
+    let tlen = Math.sqrt(tx * tx + ty * ty)
+    if tlen < 0.000001 { return }
+    tx /= tlen; ty /= tlen
+    let rtA = rax * ty - ray * tx
+    let rtB = rbx * ty - rby * tx
+    let kt = invMa + invMb + invIa * rtA * rtA + invIb * rtB * rtB
+    if kt <= 0.0 { return }
+    var jt = -(rvx * tx + rvy * ty) / kt
+    let maxJt = Friction * jn
+    jt = Math.min(maxJt, Math.max(-maxJt, jt))
+    applyImpulse(a, b, rax, ray, rbx, rby, jt * tx, jt * ty)
+  }
+
+  static fn applyImpulse(a: PgFruitBody, b: PgFruitBody?, rax: f64, ray: f64, rbx: f64, rby: f64, jx: f64, jy: f64) {
+    a.vx -= a.invMass * jx
+    a.vy -= a.invMass * jy
+    a.angularVel -= a.invI * (rax * jy - ray * jx)
+    if b != null {
+      b!.vx += b!.invMass * jx
+      b!.vy += b!.invMass * jy
+      b!.angularVel += b!.invI * (rbx * jy - rby * jx)
+    }
+  }
+
+  static fn correctPosition(c: PgContact) {
+    let a = c.a
+    let b = c.b
+    let invSum = a.invMass + (b?.invMass ?? 0.0)
+    if invSum == 0.0 { return }
+    let corr = Math.max(c.pen - Slop, 0.0) / invSum * CorrectionPercent
+    a.x -= a.invMass * corr * c.nx
+    a.y -= a.invMass * corr * c.ny
+    if b != null {
+      b!.x += b!.invMass * corr * c.nx
+      b!.y += b!.invMass * corr * c.ny
+    }
+  }
+
+  fn flushMerges(): i32 {
+    var points = 0
+    var removed = false
+    for (a, b) in this.mergeQueue {
+      if a.removed || b.removed { continue }
+      a.removed = true; b.removed = true; removed = true
+
+      let tier = a.tier
+      let cx = (a.x + b.x) * 0.5
+      let cy = (a.y + b.y) * 0.5
+      let rt = mergeResultTier(tier)
+      if rt != null { this.spawnFruit(rt!, cx, cy) }
+      let mp = byTier(tier).mergePoints
+      points += mp
+      this.lastMerges.add(PgMergeEvent(tier, rt, cx, cy, mp))
+    }
+    this.mergeQueue.clear()
+    if removed { this.bodies.removeAll((b) => b.removed) }
+    return points
+  }
+}
+
+// ── Dueling-Q net inference (single-source forward pass; port of DuelingQNet.Forward) ──────────────────────
+// A standalone f64 forward pass for the trained FruitCake net, so C# serving and the browser run bit-identical
+// inference from one source. INFERENCE ONLY — training stays on the SDK (autograd/GEMM/GPU). Weights are float32
+// in the checkpoint; the per-platform checkpoint parser (not Polyglot — binary I/O) loads them into these f64
+// arrays. Q(s,a) = A(s,a) + (V(s) − mean_a A(s,a)); ReLU trunk; heads have no activation. Noise is off at
+// inference, so a noisy net's mean weights load exactly like a plain net's (sigma tensors are skipped).
+// Trunk weights/biases are stored FLAT (all layers concatenated in order) with per-layer offsets computed from
+// `hidden` — a single List<f64> avoids nested-generic (List<List<f64>>) parameters, which the transpiler mishandles.
+class PgDuelingNet {
+  var inputSize: i32
+  var actions: i32
+  var hidden: List<i32>          // trunk hidden sizes (from the checkpoint)
+  var trunkWFlat: List<f64>      // trunk weight matrices concatenated in layer order (each row-major [in, out])
+  var trunkBFlat: List<f64>      // trunk biases concatenated in layer order
+  var valueW: List<f64>          // [lastHidden * 1]
+  var valueB: List<f64>          // [1]
+  var advW: List<f64>            // [lastHidden * actions]
+  var advB: List<f64>            // [actions]
+
+  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, valueW: List<f64>, valueB: List<f64>, advW: List<f64>, advB: List<f64>) {
+    this.inputSize = inputSize
+    this.actions = actions
+    this.hidden = hidden
+    this.trunkWFlat = trunkWFlat
+    this.trunkBFlat = trunkBFlat
+    this.valueW = valueW
+    this.valueB = valueB
+    this.advW = advW
+    this.advB = advB
+  }
+
+  // Single-observation forward: obs (length inputSize) → Q-values (length actions).
+  fn forward(obs: List<f64>): List<f64> {
+    var x = obs
+    var prev = this.inputSize
+    var wOff = 0
+    var bOff = 0
+    for l in 0..this.hidden.count {
+      let h = this.hidden[l]
+      x = relu(linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h))
+      wOff += prev * h
+      bOff += h
+      prev = h
+    }
+    let value = linear(x, this.valueW, 0, this.valueB, 0, prev, 1)
+    let adv = linear(x, this.advW, 0, this.advB, 0, prev, this.actions)
+
+    var sumA = 0.0
+    for k in 0..this.actions { sumA += adv[k] }
+    let meanA = sumA / this.actions
+    let v = value[0]
+
+    var q: List<f64> = List<f64>()
+    for k in 0..this.actions { q.add(adv[k] + (v - meanA)) }
+    return q
+  }
+
+  // Dense layer: out[o] = b[bOff+o] + Σ_i x[i]·w[wOff + i*outDim + o]  (w row-major [inDim, outDim]).
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+}
