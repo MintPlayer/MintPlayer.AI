@@ -99,7 +99,13 @@ migrate (delete in whichever PR lands second).
   length}`, so the existing `render()` is unchanged. **Discrete tick** — reuse a `setInterval`/timer (like human
   mode), not a RAF physics loop.
 
-### Snake plan (SN0–SN6)
+### Snake plan (SN0–SN6) — ✅ DONE 2026-07-05
+> **Shipped (branch `snake-clientside-ai`).** `snake_solver.pg` single-sources the dynamics + 177-dim observation +
+> action mask (incl. the flood-fill shield) + `PgSnakeNet`; C# `SnakeEnv` is now a facade over it (9 SnakeEnvTests
+> green). Net shipped at `ClientApp/public/snake-net.ckpt` (+ `snake-net.ts` parser); `SnakeDirector` runs the AI in
+> the browser; server path (controller/service/`snake-api.ts`/stale net/`SnakeApiTests`) deleted. Verified host +
+> Playwright: the AI plays (ate 40, length ~35), 0 console errors, weights from `/snake-net.ckpt`, **0 `/api/snake`
+> calls**. Flood-fill was rewritten BFS→relaxation to dodge a Polyglot evolving-any TS7022 (net-agnostic; MintPlayer.Polyglot#14 was the multi-.pg prelude fix in 0.3.1).
 - **SN0 — `snake_solver.pg` scaffold + env dynamics.** Port `SnakeEnv` step (move/grow/collision/food, tail-follow
   ordering) into `PgSnakeEnv` over flat `List` collections; bump the Environments `.csproj` Polyglot ref to **0.2.0**.
   Gate: builds; a C# facade delegates; parity test vs `SnakeEnv` step outcomes.

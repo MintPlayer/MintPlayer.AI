@@ -1115,7 +1115,7 @@ symbols** (a standalone library `.pg` would double-define under the glob-all bui
 game** (simpler than the glob-exclusion a shared `nn.pg` needs); the `.ckpt` parser generalizes to one shared `ckpt.ts`
 (`dueling-q` + a new `mlp` branch);
 `EpisodeStreamer` is used only by these two → deletable when both migrate. **Two independent PRs, Snake first.**
-- **Snake — clean full-Polyglot port.** obs **177** (9×9×2 patch + 15 scalars; the "8-ray" memory is stale); net =
+- **Snake — ✅ DONE (client-side, verified in-browser).** obs **177** (9×9×2 patch + 15 scalars; the "8-ray" memory is stale); net =
   plain `DuelingQNet 177→[256,256]→4` → **reuses `PgDuelingNet` + the parser verbatim**; **no search** (one greedy
   masked Q-step). Real work: port the **action mask** (reversal + anti-self-trap **flood-fill shield**, load-bearing —
   net trained with it) and re-express `LinkedList`/`HashSet`/`Queue` as flat `List`s. Pure integer math → byte-identity
