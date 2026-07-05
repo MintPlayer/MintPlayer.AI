@@ -1,13 +1,13 @@
 import { Component, DestroyRef, inject, signal } from '@angular/core';
-import { SnakeApi, SnakeStatus } from './snake-api';
 import { CELLS, Dir, SIZE, SnakeGame } from './snake-logic';
+import { SnakeDirector } from './snake-director';
 import { ScreenWakeLock } from '../screen-wake-lock';
 
 /**
- * Snake page with the two interaction principles side by side (PRD §7.1):
- * - **Watch AI** = principle B: the backend drives a live game over a WebSocket and pushes frames;
- *   this component is a pure renderer (no game timer of its own).
- * - **Play yourself** = client-side: a JS timer ticks a local engine; the backend is not involved.
+ * Snake page. Both modes now run **entirely in the browser** (M33):
+ * - **Watch AI** = the single-source physics + net + masked-greedy policy run client-side (SnakeDirector) —
+ *   no server, no WebSocket.
+ * - **Play yourself** = a JS timer ticks the local engine.
  */
 @Component({
   selector: 'app-snake',
@@ -16,7 +16,6 @@ import { ScreenWakeLock } from '../screen-wake-lock';
   host: { '(window:keydown)': 'onKey($event)', '(document:visibilitychange)': 'onVisibilityChange()' },
 })
 export class Snake {
-  private readonly api = inject(SnakeApi);
   private readonly wakeLock = inject(ScreenWakeLock);
 
   protected readonly size = SIZE;
@@ -28,14 +27,12 @@ export class Snake {
   protected readonly food = signal(-1);
   protected readonly foodEaten = signal(0);
   protected readonly status = signal('Watch the self-taught AI play, or play it yourself.');
-  protected readonly modelStatus = signal<SnakeStatus | null>(null);
 
-  private socket: WebSocket | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private game: SnakeGame | null = null;
+  private director: SnakeDirector | null = null;
 
   constructor() {
-    this.pollStatus();
     inject(DestroyRef).onDestroy(() => this.stop());
   }
 
@@ -46,24 +43,21 @@ export class Snake {
     return 'cell';
   }
 
-  // --- Watch AI (principle B: backend drives, we render) ---
-  protected async watchAi(): Promise<void> {
+  // --- Watch AI: the whole AI (physics + net + masked-greedy policy) runs in the browser (M33) ---
+  protected watchAi(): void {
     this.stop();
-    const st = await this.api.status().catch(() => null);
-    this.modelStatus.set(st);
-    if (!st || st.status !== 'ready') {
-      this.status.set(st?.status === 'loading' ? 'The AI is still loading — try again shortly.' : 'AI unavailable.');
-      return;
-    }
     this.mode.set('watch');
-    void this.wakeLock.acquire(); // keep the phone screen on so an auto-lock doesn't freeze the stream
-    this.status.set('Watching the AI play (the server drives the game)…');
-    this.socket = this.api.connectLive(
-      f => {
-        this.render(f.body, f.food, f.foodEaten);
-        if (f.done) this.status.set(`AI died after eating ${f.foodEaten} (length ${f.length}). Restarting…`);
-      },
-      () => { if (this.mode() === 'watch') this.status.set('Stream closed.'); });
+    void this.wakeLock.acquire(); // keep the phone screen on so an auto-lock doesn't freeze the game
+    this.status.set('Loading the AI…');
+    this.director = new SnakeDirector();
+    this.timer = setInterval(() => {
+      const f = this.director?.step();
+      if (!f) return; // checkpoint still loading
+      this.render(f.body, f.food, f.foodEaten);
+      this.status.set(f.done
+        ? `AI died after eating ${f.foodEaten} (length ${f.length}). Restarting…`
+        : 'Watching the AI play — it all runs in your browser.');
+    }, 120);
   }
 
   // --- Human play (client-side, JS timer) ---
@@ -93,19 +87,17 @@ export class Snake {
   }
 
   protected stop(): void {
-    this.socket?.close();
-    this.socket = null;
     this.clearTimer();
     this.game = null;
+    this.director = null;
     void this.wakeLock.release();
     if (this.mode() !== 'idle') this.mode.set('idle');
   }
 
-  // A backgrounded tab (phone lock / tab switch) gets frozen and the stream socket drops; when we return to
-  // the foreground still in watch mode, reopen it so the AI resumes instead of staying stopped.
+  // A backgrounded tab is throttled by the OS and drops the wake-lock; on returning to the foreground still in
+  // watch mode, re-acquire it (the director just keeps ticking — no socket to reopen).
   protected onVisibilityChange(): void {
-    if (document.visibilityState !== 'visible' || this.mode() !== 'watch') return;
-    if (!this.socket || this.socket.readyState >= WebSocket.CLOSING) void this.watchAi();
+    if (document.visibilityState === 'visible' && this.mode() === 'watch') void this.wakeLock.acquire();
   }
 
   private render(body: number[], food: number, eaten: number): void {
@@ -117,17 +109,5 @@ export class Snake {
 
   private clearTimer(): void {
     if (this.timer !== null) { clearInterval(this.timer); this.timer = null; }
-  }
-
-  private pollStatus(): void {
-    void (async () => {
-      try {
-        const s = await this.api.status();
-        this.modelStatus.set(s);
-        if (s.status === 'loading') setTimeout(() => this.pollStatus(), 3000);
-      } catch {
-        // backend unreachable — leave status unknown; buttons stay usable
-      }
-    })();
   }
 }

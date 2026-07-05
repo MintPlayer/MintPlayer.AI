@@ -1,17 +1,9 @@
 <h1>Snake</h1>
 <p class="subtitle">
-  A masked Double + Dueling DQN that learned Snake from scratch — <strong>watch it play</strong> (the server
-  drives the game live over a WebSocket) or <strong>play it yourself</strong> (runs entirely in your browser).
+  A masked Double + Dueling DQN that learned Snake from scratch — <strong>watch it play</strong> or
+  <strong>play it yourself</strong>, both running <strong>entirely in your browser</strong> (no server).
   Honest about its skill: it seeks food and dodges walls, but a from-scratch net eventually traps itself.
 </p>
-
-@if (modelStatus(); as ms) {
-  @if (ms.status === 'loading') {
-    <div class="banner training">Loading the Snake AI… — play yourself meanwhile.</div>
-  } @else if (ms.status === 'failed') {
-    <div class="banner error">AI unavailable: {{ ms.error }}</div>
-  }
-}
 
 <div class="layout">
   <div class="board" [style.--size]="size">
