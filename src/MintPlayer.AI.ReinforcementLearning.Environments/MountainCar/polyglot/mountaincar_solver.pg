@@ -1,0 +1,152 @@
+// mountaincar_solver.pg — single-source MountainCar env + inference (M33), transpiled to C# and TS.
+//
+// ONE source for the classic-control dynamics + observation + the PPO policy forward pass, so the C# training/eval
+// env AND the browser "watch AI" run the same logic. Unlike FruitCake/Snake this uses transcendentals — `cos` in
+// the dynamics and `tanh` in the net (Polyglot 0.3.0+ std.math). Those are NOT byte-identical across .NET and JS
+// (~1 ULP), but there's no server twin after the cutover and the decision is argmax over 3 logits (robust to sub-ULP
+// drift), so it's harmless. The C# side is exact (same Math.Cos/Math.Tanh as before).
+//
+// Generated C# is transpiled at build; the TS is committed (mountaincar_solver.ts), regenerated on Windows:
+//   polyglot build mountaincar_solver.pg --target typescript --out <clientapp>
+
+import { List } from "std.collections"
+import { Math } from "std.math"
+
+fn clampF(v: f64, lo: f64, hi: f64): f64 => Math.min(hi, Math.max(lo, v))
+
+// ── PPO policy net (Mlp): Linear + Tanh per hidden layer, linear output; serving = argmax over the logits ──
+// Flat weights (all layers concatenated) with per-layer offsets derived from `sizes` = [in, h.., out].
+class PgMlpNet {
+  var sizes: List<i32>       // [inputSize, hidden…, outputSize]
+  var wFlat: List<f64>       // per layer, row-major [in, out], concatenated
+  var bFlat: List<f64>       // per layer [out], concatenated
+
+  init(sizes: List<i32>, wFlat: List<f64>, bFlat: List<f64>) {
+    this.sizes = sizes
+    this.wFlat = wFlat
+    this.bFlat = bFlat
+  }
+
+  // Single-observation forward → output logits (length sizes[last]).
+  fn forward(input: List<f64>): List<f64> {
+    var x = input
+    var wOff = 0
+    var bOff = 0
+    let layers = this.sizes.count - 1
+    for l in 0..layers {
+      let inDim = this.sizes[l]
+      let outDim = this.sizes[l + 1]
+      x = linear(x, this.wFlat, wOff, this.bFlat, bOff, inDim, outDim)
+      wOff += inDim * outDim
+      bOff += outDim
+      if l < layers - 1 { x = tanhv(x) } // hidden activation; output layer is linear
+    }
+    return x
+  }
+
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn tanhv(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.tanh(v)) }
+    return out
+  }
+}
+
+// ── MountainCar-v0 (faithful port of MountainCarEnv.cs) ──────────────────────────────────────────────────────
+class PgMountainCarEnv {
+  const MinPosition: f64 = -1.2
+  const MaxPosition: f64 = 0.6
+  const MaxSpeed: f64 = 0.07
+  const GoalPosition: f64 = 0.5
+  const Force: f64 = 0.001
+  const Gravity: f64 = 0.0025
+  const ShapeScale: f64 = 13.0
+  const ActionCount: i32 = 3
+
+  var maxEpisodeSteps: i32
+  var shapeReward: bool
+  var position: f64
+  var velocity: f64
+  var elapsedSteps: i32
+  var done: bool
+  // Step outputs (read by the C# training facade).
+  var lastReward: f64
+  var lastTerminated: bool
+  var lastTruncated: bool
+
+  init(maxEpisodeSteps: i32, shapeReward: bool) {
+    this.maxEpisodeSteps = maxEpisodeSteps
+    this.shapeReward = shapeReward
+    this.position = 0.0
+    this.velocity = 0.0
+    this.elapsedSteps = 0
+    this.done = true
+    this.lastReward = 0.0
+    this.lastTerminated = false
+    this.lastTruncated = false
+  }
+
+  // Start a fresh episode at the given position (caller draws it ~U[-0.6,-0.4]; RNG stays host-side), velocity 0.
+  fn reset(startPos: f64) {
+    this.position = startPos
+    this.velocity = 0.0
+    this.elapsedSteps = 0
+    this.done = false
+  }
+
+  // Pin the physics state directly (golden-trajectory tests, demos).
+  fn setState(pos: f64, vel: f64) {
+    this.position = pos
+    this.velocity = vel
+    this.elapsedSteps = 0
+    this.done = false
+  }
+
+  fn step(action: i32) {
+    var velocity = this.velocity + f64(action - 1) * Force + Math.cos(3.0 * this.position) * (0.0 - Gravity)
+    velocity = clampF(velocity, 0.0 - MaxSpeed, MaxSpeed)
+    var position = clampF(this.position + velocity, MinPosition, MaxPosition)
+    if position <= MinPosition && velocity < 0.0 { velocity = 0.0 } // inelastic left wall
+
+    this.position = position
+    this.velocity = velocity
+    this.elapsedSteps = this.elapsedSteps + 1
+
+    let terminated = position >= GoalPosition
+    let truncated = !terminated && this.elapsedSteps >= this.maxEpisodeSteps
+    this.done = terminated || truncated
+
+    var reward = 0.0 - 1.0
+    if this.shapeReward { reward += ShapeScale * Math.abs(velocity) }
+    this.lastReward = reward
+    this.lastTerminated = terminated
+    this.lastTruncated = truncated
+  }
+
+  // Observation normalised to ~[-1,1]: position centred on −0.3 (half-range 0.9), velocity ÷ MaxSpeed.
+  fn buildObservation(): List<f64> {
+    var obs: List<f64> = List<f64>()
+    obs.add((this.position + 0.3) / 0.9)
+    obs.add(this.velocity / MaxSpeed)
+    return obs
+  }
+
+  // The full single-source decision: argmax over the policy logits (mirrors PolicyAgent.Act greedy → Categorical.Mode).
+  fn chooseAction(net: PgMlpNet): i32 {
+    let logits = net.forward(this.buildObservation())
+    var best = 0
+    for a in 1..logits.count {
+      if logits[a] > logits[best] { best = a }
+    }
+    return best
+  }
+}

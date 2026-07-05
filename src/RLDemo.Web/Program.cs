@@ -38,15 +38,11 @@ builder.Services.AddGpuBackend();
 builder.Services.AddSingleton<RushHourModelService>();
 builder.Services.AddSingleton<Game2048ModelService>();
 builder.Services.AddSingleton<CubeModelService>();
-builder.Services.AddSingleton<SnakeModelService>();
-builder.Services.AddSingleton<MountainCarModelService>();
 // FruitCake has no server model service: its AI (physics + net + depth-3 search) runs entirely in the browser
 // from the single-source Polyglot core + the shipped ClientApp/public/fruitcake-net.ckpt (M32). Zero server inference.
 builder.Services.AddSingleton<IModelStartupService>(sp => sp.GetRequiredService<RushHourModelService>());
 builder.Services.AddSingleton<IModelStartupService>(sp => sp.GetRequiredService<Game2048ModelService>());
 builder.Services.AddSingleton<IModelStartupService>(sp => sp.GetRequiredService<CubeModelService>());
-builder.Services.AddSingleton<IModelStartupService>(sp => sp.GetRequiredService<SnakeModelService>());
-builder.Services.AddSingleton<IModelStartupService>(sp => sp.GetRequiredService<MountainCarModelService>());
 builder.Services.AddSingleton<IModelStartupService, CubeSolverWarmupService>();
 
 // Integration tests control the model store themselves and host no SPA.
@@ -66,7 +62,8 @@ var app = builder.Build();
 
 app.UseStaticFiles();
 app.UseRouting();
-app.UseWebSockets(); // principle B (PRD §7.1): the live "watch the AI play" streams (e.g. Snake, MountainCar)
+// No server WebSockets: every game's "watch AI" now runs client-side (M32/M33). The remaining controllers are
+// request/response REST (2048/RushHour/Cube solvers + /api/version).
 app.MapControllers();
 
 if (hostSpa)

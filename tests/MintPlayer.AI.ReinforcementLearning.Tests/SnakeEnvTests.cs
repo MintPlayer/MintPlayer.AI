@@ -27,8 +27,16 @@ public class SnakeEnvTests
         return ms.ToArray();
     }
 
-    private static HashSet<int> Occupied(SnakeEnv e) =>
-        (HashSet<int>)typeof(SnakeEnv).GetField("_occupied", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(e)!;
+    // Read the single-source core's occupancy (List<bool> over cells) as a set of occupied cell indices. SnakeEnv
+    // is now a facade over the generated PgSnakeEnv; the occupancy lives in the core, not a _occupied HashSet.
+    private static HashSet<int> Occupied(SnakeEnv e)
+    {
+        var core = (global::PgSnakeEnv)typeof(SnakeEnv).GetField("_core", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(e)!;
+        var set = new HashSet<int>();
+        for (int i = 0; i < core.occupied.Count; i++)
+            if (core.occupied[i]) set.Add(i);
+        return set;
+    }
 
     [Fact]
     public void TailFollowMove_KeepsOccupiedTrackingInSyncWithBody()

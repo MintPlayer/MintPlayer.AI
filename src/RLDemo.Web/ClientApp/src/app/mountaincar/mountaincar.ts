@@ -1,11 +1,12 @@
 import { Component, DestroyRef, ElementRef, afterNextRender, inject, signal, viewChild } from '@angular/core';
-import { MountainCarApi, MountainCarStatus } from './mountaincar-api';
 import { GOAL, MAX_POS, MIN_POS, MountainCarGame } from './mountaincar-logic';
+import { MountainCarDirector } from './mountaincar-director';
 import { ScreenWakeLock } from '../screen-wake-lock';
 
 /**
- * MountainCar page (PRD §7.1): **Watch AI** = principle B (backend drives the episode over a WebSocket,
- * this component renders frames), **Drive yourself** = client-side physics on a JS timer with ←/→.
+ * MountainCar page. Both modes now run **entirely in the browser** (M33): **Watch AI** = the single-source
+ * dynamics + PPO policy run client-side (MountainCarDirector), **Drive yourself** = the same dynamics on a JS
+ * timer with ←/→. No server, no WebSocket.
  */
 @Component({
   selector: 'app-mountaincar',
@@ -18,43 +19,37 @@ import { ScreenWakeLock } from '../screen-wake-lock';
   },
 })
 export class MountainCar {
-  private readonly api = inject(MountainCarApi);
   private readonly wakeLock = inject(ScreenWakeLock);
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('mcCanvas');
 
   protected readonly mode = signal<'idle' | 'watch' | 'human'>('idle');
   protected readonly status = signal('Watch the PPO agent swing its way up, or drive it yourself.');
-  protected readonly modelStatus = signal<MountainCarStatus | null>(null);
 
   private ctx: CanvasRenderingContext2D | null = null;
-  private socket: WebSocket | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private game: MountainCarGame | null = null;
+  private director: MountainCarDirector | null = null;
   private held = 1; // current human push: 0 left, 1 none, 2 right
 
   constructor() {
-    this.pollStatus();
     afterNextRender(() => { this.ctx = this.canvasRef().nativeElement.getContext('2d'); this.draw(-0.5); });
     inject(DestroyRef).onDestroy(() => this.stop());
   }
 
-  protected async watchAi(): Promise<void> {
+  protected watchAi(): void {
     this.stop();
-    const st = await this.api.status().catch(() => null);
-    this.modelStatus.set(st);
-    if (!st || st.status !== 'ready') {
-      this.status.set(st?.status === 'loading' ? 'The agent is still loading — try again shortly.' : 'AI unavailable.');
-      return;
-    }
     this.mode.set('watch');
-    void this.wakeLock.acquire(); // keep the phone screen on so an auto-lock doesn't freeze the stream
-    this.status.set('Watching the PPO agent (the server drives the car)…');
-    this.socket = this.api.connectLive(
-      f => {
-        this.draw(f.position);
-        if (f.done) this.status.set(f.position >= GOAL ? 'Reached the flag! Restarting…' : 'Ran out of time — restarting…');
-      },
-      () => { if (this.mode() === 'watch') this.status.set('Stream closed.'); });
+    void this.wakeLock.acquire(); // keep the phone screen on so an auto-lock doesn't freeze the game
+    this.status.set('Loading the agent…');
+    this.director = new MountainCarDirector();
+    this.timer = setInterval(() => {
+      const f = this.director?.step();
+      if (!f) return; // checkpoint still loading
+      this.draw(f.position);
+      this.status.set(f.done
+        ? (f.reachedGoal ? 'Reached the flag! Restarting…' : 'Ran out of time — restarting…')
+        : 'Watching the PPO agent — it runs in your browser.');
+    }, 45);
   }
 
   protected playHuman(): void {
@@ -86,19 +81,17 @@ export class MountainCar {
   }
 
   protected stop(): void {
-    this.socket?.close();
-    this.socket = null;
     this.clearTimer();
     this.game = null;
+    this.director = null;
     void this.wakeLock.release();
     if (this.mode() !== 'idle') this.mode.set('idle');
   }
 
-  // A backgrounded tab (phone lock / tab switch) gets frozen and the stream socket drops; when we return to
-  // the foreground still in watch mode, reopen it so the agent resumes instead of staying stopped.
+  // A backgrounded tab is throttled by the OS and drops the wake-lock; on returning to the foreground still in
+  // watch mode, re-acquire it (the director keeps ticking — no socket to reopen).
   protected onVisibilityChange(): void {
-    if (document.visibilityState !== 'visible' || this.mode() !== 'watch') return;
-    if (!this.socket || this.socket.readyState >= WebSocket.CLOSING) void this.watchAi();
+    if (document.visibilityState === 'visible' && this.mode() === 'watch') void this.wakeLock.acquire();
   }
 
   private clearTimer(): void {
@@ -140,17 +133,5 @@ export class MountainCar {
     ctx.beginPath();
     ctx.arc(x2px(position), y2py(hill(position)) - 7, 7, 0, Math.PI * 2);
     ctx.fill();
-  }
-
-  private pollStatus(): void {
-    void (async () => {
-      try {
-        const s = await this.api.status();
-        this.modelStatus.set(s);
-        if (s.status === 'loading') setTimeout(() => this.pollStatus(), 3000);
-      } catch {
-        // backend unreachable — leave status unknown
-      }
-    })();
   }
 }

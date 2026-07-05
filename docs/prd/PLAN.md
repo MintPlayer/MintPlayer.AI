@@ -1103,6 +1103,29 @@ in parallel). **Supersedes PG4.** Also advances MintPlayer.Polyglot (FruitCake i
 > architecture):** the shipped browser net is the **G3** net; if its net+search play quality (G4 A/B vs the
 > ~50%-watermelon / ~2505 bar) is unsatisfying, retrain (M30/G4) and replace `ClientApp/public/fruitcake-net.ckpt`.
 > Still recommended: **split into separate PRs** (NetTransfer is independently mergeable; M30/M31/M32 are entangled).
+> **UPDATE: merged to master via PR #23 (single PR) 2026-07-05.** A/B ship-as-is (2493 / 49% watermelon, on par).
+
+## M33 — Client-side AI for Snake & MountainCar  *(planned — see `CLIENTSIDE_AI_SNAKE_MOUNTAINCAR_PRD.md`)* 🔜
+
+Extend M32 to the **only two remaining WebSocket-AI games** (2048/RushHour/Cube are request/response REST → out of
+scope). A 3-agent investigation + Polyglot **0.2.0** probes (2026-07-05) confirmed: 0.2.0 **fixed all three M32
+codegen bugs** (#9 closed — casts / null-typed-locals / nested-generics now work); std.math still has **no
+transcendentals** (only `abs`/`floor`/`sqrt`/`min`/`max`); **user `.pg`→`.pg` imports work but *inline* the imported
+symbols** (a standalone library `.pg` would double-define under the glob-all build) → **duplicate the net-forward per
+game** (simpler than the glob-exclusion a shared `nn.pg` needs); the `.ckpt` parser generalizes to one shared `ckpt.ts`
+(`dueling-q` + a new `mlp` branch);
+`EpisodeStreamer` is used only by these two → deletable when both migrate. **Two independent PRs, Snake first.**
+- **Snake — ✅ DONE (client-side, verified in-browser).** obs **177** (9×9×2 patch + 15 scalars; the "8-ray" memory is stale); net =
+  plain `DuelingQNet 177→[256,256]→4` → **reuses `PgDuelingNet` + the parser verbatim**; **no search** (one greedy
+  masked Q-step). Real work: port the **action mask** (reversal + anti-self-trap **flood-fill shield**, load-bearing —
+  net trained with it) and re-express `LinkedList`/`HashSet`/`Queue` as flat `List`s. Pure integer math → byte-identity
+  free. Plan SN0–SN6.
+- **MountainCar — ✅ DONE (client-side, verified; uniform Polyglot — 0.3.0 added cos/tanh).** Two transcendentals on the client path (`cos(3·pos)` in the env, **`tanh`**
+  in the PPO `Mlp` net) — **neither writable in a `.pg`**. **Recommended: Option B** — pragmatic client-side hand-port
+  (reuse `mountaincar-logic.ts` dynamics, ~30-line TS `Mlp`+`tanh` forward, new `parseMlp`, ship ckpt, delete socket);
+  no net perturbation, keeps a trivial ~15-line env twin. **Option A** (uniform Polyglot with byte-identical `cos`/`tanh`
+  polynomial approximations) only if uniform single-source is a hard requirement, gated on an argmax-parity spike (MC0).
+  Plan MC0–MC5. **Payoff:** the last two per-viewer AI sockets → zero server inference.
 
 ## Testing strategy (cross-cutting, from research)
 
