@@ -4,11 +4,15 @@
 > **entire** AI on the server (net forward pass + depth-3 search) and streams every frame over a
 > WebSocket. On a single Hetzner VPS this makes server CPU **and** bandwidth scale **linearly with
 > concurrent viewers** — 100 viewers ≈ 100× the compute + traffic, and a real monthly-bill risk.
-> This PRD moves the **whole** AI into the browser (TypeScript), so per-viewer server cost drops to
-> **zero** (a one-time, CDN-cacheable weights download). It supersedes the deferred PG4 idea
-> (column-only streaming), which kept the server in the loop.
+> This PRD moves the **whole** AI into the browser so per-viewer server cost drops to **zero** (a
+> one-time, CDN-cacheable weights download). Rather than hand-port to TypeScript, it **single-sources the
+> inference path (observation + net forward + search) in the same MintPlayer.Polyglot `.pg` as the
+> physics** (user's steer, 2026-07-05 — see §3 D0) → C# **and** TS from one source, byte-identical by
+> construction. It supersedes the deferred PG4 idea (column-only streaming), which kept the server in the
+> loop.
 
-- **Status:** Draft v1.0 · 2026-07-05 (4-agent analysis complete; not started)
+- **Status:** Draft v1.1 · 2026-07-05 (4-agent analysis complete; pivoted to Polyglot single-source per
+  user steer; not started)
 - **Author:** Pieterjan (with Claude Code)
 - **Depends on:**
   - A **valid 89-dim net** — i.e. **M30/G4** must ship a `fruitcake.dqn.ckpt` matching the current
@@ -119,50 +123,71 @@ sync burden.
 
 ## 3. Design decisions
 
-### D1 — Weight delivery: **parse the existing `.ckpt` directly in TS** (no new format)
-The `.ckpt` is already a clean, self-describing float32 binary. Parsing it in TS keeps weights
-**single-sourced** (one artifact for training, serving, and the browser) — no JSON blow-up (float32
-JSON ≈ 1.7× the bytes and gzips poorly), no second exporter to keep in sync.
-- **Delivery:** an MSBuild `Target` in `RLDemo.Web.csproj` copies `models/fruitcake.dqn.ckpt` →
-  `ClientApp/public/fruitcake-net.ckpt` at build (single source = the LFS model; no committed
-  duplicate). The browser `fetch('/fruitcake-net.ckpt')` once; the CDN/browser caches it (~370 KB).
-- **Validation:** the TS parser asserts `magic`, `kind==="dueling-q"`, and `InputSize===89`; on
-  mismatch it logs and the front-end falls back to the heuristic board-value (`−pileHeight`), exactly
-  as the server does with a missing net — the game still plays, just weaker.
-- *Rejected:* a `--export-weights` JSON exporter in `FruitCakeLab` — a second weight format and a
-  second thing to keep faithful. (Kept only as a note in case a non-.NET consumer ever needs JSON.)
+> **Headline decision (D0), user's steer 2026-07-05:** don't hand-port the inference logic to TS and
+> babysit golden fixtures — **single-source the whole inference path (observation + net forward + search)
+> in the same `fruitcake_solver.pg`**, exactly as the physics already is. One source → C# **and** TS,
+> **byte-identical by construction.** This is the same win that justified single-sourcing the physics,
+> extended to the decision half. It also **dissolves the float-parity problem** (see D2). The rest of the
+> decisions follow from D0.
 
-### D2 — Float32 emulation in TS (parity)
-The net is float32 in C#; JS is float64. The TS forward pass wraps each op in `Math.fround` and rounds
-the observation to float32 before the first matmul. This makes the golden Q-vectors reproduce closely
-enough that **argmax matches C# exactly** on the fixtures. (Physics stays f64 both sides — already
-byte-identical from M31.)
+### D1 — What moves into the `.pg`, what stays per-platform
+**Into the `.pg` (single-sourced, f64, C#↔TS byte-identical):**
+- `buildObservation(world, current, next) -> f64[89]` (the exact fields in §2.3).
+- A standalone **inference** forward pass: `dueling MLP` over flat f64 weight arrays
+  (`forward(weights, obs) -> f64[14]`, `Q = A + (V − meanA)`, ReLU trunk). This is a *new inference
+  core*, distinct from the SDK's training forward pass (which keeps autograd/GEMM/GPU).
+- `chooseColumn(world, weights, current, next) -> int` — the depth-3 expectimax search, with the leaf
+  (`(1/5)Σ_d max_a forward(weights, obs(w,d,d))`) **inlined** (no injected delegate).
+- The search's world-queries — `clone(enableRotation)`, `anyEjected`, `anyRestingAboveDangerLine`,
+  `pileHeight` — which are pure position/tier math (today hand-written in the C# facade; move them down).
 
-### D3 — Push the search's world-queries into the `.pg` (single source), don't hand-mirror
-`clone(enableRotation)`, `anyEjected`, `anyRestingAboveDangerLine(restSpeed)`, `pileHeight`, `count`
-are pure position/tier math. Adding them to `fruitcake_solver.pg` regenerates both the C# core and the
-committed TS core; the C# **facade** then delegates to the core (dropping its hand-written copies), and
-the TS **adapter** exposes them. One source, no drift. (Host-only concerns — merge/land events, audio,
-save/restore — stay in the facades, unchanged.)
+**Stays per-platform (cannot / need not be Polyglot):**
+- **Training** — autograd, GEMM, GPU backends, Adam. Polyglot has no backprop or device kernels; training
+  stays C#/SDK-only and *produces* the weights. Only inference is single-sourced.
+- **Checkpoint parsing** — reading the `.ckpt` binary is I/O (byte layout / varint), not pure math. Small
+  hand-written parser per platform: C# already has `DuelingQNetCheckpoint`; TS gets a ~40-line
+  `DataView` parser that yields the ordered f64 weight arrays the inference core consumes.
+- **Host glue** — TS rendering/audio/DOM and the C# DTO/controller. Unchanged.
+
+### D2 — f64 inference on both sides ⇒ parity is exact by construction (no `Math.fround`)
+The SDK net is **float32**; JS is float64. Hand-porting would have needed `Math.fround` emulation + golden
+tolerance to make argmax match. With the forward pass **authored in Polyglot as f64 on both sides**, C#
+inference and TS inference are **byte-identical** — the emulation hack disappears and parity stops being a
+tolerance test. The deliberate consequence: **serving inference moves from the SDK's f32 path to the
+Polyglot f64 path** (D5). That is a *good* trade — f64 is strictly more precise, the physics already made
+the same f32→f64 move in PG1 (net re-validated fine), and it makes *what the Lab A/B judges* == *what C#
+serves* == *what the browser runs*, all identical.
+
+### D3 — Weight delivery: **parse the existing `.ckpt` directly** (no new format)
+The `.ckpt` is a clean, self-describing float32 binary; parse it directly (C# already does; TS gets the
+small parser in D1) — weights stay single-sourced (one artifact for training, serving, browser), no JSON
+blow-up, no second exporter. **Delivery:** an MSBuild `Target` in `RLDemo.Web.csproj` copies
+`models/fruitcake.dqn.ckpt` → `ClientApp/public/fruitcake-net.ckpt` at build (single source = the LFS
+model; no committed duplicate); the browser `fetch`es it once (~370 KB, CDN/browser-cached). **Validation:**
+the TS parser asserts `magic`/`kind`/`InputSize===89`; on mismatch the front-end falls back to the
+heuristic leaf (`−pileHeight`) — same as the server with no net, game still plays.
 
 ### D4 — Collapse `watch` mode into a local "director" loop
-Watch mode becomes structurally identical to human play: the same local `FruitWorld` + renderer, driven
-by a **director** that per drop calls the TS search → spawns → settles → animates the settle frames
-locally on the RAF loop (reusing the existing intra-drop cadence). No socket, no server frames. The
-`mode` signal, renderer split, and RAF loop stay; only the "who decides + who steps" seam changes.
+Watch mode becomes structurally identical to human play: the same local `FruitWorld` + renderer, driven by
+a **director** that per drop calls the generated `chooseColumn` → spawns → settles → animates the settle
+frames locally on the RAF loop. No socket, no server frames. The `mode` signal, renderer split, and RAF
+loop stay; only the "who decides + who steps" seam changes.
 
-### D5 — Retire the server serving path
-Once parity is proven and the front-end is client-side, **remove** the WebSocket loop
-(`FruitCakeController.Live`), the `FruitCakeModelService` net loading, and the `FruitCakeApi` socket
-client. Keep the checkpoint (now shipped as a static asset). This is the payoff — **zero** server
-inference and **zero** streaming bandwidth for FruitCake. (Snake/MountainCar keep their streamers; those
-are separate and out of scope.)
+### D5 — Switch C# serving + Lab eval to the Polyglot inference core, then retire the server path
+Point C# serving (`FruitCakeController`/`FruitCakeModelService`) and the Lab's search-eval at the generated
+f64 inference core, so the A/B judges exactly what's served. Confirm served quality holds with **one A/B**
+vs the ~50%-watermelon / ~2505 bar (low risk; f64 ≥ f32 precision). Then, once the front-end is client-side,
+**remove** the WebSocket loop (`FruitCakeController.Live`), the model-service net loading, and the
+`FruitCakeApi` socket — keeping the checkpoint as a static asset. Payoff: **zero** server inference and
+**zero** streaming bandwidth for FruitCake. (Snake/MountainCar keep their streamers; out of scope.)
 
-### D6 — Search/observation stay hand-ported (for now), gated by golden parity
-Porting the observation + search via Polyglot too is attractive (the observation is pure arithmetic),
-but the search takes a `Func<world,double>` net-leaf delegate and the observation reads facade body
-views — not a clean `.pg` fit at v0.1.x. We hand-port both and **gate on C#-generated golden fixtures**
-(§6). Single-sourcing them via Polyglot is a documented future option, not this milestone.
+### D6 — Polyglot rewrites the search needs
+The current `FruitCakeSearch` uses two things that don't transpile: a `Func<world,double>` leaf delegate
+and LINQ (`Enumerable…OrderByDescending…Take` for top-k). In the `.pg`: **inline the leaf** (obs+net are
+now in the same source) and **write top-k as an explicit selection loop** (don't rely on a stdlib sort
+transpiling). Recursion, `int?`, tuples, `.filter`, and lambdas already transpile (visible in the generated
+solver). New Polyglot codegen gaps get the same handoff loop as the four prior releases — and since
+FruitCake is Polyglot's north-star conformance sample, this *advances* Polyglot too.
 
 ---
 
@@ -180,51 +205,67 @@ This directly answers the Hetzner concern: 100 concurrent viewers cost the VPS *
 
 ---
 
-## 5. Plan — phases CS0–CS6 (each ends on a passing gate + commit)
+## 5. Plan — phases CS0–CS7 (each ends on a passing gate + commit)
 
-- **CS0 — TS `.ckpt` parser + weights delivery.** Add the MSBuild copy target
-  (`models/fruitcake.dqn.ckpt` → `ClientApp/public/fruitcake-net.ckpt`). Write `fruitcake-net.ts`
-  parsing the `.ckpt` (magic/kind/version, varint string, ints, `Noisy`, float32 blocks; skip Sigma).
-  **Gate:** parses the current net; asserts arch `(89,[256,256],14)`; exposes the ordered mean tensors.
-- **CS1 — TS `DuelingQNet` forward pass.** Implement trunk+ReLU+heads+dueling recombine with `Math.fround`
-  float32 emulation. **Gate:** matches a committed **golden Q-vector fixture** (obs → 14 Q-values)
-  exported from C# — argmax exact, Q within ~1e-4.
-- **CS2 — TS `BuildObservation` port.** Reproduce the 89-dim vector (all normalizers + big-fruit
-  selection/sentinel). **Gate:** matches a committed **golden observation fixture** (world state →
-  89 floats) from C#, exact to float32.
-- **CS3 — World-queries into the `.pg` (single source).** Add `clone(enableRotation)`, `anyEjected`,
-  `anyRestingAboveDangerLine`, `pileHeight`, `count` to `fruitcake_solver.pg`; regenerate C#+TS; C#
-  facade delegates (drops hand-written copies); TS adapter exposes them. **Gate:** full C# build + the
-  17 FruitCake/parity tests green (facade behaviour unchanged); TS clone deep-copies (parity test).
-- **CS4 — TS `FruitCakeSearch`.** Port depth-3 expectimax (`TopK=5/TopK2=2`, strict-`>` argmax,
-  uniform-1/5 chance node, leaf = mean-of-5 net max-Q). **Gate:** matches a committed **golden
-  chosen-column fixture** — for a set of `(world, current, next)`, TS picks the **same column** as C#.
-- **CS5 — Front-end director (client-side watch).** Collapse `watch` mode into the local director loop
-  (D4); render locally; stop using the socket. **Gate:** host + Playwright — watch mode plays a full
-  game in-browser, merges/score/game-over correct, **0 network frames**, 0 console errors.
-- **CS6 — Retire the server path + measure.** Remove `Live` WebSocket, `FruitCakeModelService` net
-  load, `FruitCakeApi` socket; keep the static weights asset. **Gate:** build + tests green; Playwright
-  watch-AI still works; confirm no `/api/fruitcake/live` traffic; note the cost delta in this PRD.
+The `.pg` grows the inference core bottom-up; each block is proven **Polyglot-C# == SDK-C#** once, and
+**C#↔TS byte-identity** comes free from the transpiler.
 
-**Ordering vs M30:** CS0's weights asset ships whatever `models/fruitcake.dqn.ckpt` is current, so
-**M30/G4 must land an 89-dim net first** (or CS0 ships the heuristic-fallback path until it does). CS1–CS4
-are net-agnostic and can be built + golden-tested against any 89-dim net in parallel with M30.
+- **CS0 — World-queries into the `.pg`.** Add `clone(enableRotation)`, `anyEjected`,
+  `anyRestingAboveDangerLine(restSpeed)`, `pileHeight` to `fruitcake_solver.pg`; regenerate C#+TS; the C#
+  `FruitCakeWorld` facade delegates (drops its hand-written copies), the TS `FruitWorld` adapter exposes
+  them. **Gate:** full C# build + the 17 FruitCake/parity tests green (facade behaviour unchanged); a TS
+  clone deep-copy parity test.
+- **CS1 — Observation in the `.pg`.** Add `buildObservation(world, current, next) -> f64[89]` (all fields
+  §2.3). C# `FruitCakeEnv.BuildObservation` becomes a facade over it (f64→f32 cast for the training net).
+  **Gate:** a C# test asserts the core obs == the legacy obs on N boards (exact after cast); C#↔TS
+  byte-identical (transpiler).
+- **CS2 — Inference forward pass in the `.pg`.** Add `duelingForward(weights, obs) -> f64[14]` over flat
+  f64 weight arrays (ReLU trunk, `Q = A + (V − meanA)`). **Gate:** matches the SDK's
+  `DuelingQNet.Forward` on N observations — **argmax exact**, values within ~1e-5 (f32-weights→f64 math);
+  C#↔TS byte-identical.
+- **CS3 — Checkpoint delivery + parsers (not Polyglot — I/O).** MSBuild target copies
+  `models/fruitcake.dqn.ckpt` → `ClientApp/public/fruitcake-net.ckpt`; write the ~40-line TS `.ckpt`
+  parser (magic/kind/version, varint string, ints, `Noisy`, float32 blocks; skip Sigma) yielding the
+  ordered f64 weight arrays `duelingForward` wants. **Gate:** TS parses the current net; asserts arch
+  `(89,[256,256],14)`; a TS test runs `duelingForward(parsedWeights, obs)` and matches the CS2 values.
+- **CS4 — Search in the `.pg`.** Add `chooseColumn(world, weights, current, next) -> int` — depth-3
+  expectimax (`MaxDepth=3, TopK=5, TopK2=2`, strict-`>` argmax, uniform-1/5 chance node), leaf inlined
+  (`(1/5)Σ_d max_a duelingForward(weights, obs(w,d,d))`; heuristic `−pileHeight` when no weights), top-k
+  as an explicit selection loop (D6). **Gate:** matches the existing SDK-backed `FruitCakeSearch`
+  `ChooseColumn` on N `(world,current,next)` — **same column**; C#↔TS byte-identical.
+- **CS5 — Adopt the f64 inference core server-side + A/B.** Point C# serving
+  (`FruitCakeController`/`FruitCakeModelService`) and the Lab's `--search-eval` at the generated
+  `chooseColumn`/`duelingForward` (f64) instead of the SDK forward. **Gate:** one 100-game A/B holds the
+  served quality vs the ~50%-watermelon / ~2505 bar (f64 ≥ f32 precision, low risk); build + tests green.
+- **CS6 — Front-end director (client-side watch).** Collapse `watch` mode into the local director loop
+  (D4): fetch+parse weights (CS3), per drop call the generated `chooseColumn`, spawn, settle, animate
+  locally; stop using the socket. **Gate:** host + Playwright — watch mode plays a full game in-browser,
+  merges/score/game-over correct, **0 network frames**, 0 console errors.
+- **CS7 — Retire the server path + measure.** Remove `Live` WebSocket, `FruitCakeModelService` net load,
+  `FruitCakeApi` socket; keep the static weights asset. **Gate:** build + tests green; Playwright watch-AI
+  still works; confirm no `/api/fruitcake/live` traffic; note the cost delta in this PRD.
+
+**Ordering vs M30:** CS3's weights asset ships whatever `models/fruitcake.dqn.ckpt` is current, so
+**M30/G4 must land an 89-dim net first** (or the client falls back to the heuristic leaf until it does).
+CS0–CS2 and CS4 are net-agnostic and can be built + equivalence-tested against any 89-dim net in parallel
+with M30.
 
 ---
 
 ## 6. Correctness gate (the crux)
 
-Client-side AI is only trustworthy if the browser reproduces the server's decisions. We commit three
-**golden fixtures generated from C#** and assert TS parity:
-1. **Q-vector golden** — N observations → 14 Q-values (CS1).
-2. **Observation golden** — N `(world,current,next)` → 89 floats (CS2).
-3. **Chosen-column golden** — N `(world,current,next)` → the depth-3 column (CS4).
+Client-side AI is only trustworthy if the browser reproduces the server's decisions. With the inference
+path single-sourced in Polyglot, the gate has **two** cheaper parts than a hand-port's golden fixtures:
 
-A tiny C#-side helper (a `FruitCakeLab --emit-goldens <dir>` sub-mode, following the existing
-`--search-eval`/`--ab` return-pattern) serializes these; a TS test (Node or Playwright `evaluate`)
-loads and checks them. Float policy: argmax/column **exact**; raw Q within ~1e-4 after `Math.fround`.
-A drift here is the one thing that would make client-side play *visibly* differ, so this gate is
-non-negotiable before CS5/CS6.
+1. **Polyglot-C# == SDK-C# equivalence** (one-time, per block): the generated obs/forward/search match
+   the existing SDK implementations — CS1 obs equality, CS2 argmax-exact forward, CS4 same-column search.
+   These are ordinary C# unit tests over the same in-process net.
+2. **C#↔TS byte-identity** comes **free from the transpiler** (the property PG0–PG2 already established
+   for the physics) — no committed golden fixtures to maintain, no `Math.fround` tolerance.
+
+The only *behavioural* change to validate end-to-end is D5's f32→f64 serving switch: the CS5 A/B
+(100 games vs the ~50%/2505 bar). A drift there is the one thing that would make served play differ, so
+CS5 gates CS6/CS7.
 
 ---
 
@@ -232,19 +273,22 @@ non-negotiable before CS5/CS6.
 
 | Risk | Mitigation |
 |---|---|
-| float32↔float64 drift flips a near-tie column | `Math.fround` per-op emulation + float32 obs; golden fixtures gate argmax exactness (§6). Worst case is a different but equally-valid move in *watch* mode — not a correctness bug. |
-| Search cost too slow in-browser (14×… settle sims/drop) | Physics is the same f64 code already running human play at 60 fps; depth-3 with TopK=5/TopK2=2 is bounded. Measure in CS4/CS5; if needed, throttle to 1 drop/s (viewers watch, don't race) or lower TopK2. |
-| Weights asset drifts from the served net | MSBuild copy from the single LFS source at build (D1); TS validates `InputSize` and falls back to heuristic on mismatch. |
-| Removing the WebSocket breaks a shared abstraction | FruitCake uses a **bespoke** intra-drop streamer, not the shared `EpisodeStreamer` (Snake/MountainCar) — removal is localized (CS6). |
-| Ships before M30's 89-dim net exists | CS0 fallback = heuristic board-value (same as server today with no net); flips to the real net the moment M30 lands it. |
+| Polyglot can't express part of the search (sort, delegate) | Inline the leaf; write top-k as an explicit selection loop (D6). Recursion/`int?`/tuples/`.filter`/lambdas already transpile. New codegen gaps → the established Polyglot handoff loop. |
+| f32→f64 serving switch changes played quality | CS5 A/B (100 games) vs the ~50%/2505 bar before cutover; f64 ≥ f32 precision and PG1 already validated the net on f64 physics — low risk. |
+| Search cost too slow in-browser (14×… settle sims/drop) | Physics is the same f64 code already running human play at 60 fps; depth-3 TopK=5/TopK2=2 is bounded. Measure in CS4/CS6; if needed throttle to ~1 drop/s (viewers watch, don't race) or lower TopK2. |
+| Weights asset drifts from the served net | MSBuild copy from the single LFS source at build (D3); TS validates `InputSize` and falls back to the heuristic leaf on mismatch. |
+| Removing the WebSocket breaks a shared abstraction | FruitCake uses a **bespoke** intra-drop streamer, not the shared `EpisodeStreamer` (Snake/MountainCar) — removal is localized (CS7). |
+| Ships before M30's 89-dim net exists | Client falls back to the heuristic leaf (same as the server today with no net); flips to the real net the moment M30 lands it. |
 
 ---
 
-## 8. Port checklist (behavioural invariants — must hold in TS)
+## 8. Behavioural invariants (must hold in the `.pg` inference core; C#↔TS byte-identical)
 
-1. Net: `Q = A + (V − mean_a A)`; ReLU trunk; widths from checkpoint; **mean weights only**; float32
-   via `Math.fround`; single-obs forward `[1,89]→[1,14]`.
-2. Checkpoint: `RLNC`/`dueling-q`/v2; read `Noisy`, skip Sigma; float32 LE, row-major `[in,out]`.
+1. Net: `Q = A + (V − mean_a A)`; ReLU trunk; widths from checkpoint; **mean weights only**; **all math
+   f64 both sides** (no float32 emulation — parity is byte-identical by construction); single-obs forward
+   `89→14`.
+2. Checkpoint (the one per-platform, non-Polyglot part): `RLNC`/`dueling-q`/v2; read `Noisy`, skip Sigma;
+   float32 LE, row-major `[in,out]`; parsed to f64 weight arrays for the core.
 3. Observation 89-dim in the exact block order (§2.3) with normalizers `/850, /11, /700, /100,
    /(620·850), /620`; big-fruit order tier→lower-Y→leftmost-X; sentinel `(0.5,1,0)`; clamp `[0,1]`.
 4. Search: `MaxDepth=3, TopK=5, TopK2=2, MergeWeight=1, LosePenalty=1e9`; strict-`>` argmax, default
@@ -261,7 +305,8 @@ non-negotiable before CS5/CS6.
 ## 9. Out of scope
 
 - Snake / MountainCar / cube streamers (separate `EpisodeStreamer` path; keep as-is).
-- Single-sourcing observation/search via Polyglot (future; D6).
+- **Training** in Polyglot/the browser — autograd/GEMM/GPU/Adam stay C#/SDK-only (D1). Only *inference*
+  is single-sourced.
 - Retraining the net (that's M30/G4). This PRD ships whatever net is current.
 - Any change to human-play mode (already fully client-side).
 
