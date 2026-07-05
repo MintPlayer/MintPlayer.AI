@@ -110,6 +110,9 @@ class PgSnakeEnv {
   var lastReward: f64
   var lastTerminated: bool
   var lastTruncated: bool
+  // After step(): true if this move ate and the board isn't full → the caller must spawnFood(rng.pick(freeCount)).
+  // Food RNG is kept OUT of the single source so the caller owns it (C# Xoshiro for determinism; TS Math.random).
+  var needsFood: bool
 
   init(size: i32, stepPenalty: f64, safeMask: bool) {
     this.size = size
@@ -128,6 +131,7 @@ class PgSnakeEnv {
     this.lastReward = 0.0
     this.lastTerminated = false
     this.lastTruncated = false
+    this.needsFood = false
   }
 
   // Action deltas: Up(0)=(-1,0) Down(1)=(1,0) Left(2)=(0,-1) Right(3)=(0,1).
@@ -171,9 +175,11 @@ class PgSnakeEnv {
     }
   }
 
-  // Advance one step with the given action (assumed legal — call currentActionMask() first). foodPick is the
-  // random free-cell index used only if this move eats and the board isn't full.
-  fn step(action: i32, foodPick: i32) {
+  // Advance one step with the given action (assumed legal — call currentActionMask() first). Sets `needsFood`
+  // when this move ate and the board isn't full; the caller then rolls a pick and calls spawnFood before reading
+  // the observation. (Food RNG stays with the caller — see `needsFood`.)
+  fn step(action: i32) {
+    this.needsFood = false
     let head = this.headCell()
     let headRow = head / this.size
     let headCol = head % this.size
@@ -203,7 +209,7 @@ class PgSnakeEnv {
       if this.body.count == this.cells {
         terminated = true // board full — a win
       } else {
-        this.spawnFood(foodPick)
+        this.needsFood = true // caller spawns food (owns the RNG)
       }
     } else {
       // Remove the vacating tail BEFORE marking the new head occupied (tail-follow ordering; see SnakeEnv.cs).
