@@ -1047,7 +1047,24 @@ training/serving + TS human-play).** Optional **PG4** (not built): watch-AI coul
 client-side (byte-identical physics enables it) to cut streaming bandwidth — but the depth-3 search + net stay C#-only.
 **⇒ PG4 is SUPERSEDED by M32** (full client-side inference removes the compute, the bandwidth, *and* the WebSocket).
 
-## M32 — FruitCake: fully client-side AI (zero server inference)  *(planned — see `FRUITCAKE_CLIENT_SIDE_AI_PRD.md`)* 🔜
+## M32 — FruitCake: fully client-side AI (zero server inference)  *(✅ CS0–CS7 DONE 2026-07-05 — see `FRUITCAKE_CLIENT_SIDE_AI_PRD.md`)*
+
+> **✅ DONE (2026-07-05) — the FruitCake AI runs entirely in the browser.** CS0 `e429cdf` (world-queries →
+> `.pg` + fixed a leaked-`float` timestep) · CS1 `19bd0b8` (`buildObservation` → `.pg`, obs reproduces legacy
+> float32 within 1e-5) · CS2 `e8e3c6b` (`PgDuelingNet.forward` → `.pg`, argmax-exact vs SDK) · CS4 `63213db`
+> (`chooseColumn` depth-3 → `.pg`, **same column** as C# `FruitCakeSearch`) · CS3+CS6 `d458311` (ship the 89-dim
+> net as `ClientApp/public/fruitcake-net.ckpt` (LFS) + TS `.ckpt` parser; client-side `FruitCakeDirector`
+> replaces the WebSocket watch mode) · CS7 `b54bfc5` (retire `FruitCakeController` / `FruitCakeModelService` /
+> `FruitCakeApi` / stale 83-dim `models/fruitcake.dqn.ckpt`). **Verified host + Playwright:** watch mode plays
+> (fruit fall/roll/merge, score climbs), **0 console errors**, weights fetched once from `/fruitcake-net.ckpt`,
+> **0 `/api/fruitcake` requests**. 22 FruitCake/Polyglot tests green. Three Polyglot 0.1.4 codegen bugs found +
+> worked around (filed **MintPlayer.Polyglot#9**; handoff `docs/prd/polyglot-pilot/POLYGLOT_BUG_HANDOFF_M32.md`).
+> **CS5 note:** the server-adoption half is moot (server path removed); the shipped browser net is the **G3**
+> 89-dim net — its net+search *play quality* (the G4 A/B vs the ~50%-watermelon / ~2505 bar) is a separate
+> **M30/G4** training question, not an architecture blocker. **The canonical FruitCake net now lives once at
+> `ClientApp/public/fruitcake-net.ckpt`** (browser); the server no longer loads any FruitCake net.
+
+
 
 **Cost-driven (user's steer).** "Watch the AI play" runs the **entire** AI server-side (net forward pass + depth-3
 search) and streams every intra-drop frame over the `/api/fruitcake/live` WebSocket — so both server **CPU and
@@ -1075,12 +1092,14 @@ an end-to-end A/B. **Payoff:** per-viewer server cost → **0** (one ~370 KB CDN
 on M30/G4** for a valid 89-dim net (client falls back to the heuristic leaf until it lands; CS0–CS2/CS4 are net-agnostic
 in parallel). **Supersedes PG4.** Also advances MintPlayer.Polyglot (FruitCake is its north-star conformance sample).
 
-> **Branch `net-transfer-input-grow` — merge readiness (2026-07-05).** This branch carries **three** initiatives:
-> M-series NetTransfer/`GrowInput` (SDK, self-contained), **M30** FruitCake big-fruit inputs (obs 83→89), and **M31**
-> Polyglot single-source. **Merge blocker:** the big-fruit obs (83→89) makes the shipped 83-dim `models/fruitcake.dqn.ckpt`
-> stale → the web AI falls back to heuristic. Before merging to master, either **finish M30/G4** (train+ship an 89-dim
-> model on the now-**double** physics, then the depth-3 A/B) **or revert** the big-fruit obs change. Recommended: **split
-> into separate PRs** (NetTransfer is independently mergeable; big-fruit + Polyglot are entangled via the obs width).
+> **Branch `net-transfer-input-grow` — merge readiness (updated 2026-07-05).** This branch carries **four** initiatives:
+> M-series NetTransfer/`GrowInput` (SDK, self-contained), **M30** FruitCake big-fruit inputs (obs 83→89), **M31**
+> Polyglot single-source physics, and **M32** fully client-side FruitCake AI. **The old merge blocker is RESOLVED:**
+> the stale 83-dim server model no longer matters — M32 removed the server's FruitCake net entirely; the browser now
+> runs the AI from the 89-dim `ClientApp/public/fruitcake-net.ckpt`. **Remaining pre-master judgement (quality, not
+> architecture):** the shipped browser net is the **G3** net; if its net+search play quality (G4 A/B vs the
+> ~50%-watermelon / ~2505 bar) is unsatisfying, retrain (M30/G4) and replace `ClientApp/public/fruitcake-net.ckpt`.
+> Still recommended: **split into separate PRs** (NetTransfer is independently mergeable; M30/M31/M32 are entangled).
 
 ## Testing strategy (cross-cutting, from research)
 

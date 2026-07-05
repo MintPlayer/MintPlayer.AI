@@ -136,10 +136,12 @@ them is the classic silent DQN bug.
 | GridWorld / FrozenLake | 16 | 4 | Tabular; value-iteration ground truth for tests. |
 
 **The static `BuildObservation` pattern.** Observation construction is a *static* method so the live
-serving path feeds the net the **byte-identical** observation the policy trained on (e.g.
-`FruitCakeEnv.BuildObservation(world, current, next)` is called by both `Step()` and the WebSocket frame
-builder). When you change an observation, you change it in exactly one place and bump the net's input width
-(the model-load guard rejects a stale-width checkpoint).
+serving path feeds the net the **byte-identical** observation the policy trained on. When you change an
+observation, you change it in exactly one place and bump the net's input width (the model-load guard rejects
+a stale-width checkpoint). **FruitCake goes further (M32):** its `BuildObservation` — plus the net forward
+pass and the depth-3 search — are single-sourced in `fruitcake_solver.pg` (see §10), so the *same* code runs
+in C# and, transpiled, in the browser. `FruitCakeEnv.BuildObservation` is now a thin delegate to the
+generated core.
 
 ---
 
@@ -231,7 +233,10 @@ browser is a pure renderer with no game timer (this avoids client/server timer r
 Extended CONNECT, RFC 8441)** so the socket works under HTTP/1.1 and HTTP/2.
 
 - Snake / MountainCar use the **generic `EpisodeStreamer`** (`Reset → policy → Step → JSON frame`, paced by `tickMs`; one frame per env step).
-- FruitCake uses a **bespoke intra-drop streamer** in `FruitCakeController` (the agent decides once per *drop*, but ~30 fps of falling/merging is streamed *between* decisions; the drop column is chosen by `FruitCakeSearch`).
+- **FruitCake no longer uses the server at all (M32).** Its entire AI — physics, observation, net forward pass,
+  and depth-3 search — is single-sourced in `fruitcake_solver.pg` and runs **in the browser** (`FruitCakeDirector`
+  over the generated TS core + the shipped `ClientApp/public/fruitcake-net.ckpt`). There is **no** `FruitCakeController`,
+  no `/api/fruitcake` WebSocket, and no server-side FruitCake net — per-viewer server cost is zero. See §10.
 
 ```csharp
 // e.g. SnakeController — 503 until the model is loaded, then stream
@@ -430,7 +435,9 @@ logic modules mirroring the C# envs by hand.
 
 | Path (`RLDemo.Web/ClientApp/src/app/`) | Role |
 |---|---|
-| [`fruit-cake/fruitcake_solver.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake_solver.ts) | **Generated (committed) — do not edit.** TS transpilation of `fruitcake_solver.pg`; `PgFruitCakeWorld` sequential-impulse circle solver (12 velocity / 4 position iters; deferred same-tier merges; area-mass; `lastMerges`). |
+| [`fruit-cake/fruitcake_solver.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake_solver.ts) | **Generated (committed) — do not edit.** TS transpilation of `fruitcake_solver.pg`: `PgFruitCakeWorld` physics **plus** the whole inference path — `buildObservation`, `PgDuelingNet.forward`, `chooseColumn` (depth-3 search). Edit the `.pg` + regenerate. |
+| [`fruit-cake/fruitcake-net.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake-net.ts) | Parses the shipped `.ckpt` binary (mirrors the C# `DuelingQNetCheckpoint` reader) → builds `PgDuelingNet`. The one inference piece that isn't Polyglot (binary I/O). |
+| [`fruit-cake/fruit-cake-director.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-director.ts) | **Client-side "watch AI"** (M32): a real-time state machine that runs the generated physics + `chooseColumn` over the loaded net locally — replaces the retired server WebSocket stream. Emits `FruitCakeFrame`s ([`fruit-cake-frame.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-frame.ts)) for `renderFrame`. |
 | [`fruit-cake/fruit-cake-physics.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-physics.ts) | Thin **`FruitWorld` facade** over the generated core — **not the physics**. Re-adds host-only surface: `onMerged` (exact, from the core's merge list), `onLanded` (host-side approximation), and per-fruit `mergeBorn`/age via a side-table. Edit the `.pg`, not this. |
 | `fruit-cake/` [`game`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-game.ts) · [`render`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-render.ts) · [`audio`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-audio.ts) · [`fruits`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-fruits.ts) | Rules + localStorage; Canvas 2D art + HUD + letterbox scaling; Web Audio; the 11-tier merge catalog (render/scoring; a second copy of the catalog also lives inside the `.pg`). |
 | [`fruit-cake/fruit-cake.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake.ts) (component) | Fixed-timestep rAF loop, pointer aim/drop, `mode` signal (human ↔ watch), fullscreen. |
@@ -450,9 +457,19 @@ and transpiled to **C#** (build-time via the `MintPlayer.Polyglot.MSBuild` Packa
 public `FruitCakeWorld` **facade**) and to **TypeScript** (committed `fruitcake_solver.ts` here, wrapped by the
 `FruitWorld` **adapter**). Both targets are byte-identical (f64). **To change the physics, edit the `.pg` and
 regenerate** — never the generated `.cs`/`.ts` or the facades' physics; the facades hold only host glue (events,
-rendering hooks, danger-line, RNG, state I/O). See `…/FruitCake/polyglot/README.md` and
-[`prd/POLYGLOT_FRUITCAKE_PRD.md`](prd/POLYGLOT_FRUITCAKE_PRD.md). The AI (net + depth-3 search) stays C#-only, so
-watch-AI remains a server WebSocket stream regardless.
+rendering hooks, RNG, state I/O). See `…/FruitCake/polyglot/README.md` and
+[`prd/POLYGLOT_FRUITCAKE_PRD.md`](prd/POLYGLOT_FRUITCAKE_PRD.md).
+
+**The `.pg` now holds the whole *inference* path too (M32).** Beyond physics, `fruitcake_solver.pg` also contains
+`buildObservation` (the 89-dim vector), `PgDuelingNet.forward` (f64 dueling-Q forward pass), and `chooseColumn`
+(the depth-3 expectimax search with the net-leaf inlined) — so the **entire FruitCake AI is single-sourced** and, f64
+on both sides, byte-identical in C# and the browser. Consequently **watch-AI runs fully client-side**
+([`fruit-cake-director.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-director.ts) over the generated
+TS core + the shipped [`fruit-cake/…/public/fruitcake-net.ckpt`](../src/RLDemo.Web/ClientApp/public/fruitcake-net.ckpt),
+parsed by [`fruitcake-net.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake-net.ts)); there is no
+FruitCake server controller or net. Training stays C#/SDK-only (autograd/GEMM/GPU) and *produces* the weights; the
+only per-platform inference piece is the binary `.ckpt` parser (C# `DuelingQNetCheckpoint`; TS `fruitcake-net.ts`).
+See [`prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md`](prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md).
 
 ---
 

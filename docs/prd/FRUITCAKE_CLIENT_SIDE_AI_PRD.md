@@ -11,8 +11,13 @@
 > construction. It supersedes the deferred PG4 idea (column-only streaming), which kept the server in the
 > loop.
 
-- **Status:** Draft v1.1 · 2026-07-05 (4-agent analysis complete; pivoted to Polyglot single-source per
-  user steer; not started)
+- **Status:** ✅ **IMPLEMENTED (CS0–CS7) · 2026-07-05.** The FruitCake AI runs entirely in the browser —
+  observation + net forward + depth-3 search single-sourced in `fruitcake_solver.pg` (f64, C#↔TS byte-identical),
+  the 89-dim net shipped at `ClientApp/public/fruitcake-net.ckpt` + a TS `.ckpt` parser, a client-side
+  `FruitCakeDirector`, and the server serving path (`FruitCakeController`/`FruitCakeModelService`/`FruitCakeApi`)
+  removed. Verified host + Playwright (plays, 0 console errors, 0 `/api/fruitcake` calls). See PLAN.md M32 for
+  commit refs. **Caveat:** the shipped browser net is the G3 net; its *play quality* (G4 A/B) is a separate M30/G4
+  training question, not an architecture blocker.
 - **Author:** Pieterjan (with Claude Code)
 - **Depends on:**
   - A **valid 89-dim net** — i.e. **M30/G4** must ship a `fruitcake.dqn.ckpt` matching the current
