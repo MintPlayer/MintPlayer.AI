@@ -131,13 +131,15 @@ not on this experiment's critical path.
   in** (best greedy **1019.5** @86k drops, maxTier 8.9); net + 73 MB resume state saved (resumable — re-run the same
   command). **⚠️ The solver is now `double`** after the Polyglot PG1 cutover (`POLYGLOT_FRUITCAKE_PRD.md`), so a
   continue/re-train runs on double physics; the saved net still evaluates fine on double (see G4).
-- **G4 — Judge & decide (the gate).** 🟡 **PARTIAL — verdict PENDING.** A 30-game **depth-2** net+search eval of the
-  G3 net on the **new double-physics build** (done during PG1 validation) gave greedy **895** / tier 8.57 and search
-  **2317 / tier 10.33 / 33% watermelon** — vs the recorded depth-2 baseline ~2278 / 30%: **within seed noise**
-  (consistent with the saturated-net prior — the big-fruit inputs did *not* clearly beat the bar). The full
-  **≥100-game depth-3** A/B (the real ~50% gate) was **never completed** (interrupted). So **no ship decision yet;
-  `models/fruitcake.dqn.ckpt` unchanged.** To finish: run `--search-eval --depth 3 --topk 5 --topk2 2 --ab-episodes
-  100 --data data/fruitcake-bigfruit` and compare to the G0 depth-3 bar. Original G4 plan:
+- **G4 — Judge & decide (the gate).** ✅ **DONE 2026-07-05 — NULL RESULT (as the prior predicted).** The full
+  **100-game depth-3** A/B of the G3 89-dim net (`--search-eval --depth 3 --topk 5 --topk2 2 --ab-episodes 100
+  --data data/fruitcake-bigfruit`): greedy **874 / tier 8.62 / 0% watermelon**; **search 2493 / median 2498 /
+  tier 10.48 / 49% watermelon**, wins 100/100 (paired Δ +1619 ± 49 SE). Vs the recorded 83-dim depth-3 bar
+  (~2505 / 50%): **within seed noise — the big-fruit inputs did NOT beat the bar.** Confirms the saturated-net
+  prior (the watermelon win is *search*, not the net). **Decision: input block KEPT** (it doesn't hurt, and it
+  was needed for the M32 obs anyway), **net shipped as-is.** Note the shipping target changed: the net now ships
+  as the browser asset **`ClientApp/public/fruitcake-net.ckpt`** (M32 client-side AI), not `models/`. Earlier
+  30-game depth-2 read (PG1 validation): search 2317 / 33% — same within-noise story. Original G4 plan (for record):
   1. **Greedy net** A/B to isolate the *input contribution* (new 89-dim greedy vs recorded 83-dim greedy 963.5 /
      meanTier 8.75 / 0 watermelon — absolute comparison, since widths can't be paired in one build, per F5).
   2. **Net + search** A/B (depth-2 *and* depth-3) — **this is the decision metric**, because search is deployed.

@@ -1059,10 +1059,13 @@ client-side (byte-identical physics enables it) to cut streaming bandwidth — b
 > (fruit fall/roll/merge, score climbs), **0 console errors**, weights fetched once from `/fruitcake-net.ckpt`,
 > **0 `/api/fruitcake` requests**. 22 FruitCake/Polyglot tests green. Three Polyglot 0.1.4 codegen bugs found +
 > worked around (filed **MintPlayer.Polyglot#9**; handoff `docs/prd/polyglot-pilot/POLYGLOT_BUG_HANDOFF_M32.md`).
-> **CS5 note:** the server-adoption half is moot (server path removed); the shipped browser net is the **G3**
-> 89-dim net — its net+search *play quality* (the G4 A/B vs the ~50%-watermelon / ~2505 bar) is a separate
-> **M30/G4** training question, not an architecture blocker. **The canonical FruitCake net now lives once at
-> `ClientApp/public/fruitcake-net.ckpt`** (browser); the server no longer loads any FruitCake net.
+> **CS5 (quality A/B) — DONE, ship-as-is:** depth-3 net+search on the shipped G3 89-dim net (100 paired games)
+> = **2493 mean / 49% watermelon / meanTier 10.48**, wins 100/100 vs greedy — **on par with the prior live AI**
+> (83-dim was ~2505 / 50%, within noise). Browser f64 inference is argmax/column-equivalent (CS2/CS4), so this
+> is representative. No retrain needed. (Also = the **M30/G4 verdict**: big-fruit inputs are a *null result* for
+> net+search quality — the saturated-net prior holds; kept because they don't hurt.) **The canonical FruitCake
+> net now lives once at `ClientApp/public/fruitcake-net.ckpt`** (browser); the server loads no FruitCake net.
+> **Shipped in PR #23** (single PR: NetTransfer + M30 + M31 + M32).
 
 
 
