@@ -76,6 +76,31 @@ nullable references (`var big1: PgFruitBody? = null`), sidestepping the null-ini
 
 ---
 
+## Bug 3 — two nested-generic (`List<List<f64>>`) parameters in one signature break the parser
+
+A single nested-generic parameter parses; a **second** one in the same parameter list fails to parse.
+
+`repro.pg` (fails — `error: expected ')'` at the second param):
+```
+import { List } from "std.collections"
+class N { var a: List<List<f64>>; var b: List<List<f64>>
+  init(a: List<List<f64>>, b: List<List<f64>>) { this.a = a; this.b = b } }
+```
+`repro.pg` (OK — a single nested-generic param):
+```
+import { List } from "std.collections"
+class N { var a: List<List<f64>>
+  init(a: List<List<f64>>) { this.a = a } }
+```
+Nested-generic **fields** are fine; nested-generic types as a **single** param are fine; it's specifically **two
+or more** in one parameter list. Likely the `>>` (right-shift vs double generic-close) disambiguation loses state
+after the first close. (Independent of line breaks — single-line and multi-line both fail with two.)
+
+**Workaround used in the port:** the `PgDuelingNet` constructor took `trunkW`/`trunkB` as `List<List<f64>>`
+(per-layer weight matrices). Flattened both to a single `List<f64>` each (all layers concatenated, with per-layer
+offsets computed from the `hidden` sizes) — so the constructor has only single-level generic params. This also
+matches the checkpoint's flat float layout, so it's arguably the better representation regardless.
+
 ## Conformance-gate note
 Bug 1's TS output (`new i32(x)`) throws at runtime and Bug 1/2's C# output does not compile — both would be
 caught by a gate that (a) compiles the generated C# and (b) runs the generated TS, rather than only diffing

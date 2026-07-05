@@ -425,6 +425,72 @@ export class PgFruitCakeWorld {
         return points;
     }
 }
+export class PgDuelingNet {
+    inputSize: number;
+    actions: number;
+    hidden: number[];
+    trunkWFlat: number[];
+    trunkBFlat: number[];
+    valueW: number[];
+    valueB: number[];
+    advW: number[];
+    advB: number[];
+    constructor(inputSize: number, actions: number, hidden: number[], trunkWFlat: number[], trunkBFlat: number[], valueW: number[], valueB: number[], advW: number[], advB: number[]) {
+        this.inputSize = inputSize;
+        this.actions = actions;
+        this.hidden = hidden;
+        this.trunkWFlat = trunkWFlat;
+        this.trunkBFlat = trunkBFlat;
+        this.valueW = valueW;
+        this.valueB = valueB;
+        this.advW = advW;
+        this.advB = advB;
+    }
+    forward(obs: number[]): number[] {
+        let x = obs;
+        let prev = this.inputSize;
+        let wOff = 0;
+        let bOff = 0;
+        for (let l = 0; l < this.hidden.length; l++) {
+            const h = this.hidden[l];
+            x = PgDuelingNet.relu(PgDuelingNet.linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h));
+            wOff += Math.imul(prev, h);
+            bOff += h;
+            prev = h;
+        }
+        const value = PgDuelingNet.linear(x, this.valueW, 0, this.valueB, 0, prev, 1);
+        const adv = PgDuelingNet.linear(x, this.advW, 0, this.advB, 0, prev, this.actions);
+        let sumA = 0.0;
+        for (let k = 0; k < this.actions; k++) {
+            sumA += adv[k];
+        }
+        const meanA = sumA / this.actions;
+        const v = value[0];
+        let q = [];
+        for (let k = 0; k < this.actions; k++) {
+            q.push(adv[k] + (v - meanA));
+        }
+        return q;
+    }
+    static linear(x: number[], w: number[], wOff: number, b: number[], bOff: number, inDim: number, outDim: number): number[] {
+        let out = [];
+        for (let o = 0; o < outDim; o++) {
+            let s = b[(bOff + o | 0)];
+            for (let i = 0; i < inDim; i++) {
+                s += x[i] * w[((wOff + Math.imul(i, outDim) | 0) + o | 0)];
+            }
+            out.push(s);
+        }
+        return out;
+    }
+    static relu(x: number[]): number[] {
+        let out = [];
+        for (const v of x) {
+            out.push(((a, b) => (a >= b ? a : b))(0.0, v));
+        }
+        return out;
+    }
+}
 export let Catalog: PgFruitDef[] = [new PgFruitDef(24.0, 1), new PgFruitDef(32.0, 3), new PgFruitDef(40.0, 6), new PgFruitDef(56.0, 10), new PgFruitDef(64.0, 15), new PgFruitDef(72.0, 21), new PgFruitDef(84.0, 28), new PgFruitDef(96.0, 36), new PgFruitDef(128.0, 45), new PgFruitDef(160.0, 55), new PgFruitDef(192.0, 66)];
 export function byTier(tier: number): PgFruitDef {
     return Catalog[(tier - 1 | 0)];

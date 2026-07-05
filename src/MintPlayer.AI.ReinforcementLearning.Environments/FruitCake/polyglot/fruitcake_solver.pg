@@ -406,3 +406,78 @@ class PgFruitCakeWorld {
     return points
   }
 }
+
+// ── Dueling-Q net inference (single-source forward pass; port of DuelingQNet.Forward) ──────────────────────
+// A standalone f64 forward pass for the trained FruitCake net, so C# serving and the browser run bit-identical
+// inference from one source. INFERENCE ONLY — training stays on the SDK (autograd/GEMM/GPU). Weights are float32
+// in the checkpoint; the per-platform checkpoint parser (not Polyglot — binary I/O) loads them into these f64
+// arrays. Q(s,a) = A(s,a) + (V(s) − mean_a A(s,a)); ReLU trunk; heads have no activation. Noise is off at
+// inference, so a noisy net's mean weights load exactly like a plain net's (sigma tensors are skipped).
+// Trunk weights/biases are stored FLAT (all layers concatenated in order) with per-layer offsets computed from
+// `hidden` — a single List<f64> avoids nested-generic (List<List<f64>>) parameters, which the transpiler mishandles.
+class PgDuelingNet {
+  var inputSize: i32
+  var actions: i32
+  var hidden: List<i32>          // trunk hidden sizes (from the checkpoint)
+  var trunkWFlat: List<f64>      // trunk weight matrices concatenated in layer order (each row-major [in, out])
+  var trunkBFlat: List<f64>      // trunk biases concatenated in layer order
+  var valueW: List<f64>          // [lastHidden * 1]
+  var valueB: List<f64>          // [1]
+  var advW: List<f64>            // [lastHidden * actions]
+  var advB: List<f64>            // [actions]
+
+  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, valueW: List<f64>, valueB: List<f64>, advW: List<f64>, advB: List<f64>) {
+    this.inputSize = inputSize
+    this.actions = actions
+    this.hidden = hidden
+    this.trunkWFlat = trunkWFlat
+    this.trunkBFlat = trunkBFlat
+    this.valueW = valueW
+    this.valueB = valueB
+    this.advW = advW
+    this.advB = advB
+  }
+
+  // Single-observation forward: obs (length inputSize) → Q-values (length actions).
+  fn forward(obs: List<f64>): List<f64> {
+    var x = obs
+    var prev = this.inputSize
+    var wOff = 0
+    var bOff = 0
+    for l in 0..this.hidden.count {
+      let h = this.hidden[l]
+      x = relu(linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h))
+      wOff += prev * h
+      bOff += h
+      prev = h
+    }
+    let value = linear(x, this.valueW, 0, this.valueB, 0, prev, 1)
+    let adv = linear(x, this.advW, 0, this.advB, 0, prev, this.actions)
+
+    var sumA = 0.0
+    for k in 0..this.actions { sumA += adv[k] }
+    let meanA = sumA / this.actions
+    let v = value[0]
+
+    var q: List<f64> = List<f64>()
+    for k in 0..this.actions { q.add(adv[k] + (v - meanA)) }
+    return q
+  }
+
+  // Dense layer: out[o] = b[bOff+o] + Σ_i x[i]·w[wOff + i*outDim + o]  (w row-major [inDim, outDim]).
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+}
