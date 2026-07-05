@@ -123,6 +123,11 @@ The twins are **not byte-identical today**: C# uses `float` (float32/`MathF`), T
 - **PG3 — byte-identity.** ✅ *Effectively DONE as a side-effect of PG1/PG2.* `f32` proved impractical, so the `.pg`
   was `f64` from the start → generated C# is `double` and TS is `number`/float64 → **C# and TS are byte-identical**
   (verified at PG0: 28-drop cascade + float checksum identical). No separate upgrade needed.
+- **PG4 — ❌ SUPERSEDED by M32 (`FRUITCAKE_CLIENT_SIDE_AI_PRD.md`).** The premise below ("the AI can't run in the
+  browser") was wrong — the 4-agent analysis (2026-07-05) showed the net (mean weights, noise off at inference) +
+  the RNG-free depth-3 search are fully portable to TS. **M32 runs the *whole* AI client-side**, which removes the
+  server compute, the bandwidth, **and** the WebSocket entirely — strictly better than the column-only-streaming idea
+  described here. Kept for the record:
 - **PG4 — (Follow-up, NOT built) watch-AI bandwidth optimization — *enabled by PG3's byte-identity*.** Today the
   watch-AI WebSocket streams **every intra-drop frame** (all fruit positions) — unchanged by this PR; server load +
   bandwidth are as before. Because the browser now runs **byte-identical** physics to the C# server, watch-AI *could*

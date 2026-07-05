@@ -1045,6 +1045,27 @@ host + Playwright (drops/merges/`onMerged`-exact/`mergeBorn`/score, 0 console er
 side-effect** (f64 both sides). **⇒ PG0–PG2 COMPLETE: FruitCake physics is fully single-source (one `.pg` → C#
 training/serving + TS human-play).** Optional **PG4** (not built): watch-AI could stream only the chosen column + animate
 client-side (byte-identical physics enables it) to cut streaming bandwidth — but the depth-3 search + net stay C#-only.
+**⇒ PG4 is SUPERSEDED by M32** (full client-side inference removes the compute, the bandwidth, *and* the WebSocket).
+
+## M32 — FruitCake: fully client-side AI (zero server inference)  *(planned — see `FRUITCAKE_CLIENT_SIDE_AI_PRD.md`)* 🔜
+
+**Cost-driven (user's steer).** "Watch the AI play" runs the **entire** AI server-side (net forward pass + depth-3
+search) and streams every intra-drop frame over the `/api/fruitcake/live` WebSocket — so both server **CPU and
+bandwidth scale linearly with concurrent viewers** (100 viewers ≈ 100× load on the single Hetzner VPS, a real
+monthly-bill risk). A 4-agent analysis (2026-07-05) confirmed the AI is fully portable: the net is plain float32
+matmuls (**noise is off at inference ⇒ mean weights only**), the depth-3 search is **RNG-free deterministic**
+game-tree logic, the **physics is already in the browser** (M31 single-source solver), and `BuildObservation` is a
+pure function. Nothing is C#-specific — it was only *written* in C#. **Plan CS0–CS6:** CS0 TS `.ckpt` parser +
+build-time weights copy to `ClientApp/public/` (parse the existing checkpoint directly — no new format, weights stay
+single-sourced) → CS1 TS `DuelingQNet` forward (float32 via `Math.fround`) → CS2 TS `BuildObservation` → CS3 push
+`clone`/`anyEjected`/`anyRestingAboveDangerLine`/`pileHeight` **into the `.pg`** (single source; C# facade delegates,
+TS adapter exposes) → CS4 TS depth-3 expectimax search → CS5 collapse `watch` mode into a **local director loop**
+(reuse the human-play physics + renderer; drop the socket) → CS6 **retire** the server path (`Live` WebSocket +
+`FruitCakeModelService` net load + `FruitCakeApi` socket) and measure. **Correctness crux:** three C#-generated
+**golden fixtures** (Q-vector, observation, chosen-column) gate TS parity — argmax/column **exact**, Q within ~1e-4.
+**Payoff:** per-viewer server cost → **0** (one ~370 KB CDN-cacheable weights download). **Depends on M30/G4** for a
+valid 89-dim net (CS0 ships the heuristic-fallback path until it lands; CS1–CS4 are net-agnostic and golden-testable
+in parallel). **Supersedes PG4.**
 
 > **Branch `net-transfer-input-grow` — merge readiness (2026-07-05).** This branch carries **three** initiatives:
 > M-series NetTransfer/`GrowInput` (SDK, self-contained), **M30** FruitCake big-fruit inputs (obs 83→89), and **M31**
