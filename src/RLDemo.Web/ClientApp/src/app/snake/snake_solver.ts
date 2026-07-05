@@ -255,33 +255,37 @@ export class PgSnakeEnv {
         for (let i = 0; i < this.cells; i++) {
             seen.push(false);
         }
-        let queue = [];
-        const start = (Math.imul(r, this.size) + c | 0);
-        seen[start] = true;
-        queue.push(start);
-        let cursor = 0;
-        let count = 0;
-        for (let _iter = 0; _iter < this.cells; _iter++) {
-            if (cursor >= queue.length) {
+        seen[(Math.imul(r, this.size) + c | 0)] = true;
+        let changed = true;
+        for (let _pass = 0; _pass < this.cells; _pass++) {
+            if (!changed) {
                 break;
             }
-            const cell = queue[cursor];
-            cursor = (cursor + 1 | 0);
-            count = (count + 1 | 0);
-            const cr = (cell / this.size | 0);
-            const cc = (cell % this.size | 0);
-            for (let a = 0; a < PgSnakeEnv.ActionCount; a++) {
-                const nr = (cr + PgSnakeEnv.drOf(a) | 0);
-                const nc = (cc + PgSnakeEnv.dcOf(a) | 0);
-                if (!this.freeCell(nr, nc, tail)) {
+            changed = false;
+            for (let cell = 0; cell < this.cells; cell++) {
+                if (!seen[cell]) {
                     continue;
                 }
-                const n = (Math.imul(nr, this.size) + nc | 0);
-                if (seen[n]) {
-                    continue;
+                const cr = (cell / this.size | 0);
+                const cc = (cell % this.size | 0);
+                for (let a = 0; a < PgSnakeEnv.ActionCount; a++) {
+                    const nr = (cr + PgSnakeEnv.drOf(a) | 0);
+                    const nc = (cc + PgSnakeEnv.dcOf(a) | 0);
+                    if (!this.freeCell(nr, nc, tail)) {
+                        continue;
+                    }
+                    const n = (Math.imul(nr, this.size) + nc | 0);
+                    if (!seen[n]) {
+                        seen[n] = true;
+                        changed = true;
+                    }
                 }
-                seen[n] = true;
-                queue.push(n);
+            }
+        }
+        let count = 0;
+        for (let cell = 0; cell < this.cells; cell++) {
+            if (seen[cell]) {
+                count = (count + 1 | 0);
             }
         }
         return count;

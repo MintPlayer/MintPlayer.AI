@@ -249,35 +249,38 @@ class PgSnakeEnv {
     return !this.occupied[cell] || cell == tail
   }
 
-  // BFS flood-fill: count of free cells reachable from (r,c). Bounded at `cells` iterations (each cell processed
-  // once). List<i32> queue + cursor instead of a Queue; List<bool> seen instead of a HashSet.
+  // Flood-fill: count of free cells reachable from (r,c). Iterative relaxation over a `seen` bool-list (BFS-
+  // equivalent) rather than a growing queue — a queue whose pushed values derive from reads of the same list
+  // makes the transpiled TS an "evolving-any" array with circular element inference (TS7022). Scanning `seen`
+  // instead (values come from a fixed 0..cells range, never a list read) sidesteps that. Bounded at `cells`
+  // passes (each pass marks ≥1 new cell or stops); cells is small (≤ e.g. 144), so O(cells²) is fine.
   fn reachableFreeSpace(r: i32, c: i32, tail: i32): i32 {
     if !this.freeCell(r, c, tail) { return 0 }
     var seen: List<bool> = List<bool>()
     for i in 0..this.cells { seen.add(false) }
-    var queue: List<i32> = List<i32>()
-    let start = r * this.size + c
-    seen[start] = true
-    queue.add(start)
-    var cursor = 0
-    var count = 0
-    for _iter in 0..this.cells {
-      if cursor >= queue.count { break }
-      let cell = queue[cursor]
-      cursor = cursor + 1
-      count = count + 1
-      let cr = cell / this.size
-      let cc = cell % this.size
-      for a in 0..ActionCount {
-        let nr = cr + drOf(a)
-        let nc = cc + dcOf(a)
-        if !this.freeCell(nr, nc, tail) { continue }
-        let n = nr * this.size + nc
-        if seen[n] { continue }
-        seen[n] = true
-        queue.add(n)
+    seen[r * this.size + c] = true
+    var changed = true
+    for _pass in 0..this.cells {
+      if !changed { break }
+      changed = false
+      for cell in 0..this.cells {
+        if !seen[cell] { continue }
+        let cr = cell / this.size
+        let cc = cell % this.size
+        for a in 0..ActionCount {
+          let nr = cr + drOf(a)
+          let nc = cc + dcOf(a)
+          if !this.freeCell(nr, nc, tail) { continue }
+          let n = nr * this.size + nc
+          if !seen[n] {
+            seen[n] = true
+            changed = true
+          }
+        }
       }
     }
+    var count = 0
+    for cell in 0..this.cells { if seen[cell] { count = count + 1 } }
     return count
   }
 
