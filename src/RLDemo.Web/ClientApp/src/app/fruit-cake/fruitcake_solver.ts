@@ -79,6 +79,8 @@ export class PgFruitCakeWorld {
     static readonly Width: number = 620.0;
     static readonly Height: number = 850.0;
     static readonly DangerLineY: number = 150.0;
+    static readonly ColumnCount: number = 14;
+    static readonly MaxDroppableTier: number = 5;
     static readonly Gravity: number = 9.8 * 64.0;
     static readonly Restitution: number = 0.1;
     static readonly Friction: number = 0.3;
@@ -190,6 +192,87 @@ export class PgFruitCakeWorld {
             minTop = ((a, b) => (a <= b ? a : b))(minTop, b.y - b.r);
         }
         return PgFruitCakeWorld.Height - minTop;
+    }
+    buildObservation(current: number, next: number): number[] {
+        const binW = PgFruitCakeWorld.Width / PgFruitCakeWorld.ColumnCount;
+        let topY = [];
+        let topTier = [];
+        for (let c = 0; c < PgFruitCakeWorld.ColumnCount; c++) {
+            topY.push(PgFruitCakeWorld.Height);
+            topTier.push(0);
+        }
+        let fillArea = 0.0;
+        for (const b of this.bodies) {
+            fillArea += Math.PI * b.r * b.r;
+            const bl = b.x - b.r;
+            const br = b.x + b.r;
+            const t = b.y - b.r;
+            for (let c = 0; c < PgFruitCakeWorld.ColumnCount; c++) {
+                if (br > binW * c && bl < binW * (c + 1 | 0)) {
+                    if (t < topY[c]) {
+                        topY[c] = t;
+                        topTier[c] = b.tier;
+                    }
+                }
+            }
+        }
+        let obs = [];
+        let minTop = PgFruitCakeWorld.Height;
+        for (let c = 0; c < PgFruitCakeWorld.ColumnCount; c++) {
+            obs.push(clamp01((PgFruitCakeWorld.Height - topY[c]) / PgFruitCakeWorld.Height));
+            obs.push(clamp01(topTier[c] / 11.0));
+            if (topY[c] < minTop) {
+                minTop = topY[c];
+            }
+        }
+        for (let c = 0; c < PgFruitCakeWorld.ColumnCount; c++) {
+            obs.push(clamp01((topY[c] - PgFruitCakeWorld.DangerLineY) / (PgFruitCakeWorld.Height - PgFruitCakeWorld.DangerLineY)));
+        }
+        for (let c = 0; c < PgFruitCakeWorld.ColumnCount; c++) {
+            obs.push((topTier[c] === current ? 1.0 : 0.0));
+        }
+        for (let c = 0; c < PgFruitCakeWorld.ColumnCount; c++) {
+            const hasLeft = c > 0 && topTier[(c - 1 | 0)] === topTier[c];
+            const hasRight = c < (PgFruitCakeWorld.ColumnCount - 1 | 0) && topTier[(c + 1 | 0)] === topTier[c];
+            obs.push((topTier[c] > 0 && (hasLeft || hasRight) ? 1.0 : 0.0));
+        }
+        for (let t = 1; t < (PgFruitCakeWorld.MaxDroppableTier + 1 | 0); t++) {
+            obs.push((current === t ? 1.0 : 0.0));
+        }
+        for (let t = 1; t < (PgFruitCakeWorld.MaxDroppableTier + 1 | 0); t++) {
+            obs.push((next === t ? 1.0 : 0.0));
+        }
+        obs.push(clamp01(this.count / 100.0));
+        obs.push(clamp01(fillArea / (PgFruitCakeWorld.Width * PgFruitCakeWorld.Height)));
+        obs.push(clamp01(minTop / PgFruitCakeWorld.Height));
+        let big1 = (-1 | 0);
+        let big2 = (-1 | 0);
+        for (let i = 0; i < this.bodies.length; i++) {
+            const b = this.bodies[i];
+            if (big1 < 0 || isLarger(b, this.bodies[big1])) {
+                big2 = big1;
+                big1 = i;
+            } else {
+                if (big2 < 0 || isLarger(b, this.bodies[big2])) {
+                    big2 = i;
+                }
+            }
+        }
+        this.writeBig(obs, big1);
+        this.writeBig(obs, big2);
+        return obs;
+    }
+    writeBig(obs: number[], idx: number): void {
+        if (idx >= 0) {
+            const b = this.bodies[idx];
+            obs.push(clamp01(b.x / PgFruitCakeWorld.Width));
+            obs.push(clamp01(b.y / PgFruitCakeWorld.Height));
+            obs.push(clamp01(b.tier / 11.0));
+        } else {
+            obs.push(0.5);
+            obs.push(1.0);
+            obs.push(0.0);
+        }
     }
     buildContacts(detect: boolean): void {
         this.contacts = [];
@@ -348,4 +431,16 @@ export function byTier(tier: number): PgFruitDef {
 }
 export function mergeResultTier(tier: number): number | null {
     return (tier < Catalog.length ? (tier + 1 | 0) : null);
+}
+export function clamp01(v: number): number {
+    return ((a, b) => (a <= b ? a : b))(1.0, ((a, b) => (a >= b ? a : b))(0.0, v));
+}
+export function isLarger(cand: PgFruitBody, cur: PgFruitBody): boolean {
+    if (cand.tier !== cur.tier) {
+        return cand.tier > cur.tier;
+    }
+    if (cand.y !== cur.y) {
+        return cand.y > cur.y;
+    }
+    return cand.x < cur.x;
 }

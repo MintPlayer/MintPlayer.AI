@@ -53,10 +53,23 @@ record PgContact(a: PgFruitBody, b: PgFruitBody?, nx: f64, ny: f64, pen: f64)
 // use for effects/audio; C# consumers ignore it and read the points return of step().
 record PgMergeEvent(sourceTier: i32, resultTier: i32?, x: f64, y: f64, points: i32)
 
+// Clamp to [0,1] (matches C# Math.Clamp(v,0,1) for the non-NaN observation values).
+fn clamp01(v: f64): f64 => Math.min(1.0, Math.max(0.0, v))
+
+// Deterministic total order over fruit for the "biggest two" observation block: higher tier first,
+// then lower on the board (larger y), then leftmost (smaller x). Stable so the observation is stable.
+fn isLarger(cand: PgFruitBody, cur: PgFruitBody): bool {
+  if cand.tier != cur.tier { return cand.tier > cur.tier }
+  if cand.y != cur.y { return cand.y > cur.y }
+  return cand.x < cur.x
+}
+
 class PgFruitCakeWorld {
   const Width: f64 = 620.0
   const Height: f64 = 850.0
   const DangerLineY: f64 = 150.0
+  const ColumnCount: i32 = 14        // RL: drop columns / observation width driver
+  const MaxDroppableTier: i32 = 5    // RL: player may drop tiers 1..5 (one-hot size)
 
   const Gravity: f64 = 9.8 * 64.0
   const Restitution: f64 = 0.1
@@ -168,6 +181,101 @@ class PgFruitCakeWorld {
     var minTop = Height
     for b in this.bodies { minTop = Math.min(minTop, b.y - b.r) }
     return Height - minTop
+  }
+
+  // ── Observation (single-sourced RL feature vector; port of FruitCakeEnv.BuildObservation) ────────────────
+  // The 89-dim vector the trained net consumes, pure over (world, current, next): per-column skyline (surface
+  // height + top tier), three relational blocks (danger margin, merge-with-current, adjacent-equal-pair),
+  // current/next one-hots, three globals, and the two biggest fruit's (x, y, tier). f64 here (net inference is
+  // f64 both sides); the C# training env casts the result to float for the float32 net.
+  fn buildObservation(current: i32, next: i32): List<f64> {
+    let binW = Width / ColumnCount
+
+    // Per-column surface: the highest fruit top (smallest y) whose x-extent overlaps the column.
+    var topY: List<f64> = List<f64>()
+    var topTier: List<i32> = List<i32>()
+    for c in 0..ColumnCount { topY.add(Height); topTier.add(0) }
+
+    var fillArea = 0.0
+    for b in this.bodies {
+      fillArea += Math.PI * b.r * b.r
+      let bl = b.x - b.r
+      let br = b.x + b.r
+      let t = b.y - b.r
+      // Columns whose [c*binW,(c+1)*binW) span intersects the body's x-extent (matches the C# c0..c1 range).
+      for c in 0..ColumnCount {
+        if br > binW * c && bl < binW * (c + 1) {
+          if t < topY[c] { topY[c] = t; topTier[c] = b.tier }
+        }
+      }
+    }
+
+    var obs: List<f64> = List<f64>()
+
+    // Block A — per column: surface height (0 floor … 1 top), top-fruit tier (÷11). Track the highest surface.
+    var minTop = Height
+    for c in 0..ColumnCount {
+      obs.add(clamp01((Height - topY[c]) / Height))
+      obs.add(clamp01(topTier[c] / 11.0))
+      if topY[c] < minTop { minTop = topY[c] }
+    }
+
+    // Block B — danger margin: room between the surface and the danger line (1 = floor/safe, 0 = at/above).
+    for c in 0..ColumnCount {
+      obs.add(clamp01((topY[c] - DangerLineY) / (Height - DangerLineY)))
+    }
+
+    // Block C — merge-with-current: dropping the current fruit here scores an immediate merge.
+    for c in 0..ColumnCount {
+      obs.add(if topTier[c] == current { 1.0 } else { 0.0 })
+    }
+
+    // Block D — adjacent-equal-pair: this surface fruit already sits beside a same-tier surface fruit.
+    for c in 0..ColumnCount {
+      let hasLeft = c > 0 && topTier[c - 1] == topTier[c]
+      let hasRight = c < ColumnCount - 1 && topTier[c + 1] == topTier[c]
+      obs.add(if topTier[c] > 0 && (hasLeft || hasRight) { 1.0 } else { 0.0 })
+    }
+
+    // current / next one-hots (droppable tiers 1..MaxDroppableTier).
+    for t in 1..(MaxDroppableTier + 1) { obs.add(if current == t { 1.0 } else { 0.0 }) }
+    for t in 1..(MaxDroppableTier + 1) { obs.add(if next == t { 1.0 } else { 0.0 }) }
+
+    obs.add(clamp01(this.count / 100.0))                 // normalized fruit count
+    obs.add(clamp01(fillArea / (Width * Height)))        // board fill ratio
+    obs.add(clamp01(minTop / Height))                    // highest surface (0 = pile at the very top)
+
+    // The two biggest fruit's (x, y, tier) — absolute positions the skyline collapses (buried big fruit).
+    // Tracked by body index (-1 = none) rather than nullable refs (keeps the codegen on the safe path).
+    var big1: i32 = -1
+    var big2: i32 = -1
+    for i in 0..this.bodies.count {
+      let b = this.bodies[i]
+      if big1 < 0 || isLarger(b, this.bodies[big1]) {
+        big2 = big1
+        big1 = i
+      } else if big2 < 0 || isLarger(b, this.bodies[big2]) {
+        big2 = i
+      }
+    }
+    this.writeBig(obs, big1)
+    this.writeBig(obs, big2)
+    return obs
+  }
+
+  // Append the body at index idx as (x÷Width, y÷Height, tier÷11), or a neutral sentinel (floor-centre, tier 0)
+  // when idx < 0 (fewer than two fruit on the board).
+  fn writeBig(obs: List<f64>, idx: i32) {
+    if idx >= 0 {
+      let b = this.bodies[idx]
+      obs.add(clamp01(b.x / Width))
+      obs.add(clamp01(b.y / Height))
+      obs.add(clamp01(b.tier / 11.0))
+    } else {
+      obs.add(0.5)
+      obs.add(1.0)
+      obs.add(0.0)
+    }
   }
 
   fn buildContacts(detect: bool) {

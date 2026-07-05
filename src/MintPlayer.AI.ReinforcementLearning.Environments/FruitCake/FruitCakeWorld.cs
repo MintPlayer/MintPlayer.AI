@@ -105,6 +105,16 @@ public sealed class FruitCakeWorld
     /// <summary>Height of the tallest point of the pile above the floor (0 = empty board).</summary>
     public float PileHeight() => (float)_core.pileHeight();
 
+    /// <summary>The 89-dim RL observation for the given held/next tiers — the single-source core vector (f64)
+    /// cast to float for the float32 net. See <see cref="FruitCakeEnv.BuildObservation"/> for the field spec.</summary>
+    public float[] BuildObservation(int current, int next)
+    {
+        var core = _core.buildObservation(current, next);
+        var obs = new float[core.Count];
+        for (int i = 0; i < obs.Length; i++) obs[i] = (float)core[i];
+        return obs;
+    }
+
     /// <summary>Serialize every body's full state at native (double) precision — for env Save. Writes the count
     /// then, per body: tier, x, y, vx, vy, angle, angularVel. Double (not the facade's float view) so
     /// <see cref="ReadBodies"/> round-trips the solver's exact state and a resumed sim stays bitwise-identical.</summary>

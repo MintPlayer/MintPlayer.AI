@@ -104,4 +104,101 @@ public class PolyglotSolverParityTests
         Assert.Equal(core.anyRestingAboveDangerLine(40.0), facade.AnyRestingAboveDangerLine(40f));
         Assert.Equal((float)core.pileHeight(), facade.PileHeight());
     }
+
+    // CS1 (docs/prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md): BuildObservation now lives in the .pg (f64), and the C#
+    // env delegates (core f64 -> float). This pins that the single-source obs reproduces the legacy float32
+    // observation the net was trained on, within f32/f64 rounding — so the argmax-relevant features are unchanged
+    // and no retrain is needed. (Also validates the cast-free column-overlap reformulation on real boards.)
+    [Fact]
+    public void CoreObservation_MatchesLegacyFloat32_WithinTolerance()
+    {
+        var w = new FruitCakeWorld();
+        foreach (var (tier, x) in Script) { w.SpawnFruit(tier, (float)x, 90f); w.SettleAfterDrop(30f, 8, 600); }
+
+        foreach (var (cur, next) in new[] { (1, 2), (3, 5), (5, 1) })
+        {
+            var actual = FruitCakeEnv.BuildObservation(w, cur, next); // single-source (.pg f64 -> float)
+            var legacy = LegacyObservationFloat32(w, cur, next);
+            Assert.Equal(legacy.Length, actual.Length);
+            for (int i = 0; i < legacy.Length; i++)
+                Assert.True(Math.Abs(legacy[i] - actual[i]) < 1e-5f,
+                    $"obs[{i}] (cur={cur},next={next}) legacy={legacy[i]} actual={actual[i]}");
+        }
+    }
+
+    // The pre-.pg float32 observation, kept here as the one-time equivalence reference for the port above.
+    private static float[] LegacyObservationFloat32(FruitCakeWorld world, int current, int next)
+    {
+        const int ColumnCount = FruitCakeEnv.ColumnCount;
+        const float W = FruitCakeWorld.Width, H = FruitCakeWorld.Height, DangerY = FruitCakeWorld.DangerLineY;
+        float binW = W / ColumnCount;
+
+        var topY = new float[ColumnCount];
+        var topTier = new int[ColumnCount];
+        for (int c = 0; c < ColumnCount; c++) topY[c] = H;
+
+        float fillArea = 0f;
+        foreach (var b in world.Bodies)
+        {
+            fillArea += MathF.PI * b.R * b.R;
+            int c0 = Math.Clamp((int)((b.X - b.R) / binW), 0, ColumnCount - 1);
+            int c1 = Math.Clamp((int)((b.X + b.R) / binW), 0, ColumnCount - 1);
+            float t = b.Y - b.R;
+            for (int c = c0; c <= c1; c++)
+                if (t < topY[c]) { topY[c] = t; topTier[c] = b.Tier; }
+        }
+
+        var obs = new float[FruitCakeEnv.ObservationSize];
+        int i = 0;
+        float minTop = H;
+        for (int c = 0; c < ColumnCount; c++)
+        {
+            obs[i++] = Math.Clamp((H - topY[c]) / H, 0f, 1f);
+            obs[i++] = Math.Clamp(topTier[c] / 11f, 0f, 1f);
+            if (topY[c] < minTop) minTop = topY[c];
+        }
+        for (int c = 0; c < ColumnCount; c++)
+            obs[i++] = Math.Clamp((topY[c] - DangerY) / (H - DangerY), 0f, 1f);
+        for (int c = 0; c < ColumnCount; c++)
+            obs[i++] = topTier[c] == current ? 1f : 0f;
+        for (int c = 0; c < ColumnCount; c++)
+        {
+            bool pair = topTier[c] > 0 &&
+                        ((c > 0 && topTier[c - 1] == topTier[c]) ||
+                         (c < ColumnCount - 1 && topTier[c + 1] == topTier[c]));
+            obs[i++] = pair ? 1f : 0f;
+        }
+        for (int t = 1; t <= FruitCatalog.MaxDroppableTier; t++) obs[i++] = current == t ? 1f : 0f;
+        for (int t = 1; t <= FruitCatalog.MaxDroppableTier; t++) obs[i++] = next == t ? 1f : 0f;
+        obs[i++] = Math.Clamp(world.Count / 100f, 0f, 1f);
+        obs[i++] = Math.Clamp(fillArea / (W * H), 0f, 1f);
+        obs[i++] = Math.Clamp(minTop / H, 0f, 1f);
+
+        FruitBody? big1 = null, big2 = null;
+        foreach (var b in world.Bodies)
+        {
+            if (big1 is null || IsLarger(b, big1)) (big1, big2) = (b, big1);
+            else if (big2 is null || IsLarger(b, big2)) big2 = b;
+        }
+        WriteBig(obs, ref i, big1);
+        WriteBig(obs, ref i, big2);
+        return obs;
+
+        static bool IsLarger(FruitBody cand, FruitBody cur)
+        {
+            if (cand.Tier != cur.Tier) return cand.Tier > cur.Tier;
+            if (cand.Y != cur.Y) return cand.Y > cur.Y;
+            return cand.X < cur.X;
+        }
+        static void WriteBig(float[] o, ref int idx, FruitBody? b)
+        {
+            if (b is not null)
+            {
+                o[idx++] = Math.Clamp(b.X / FruitCakeWorld.Width, 0f, 1f);
+                o[idx++] = Math.Clamp(b.Y / FruitCakeWorld.Height, 0f, 1f);
+                o[idx++] = Math.Clamp(b.Tier / 11f, 0f, 1f);
+            }
+            else { o[idx++] = 0.5f; o[idx++] = 1f; o[idx++] = 0f; }
+        }
+    }
 }
