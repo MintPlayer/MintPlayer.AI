@@ -1120,7 +1120,7 @@ game** (simpler than the glob-exclusion a shared `nn.pg` needs); the `.ckpt` par
   masked Q-step). Real work: port the **action mask** (reversal + anti-self-trap **flood-fill shield**, load-bearing —
   net trained with it) and re-express `LinkedList`/`HashSet`/`Queue` as flat `List`s. Pure integer math → byte-identity
   free. Plan SN0–SN6.
-- **MountainCar — transcendental fork.** Two transcendentals on the client path (`cos(3·pos)` in the env, **`tanh`**
+- **MountainCar — ✅ DONE (client-side, verified; uniform Polyglot — 0.3.0 added cos/tanh).** Two transcendentals on the client path (`cos(3·pos)` in the env, **`tanh`**
   in the PPO `Mlp` net) — **neither writable in a `.pg`**. **Recommended: Option B** — pragmatic client-side hand-port
   (reuse `mountaincar-logic.ts` dynamics, ~30-line TS `Mlp`+`tanh` forward, new `parseMlp`, ship ckpt, delete socket);
   no net perturbation, keeps a trivial ~15-line env twin. **Option A** (uniform Polyglot with byte-identical `cos`/`tanh`

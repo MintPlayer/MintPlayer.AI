@@ -5,7 +5,10 @@
 > `.pg` where feasible, ship the trained **checkpoint** as a browser asset, run the AI **client-side**, and delete
 > the server serving path. Per-viewer server inference/streaming → **zero**.
 
-- **Status:** Draft v1.0 · 2026-07-05 (3-agent investigation + Polyglot 0.2.0 probes complete; not started)
+- **Status:** ✅ **IMPLEMENTED — both games client-side, 2026-07-05.** Snake + MountainCar AI now run entirely in
+  the browser (single-source `.pg` env+obs+net, C# facades, browser directors, server path + `EpisodeStreamer`
+  retired). Verified host + Playwright (Snake ate 40; MountainCar reaches the flag), 0 console errors, 0 `/api/*`
+  AI calls. Branch `snake-clientside-ai`. See PLAN.md M33 for commit refs.
 - **Author:** Pieterjan (with Claude Code)
 - **Precedent:** `FRUITCAKE_CLIENT_SIDE_AI_PRD.md` (M32, shipped) — the pattern this replicates.
 
@@ -170,7 +173,11 @@ nothing, while the transcendentals actively fight it. The cost win (removing the
 Reserve Option A only if *uniform Polyglot single-source* is a hard requirement — in which case gate it behind an
 approximation-accuracy spike (**MC0**) before committing.
 
-### MountainCar plan (MC0–MC5) — assuming Option B (adjust if A is chosen)
+### MountainCar plan (MC0–MC5) — ✅ DONE 2026-07-05 (uniform Polyglot, per the 0.3.0 update above)
+> **Shipped.** `mountaincar_solver.pg` single-sources the dynamics (`cos`) + normalised obs + `PgMlpNet` (Tanh MLP,
+> argmax); C# `MountainCarEnv` is a facade (6 tests green, incl. the Gymnasium golden). Net at
+> `ClientApp/public/mountaincar-net.ckpt` + `mountaincar-net.ts` (`parseMlp`); `MountainCarDirector` runs it;
+> server path + `EpisodeStreamer` deleted; `app.UseWebSockets()` removed (no server WS left). Verified in-browser.
 - **MC0 (only if Option A) — approximation spike.** Implement `cos`/`tanh` in pure `+−×÷`; verify argmax matches the
   real net across a state sweep. Pass → proceed Polyglot (mirror Snake's SN plan). Fail → fall back to Option B.
 - **MC1 — `parseMlp` in the shared `ckpt.ts`** (Sizes + activation byte + per-layer W/b).
