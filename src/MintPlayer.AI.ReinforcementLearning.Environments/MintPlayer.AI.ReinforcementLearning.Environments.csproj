@@ -9,16 +9,7 @@
        build-only transpiler OUT of this published package's dependencies. The 0.1.3+ CLI is bundled for
        win-x64/linux-x64/linux-arm64 (covers Windows dev + Linux CI/deploy); macOS dev must set $(PolyglotTool). -->
   <ItemGroup>
-    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.3.0" PrivateAssets="all" />
-  </ItemGroup>
-
-  <!-- PARKED: Snake single-source core (Snake/polyglot/snake_solver.pg) is written + type-checks + generates
-       correct C#/TS individually, but is excluded from the build pending MintPlayer.Polyglot#14 — with a SECOND
-       .pg in the project, each transpiled .cs emits its own prelude (Option/Some/None) → CS0101 duplicate. Once
-       0.3.x dedups the prelude across a multi-.pg build, delete this Remove and continue the Snake port (facade,
-       tests, director). See docs/prd/CLIENTSIDE_AI_SNAKE_MOUNTAINCAR_PRD.md (M33). -->
-  <ItemGroup>
-    <PolyglotFile Remove="Snake\polyglot\snake_solver.pg" />
+    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.3.1" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- The generated solver types (PgFruitCakeWorld etc.) are internal; the public FruitCakeWorld facade wraps

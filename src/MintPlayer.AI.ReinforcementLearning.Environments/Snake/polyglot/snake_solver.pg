@@ -15,10 +15,10 @@
 import { List } from "std.collections"
 import { Math } from "std.math"
 
-// ── Dueling-Q net inference (copied verbatim from fruitcake_solver.pg; Snake's net is the same architecture) ──
+// ── Dueling-Q net inference (PgSnakeNet: a deliberate copy of FruitCake's PgDuelingNet — same architecture. 
 // f64 forward pass over flat weight arrays. Q(s,a) = A(s,a) + (V(s) − mean_a A(s,a)); ReLU trunk; linear heads.
 // Weights (float32 in the .ckpt) are loaded into these f64 arrays by the per-platform parser.
-class PgDuelingNet {
+class PgSnakeNet {
   var inputSize: i32
   var actions: i32
   var hidden: List<i32>
@@ -285,7 +285,7 @@ class PgSnakeEnv {
     let fc = this.food % this.size
 
     var obs: List<f64> = List<f64>()
-    for i in 0..ObservationSize { obs.add(0.0) }
+    for _pad in 0..ObservationSize { obs.add(0.0) }
 
     var i = 0
     for dr in (0 - PatchRadius)..(PatchRadius + 1) {
@@ -350,7 +350,7 @@ class PgSnakeEnv {
   }
 
   // The full single-source decision: masked greedy argmax over the net's Q-values (mirrors GreedyQAgent.Act).
-  fn chooseAction(net: PgDuelingNet): i32 {
+  fn chooseAction(net: PgSnakeNet): i32 {
     let q = net.forward(this.buildObservation())
     let mask = this.currentActionMask()
     var best = -1
