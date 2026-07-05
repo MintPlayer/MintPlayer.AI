@@ -44,6 +44,21 @@ export class PgMergeEvent {
         return this.sourceTier === other.sourceTier && this.resultTier === other.resultTier && this.x === other.x && this.y === other.y && this.points === other.points;
     }
 }
+export class PgPlyResult {
+    world: PgFruitCakeWorld;
+    points: number;
+    lost: boolean;
+    oneDropValue: number;
+    constructor(world: PgFruitCakeWorld, points: number, lost: boolean, oneDropValue: number) {
+        this.world = world;
+        this.points = points;
+        this.lost = lost;
+        this.oneDropValue = oneDropValue;
+    }
+    equals(other: PgPlyResult): boolean {
+        return this.world === other.world && this.points === other.points && this.lost === other.lost && this.oneDropValue === other.oneDropValue;
+    }
+}
 export class PgFruitBody {
     x: number;
     y: number;
@@ -81,6 +96,13 @@ export class PgFruitCakeWorld {
     static readonly DangerLineY: number = 150.0;
     static readonly ColumnCount: number = 14;
     static readonly MaxDroppableTier: number = 5;
+    static readonly WallInset: number = 6.0;
+    static readonly SettleSpeedPx: number = 30.0;
+    static readonly RestSpeedPx: number = 40.0;
+    static readonly MinSettleSubsteps: number = 8;
+    static readonly MaxSubsteps: number = 600;
+    static readonly LosePenalty: number = 1000000000.0;
+    static readonly NegInf: number = -1.0e18;
     static readonly Gravity: number = 9.8 * 64.0;
     static readonly Restitution: number = 0.1;
     static readonly Friction: number = 0.3;
@@ -273,6 +295,126 @@ export class PgFruitCakeWorld {
             obs.push(1.0);
             obs.push(0.0);
         }
+    }
+    static columnX(action: number, tier: number): number {
+        const r = byTier(tier).radiusPx;
+        const nominalX = (action + 0.5) * (PgFruitCakeWorld.Width / PgFruitCakeWorld.ColumnCount);
+        return ((a, b) => (a <= b ? a : b))(PgFruitCakeWorld.Width - r - PgFruitCakeWorld.WallInset, ((a, b) => (a >= b ? a : b))(r + PgFruitCakeWorld.WallInset, nominalX));
+    }
+    static heldY(tier: number): number {
+        return PgFruitCakeWorld.DangerLineY - byTier(tier).radiusPx - 4.0;
+    }
+    leafValue(net: PgDuelingNet): number {
+        let sum = 0.0;
+        for (let d = 1; d < (PgFruitCakeWorld.MaxDroppableTier + 1 | 0); d++) {
+            const q = net.forward(this.buildObservation(d, d));
+            let mx = q[0];
+            for (let k = 1; k < q.length; k++) {
+                mx = ((a, b) => (a >= b ? a : b))(mx, q[k]);
+            }
+            sum += mx;
+        }
+        return sum / PgFruitCakeWorld.MaxDroppableTier;
+    }
+    dropAndScore(net: PgDuelingNet, tier: number, col: number): PgPlyResult {
+        const sim = this.clone(false);
+        sim.spawnFruit(tier, PgFruitCakeWorld.columnX(col, tier), PgFruitCakeWorld.heldY(tier));
+        const points = sim.settleAfterDrop(PgFruitCakeWorld.SettleSpeedPx, PgFruitCakeWorld.MinSettleSubsteps, PgFruitCakeWorld.MaxSubsteps, 1.0 / 60.0);
+        const lost = sim.anyEjected() || sim.anyRestingAboveDangerLine(PgFruitCakeWorld.RestSpeedPx);
+        const value = (lost ? points - PgFruitCakeWorld.LosePenalty : points + sim.leafValue(net));
+        return new PgPlyResult(sim, points, lost, value);
+    }
+    chooseColumn(net: PgDuelingNet, current: number, next: number, maxDepth: number, topK: number, topK2: number): number {
+        let first = [];
+        for (let col = 0; col < PgFruitCakeWorld.ColumnCount; col++) {
+            first.push(this.dropAndScore(net, current, col));
+        }
+        if (maxDepth <= 1) {
+            return PgFruitCakeWorld.argMaxOneDrop(first);
+        }
+        const keep = PgFruitCakeWorld.selectTopK(first, topK);
+        let bestValue = PgFruitCakeWorld.NegInf;
+        let bestCol = (PgFruitCakeWorld.ColumnCount / 2 | 0);
+        for (let col = 0; col < PgFruitCakeWorld.ColumnCount; col++) {
+            const f = first[col];
+            let value = f.oneDropValue;
+            if (!f.lost && keep[col]) {
+                value = f.points + f.world.bestContinuation(net, next, (maxDepth - 1 | 0), topK2);
+            }
+            if (value > bestValue) {
+                bestValue = value;
+                bestCol = col;
+            }
+        }
+        return bestCol;
+    }
+    bestContinuation(net: PgDuelingNet, fruit: number | null, pliesLeft: number, topK2: number): number {
+        if (pliesLeft === 0) {
+            return this.leafValue(net);
+        }
+        if (fruit === null) {
+            let sum = 0.0;
+            for (let d = 1; d < (PgFruitCakeWorld.MaxDroppableTier + 1 | 0); d++) {
+                sum += this.bestContinuation(net, d, pliesLeft, topK2);
+            }
+            return sum / PgFruitCakeWorld.MaxDroppableTier;
+        }
+        const f = fruit;
+        let plies = [];
+        for (let c = 0; c < PgFruitCakeWorld.ColumnCount; c++) {
+            plies.push(this.dropAndScore(net, f, c));
+        }
+        if (pliesLeft === 1) {
+            let best = PgFruitCakeWorld.NegInf;
+            for (let c = 0; c < PgFruitCakeWorld.ColumnCount; c++) {
+                best = ((a, b) => (a >= b ? a : b))(best, plies[c].oneDropValue);
+            }
+            return best;
+        }
+        const keep = PgFruitCakeWorld.selectTopK(plies, topK2);
+        let bestDeep = PgFruitCakeWorld.NegInf;
+        for (let c = 0; c < PgFruitCakeWorld.ColumnCount; c++) {
+            const p = plies[c];
+            let v = p.oneDropValue;
+            if (!p.lost && keep[c]) {
+                v = p.points + p.world.bestContinuation(net, null, (pliesLeft - 1 | 0), topK2);
+            }
+            bestDeep = ((a, b) => (a >= b ? a : b))(bestDeep, v);
+        }
+        return bestDeep;
+    }
+    static selectTopK(plies: PgPlyResult[], k: number): boolean[] {
+        let keep = [];
+        for (let i = 0; i < plies.length; i++) {
+            keep.push(false);
+        }
+        const target = (k > 1 ? k : 1);
+        for (let _iter = 0; _iter < target; _iter++) {
+            let bestIdx = (-1 | 0);
+            let bestVal = PgFruitCakeWorld.NegInf;
+            for (let i = 0; i < plies.length; i++) {
+                if (!plies[i].lost && !keep[i] && plies[i].oneDropValue > bestVal) {
+                    bestVal = plies[i].oneDropValue;
+                    bestIdx = i;
+                }
+            }
+            if (bestIdx < 0) {
+                break;
+            }
+            keep[bestIdx] = true;
+        }
+        return keep;
+    }
+    static argMaxOneDrop(plies: PgPlyResult[]): number {
+        let best = PgFruitCakeWorld.NegInf;
+        let bestCol = (plies.length / 2 | 0);
+        for (let i = 0; i < plies.length; i++) {
+            if (plies[i].oneDropValue > best) {
+                best = plies[i].oneDropValue;
+                bestCol = i;
+            }
+        }
+        return bestCol;
     }
     buildContacts(detect: boolean): void {
         this.contacts = [];

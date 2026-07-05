@@ -53,6 +53,10 @@ record PgContact(a: PgFruitBody, b: PgFruitBody?, nx: f64, ny: f64, pen: f64)
 // use for effects/audio; C# consumers ignore it and read the points return of step().
 record PgMergeEvent(sourceTier: i32, resultTier: i32?, x: f64, y: f64, points: i32)
 
+// One simulated drop's outcome (search node): the settled clone, its merge points, whether it lost, and the
+// one-drop value (weighted points + leaf board value, or points − LosePenalty when lost).
+record PgPlyResult(world: PgFruitCakeWorld, points: i32, lost: bool, oneDropValue: f64)
+
 // Clamp to [0,1] (matches C# Math.Clamp(v,0,1) for the non-NaN observation values).
 fn clamp01(v: f64): f64 => Math.min(1.0, Math.max(0.0, v))
 
@@ -70,6 +74,14 @@ class PgFruitCakeWorld {
   const DangerLineY: f64 = 150.0
   const ColumnCount: i32 = 14        // RL: drop columns / observation width driver
   const MaxDroppableTier: i32 = 5    // RL: player may drop tiers 1..5 (one-hot size)
+  // Search / serving params (mirror FruitCakeEnv's; the search is single-sourced here).
+  const WallInset: f64 = 6.0         // drop-x clamp margin from the walls
+  const SettleSpeedPx: f64 = 30.0    // early-settle speed threshold
+  const RestSpeedPx: f64 = 40.0      // "resting above the danger line" speed threshold (game-over)
+  const MinSettleSubsteps: i32 = 8
+  const MaxSubsteps: i32 = 600
+  const LosePenalty: f64 = 1000000000.0   // 1e9: dominates any board/merge diff so a losing line is chosen last
+  const NegInf: f64 = -1.0e18             // below every real line value (incl. losing = points − 1e9)
 
   const Gravity: f64 = 9.8 * 64.0
   const Restitution: f64 = 0.1
@@ -276,6 +288,134 @@ class PgFruitCakeWorld {
       obs.add(1.0)
       obs.add(0.0)
     }
+  }
+
+  // ── Depth-N forward-model search (single-source; port of FruitCakeSearch) ─────────────────────────────────
+  // For each column: clone, drop, settle, prune losing lines, recurse. current+next are known (maximize); the
+  // 3rd ply (maxDepth 3) is an expectimax chance node over the unknown upcoming fruit (average over droppable
+  // tiers). A line's value = realized merge points + leaf board value. The leaf is INLINED here (net's max-Q
+  // marginalized over the unknown next fruit) — no injected delegate — so the whole decision is single-sourced.
+
+  // The drop-x (px) for a column + fruit radius; clamped inside the walls. (FruitCakeEnv.ColumnX.)
+  static fn columnX(action: i32, tier: i32): f64 {
+    let r = byTier(tier).radiusPx
+    let nominalX = (action + 0.5) * (Width / ColumnCount)
+    return Math.min(Width - r - WallInset, Math.max(r + WallInset, nominalX))
+  }
+
+  // The held drop height (px), just above the danger line. (FruitCakeEnv.HeldY.)
+  static fn heldY(tier: i32): f64 => DangerLineY - byTier(tier).radiusPx - 4.0
+
+  // Leaf board value = (1/MaxDroppableTier) Σ_d max_a net.forward(obs(this, d, d)) — the net's sense of this
+  // board, marginalized over the unknown next droppable fruit (mirrors the C# serving leaf).
+  fn leafValue(net: PgDuelingNet): f64 {
+    var sum = 0.0
+    for d in 1..(MaxDroppableTier + 1) {
+      let q = net.forward(this.buildObservation(d, d))
+      var mx = q[0]
+      for k in 1..q.count { mx = Math.max(mx, q[k]) }
+      sum += mx
+    }
+    return sum / MaxDroppableTier
+  }
+
+  // One simulated drop: clone (rotation off), spawn, settle, score. Value = points − LosePenalty if it lost,
+  // else points + leaf board value.
+  fn dropAndScore(net: PgDuelingNet, tier: i32, col: i32): PgPlyResult {
+    let sim = this.clone(false)
+    sim.spawnFruit(tier, columnX(col, tier), heldY(tier))
+    let points = sim.settleAfterDrop(SettleSpeedPx, MinSettleSubsteps, MaxSubsteps, 1.0 / 60.0)
+    let lost = sim.anyEjected() || sim.anyRestingAboveDangerLine(RestSpeedPx)
+    let value = if lost { points - LosePenalty } else { points + sim.leafValue(net) }
+    return PgPlyResult(sim, points, lost, value)
+  }
+
+  // Pick the best column (0..ColumnCount-1) to drop `current` into, planning ahead with `next`.
+  fn chooseColumn(net: PgDuelingNet, current: i32, next: i32, maxDepth: i32, topK: i32, topK2: i32): i32 {
+    var first: List<PgPlyResult> = List<PgPlyResult>()
+    for col in 0..ColumnCount { first.add(this.dropAndScore(net, current, col)) }
+
+    if maxDepth <= 1 { return argMaxOneDrop(first) }
+
+    let keep = selectTopK(first, topK)
+    var bestValue = NegInf
+    var bestCol = ColumnCount / 2
+    for col in 0..ColumnCount {
+      let f = first[col]
+      // A lost or non-top-K column keeps its one-drop value; only a surviving top-K column is recursed.
+      var value = f.oneDropValue
+      if !f.lost && keep[col] {
+        value = f.points + f.world.bestContinuation(net, next, maxDepth - 1, topK2)
+      }
+      if value > bestValue { bestValue = value; bestCol = col }
+    }
+    return bestCol
+  }
+
+  // Best achievable value over `pliesLeft` more drops. `fruit` known ⇒ maximize over columns; null ⇒ expectimax
+  // chance node over the droppable tiers.
+  fn bestContinuation(net: PgDuelingNet, fruit: i32?, pliesLeft: i32, topK2: i32): f64 {
+    if pliesLeft == 0 { return this.leafValue(net) }
+
+    if fruit == null {
+      var sum = 0.0
+      for d in 1..(MaxDroppableTier + 1) { sum += this.bestContinuation(net, d, pliesLeft, topK2) }
+      return sum / MaxDroppableTier
+    }
+
+    let f = fruit!
+    var plies: List<PgPlyResult> = List<PgPlyResult>()
+    for c in 0..ColumnCount { plies.add(this.dropAndScore(net, f, c)) }
+
+    // Last simulated drop: the one-drop value is already the full value — take the max.
+    if pliesLeft == 1 {
+      var best = NegInf
+      for c in 0..ColumnCount { best = Math.max(best, plies[c].oneDropValue) }
+      return best
+    }
+
+    // Deeper: expand only the top-K columns into the next (unknown) fruit; the rest keep their one-drop value.
+    let keep = selectTopK(plies, topK2)
+    var bestDeep = NegInf
+    for c in 0..ColumnCount {
+      let p = plies[c]
+      var v = p.oneDropValue
+      if !p.lost && keep[c] {
+        v = p.points + p.world.bestContinuation(net, null, pliesLeft - 1, topK2)
+      }
+      bestDeep = Math.max(bestDeep, v)
+    }
+    return bestDeep
+  }
+
+  // Mark the K highest-one-drop-value non-losing columns (all survivors if fewer than K; always ≥ 1 unless all lost).
+  static fn selectTopK(plies: List<PgPlyResult>, k: i32): List<bool> {
+    var keep: List<bool> = List<bool>()
+    for i in 0..plies.count { keep.add(false) }
+    let target = if k > 1 { k } else { 1 }
+    for _iter in 0..target {
+      var bestIdx = -1
+      var bestVal = NegInf
+      for i in 0..plies.count {
+        if !plies[i].lost && !keep[i] && plies[i].oneDropValue > bestVal {
+          bestVal = plies[i].oneDropValue
+          bestIdx = i
+        }
+      }
+      if bestIdx < 0 { break }
+      keep[bestIdx] = true
+    }
+    return keep
+  }
+
+  // Argmax over one-drop value (strict >, lowest index wins ties); default to the middle column.
+  static fn argMaxOneDrop(plies: List<PgPlyResult>): i32 {
+    var best = NegInf
+    var bestCol = plies.count / 2
+    for i in 0..plies.count {
+      if plies[i].oneDropValue > best { best = plies[i].oneDropValue; bestCol = i }
+    }
+    return bestCol
   }
 
   fn buildContacts(detect: bool) {

@@ -115,6 +115,10 @@ public sealed class FruitCakeWorld
         return obs;
     }
 
+    /// <summary>The raw f64 observation (not cast to float) — for the single-source f64 inference core, which
+    /// consumes it directly so C# serving and the browser feed the net identical inputs.</summary>
+    public IReadOnlyList<double> BuildObservationF64(int current, int next) => _core.buildObservation(current, next);
+
     /// <summary>Serialize every body's full state at native (double) precision — for env Save. Writes the count
     /// then, per body: tier, x, y, vx, vy, angle, angularVel. Double (not the facade's float view) so
     /// <see cref="ReadBodies"/> round-trips the solver's exact state and a resumed sim stays bitwise-identical.</summary>
