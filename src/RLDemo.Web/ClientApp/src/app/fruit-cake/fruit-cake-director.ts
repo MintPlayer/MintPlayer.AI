@@ -1,5 +1,5 @@
 import { PgDuelingNet, PgFruitCakeWorld } from './fruitcake_solver';
-import { FruitCakeFrame } from './fruit-cake-api';
+import { FruitCakeFrame } from './fruit-cake-frame';
 import { loadFruitCakeNet } from './fruitcake-net';
 
 // Client-side "watch the AI" director — the whole AI now runs in the browser (PRD FRUITCAKE_CLIENT_SIDE_AI, M32).
