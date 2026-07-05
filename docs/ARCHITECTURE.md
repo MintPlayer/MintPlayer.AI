@@ -129,7 +129,7 @@ them is the classic silent DQN bug.
 | CartPole | 4 | 2 | Bit-exact Gymnasium port. |
 | MountainCar | 2 | 3 | Momentum-building control. |
 | Snake | 177 | 4 | Egocentric 9×9 patch + scalars + **flood-fill** free-cell reachability (anti-self-trap). |
-| FruitCake | 83 | 14 | Suika merge physics; reward shaping (training-only); see below. |
+| FruitCake | 89 | 14 | Suika merge physics (**single-source solver** — one `.pg` → C# + TS, see §10); reward shaping (training-only); big-fruit position inputs; see below. |
 | 2048 | 16 | 4 | Log-scaled tiles; action masking. |
 | RushHour | 72 | 32 | Two 6×6 planes; puzzle-per-episode; BFS oracle for imitation. |
 | RubiksCube | 324 | 12 | One-hot stickers; inverse-move masking; curriculum depth. |
@@ -424,13 +424,15 @@ form in `Env2048.Step`.
 
 "Play yourself" runs **entirely in the browser** — a pure-TS engine per game ticks on `requestAnimationFrame`
 (canvas games) or `setInterval` (turn-based), no backend in the loop. The browser rules mirror the C# training
-env so human and AI obey identical mechanics. FruitCake is the richest (its own circle-physics solver); the
-others are thin logic modules.
+env so human and AI obey identical mechanics. FruitCake goes furthest: its **physics is literally the same code
+as the C# env** — one MintPlayer.Polyglot `.pg` transpiled to both (callout below) — while the others are thin
+logic modules mirroring the C# envs by hand.
 
 | Path (`RLDemo.Web/ClientApp/src/app/`) | Role |
 |---|---|
-| [`fruit-cake/fruit-cake-physics.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-physics.ts) | Custom sequential-impulse circle solver (12 velocity / 4 position iters; deferred same-tier merges; area-mass). |
-| `fruit-cake/` [`game`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-game.ts) · [`render`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-render.ts) · [`audio`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-audio.ts) · [`fruits`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-fruits.ts) | Rules + localStorage; Canvas 2D art + HUD + letterbox scaling; Web Audio; the 11-tier merge catalog (shared by physics/render/scoring). |
+| [`fruit-cake/fruitcake_solver.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake_solver.ts) | **Generated (committed) — do not edit.** TS transpilation of `fruitcake_solver.pg`; `PgFruitCakeWorld` sequential-impulse circle solver (12 velocity / 4 position iters; deferred same-tier merges; area-mass; `lastMerges`). |
+| [`fruit-cake/fruit-cake-physics.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-physics.ts) | Thin **`FruitWorld` facade** over the generated core — **not the physics**. Re-adds host-only surface: `onMerged` (exact, from the core's merge list), `onLanded` (host-side approximation), and per-fruit `mergeBorn`/age via a side-table. Edit the `.pg`, not this. |
+| `fruit-cake/` [`game`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-game.ts) · [`render`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-render.ts) · [`audio`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-audio.ts) · [`fruits`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-fruits.ts) | Rules + localStorage; Canvas 2D art + HUD + letterbox scaling; Web Audio; the 11-tier merge catalog (render/scoring; a second copy of the catalog also lives inside the `.pg`). |
 | [`fruit-cake/fruit-cake.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake.ts) (component) | Fixed-timestep rAF loop, pointer aim/drop, `mode` signal (human ↔ watch), fullscreen. |
 | [`snake-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/snake/snake-logic.ts), [`mountaincar-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/mountaincar/mountaincar-logic.ts), [`game-2048-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/game-2048/game-2048-logic.ts), [`rush-hour-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/rush-hour/rush-hour-logic.ts) | Browser-side rules for human play, mirroring the C# envs. |
 | [`cube/cube.ts`](../src/RLDemo.Web/ClientApp/src/app/cube/cube.ts) | Three.js scene + manual turns + Kociemba/AI solver playback. |
@@ -441,6 +443,16 @@ Conventions: plain `fetch`/`WebSocket` (no `HttpClient`/`environment.ts`), stand
 canvas loops run **outside** Angular's zone.
 *Change it:* game rules → the `*-logic.ts` (keep the C# env in sync — see the PRD-sync comments); render/input →
 `*-render.ts` or the component; new game → add a folder + route (+ server controller/service).
+
+**Single-source FruitCake physics (MintPlayer.Polyglot).** The FruitCake solver is written **once** in
+[`…/Environments/FruitCake/polyglot/fruitcake_solver.pg`](../src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/polyglot/fruitcake_solver.pg)
+and transpiled to **C#** (build-time via the `MintPlayer.Polyglot.MSBuild` PackageReference → `obj/`, wrapped by the
+public `FruitCakeWorld` **facade**) and to **TypeScript** (committed `fruitcake_solver.ts` here, wrapped by the
+`FruitWorld` **adapter**). Both targets are byte-identical (f64). **To change the physics, edit the `.pg` and
+regenerate** — never the generated `.cs`/`.ts` or the facades' physics; the facades hold only host glue (events,
+rendering hooks, danger-line, RNG, state I/O). See `…/FruitCake/polyglot/README.md` and
+[`prd/POLYGLOT_FRUITCAKE_PRD.md`](prd/POLYGLOT_FRUITCAKE_PRD.md). The AI (net + depth-3 search) stays C#-only, so
+watch-AI remains a server WebSocket stream regardless.
 
 ---
 
