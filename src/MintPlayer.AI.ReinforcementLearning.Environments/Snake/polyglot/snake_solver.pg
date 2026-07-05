@@ -1,0 +1,364 @@
+// snake_solver.pg — single-source Snake env + inference (M33), transpiled to C# and TS.
+//
+// ONE source for the game dynamics + observation + action mask (incl. the anti-self-trap flood-fill "shield")
+// + the dueling-Q forward pass, so the C# training/eval env AND the browser "watch AI" run identical logic.
+// f64 for the net; the env is pure integer + `+ − × ÷` math, so C# and TS are byte-identical.
+//
+// Collections: Polyglot's std.collections List has add / removeAt / [i] get+set / count / clear (no
+// removeFirst/removeLast/insert). So the snake body is a List<i32> with the HEAD AT THE END (add = grow head,
+// removeAt(0) = drop tail); occupancy is a List<bool> of size cells (occupied.count == body.count always); the
+// BFS uses a List<i32> + a cursor and a List<bool> seen-set. No HashSet/LinkedList/Queue.
+//
+// The generated C# is transpiled at build (MintPlayer.Polyglot.MSBuild); the TS is committed
+// (snake_solver.ts), regenerated on Windows:  polyglot build snake_solver.pg --target typescript --out <clientapp>
+
+import { List } from "std.collections"
+import { Math } from "std.math"
+
+// ── Dueling-Q net inference (copied verbatim from fruitcake_solver.pg; Snake's net is the same architecture) ──
+// f64 forward pass over flat weight arrays. Q(s,a) = A(s,a) + (V(s) − mean_a A(s,a)); ReLU trunk; linear heads.
+// Weights (float32 in the .ckpt) are loaded into these f64 arrays by the per-platform parser.
+class PgDuelingNet {
+  var inputSize: i32
+  var actions: i32
+  var hidden: List<i32>
+  var trunkWFlat: List<f64>
+  var trunkBFlat: List<f64>
+  var valueW: List<f64>
+  var valueB: List<f64>
+  var advW: List<f64>
+  var advB: List<f64>
+
+  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, valueW: List<f64>, valueB: List<f64>, advW: List<f64>, advB: List<f64>) {
+    this.inputSize = inputSize
+    this.actions = actions
+    this.hidden = hidden
+    this.trunkWFlat = trunkWFlat
+    this.trunkBFlat = trunkBFlat
+    this.valueW = valueW
+    this.valueB = valueB
+    this.advW = advW
+    this.advB = advB
+  }
+
+  fn forward(obs: List<f64>): List<f64> {
+    var x = obs
+    var prev = this.inputSize
+    var wOff = 0
+    var bOff = 0
+    for l in 0..this.hidden.count {
+      let h = this.hidden[l]
+      x = relu(linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h))
+      wOff += prev * h
+      bOff += h
+      prev = h
+    }
+    let value = linear(x, this.valueW, 0, this.valueB, 0, prev, 1)
+    let adv = linear(x, this.advW, 0, this.advB, 0, prev, this.actions)
+
+    var sumA = 0.0
+    for k in 0..this.actions { sumA += adv[k] }
+    let meanA = sumA / this.actions
+    let v = value[0]
+
+    var q: List<f64> = List<f64>()
+    for k in 0..this.actions { q.add(adv[k] + (v - meanA)) }
+    return q
+  }
+
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+}
+
+// ── Snake environment (port of SnakeEnv.cs) ─────────────────────────────────────────────────────────────────
+class PgSnakeEnv {
+  const ActionCount: i32 = 4
+  const PatchRadius: i32 = 4
+  const PatchSide: i32 = 9      // 2*PatchRadius+1
+  const PatchPlane: i32 = 81    // PatchSide*PatchSide
+  const PatchSize: i32 = 162    // PatchPlane*2 (obstacle + food channels)
+  const ObservationSize: i32 = 177   // PatchSize + 15 scalars
+  const FoodReward: f64 = 1.0
+  const DeathReward: f64 = -1.0
+
+  var size: i32
+  var cells: i32
+  var stepPenalty: f64
+  var safeMask: bool
+  var body: List<i32>        // head at END: body[count-1]=head, body[0]=tail
+  var occupied: List<bool>   // size cells; occupied.count invariant == body.count
+  var food: i32
+  var foodEaten: i32
+  var heading: i32
+  var elapsedSteps: i32
+  var stepsSinceFood: i32
+  var done: bool
+  // Step outputs (read by the C# training facade; the browser director only needs `done` + state).
+  var lastReward: f64
+  var lastTerminated: bool
+  var lastTruncated: bool
+
+  init(size: i32, stepPenalty: f64, safeMask: bool) {
+    this.size = size
+    this.cells = size * size
+    this.stepPenalty = stepPenalty
+    this.safeMask = safeMask
+    this.body = List<i32>()
+    this.occupied = List<bool>()
+    for i in 0..this.cells { this.occupied.add(false) }
+    this.food = 0
+    this.foodEaten = 0
+    this.heading = 3
+    this.elapsedSteps = 0
+    this.stepsSinceFood = 0
+    this.done = true
+    this.lastReward = 0.0
+    this.lastTerminated = false
+    this.lastTruncated = false
+  }
+
+  // Action deltas: Up(0)=(-1,0) Down(1)=(1,0) Left(2)=(0,-1) Right(3)=(0,1).
+  static fn drOf(a: i32): i32 { if a == 0 { return -1 } if a == 1 { return 1 } return 0 }
+  static fn dcOf(a: i32): i32 { if a == 2 { return -1 } if a == 3 { return 1 } return 0 }
+  static fn iabs(x: i32): i32 { if x < 0 { return 0 - x } return x }
+
+  fn headCell(): i32 => this.body[this.body.count - 1]
+  fn neckCell(): i32 => this.body[this.body.count - 2]
+  fn tailCell(): i32 => this.body[0]
+  let length: i32 => this.body.count
+  fn freeCount(): i32 => this.cells - this.body.count
+
+  // Reset to a length-3 horizontal snake, centred, head pointing Right. Food is spawned separately by the caller
+  // (spawnFood) so the RNG stays out of the single source: C# rolls Xoshiro, the browser rolls Math.random.
+  fn reset() {
+    this.body.clear()
+    for i in 0..this.cells { this.occupied[i] = false }
+    let row = this.size / 2
+    let headCol = this.size / 2
+    // head-at-end: add tail → head, i.e. c = headCol-2, headCol-1, headCol.
+    for c in (headCol - 2)..(headCol + 1) {
+      let cell = row * this.size + c
+      this.body.add(cell)
+      this.occupied[cell] = true
+    }
+    this.heading = 3
+    this.foodEaten = 0
+    this.elapsedSteps = 0
+    this.stepsSinceFood = 0
+    this.done = false
+  }
+
+  // Place food at the pick'th free cell (pick in [0, freeCount)). Caller supplies the random index.
+  fn spawnFood(pick: i32) {
+    var p = pick
+    for cell in 0..this.cells {
+      if this.occupied[cell] { continue }
+      if p == 0 { this.food = cell; return }
+      p = p - 1
+    }
+  }
+
+  // Advance one step with the given action (assumed legal — call currentActionMask() first). foodPick is the
+  // random free-cell index used only if this move eats and the board isn't full.
+  fn step(action: i32, foodPick: i32) {
+    let head = this.headCell()
+    let headRow = head / this.size
+    let headCol = head % this.size
+    let newRow = headRow + drOf(action)
+    let newCol = headCol + dcOf(action)
+
+    if newRow < 0 || newRow >= this.size || newCol < 0 || newCol >= this.size {
+      this.die()
+      return
+    }
+    let newHead = newRow * this.size + newCol
+    let eating = newHead == this.food
+    let tail = this.tailCell()
+    if this.occupied[newHead] && !(newHead == tail && !eating) {
+      this.die()
+      return
+    }
+
+    this.body.add(newHead) // grow head (head-at-end)
+    this.heading = action
+    var terminated = false
+    if eating {
+      this.occupied[newHead] = true
+      this.foodEaten = this.foodEaten + 1
+      this.stepsSinceFood = 0
+      this.lastReward = FoodReward
+      if this.body.count == this.cells {
+        terminated = true // board full — a win
+      } else {
+        this.spawnFood(foodPick)
+      }
+    } else {
+      // Remove the vacating tail BEFORE marking the new head occupied (tail-follow ordering; see SnakeEnv.cs).
+      this.occupied[tail] = false
+      this.body.removeAt(0)
+      this.occupied[newHead] = true
+      this.stepsSinceFood = this.stepsSinceFood + 1
+      this.lastReward = this.stepPenalty
+    }
+
+    this.elapsedSteps = this.elapsedSteps + 1
+    let starveLimit = 2 * this.cells
+    let maxSteps = 100 * this.cells
+    let truncated = !terminated && (this.stepsSinceFood >= starveLimit || this.elapsedSteps >= maxSteps)
+    this.done = terminated || truncated
+    this.lastTerminated = terminated
+    this.lastTruncated = truncated
+  }
+
+  fn die() {
+    this.done = true
+    this.lastReward = DeathReward
+    this.lastTerminated = true
+    this.lastTruncated = false
+  }
+
+  // A cell is an obstacle if off-board or a non-vacating body segment (the tail vacates on a non-eating move).
+  fn obstacle(r: i32, c: i32, tail: i32): bool {
+    if r < 0 || r >= this.size || c < 0 || c >= this.size { return true }
+    let cell = r * this.size + c
+    return this.occupied[cell] && cell != tail
+  }
+
+  fn freeCell(r: i32, c: i32, tail: i32): bool {
+    if r < 0 || r >= this.size || c < 0 || c >= this.size { return false }
+    let cell = r * this.size + c
+    return !this.occupied[cell] || cell == tail
+  }
+
+  // BFS flood-fill: count of free cells reachable from (r,c). Bounded at `cells` iterations (each cell processed
+  // once). List<i32> queue + cursor instead of a Queue; List<bool> seen instead of a HashSet.
+  fn reachableFreeSpace(r: i32, c: i32, tail: i32): i32 {
+    if !this.freeCell(r, c, tail) { return 0 }
+    var seen: List<bool> = List<bool>()
+    for i in 0..this.cells { seen.add(false) }
+    var queue: List<i32> = List<i32>()
+    let start = r * this.size + c
+    seen[start] = true
+    queue.add(start)
+    var cursor = 0
+    var count = 0
+    for _iter in 0..this.cells {
+      if cursor >= queue.count { break }
+      let cell = queue[cursor]
+      cursor = cursor + 1
+      count = count + 1
+      let cr = cell / this.size
+      let cc = cell % this.size
+      for a in 0..ActionCount {
+        let nr = cr + drOf(a)
+        let nc = cc + dcOf(a)
+        if !this.freeCell(nr, nc, tail) { continue }
+        let n = nr * this.size + nc
+        if seen[n] { continue }
+        seen[n] = true
+        queue.add(n)
+      }
+    }
+    return count
+  }
+
+  // The 177-dim observation (port of SnakeEnv.Observation): 9×9×2 egocentric patch (channel-major) + 15 scalars.
+  fn buildObservation(): List<f64> {
+    let head = this.headCell()
+    let hr = head / this.size
+    let hc = head % this.size
+    let tail = this.tailCell()
+    let fr = this.food / this.size
+    let fc = this.food % this.size
+
+    var obs: List<f64> = List<f64>()
+    for i in 0..ObservationSize { obs.add(0.0) }
+
+    var i = 0
+    for dr in (0 - PatchRadius)..(PatchRadius + 1) {
+      for dc in (0 - PatchRadius)..(PatchRadius + 1) {
+        let r = hr + dr
+        let c = hc + dc
+        if (dr != 0 || dc != 0) && this.obstacle(r, c, tail) { obs[i] = 1.0 }
+        if r == fr && c == fc { obs[PatchPlane + i] = 1.0 }
+        i = i + 1
+      }
+    }
+
+    var s = PatchSize
+    obs[s] = f64(fc - hc) / f64(this.size); s = s + 1
+    obs[s] = f64(fr - hr) / f64(this.size); s = s + 1
+    obs[s] = f64(iabs(fr - hr) + iabs(fc - hc)) / (2.0 * f64(this.size)); s = s + 1
+    obs[s] = if this.heading == 0 { 1.0 } else { 0.0 }; s = s + 1
+    obs[s] = if this.heading == 1 { 1.0 } else { 0.0 }; s = s + 1
+    obs[s] = if this.heading == 2 { 1.0 } else { 0.0 }; s = s + 1
+    obs[s] = if this.heading == 3 { 1.0 } else { 0.0 }; s = s + 1
+    obs[s] = f64(this.body.count) / f64(this.cells); s = s + 1
+    for a in 0..ActionCount {
+      obs[s] = f64(this.reachableFreeSpace(hr + drOf(a), hc + dcOf(a), tail)) / f64(this.cells); s = s + 1
+    }
+    let tr = tail / this.size
+    let tc = tail % this.size
+    obs[s] = f64(tc - hc) / f64(this.size); s = s + 1
+    obs[s] = f64(tr - hr) / f64(this.size); s = s + 1
+    obs[s] = f64(iabs(tr - hr) + iabs(tc - hc)) / (2.0 * f64(this.size)); s = s + 1
+    return obs
+  }
+
+  // Legal-move mask: forbid the 180° reversal onto the neck; with safeMask, also forbid moves that seal the snake
+  // into a region smaller than its length (flood-fill shield), never returning an all-false mask.
+  fn currentActionMask(): List<bool> {
+    var mask: List<bool> = List<bool>()
+    for a in 0..ActionCount { mask.add(true) }
+    if this.body.count < 2 { return mask }
+    let head = this.headCell()
+    let neck = this.neckCell()
+    let headRow = head / this.size
+    let headCol = head % this.size
+    for a in 0..ActionCount {
+      let r = headRow + drOf(a)
+      let c = headCol + dcOf(a)
+      if r >= 0 && r < this.size && c >= 0 && c < this.size && r * this.size + c == neck { mask[a] = false }
+    }
+    if !this.safeMask { return mask }
+
+    let tail = this.tailCell()
+    let len = this.body.count
+    var safe: List<bool> = List<bool>()
+    for a in 0..ActionCount { safe.add(mask[a]) }
+    var any = false
+    for a in 0..ActionCount {
+      if !mask[a] { continue }
+      if this.reachableFreeSpace(headRow + drOf(a), headCol + dcOf(a), tail) >= len { any = true }
+      else { safe[a] = false }
+    }
+    if any { return safe }
+    return mask
+  }
+
+  // The full single-source decision: masked greedy argmax over the net's Q-values (mirrors GreedyQAgent.Act).
+  fn chooseAction(net: PgDuelingNet): i32 {
+    let q = net.forward(this.buildObservation())
+    let mask = this.currentActionMask()
+    var best = -1
+    for a in 0..ActionCount {
+      if !mask[a] { continue }
+      if best < 0 { best = a }
+      else if q[a] > q[best] { best = a }
+    }
+    return best
+  }
+}

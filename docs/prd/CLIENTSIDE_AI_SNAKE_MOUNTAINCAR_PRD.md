@@ -36,6 +36,16 @@ in a `.pg`; the C#↔TS sub-ULP drift is harmless (no server twin post-cutover, 
 same uniform full-Polyglot treatment as Snake (no poly-approx). §5's Option A is now the clean default. The
 Environments `.csproj` is bumped 0.1.4 → **0.3.0** (FruitCake TS codegen verified content-identical, 22 tests green).
 
+### ⚠️ BLOCKER discovered (MintPlayer.Polyglot#14) — multi-`.pg` prelude collision
+Adding a **second** `.pg` (Snake) to the Environments project fails to compile: **every transpiled `.pg` emits its
+own copy of the prelude** (`Option`/`Some`/`None` records + `PolyglotProgram`), so two generated `.cs` in one
+assembly hit **CS0101 duplicate** (+ CS8863). FruitCake only worked as the *sole* `.pg`. This contradicts the
+package targets' own §4.5 comment ("linked build → each type defined once → no CS0101") — the *import* linking works,
+but the auto-emitted prelude isn't deduped. **`snake_solver.pg` is written, type-checks, and generates correct
+C#/TS individually**, but is **parked** (excluded via `PolyglotFile Remove` in the csproj) until the fix. Given the
+0.1.4→0.2.0→0.3.0 turnaround, waiting for a prelude-dedup fix is preferred over a per-game-project workaround. Once
+fixed: delete the `Remove`, then continue SN1–SN6 (facade, parity tests, parser reuse, director, retire server).
+
 ### Polyglot 0.2.0 (historical)
 - **All three M32 codegen bugs are FIXED** (issue MintPlayer.Polyglot#9, closed): `i32()/f64()` casts now lower to
   `(int)x` / `Math.trunc(x)|0` / `(double)n`; `var x: T? = null` emits a typed decl; 2+ nested-generic params parse.
