@@ -73,6 +73,7 @@ class PgFruitCakeWorld {
   const Height: f64 = 850.0
   const DangerLineY: f64 = 150.0
   const ColumnCount: i32 = 14        // RL: drop columns / observation width driver
+  const GridRows: i32 = 10           // RL B4: tier-occupancy grid rows (obs grid = ColumnCount × GridRows)
   const MaxDroppableTier: i32 = 5    // RL: player may drop tiers 1..5 (one-hot size)
   // Search / serving params (mirror FruitCakeEnv's; the search is single-sourced here).
   const WallInset: f64 = 6.0         // drop-x clamp margin from the walls
@@ -196,10 +197,10 @@ class PgFruitCakeWorld {
   }
 
   // ── Observation (single-sourced RL feature vector; port of FruitCakeEnv.BuildObservation) ────────────────
-  // The 89-dim vector the trained net consumes, pure over (world, current, next): per-column skyline (surface
+  // The 229-dim vector the trained net consumes, pure over (world, current, next): per-column skyline (surface
   // height + top tier), three relational blocks (danger margin, merge-with-current, adjacent-equal-pair),
-  // current/next one-hots, three globals, and the two biggest fruit's (x, y, tier). f64 here (net inference is
-  // f64 both sides); the C# training env casts the result to float for the float32 net.
+  // current/next one-hots, three globals, a ColumnCount×GridRows tier-occupancy grid, and the two biggest fruit's
+  // (x, y, tier). f64 here (net inference is f64 both sides); the C# training env casts the result to float.
   fn buildObservation(current: i32, next: i32): List<f64> {
     let binW = Width / ColumnCount
 
@@ -256,6 +257,31 @@ class PgFruitCakeWorld {
     obs.add(clamp01(this.count / 100.0))                 // normalized fruit count
     obs.add(clamp01(fillArea / (Width * Height)))        // board fill ratio
     obs.add(clamp01(minTop / Height))                    // highest surface (0 = pile at the very top)
+
+    // Block E — tier-occupancy grid (ColumnCount × GridRows): each cell holds the MAX tier of any fruit whose
+    // bounding box overlaps it (÷11; 0 = empty). Row 0 = top (small y) … row GridRows-1 = floor; flattened
+    // row-major. Unlike Block A's 1-D skyline (topmost fruit per column only), this exposes BURIED fruit and
+    // 2-D same-tier adjacency the skyline destroys — the structural perception fix (FRUITCAKE_IMPROVE_PRD §4.B B4).
+    let binH = Height / GridRows
+    var grid: List<i32> = List<i32>()
+    for k in 0..(ColumnCount * GridRows) { grid.add(0) }
+    for b in this.bodies {
+      let bl = b.x - b.r
+      let br = b.x + b.r
+      let bt = b.y - b.r
+      let bb = b.y + b.r
+      for c in 0..ColumnCount {
+        if br > binW * c && bl < binW * (c + 1) {
+          for row in 0..GridRows {
+            if bb > binH * row && bt < binH * (row + 1) {
+              let idx = row * ColumnCount + c
+              if b.tier > grid[idx] { grid[idx] = b.tier }
+            }
+          }
+        }
+      }
+    }
+    for k in 0..(ColumnCount * GridRows) { obs.add(clamp01(grid[k] / 11.0)) }
 
     // The two biggest fruit's (x, y, tier) — absolute positions the skyline collapses (buried big fruit).
     // Tracked by body index (-1 = none) rather than nullable refs (keeps the codegen on the safe path).

@@ -23,12 +23,15 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironment
 {
     public const int ColumnCount = 14;
+    public const int GridRows = 10;  // B4 tier-occupancy grid rows (grid = ColumnCount × GridRows cells)
     // Per column (×ColumnCount): surface height, top tier, danger margin, merge-with-current, adjacent-equal-pair.
-    // Plus current one-hot (5) + next one-hot (5) + 3 globals + the two biggest fruit's (x, y, tier) = 6. The 3
-    // relational per-column blocks (danger margin, merge-with-current, adjacent-equal-pair) are the B1+B2 fix for
-    // the pineapple plateau (PRD §4.B); the big-fruit block is FRUITCAKE_BIGFRUIT_INPUTS_PRD §4.A — absolute
-    // positions the bare skyline collapses, so the net can locate where the (possibly buried) biggest fruit sits.
-    public const int ObservationSize = ColumnCount * 5 + 5 + 5 + 3 + 6; // 89
+    // Plus current one-hot (5) + next one-hot (5) + 3 globals + a ColumnCount×GridRows tier-occupancy grid + the
+    // two biggest fruit's (x, y, tier) = 6. The 3 relational per-column blocks (danger margin, merge-with-current,
+    // adjacent-equal-pair) are the B1+B2 fix for the pineapple plateau (PRD §4.B); the tier-occupancy grid is
+    // §4.B B4 — the structural perception fix exposing buried fruit + 2-D adjacency the 1-D skyline collapses;
+    // the big-fruit block is FRUITCAKE_BIGFRUIT_INPUTS_PRD §4.A — absolute positions of the largest fruit.
+    // Layout order matches BuildObservation: A-D | one-hots | globals | grid | big-fruit (big-fruit stays last 6).
+    public const int ObservationSize = ColumnCount * 5 + 5 + 5 + 3 + ColumnCount * GridRows + 6; // 89 + 140 = 229
 
     private const float RewardScale = 10f;       // normalize merge points
     private const float TerminalPenalty = -1f;
@@ -133,7 +136,7 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
     private float[] Observation() => BuildObservation(_world, _current, _next);
 
     /// <summary>
-    /// Builds the 89-dim observation from a board + the current/next droppable tiers. Static so the live
+    /// Builds the 229-dim observation from a board + the current/next droppable tiers. Static so the live
     /// "Watch AI" serving handler (which drives a <see cref="FruitCakeWorld"/> directly, not a full env) can
     /// feed the trained net the <b>exact same observation</b> the policy was trained on.
     /// <para>Beyond the bare skyline (surface height + top tier per column), it carries three relational
@@ -141,6 +144,9 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
     /// line), <b>merge-with-current</b> (dropping the current fruit here scores an immediate merge), and
     /// <b>adjacent-equal-pair</b> (this surface fruit already has a same-tier neighbour — a half-built merge).
     /// The skyline alone exposed none of mergeable adjacency or survival margin.</para>
+    /// <para>It then carries a <b>ColumnCount×GridRows tier-occupancy grid</b> (PRD §4.B B4): each cell holds the
+    /// max tier of any fruit whose bounding box overlaps it (÷11), exposing <b>buried</b> fruit and 2-D same-tier
+    /// adjacency the per-column skyline collapses to a single top surface.</para>
     /// <para>Finally, the <b>(x, y, tier) of the two biggest fruit</b> (FRUITCAKE_BIGFRUIT_INPUTS_PRD §4.A):
     /// absolute positions the per-column skyline collapses, so the policy (and the search leaf) can reason
     /// about where the largest fruit — possibly buried below the surface — actually sits.</para>

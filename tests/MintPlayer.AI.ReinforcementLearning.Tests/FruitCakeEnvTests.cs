@@ -87,6 +87,26 @@ public class FruitCakeEnvTests
     }
 
     [Fact]
+    public void BuildObservation_TierGrid_EncodesOccupiedCellsAndLeavesEmptiesZero()
+    {
+        var world = new FruitCakeWorld(enableRotation: false);
+        const int tier = 7;                 // r = 84px
+        const float x = 300f, y = 700f;
+        world.SpawnFruit(tier, x, y);
+
+        var obs = FruitCakeEnv.BuildObservation(world, current: 1, next: 2);
+        int gridBase = FruitCakeEnv.ColumnCount * 5 + 5 + 5 + 3; // after A-D + one-hots + globals; grid precedes big-fruit
+        float binW = FruitCakeWorld.Width / FruitCakeEnv.ColumnCount;
+        float binH = FruitCakeWorld.Height / FruitCakeEnv.GridRows;
+
+        // The cell over the fruit's center carries its tier (÷11)…
+        int col = (int)(x / binW), row = (int)(y / binH);
+        Assert.Equal(tier / 11f, obs[gridBase + row * FruitCakeEnv.ColumnCount + col], 1e-5f);
+        // …while a far top-left cell the fruit can't reach stays empty.
+        Assert.Equal(0f, obs[gridBase + 0 * FruitCakeEnv.ColumnCount + 0], 1e-5f);
+    }
+
+    [Fact]
     public void BuildObservation_EncodesTwoBiggestFruitPositions()
     {
         var world = new FruitCakeWorld(enableRotation: false);

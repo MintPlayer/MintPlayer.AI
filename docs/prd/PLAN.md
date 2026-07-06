@@ -1000,6 +1000,14 @@ Plan F0–F6 in the PRD; judge on the **≥200-game paired max-tier distribution
 trap). Honest ceiling: even SOTA Suika agents reach strong-human, not "always watermelon." Recommended first
 session: F0 baseline → F1 search (no-retrain win) → training session F2+F3+F4 → F5 A/B + conditional ship.
 
+> **B4 tier-occupancy grid — measured 2026-07-06, NULL result (branch `fruitcake-tier-grid`, not shipped).** The
+> lever-B escalation ("do B4 if B1–B3 underdeliver"): appended a 14×10 dominant-tier grid to the observation
+> (obs 89 → 229, single-sourced in `fruitcake_solver.pg`), trained a fresh net to 321k drops. Depth-3 net+search
+> = **2519 / 52% watermelon** — a tie on the ~2505/~50% bar. The reactive net is **saturated**; richer perception
+> doesn't move the deployed search ceiling (same verdict as F2 inputs, M30 big-fruit, M28 NoisyNets, F6 distill,
+> curriculum). Branch = validated-capability artifact; **do not merge** (229-dim obs would break the live 89-dim
+> net). See `FRUITCAKE_IMPROVE_PRD.md` §4.B B4 + `docs/OPTIMIZATIONS.md`.
+
 ## M30 — FruitCake: big-fruit position inputs  *(planned — see `FRUITCAKE_BIGFRUIT_INPUTS_PRD.md`)* 🔜
 
 A focused input experiment (the user's steer): the current 83-dim observation is a per-column **skyline with

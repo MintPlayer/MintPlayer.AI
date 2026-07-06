@@ -104,6 +104,20 @@ Prioritized:
 - **B4 — Tier-occupancy grid (~112–140 dims, the structural fix):** a 14-col × ~8–10-row grid encoding
   occupancy/dominant-tier — exposes *buried* structure and 2-D adjacency the skyline destroys (the direct Snake
   9×9-patch analog). MLP consumes it flattened (no CNN). Do this if B1–B3 underdeliver.
+
+  > **Implemented + measured 2026-07-06 (branch `fruitcake-tier-grid`) — NULL result, NOT shipped.** Appended a
+  > **14×10 tier-occupancy grid** (140 cells, each = max tier of any fruit whose bounding box overlaps it ÷11;
+  > 0 = empty) to `buildObservation` in the single-source `fruitcake_solver.pg`, inserted *before* the big-fruit
+  > block so big-fruit stays the last 6 dims → **obs 89 → 229**. Trained a FRESH net at width 229 (same recipe as
+  > F5/G3: `--shape --nstep 3 --gamma 0.997`) to **321k drops** (greedy plateaued ~800–944, *at or slightly below*
+  > the 963/1019 F5/G3 baselines). Judged on the deployed metric — depth-3 net+search (`--search-eval --depth 3
+  > --topk 5 --topk2 2`): a 50-game read = **2519 score / 52% watermelon / meanTier 10.52**, i.e. **dead on the
+  > ~2505 / ~50% bar** — a tie within seed noise (200-game confirmation launched). The grid gives the reactive net
+  > no edge the deployed search system can exploit. **Consistent with the saturated-net prior** (F2 relational
+  > inputs, big-fruit positions M30/G4, NoisyNets M28, planner distillation F6, and reverse-curriculum all
+  > null/negative): on Suika the strength is the **search**, not the net — richer perception doesn't move the
+  > ceiling. Branch kept as a validated-capability artifact (like NoisyNets/F6); **must not merge to master** (the
+  > 229-dim obs would desync the live 89-dim browser net). Write-up in `docs/OPTIMIZATIONS.md`.
 - **B5 — Per-tier board counts (+11 dims):** cheap "how close to a high-tier pair" signal.
 - *Sequence:* ship **B1+B2(+B3)** first (a handful of dims, fills the glaring blind spots, one retrain); escalate
   to **B4** if needed. Caveat: column-binning is lossy for large fruit — B4's grid is the true representational fix.

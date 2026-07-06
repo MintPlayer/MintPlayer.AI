@@ -174,6 +174,27 @@ public class PolyglotSolverParityTests
         obs[i++] = Math.Clamp(fillArea / (W * H), 0f, 1f);
         obs[i++] = Math.Clamp(minTop / H, 0f, 1f);
 
+        // Block E — tier-occupancy grid (ColumnCount × GridRows): max overlapping tier per cell ÷ 11 (mirrors the .pg).
+        const int GridRows = FruitCakeEnv.GridRows;
+        float binH = H / GridRows;
+        var grid = new int[ColumnCount * GridRows];
+        foreach (var b in world.Bodies)
+        {
+            float bl = b.X - b.R, br = b.X + b.R, bt = b.Y - b.R, bb = b.Y + b.R;
+            for (int c = 0; c < ColumnCount; c++)
+            {
+                if (!(br > binW * c && bl < binW * (c + 1))) continue;
+                for (int row = 0; row < GridRows; row++)
+                    if (bb > binH * row && bt < binH * (row + 1))
+                    {
+                        int idx = row * ColumnCount + c;
+                        if (b.Tier > grid[idx]) grid[idx] = b.Tier;
+                    }
+            }
+        }
+        for (int k = 0; k < ColumnCount * GridRows; k++)
+            obs[i++] = Math.Clamp(grid[k] / 11f, 0f, 1f);
+
         FruitBody? big1 = null, big2 = null;
         foreach (var b in world.Bodies)
         {
