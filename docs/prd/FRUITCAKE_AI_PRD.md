@@ -9,6 +9,25 @@
 - **Depends on:** the shipped FruitCake game (PR #12) + rolling-physics (PR #13). Companion to
   [PRD.md](PRD.md) (the RL library) and the add-a-game checklist in [../ADDING_A_GAME.md](../ADDING_A_GAME.md).
 
+> **⚠️ OUTDATED — the serving architecture (§4.6, §2, §4.8) has been superseded (M32, PRs #23–#24).**
+> This PRD specified a **server-authoritative** design: the C# simulation + agent run on the server and
+> stream frames to each viewer over a WebSocket. That was abandoned because **running the game and the
+> AI on the server for every visitor doesn't scale** — per-viewer physics-in-the-loop plus inference
+> overloads a single CPU-only host as concurrent watchers grow.
+>
+> **FruitCake AI now runs entirely in the browser (zero server inference), like Snake and Mountain Car.**
+> The enabling change: with **MintPlayer.Polyglot** (§4.8 update) the solver is written **once** in a
+> `.pg` source and transpiled to **both** C# and TypeScript, so the physics is genuinely single-source
+> rather than two hand-synced ports. The trained checkpoint is **no longer constrained to C#** — the
+> browser owns both the physics *and* the decision: it loads the shipped `.ckpt` and runs the forward
+> pass client-side (`fruit-cake-director.ts` / `fruitcake-net.ts`), falling back to the greedy heuristic
+> if the checkpoint is missing. The server just serves the static `.ckpt` file.
+>
+> **Still accurate:** the headless C# environment (§4.1–4.2), observation/action/reward (§4.3), the
+> Double+Dueling DQN choice (§4.4), the heuristic baseline (§4.5), and the Lab training pipeline (§4.7).
+> **Superseded:** §4.6 (server-authoritative stream / bespoke WebSocket handler), the "server runs the
+> game and streams the play" framing in §1–§2, and §4.8's "single-source isn't viable" conclusion.
+
 ---
 
 ## 1. Summary & Vision
