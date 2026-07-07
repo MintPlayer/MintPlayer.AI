@@ -1146,8 +1146,11 @@ first, gated:
   346.8M net:** 10/10 solve d4→d26; **100% provably QTM-optimal d1–6** (criterion C met at the shallow end); length
   slack ≈0 through d12 then **+4–6 qt at d14–d18** — that mid-depth band is the real headroom (deep-end slack is
   small only because scramble-depth loosely upper-bounds the true optimum there). **Unblocks W2/W3.**
-- **W2 (E2) — beam-width sweep** {500…10000}: find the smallest width holding solve-rate+length (latency win on
-  Hetzner CPU) and whether wider = shorter. Free (pure eval).
+- **W2 (E2) — beam-width sweep. ✅ DONE 2026-07-07.** Added `--beam-sweep` (→ `cube-policy-sweep.csv`, tracks mean
+  expansions). Findings: **width ≥1000 already solves 100%** (2000 is conservative → dropping web to 1000 ≈ halves
+  cost, tiny length cost = criterion B latency win); **wider = shorter mid-depth** (d14 17.8→**14.4**qt at b5000 ≈
+  optimal; d16–d22 −1–2qt) at ~2.4× expansions = criterion A. **Frames W3:** can value-guidance at beam 2000 buy
+  beam-5000 lengths at beam-2000 cost?
 - **W3 (E3) — value-guided beam.** The net's trained distance head is **thrown away** by `PolicyAsMlp()`; beam ranks
   by policy log-prob only (biases toward *likely*, not *short*). Add a combined policy+value resident forward + a λ
   knob (`cumLogProb + λ·(−dist)`); default **λ=0 = today's behavior** (strict superset, no regression). Sweep λ at

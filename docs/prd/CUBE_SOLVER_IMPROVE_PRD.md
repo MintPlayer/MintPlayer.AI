@@ -108,11 +108,40 @@ satisfies criterion C. `--optimal-probe` implies `--eval-only`.
 - **Gate:** a baseline table — for the shipped net, mean beam length + slack at each depth, and the ≤7 optimal gap.
   This is the **deliverable that makes "improve" falsifiable**; everything after is measured against it.
 
-### W2 — Beam-width sweep (E2)  *(free; pure eval)*
+### W2 — Beam-width sweep (E2)  ✅ DONE 2026-07-07
 - Run E1's eval-only measurement at beam widths **{500, 1000, 2000, 5000, 10000}** over the depth ladder.
 - Produce the **length ↔ width ↔ solve-rate ↔ expansions** curve.
 - **Gate:** identify (a) the smallest width holding 1.000 solve rate + current length (criterion **B**, latency win),
   and (b) whether a wider beam yields shorter solutions (criterion **A**, quality win) and at what cost.
+
+> **✅ SHIPPED + MEASURED (2026-07-07).** Added `--beam-sweep w1,w2,…` (a `TryRunStandaloneEval` mode) that re-runs
+> the depth eval per width and writes a self-describing `cube-policy-sweep.csv` (`beam,depth,beam_solved,beamlen,
+> slack,mean_expansions`). Extracted a shared `EvaluateDepths(logits, width, includeGreedy)` helper that also
+> tallies **mean expansions** (net-forward count = the machine-independent search-cost proxy). Sweep of the shipped
+> net (10 cubes/depth, RTX 3060):
+>
+> **Solve rate:** 10/10 everywhere for width **≥ 1000**; width 500 misses only d16 (9/10). **So beam 2000 (the
+> shipped default) is conservative — width 1000 already solves 100%.**
+>
+> **Length — wider beam DOES shorten mid-depth solutions** (beamlen qt; the d14–d18 headroom band):
+>
+> | depth | b500 | b1000 | b2000 | b5000 | b10000 |
+> |---|---|---|---|---|---|
+> | d14 | 19.0 | 18.2 | 17.8 | **14.4** | 14.2 |
+> | d16 | 23.8 | 22.8 | 21.2 | 20.2 | 19.4 |
+> | d18 | 26.4 | 24.4 | 24.0 | 22.6 | 22.4 |
+> | d22 | 29.4 | 28.4 | 26.2 | 25.8 | 25.0 |
+>
+> The **d14 gap collapses** at width 5000 (17.8 → 14.4 qt, slack 3.8 → **0.4** ≈ optimal); d16–d22 trim 1–2 qt.
+> **Cost:** expansions scale ~linearly with width (d26: b2000 44k → b5000 107k → b10000 209k).
+>
+> **Two opposite levers, both real:**
+> - **Criterion B (latency):** drop the web beam **2000 → 1000** → ~½ the expansions, still 100% solve, tiny length
+>   cost (d16 21.2 → 22.8). The right move for the CPU-bound Hetzner box (W5).
+> - **Criterion A (quality):** width **≥ 5000** closes d14 to near-optimal and trims d16–d22, at ~2.4× the expansions.
+>
+> **This frames W3's target precisely:** can **value-guidance at beam 2000** buy the beam-5000 lengths (d14 → ~14.4)
+> at beam-2000 cost — i.e. shorter solutions *without* paying the 2.4× search? That is now a measurable hypothesis.
 
 ### W3 — Value-guided beam scoring (E3)  *(the real modeling change; hypothesis, not a guaranteed win)*
 The net predicts distance-to-solved but beam search ranks purely by policy log-prob — which biases toward *likely*

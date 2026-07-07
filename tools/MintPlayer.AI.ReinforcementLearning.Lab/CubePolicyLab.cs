@@ -25,6 +25,7 @@ internal static class CubePolicyLab
         int evalEpisodes = 20;
         bool evalOnly = false;
         bool optimalProbe = false;
+        int[]? beamSweep = null;
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], CultureInfo.InvariantCulture);
@@ -37,6 +38,12 @@ internal static class CubePolicyLab
             else if (args[i] == "--episodes" && i + 1 < args.Length) evalEpisodes = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
             else if (args[i] == "--optimal-probe") { optimalProbe = true; evalOnly = true; } // probe is an eval-only mode
+            else if (args[i] == "--beam-sweep" && i + 1 < args.Length)
+            {
+                beamSweep = args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(int.Parse).ToArray();
+                evalOnly = true; // sweep is an eval-only mode
+            }
         }
 
         // DI all the way: the model store, clock, GPU backend and CampaignRunner are resolved from the AIHost
@@ -51,8 +58,9 @@ internal static class CubePolicyLab
         // CSV — the generic writer only emits a header when the file is absent, so appending the wider row set to the
         // training log would misalign its columns.
         string csvPath = Path.Combine(dataDir, "logs", evalOnly ? "cube-policy-eval.csv" : "cube-policy.csv");
+        string sweepCsvPath = Path.Combine(dataDir, "logs", "cube-policy-sweep.csv");
         runner.Run(
-            new CubeEfficientCampaign(backend, seed, learningRate, width, maxScramble, beamWidth, evalEpisodes, optimalProbe),
+            new CubeEfficientCampaign(backend, seed, learningRate, width, maxScramble, beamWidth, evalEpisodes, optimalProbe, beamSweep, sweepCsvPath),
             store,
             new CampaignOptions
             {
