@@ -397,6 +397,33 @@ recipe). **Negative result on every axis** — 30-game paired A/B (seeds 20000+,
   `--distill-eval`) was **not merged** (PR #21 closed; no dead code on `master`); recoverable from the
   `fruitcake-planner-distillation` branch / commit `7201dd5`.
 
+## Investigated, not pursued — FruitCake tier-occupancy grid (B4, measured 2026-07-06)
+
+The last untried perception lever from `FRUITCAKE_IMPROVE_PRD.md` §4.B: give the reactive net a **2-D view** the
+1-D skyline collapses. The shipped observation is a per-column skyline (topmost fruit per column) + relational
+blocks + big-fruit positions; it cannot see **buried** fruit or 2-D same-tier adjacency. B4 appends a **14×10
+tier-occupancy grid** (140 cells, each = the max tier of any fruit whose bounding box overlaps it ÷11; 0 = empty),
+flattened into the MLP — **obs 89 → 229**, single-sourced in `fruitcake_solver.pg` so the training env, the search
+leaf, and the browser stay in lockstep. Trained a **fresh** net at width 229 (same recipe as the F5/G3 baselines:
+`--shape --nstep 3 --gamma 0.997`) to **321k drops**. **Null result** — judged on the deployed metric (depth-3
+net+search, `--search-eval --depth 3 --topk 5 --topk2 2`), a 50-game read:
+
+| arm | mean score | meanTier | watermelon |
+|---|---|---|---|
+| B4 net + depth-3 search | 2519 | 10.52 | **26/50 (52%)** |
+| recorded bar (89-dim net + depth-3 search) | ~2505 | ~10.49 | ~50% |
+
+- **Dead on the bar** — 52% vs 50%, 2519 vs 2505: a tie within seed noise (a 26/50 count has ~±7pp sampling std;
+  a 200-game confirmation was launched). Greedy (no-search) plateaued at ~800–944, *at or below* the 963/1019
+  F5/G3 baselines — a marginally weaker reactive net that nonetheless yields the same search ceiling.
+- **Principle (reinforces the F6 takeaway): on Suika the ceiling is set by the SEARCH, not the net's perception.**
+  Richer inputs (F2 relational blocks, M30 big-fruit positions, and now the B4 grid) improve greedy play modestly
+  but do **not** move the deployed net+search system — the depth-3 planner already extracts what the board offers.
+  The reactive net is **saturated**; don't spend more retrains on observation richness for this game.
+- Code preserved at commit `d8e6893` (tag `archive/fruitcake-tier-grid-b4`; branch removed) as a validated-capability
+  artifact (like NoisyNets / F6 distillation); **never merged** — the 229-dim observation would desync the live
+  89-dim browser net (`wwwroot/models/fruitcake-net.ckpt`).
+
 ## Planned
 
 | # | Optimization | Milestone | Why / expected |
