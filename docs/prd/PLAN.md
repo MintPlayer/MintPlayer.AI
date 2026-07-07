@@ -1135,6 +1135,28 @@ game** (simpler than the glob-exclusion a shared `nn.pg` needs); the `.ckpt` par
   polynomial approximations) only if uniform single-source is a hard requirement, gated on an argmax-parity spike (MC0).
   Plan MC0–MC5. **Payoff:** the last two per-viewer AI sockets → zero server inference.
 
+## M34 — EfficientCube: shorter solutions + cheaper search  *(planned — see `CUBE_SOLVER_IMPROVE_PRD.md`)* 🔜
+
+"Can we improve the cube AI?" — the served EfficientCube net (1024-wide, teacher-free, 346.8M samples) already
+solves **100% beam at d4→d26**, so solve-rate is saturated. The honest lever is **solution length (optimality) +
+search cost**, not more training (loss is sample-bound per `OPTIMIZATIONS.md`; width settled by M17). Zero-retraining
+first, gated:
+- **W1 (E1) — instrument length.** Eval already computes `beamLen` but only *prints* it — add `d{depth}_beamlen` /
+  `_slack` metrics so it reaches the CSV; add a `--eval-only` mode to baseline the **shipped** checkpoint now; probe
+  provable QTM-optimality at depths ≤7 via `BreadthFirstPlanner`. **Unblocks everything — you can't improve an
+  unlogged metric.**
+- **W2 (E2) — beam-width sweep** {500…10000}: find the smallest width holding solve-rate+length (latency win on
+  Hetzner CPU) and whether wider = shorter. Free (pure eval).
+- **W3 (E3) — value-guided beam.** The net's trained distance head is **thrown away** by `PolicyAsMlp()`; beam ranks
+  by policy log-prob only (biases toward *likely*, not *short*). Add a combined policy+value resident forward + a λ
+  knob (`cumLogProb + λ·(−dist)`); default **λ=0 = today's behavior** (strict superset, no regression). Sweep λ at
+  matched compute. May be a null result (vanilla EfficientCube is policy-only) — honest either way.
+- **W4 — more training:** LAST, optional, only if W1–W3 show a policy ceiling. Expect incremental (sample-bound).
+
+**Success (any of):** shorter mean length at fixed width/solve-rate; OR same quality at a materially smaller beam
+(latency); OR ≥95% of depth ≤7 solved provably QTM-optimal. **Non-goal:** god's-number / arbitrary-cube coverage
+(DeepCubeA-scale). Distinct lineage from the DAVI net (PRD §13.1) — nothing here touches DAVI.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
