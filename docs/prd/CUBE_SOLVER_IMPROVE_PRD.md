@@ -5,7 +5,10 @@
 > already solves **100% (beam) at every eval depth d4→d26**, so solve-rate is saturated and can't move. What
 > *can* move: how close the beam's solutions are to optimal, and the search cost (beam width) needed to get there.
 
-- **Status:** 🔜 **PLANNED (2026-07-07).** Not started. Author: Pieterjan (with Claude Code).
+- **Status:** ✅ **DONE (2026-07-07, branch `cube-solver-improve`).** W1 instrument + baseline, W2 beam-width sweep,
+  W3 value-guided beam (null → not shipped), W4 more-training (skipped, not indicated), W5 shipped beam 2000→5000.
+  **Net outcome:** the model was already optimal wherever verifiable; the real, shipped improvement is a search-width
+  retune (shorter mid-depth solutions). Author: Pieterjan (with Claude Code).
 - **Lineage:** this is the **EfficientCube policy net** (teacher-free, `--game cube-policy`, beam search) — the
   website's *only* served AI cube solver. It is a **different net** from the DAVI value net (PRD §13/§13.1,
   `value-davi-res`), which is no longer exposed on the web. Nothing here touches DAVI.
@@ -185,10 +188,16 @@ mechanistic reason this could shorten solutions and/or let us cut the beam.
 > — could cut the ~10× overhead, but the guidance is weak enough that even a 5× cheaper version would only tie pure
 > beam, so it's not pursued. λ stays 0 in the shipped path.)
 
-### W4 — (Optional, last) more training  *(only if W1–W3 show a policy-quality ceiling)*
+### W4 — (Optional, last) more training  ⏭️ SKIPPED 2026-07-07 (not indicated)
 - Resume from the 346.8M checkpoint for a multi-day run and re-measure the length curve.
 - **Only pursue if** the measurements show search can't close the gap (i.e. the policy itself is the bottleneck).
   Given the sample-bound evidence (§2), expect **incremental** gains at best — budget accordingly, don't lead with it.
+
+> **⏭️ SKIPPED — the gate is not met.** W1–W3 showed the opposite of a policy ceiling: the net is already optimal
+> through d12 and **100% provably QTM-optimal at d1–6**, and W2 proved the mid-depth gap is **search-bound** (pure
+> beam 5000 recovers d14 to near-optimal with zero retraining). With the loss also sample-bound (`OPTIMIZATIONS.md`),
+> a multi-day run would spend days for at-best-incremental gain on a model that's optimal wherever we can verify it.
+> Not run. (The eval-only length tooling from W1 stays, so if a future training run happens it will track length.)
 
 ---
 
@@ -202,8 +211,16 @@ Kociemba fallback and the unchanged `CubeSolveAiResponse` contract:
 - **Quality (criterion A):** raise **2000 → 5000** — closes the d14 gap to near-optimal (17.8 → 14.4 qt) and trims
   d16–d22 by 1–2 qt, at ~2.4× the expansions.
 
-These pull in opposite directions; the choice is a product call (snappy solver vs. shortest solution). See W5 below.
+These pull in opposite directions; the choice is a product call (snappy solver vs. shortest solution).
 The eval-only length + sweep tooling stays so future training runs track length, not just solve rate.
+
+> **✅ SHIPPED 2026-07-07 — beam 2000 → 5000 (quality, owner's call).** `CubeController.SolveEfficient` beam width
+> raised to 5000: near-optimalizes mid-depth solutions (d14 17.8 → 14.4 qt, d16–d22 −1–2 qt) at ~2.4× the search
+> cost. The endpoint contract, resident-GPU/CPU-fallback path, and the honest Kociemba reference are unchanged; the
+> beam stays pure-policy (W3 value-guidance was worse per-compute). Beam-5000 behavior was already exercised in the
+> W2 sweep (100% solve d4→d26, the exact lengths above). *Latency note:* the Hetzner box is CPU-only, so this is
+> slower per request than 2000 — acceptable per the owner's quality preference; revisit with a time-bound if a solve
+> feels sluggish in production.
 - Keep the eval-only length measurement in the campaign so future training runs **track length, not just solve rate**.
 
 ---

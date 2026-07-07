@@ -1135,7 +1135,7 @@ game** (simpler than the glob-exclusion a shared `nn.pg` needs); the `.ckpt` par
   polynomial approximations) only if uniform single-source is a hard requirement, gated on an argmax-parity spike (MC0).
   Plan MC0–MC5. **Payoff:** the last two per-viewer AI sockets → zero server inference.
 
-## M34 — EfficientCube: shorter solutions + cheaper search  *(planned — see `CUBE_SOLVER_IMPROVE_PRD.md`)* 🔜
+## M34 — EfficientCube: shorter solutions + cheaper search  *(✅ DONE 2026-07-07, branch `cube-solver-improve` — see `CUBE_SOLVER_IMPROVE_PRD.md`)*
 
 "Can we improve the cube AI?" — the served EfficientCube net (1024-wide, teacher-free, 346.8M samples) already
 solves **100% beam at d4→d26**, so solve-rate is saturated. The honest lever is **solution length (optimality) +
@@ -1157,11 +1157,18 @@ first, gated:
   matched compute** — the heuristic needs every child forwarded (~10×/step), so pure beam-widening is **3–11×
   more compute-efficient** for the same length (d18 24.0qt: vg-500-λ8 @110k exp vs pure-2000 @39k). Signal real
   but weak → not worth shipping. **The web win is W2's beam-width knob, not this.**
-- **W4 — more training:** LAST, optional, only if W1–W3 show a policy ceiling. Expect incremental (sample-bound).
+- **W4 — more training: ⏭️ SKIPPED (not indicated).** W1–W3 showed no policy ceiling — the net is optimal through
+  d12, provably optimal d1–6, and the mid-depth gap is search-bound (W2 recovers it). Sample-bound loss ⇒ days for
+  incremental gain. Not run.
+- **W5 — ship: ✅ beam 2000 → 5000 (quality, owner's call).** `CubeController` beam width raised: d14 17.8→**14.4**qt
+  (~optimal), d16–d22 −1–2qt, at ~2.4× search cost (CPU-latency tradeoff accepted). Beam stays pure-policy.
 
-**Success (any of):** shorter mean length at fixed width/solve-rate; OR same quality at a materially smaller beam
-(latency); OR ≥95% of depth ≤7 solved provably QTM-optimal. **Non-goal:** god's-number / arbitrary-cube coverage
-(DeepCubeA-scale). Distinct lineage from the DAVI net (PRD §13.1) — nothing here touches DAVI.
+**Outcome:** the EfficientCube model was already optimal wherever verifiable; solve-rate had no headroom. The real,
+shipped improvement is a **search-width retune** (shorter mid-depth solutions) — plus permanent length/optimality
+instrumentation (`--eval-only` length metrics, `--optimal-probe`, `--beam-sweep`, `--value-sweep`). Value-guidance
+and more-training were investigated and rejected (measured, honest nulls). **Success met:** criterion A (shorter at
+fixed solve-rate) + criterion C (≥95% provably optimal d≤7 — actually 100% d1–6). **Non-goal:** god's-number /
+arbitrary-cube coverage (DeepCubeA-scale). Distinct lineage from the DAVI net (PRD §13.1) — nothing here touches DAVI.
 
 ## Testing strategy (cross-cutting, from research)
 
