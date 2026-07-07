@@ -26,6 +26,7 @@ internal static class CubePolicyLab
         bool evalOnly = false;
         bool optimalProbe = false;
         int[]? beamSweep = null;
+        double[]? valueSweep = null;
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], CultureInfo.InvariantCulture);
@@ -44,6 +45,12 @@ internal static class CubePolicyLab
                     .Select(int.Parse).ToArray();
                 evalOnly = true; // sweep is an eval-only mode
             }
+            else if (args[i] == "--value-sweep" && i + 1 < args.Length)
+            {
+                valueSweep = args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(v => double.Parse(v, CultureInfo.InvariantCulture)).ToArray();
+                evalOnly = true; // value-guided sweep is an eval-only mode
+            }
         }
 
         // DI all the way: the model store, clock, GPU backend and CampaignRunner are resolved from the AIHost
@@ -59,8 +66,9 @@ internal static class CubePolicyLab
         // training log would misalign its columns.
         string csvPath = Path.Combine(dataDir, "logs", evalOnly ? "cube-policy-eval.csv" : "cube-policy.csv");
         string sweepCsvPath = Path.Combine(dataDir, "logs", "cube-policy-sweep.csv");
+        string valueCsvPath = Path.Combine(dataDir, "logs", "cube-policy-value.csv");
         runner.Run(
-            new CubeEfficientCampaign(backend, seed, learningRate, width, maxScramble, beamWidth, evalEpisodes, optimalProbe, beamSweep, sweepCsvPath),
+            new CubeEfficientCampaign(backend, seed, learningRate, width, maxScramble, beamWidth, evalEpisodes, optimalProbe, beamSweep, sweepCsvPath, valueSweep, valueCsvPath),
             store,
             new CampaignOptions
             {

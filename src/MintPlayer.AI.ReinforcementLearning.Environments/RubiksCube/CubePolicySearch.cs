@@ -193,6 +193,117 @@ public static class CubePolicySearch
         return new(false, [], expansions);
     }
 
+    /// <summary>CPU overload: runs the two-headed net's batched forward, packing [12 logits ‖ 1 value] per row.</summary>
+    public static SearchResult BeamSearchValueGuided(CubePolicyNet net, FaceletCube start, int beamWidth = 2_000, double valueWeight = 1.0, int maxDepth = MaxSolutionMoves)
+        => BeamSearchValueGuided((features, rows) =>
+        {
+            using (GradMode.NoGrad())
+            {
+                var (logits, value) = net.Forward(new Tensor(features, rows, RubiksCubeEnv.ObservationSize));
+                const int stride = RubiksCubeEnv.ActionCount + 1;
+                var packed = new float[rows * stride];
+                for (int r = 0; r < rows; r++)
+                {
+                    Array.Copy(logits.Data, r * RubiksCubeEnv.ActionCount, packed, r * stride, RubiksCubeEnv.ActionCount);
+                    packed[r * stride + RubiksCubeEnv.ActionCount] = value.Data[r];
+                }
+                return packed;
+            }
+        }, start, beamWidth, valueWeight, maxDepth);
+
+    /// <summary>
+    /// Value-guided beam search: the pure-policy beam (above), but each candidate is ranked by
+    /// <c>cumulative-log-prob − valueWeight · relu(value)</c> instead of log-prob alone — nudging the beam toward
+    /// states the value head predicts are CLOSER to solved, which tends to shorten solutions. At
+    /// <paramref name="valueWeight"/> = 0 this reduces to the pure beam's ranking (so it's a strict superset), but
+    /// prefer the cheaper <see cref="BeamSearch(Func{float[],int,float[]},FaceletCube,int,int)"/> for that case.
+    /// <para>
+    /// Unlike the pure beam (which scores children from the parent's logits and forwards only survivors), using the
+    /// heuristic requires each child's OWN value, so this forwards ALL candidate children each step (≈ beam × ~10
+    /// states) and reuses those logits to expand the survivors next step — every state is forwarded exactly once.
+    /// The extra per-step forwards are the honest cost of the heuristic; compare variants by <see
+    /// cref="SearchResult.Expansions"/> (states forwarded), not by beam width.
+    /// </para>
+    /// <para><paramref name="forwardWithValue"/> maps a row-major observation batch to row-major
+    /// <c>[ActionCount+1]</c> outputs per row: the raw policy logits then the raw value (distance / DistanceScale).</para>
+    /// </summary>
+    public static SearchResult BeamSearchValueGuided(Func<float[], int, float[]> forwardWithValue, FaceletCube start, int beamWidth = 2_000, double valueWeight = 1.0, int maxDepth = MaxSolutionMoves)
+    {
+        if (start.IsSolved)
+            return new(true, [], 0);
+
+        const int stride = RubiksCubeEnv.ActionCount + 1;
+        var startObs = new float[RubiksCubeEnv.ObservationSize];
+        RubiksCubeEnv.WriteObservation(start, startObs);
+        float[] startOut = forwardWithValue(startObs, 1);
+        int expansions = 1;
+        var beam = new List<VgNode> { new(start, -1, [], 0.0, start.ToKociembaString(), startOut[..RubiksCubeEnv.ActionCount]) };
+
+        for (int depth = 0; depth < maxDepth && beam.Count > 0; depth++)
+        {
+            // Expand every node's non-undo children from its (already-computed) logits — same masking as the pure beam.
+            var candidates = new List<BeamNode>(beam.Count * RubiksCubeEnv.ActionCount);
+            foreach (var node in beam)
+            {
+                int undo = RubiksCubeEnv.InverseAction(node.LastAction);
+                int blockedRepeat = node.Path.Count >= 2 && node.Path[^1] == node.Path[^2] ? node.LastAction : -1;
+
+                float max = float.NegativeInfinity;
+                for (int a = 0; a < RubiksCubeEnv.ActionCount; a++)
+                    if (a != undo && a != blockedRepeat && node.Logits[a] > max) max = node.Logits[a];
+                double sumExp = 0;
+                for (int a = 0; a < RubiksCubeEnv.ActionCount; a++)
+                    if (a != undo && a != blockedRepeat) sumExp += Math.Exp(node.Logits[a] - max);
+                double logZ = max + Math.Log(sumExp);
+
+                for (int a = 0; a < RubiksCubeEnv.ActionCount; a++)
+                {
+                    if (a == undo || a == blockedRepeat) continue;
+                    var child = node.Cube.Clone();
+                    child.ApplyQuarterTurn(a);
+                    var path = new List<int>(node.Path) { a };
+                    if (child.IsSolved)
+                        return new(true, Canonicalize(path), expansions);
+                    double cum = node.CumLogProb + (node.Logits[a] - logZ);
+                    candidates.Add(new BeamNode(child, a, path, cum, child.ToKociembaString()));
+                }
+            }
+            if (candidates.Count == 0) break;
+
+            // One batched forward over ALL candidate children → their logits (to expand them next step) + value.
+            var obs = new float[candidates.Count * RubiksCubeEnv.ObservationSize];
+            for (int i = 0; i < candidates.Count; i++)
+                RubiksCubeEnv.WriteObservation(candidates[i].Cube, obs.AsSpan(i * RubiksCubeEnv.ObservationSize, RubiksCubeEnv.ObservationSize));
+            float[] outputs = forwardWithValue(obs, candidates.Count);
+            expansions += candidates.Count;
+
+            // Rank by cumulative log-prob minus the (clamped) predicted distance-to-go, weighted by valueWeight.
+            var scored = new (BeamNode Node, double Score, float[] Logits)[candidates.Count];
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                int off = i * stride;
+                float v = outputs[off + RubiksCubeEnv.ActionCount];
+                double score = candidates[i].CumLogProb - valueWeight * Math.Max(0f, v);
+                scored[i] = (candidates[i], score, outputs[off..(off + RubiksCubeEnv.ActionCount)]);
+            }
+            Array.Sort(scored, (x, y) => y.Score.CompareTo(x.Score));
+
+            var next = new List<VgNode>(Math.Min(beamWidth, scored.Length));
+            var taken = new HashSet<string>();
+            foreach (var (node, _, logits) in scored)
+            {
+                if (!taken.Add(node.Key)) continue;
+                next.Add(new VgNode(node.Cube, node.LastAction, node.Path, node.CumLogProb, node.Key, logits));
+                if (next.Count >= beamWidth) break;
+            }
+            beam = next;
+        }
+
+        return new(false, [], expansions);
+    }
+
+    private sealed record VgNode(FaceletCube Cube, int LastAction, List<int> Path, double CumLogProb, string Key, float[] Logits);
+
     /// <summary>
     /// Collapse a raw quarter-turn path into its canonical minimal form: fold each maximal run of same-face
     /// turns modulo 4 (so U'×5 → U', U U U U → nothing, U U → a half-turn kept as two quarter-turns, X X' →

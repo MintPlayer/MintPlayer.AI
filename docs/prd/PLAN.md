@@ -1151,10 +1151,12 @@ first, gated:
   cost, tiny length cost = criterion B latency win); **wider = shorter mid-depth** (d14 17.8→**14.4**qt at b5000 ≈
   optimal; d16–d22 −1–2qt) at ~2.4× expansions = criterion A. **Frames W3:** can value-guidance at beam 2000 buy
   beam-5000 lengths at beam-2000 cost?
-- **W3 (E3) — value-guided beam.** The net's trained distance head is **thrown away** by `PolicyAsMlp()`; beam ranks
-  by policy log-prob only (biases toward *likely*, not *short*). Add a combined policy+value resident forward + a λ
-  knob (`cumLogProb + λ·(−dist)`); default **λ=0 = today's behavior** (strict superset, no regression). Sweep λ at
-  matched compute. May be a null result (vanilla EfficientCube is policy-only) — honest either way.
+- **W3 (E3) — value-guided beam. ✅ DONE 2026-07-07 — NULL RESULT, keep λ=0.** Built the combined policy+value
+  resident head (`PolicyAndValueAsMlp`) + `BeamSearchValueGuided` (`cumLogProb − λ·relu(value)`) + `--value-sweep`.
+  Value guidance genuinely shortens solutions (λ=8: d18 −2.4, d22 −2.6qt; fixed d16 9/10→10/10) **but loses at
+  matched compute** — the heuristic needs every child forwarded (~10×/step), so pure beam-widening is **3–11×
+  more compute-efficient** for the same length (d18 24.0qt: vg-500-λ8 @110k exp vs pure-2000 @39k). Signal real
+  but weak → not worth shipping. **The web win is W2's beam-width knob, not this.**
 - **W4 — more training:** LAST, optional, only if W1–W3 show a policy ceiling. Expect incremental (sample-bound).
 
 **Success (any of):** shorter mean length at fixed width/solve-rate; OR same quality at a materially smaller beam

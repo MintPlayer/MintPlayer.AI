@@ -1,3 +1,5 @@
+using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
+using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 
 namespace MintPlayer.AI.ReinforcementLearning.Tests;
@@ -62,4 +64,43 @@ public class CubePolicySearchTests
 
     private static char Face(string move) => move[0];
     private static bool Prime(string move) => move.EndsWith('\'');
+
+    [Fact]
+    public void PolicyAndValueAsMlp_ReproducesNetLogitsAndValue()
+    {
+        // The combined [12 logits ‖ 1 value] head must match the two-headed net exactly — guards the
+        // weight-interleaving index math in PolicyAndValueAsMlp (value at output index ActionCount).
+        var net = new CubePolicyNet(new Xoshiro256StarStar(42), hidden: 32);
+        var cube = new FaceletCube();
+        cube.ApplyQuarterTurn(6); // an arbitrary non-solved state
+
+        var obs = new float[RubiksCubeEnv.ObservationSize];
+        RubiksCubeEnv.WriteObservation(cube, obs);
+        var (logits, value) = net.Forward(new Tensor(obs, 1, obs.Length));
+        var combined = net.PolicyAndValueAsMlp().Forward(new Tensor(obs, 1, obs.Length));
+
+        for (int a = 0; a < RubiksCubeEnv.ActionCount; a++)
+            Assert.Equal(logits.Data[a], combined.Data[a], 3);
+        Assert.Equal(value.Data[0], combined.Data[RubiksCubeEnv.ActionCount], 3);
+    }
+
+    [Fact]
+    public void BeamSearchValueGuided_ZeroWeight_MatchesPurePolicyLength()
+    {
+        // A depth-3 scramble (U R F — distinct faces, so the optimum is exactly 3 qt). With uniform logits both
+        // beams explore identically; a wide beam is guaranteed to reach the solved state at depth 3. At
+        // valueWeight = 0 the value-guided ranking reduces to the pure-policy ranking (a strict superset).
+        var cube = new FaceletCube();
+        foreach (int a in new[] { 0, 6, 8 }) cube.ApplyQuarterTurn(a);
+
+        var pure = CubePolicySearch.BeamSearch(
+            (_, rows) => new float[rows * RubiksCubeEnv.ActionCount], cube, beamWidth: 1000);
+        var guided = CubePolicySearch.BeamSearchValueGuided(
+            (_, rows) => new float[rows * (RubiksCubeEnv.ActionCount + 1)], cube, beamWidth: 1000, valueWeight: 0.0);
+
+        Assert.True(pure.Solved);
+        Assert.True(guided.Solved);
+        Assert.Equal(3, pure.Moves.Length);
+        Assert.Equal(pure.Moves.Length, guided.Moves.Length);
+    }
 }

@@ -19,7 +19,7 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 /// the Ilgpu.Hosting <c>AddGpuBackend()</c>; the container owns its lifetime). Resumes net + Adam + a persisted
 /// (samples, round) counter under distinct `policy-efficient*` ids, so the imitation net is never touched.
 /// </summary>
-internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes, bool optimalProbe = false, int[]? beamSweep = null, string? sweepCsvPath = null)
+internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes, bool optimalProbe = false, int[]? beamSweep = null, string? sweepCsvPath = null, double[]? valueSweep = null, string? valueCsvPath = null)
     : ITrainingCampaign
 {
     private const string PolicyId = "policy-efficient";
@@ -144,7 +144,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
         var (beamLogits, device) = BuildBeamForward();
         try
         {
-            foreach (var d in EvaluateDepths(beamLogits, beamWidth, includeGreedy: true))
+            foreach (var d in EvaluateDepths(cube => CubePolicySearch.BeamSearch(beamLogits, cube, beamWidth), includeGreedy: true))
             {
                 metrics.Add(new($"d{d.Depth}_greedy", d.GreedySolved / (double)d.Episodes, "F3"));
                 metrics.Add(new($"d{d.Depth}_beam", d.BeamSolved / (double)d.Episodes, "F3"));
@@ -168,7 +168,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     /// machine-independent search-cost proxy the sweep trades off against solution length.</summary>
     private readonly record struct DepthEval(int Depth, int Episodes, int GreedySolved, int BeamSolved, double MeanLen, double MeanExpansions);
 
-    private List<DepthEval> EvaluateDepths(Func<float[], int, float[]> beamLogits, int width, bool includeGreedy)
+    private List<DepthEval> EvaluateDepths(Func<FaceletCube, CubePolicySearch.SearchResult> solve, bool includeGreedy)
     {
         var results = new List<DepthEval>(EvalDepths.Length);
         foreach (int depth in EvalDepths)
@@ -183,7 +183,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
                 if (cube.IsSolved) { greedySolved++; beamSolved++; continue; }
 
                 if (includeGreedy && CubePolicySearch.GreedyRollout(_net, cube).Solved) greedySolved++;
-                var beam = CubePolicySearch.BeamSearch(beamLogits, cube, width);
+                var beam = solve(cube);
                 expansions += beam.Expansions;
                 if (beam.Solved) { beamSolved++; beamLen += beam.Moves.Length; }
             }
@@ -218,9 +218,79 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     /// </summary>
     public bool TryRunStandaloneEval(IModelStore store)
     {
+        if (valueSweep is { Length: > 0 }) { RunValueSweep(); return true; }
         if (beamSweep is { Length: > 0 }) { RunBeamSweep(); return true; }
         if (optimalProbe) { RunOptimalProbe(); return true; }
         return false;
+    }
+
+    /// <summary>
+    /// The value-guided beam forward: like <see cref="BuildBeamForward"/> but over the COMBINED policy+value head
+    /// (<see cref="CubePolicyNet.PolicyAndValueAsMlp"/>), so each row returns [12 logits ‖ 1 value]. The returned
+    /// <see cref="DeviceMlp"/> (if any) is owned by the caller.
+    /// </summary>
+    private (Func<float[], int, float[]> Forward, DeviceMlp? Device) BuildPolicyValueForward()
+    {
+        const int stride = RubiksCubeEnv.ActionCount + 1;
+        DeviceMlp? device = _adaptive.Gpu is { } gpu ? gpu.CreateResidentForward(_net.PolicyAndValueAsMlp()) : null;
+        Func<float[], int, float[]> forward = device is not null
+            ? device.Forward
+            : (features, rows) =>
+            {
+                using (GradMode.NoGrad())
+                {
+                    var (logits, value) = _net.Forward(new Tensor(features, rows, RubiksCubeEnv.ObservationSize));
+                    var packed = new float[rows * stride];
+                    for (int r = 0; r < rows; r++)
+                    {
+                        Array.Copy(logits.Data, r * RubiksCubeEnv.ActionCount, packed, r * stride, RubiksCubeEnv.ActionCount);
+                        packed[r * stride + RubiksCubeEnv.ActionCount] = value.Data[r];
+                    }
+                    return packed;
+                }
+            };
+        return (forward, device);
+    }
+
+    /// <summary>
+    /// `--value-sweep λ1,λ2,…`: run the depth eval with value-GUIDED beam search at each λ (fixed beam width) and
+    /// log length + expansions per λ × depth (M34 W3). Tests whether the (already-trained) value head shortens
+    /// solutions and at what search cost — compared against the pure-policy W2 curve by expansions (states
+    /// forwarded), NOT beam width. λ = 0 is the pure-policy baseline. Writes its own self-describing CSV.
+    /// </summary>
+    private void RunValueSweep()
+    {
+        var (forward, device) = BuildPolicyValueForward();
+        try
+        {
+            if (valueCsvPath is not null)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(valueCsvPath)!);
+                if (!File.Exists(valueCsvPath))
+                    File.AppendAllText(valueCsvPath, "utc,lambda,beam,depth,episodes,beam_solved,beamlen,slack,mean_expansions\n");
+            }
+            Log($"value-guided sweep: λ [{string.Join(", ", valueSweep!)}], beam {beamWidth}, {evalEpisodes} cubes/depth over d[{string.Join(",", EvalDepths)}]");
+            foreach (double lambda in valueSweep!)
+            {
+                var report = new StringBuilder($"  λ {lambda}: ");
+                Func<FaceletCube, CubePolicySearch.SearchResult> solve = lambda <= 0
+                    ? cube => CubePolicySearch.BeamSearchValueGuided(forward, cube, beamWidth, 0.0) // still forwards children (matched cost)
+                    : cube => CubePolicySearch.BeamSearchValueGuided(forward, cube, beamWidth, lambda);
+                foreach (var d in EvaluateDepths(solve, includeGreedy: false))
+                {
+                    double slack = d.BeamSolved > 0 ? d.MeanLen - d.Depth : 0;
+                    report.Append($"d{d.Depth} {d.BeamSolved}/{d.Episodes}@{d.MeanLen:F1}qt(x{d.MeanExpansions:F0}) | ");
+                    if (valueCsvPath is not null)
+                        File.AppendAllText(valueCsvPath, string.Create(CultureInfo.InvariantCulture,
+                            $"{DateTime.UtcNow:u},{lambda},{beamWidth},{d.Depth},{d.Episodes},{d.BeamSolved},{d.MeanLen:F2},{slack:F2},{d.MeanExpansions:F0}\n"));
+                }
+                Log(report.ToString());
+            }
+        }
+        finally
+        {
+            device?.Dispose();
+        }
     }
 
     /// <summary>
@@ -244,7 +314,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
             foreach (int width in beamSweep!)
             {
                 var report = new StringBuilder($"  beam {width}: ");
-                foreach (var d in EvaluateDepths(beamLogits, width, includeGreedy: false))
+                foreach (var d in EvaluateDepths(cube => CubePolicySearch.BeamSearch(beamLogits, cube, width), includeGreedy: false))
                 {
                     double slack = d.BeamSolved > 0 ? d.MeanLen - d.Depth : 0;
                     report.Append($"d{d.Depth} {d.BeamSolved}/{d.Episodes}@{d.MeanLen:F1}qt(x{d.MeanExpansions:F0}) | ");

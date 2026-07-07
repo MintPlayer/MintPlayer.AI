@@ -160,6 +160,31 @@ mechanistic reason this could shorten solutions and/or let us cut the beam.
   record the null result (this is a real possibility — vanilla EfficientCube uses policy-only beam by design; the
   value head is *our* extra signal and may not help). Honest either way.
 
+> **✅ DONE — NULL RESULT (2026-07-07). Keep λ=0 (pure policy); do NOT ship value-guidance.** Built it in full:
+> `CubePolicyNet.PolicyAndValueAsMlp()` (combined `[324,h,h,13]` head → one resident forward gives logits + value),
+> `CubePolicySearch.BeamSearchValueGuided(…, valueWeight)` scoring `cumLogProb − λ·relu(value)`, and a `--value-sweep`
+> mode (→ `cube-policy-value.csv`, tracks expansions). **Correctness check passed:** λ=0 exactly reproduces the
+> beam-sweep@500 lengths.
+>
+> **Value guidance genuinely shortens solutions** (monotonic in λ; at beam 500, λ=8 vs λ=0: d18 −2.4, d22 −2.6,
+> d16 −1.2 qt, and it *fixed* d16 solve 9/10→10/10). **But it loses decisively at matched compute (the gate):**
+> using the value heuristic in pruning requires forwarding every candidate child (~10× the states/step), so a
+> value-guided beam-500 spends ~80–140k expansions — and plain beam-widening buys the same length far cheaper:
+>
+> | d18 | length | expansions |
+> |---|---|---|
+> | vg beam-500 λ=8 | 24.0 | 110k |
+> | **pure beam-2000** | **24.0** | **39k** (2.8× cheaper, same length) |
+> | vg beam-500 λ=0 | 26.4 | 123k |
+> | **pure beam-500** | **26.4** | **11k** (11× cheaper, identical — the raw child-forward overhead) |
+>
+> At d16, pure beam-5000 gets **20.2 qt at 77k** vs vg's 22.6 qt at 103k — shorter *and* cheaper. **Verdict:** the
+> value head's guidance signal is real but weak, and widening the pure-policy beam is **3–11× more compute-efficient**
+> for the same solution length. So value-guidance is not worth its complexity on the web — **the shipping win is
+> W2's beam-width knob, not W3.** (Unexplored: a *pre-prune* variant — cut candidates by cumLogProb before forwarding
+> — could cut the ~10× overhead, but the guidance is weak enough that even a 5× cheaper version would only tie pure
+> beam, so it's not pursued. λ stays 0 in the shipped path.)
+
 ### W4 — (Optional, last) more training  *(only if W1–W3 show a policy-quality ceiling)*
 - Resume from the 346.8M checkpoint for a multi-day run and re-measure the length curve.
 - **Only pursue if** the measurements show search can't close the gap (i.e. the policy itself is the bottleneck).
@@ -169,12 +194,16 @@ mechanistic reason this could shorten solutions and/or let us cut the beam.
 
 ## 5. Shipping the win to the web
 
-Whatever W2/W3 conclude:
-- If a smaller beam width holds quality (criterion B) → lower `beamWidth` in `CubeController.SolveEfficient`
-  (currently hard-coded 2000) → faster Hetzner-CPU solves at no quality cost.
-- If value-guidance wins (criterion A/B) → wire the combined resident forward + chosen λ into `CubeModelService`
-  (the resident `DeviceMlp` build) and `CubeController`. The endpoint contract (`CubeSolveAiResponse`) is unchanged;
-  the honest Kociemba fallback stays.
+**W3 was a null (value-guidance loses at matched compute), so the shipping win is purely W2's beam-width knob** —
+`beamWidth` in `CubeController.SolveEfficient` is hard-coded 2000. Two defensible retunes, both keeping the honest
+Kociemba fallback and the unchanged `CubeSolveAiResponse` contract:
+- **Latency (criterion B):** drop **2000 → 1000** — still 100% solve d4→d26, ~½ the expansions (the Hetzner box is
+  CPU, so this is a real per-request latency win), at a small length cost (e.g. d16 21.2 → 22.8 qt).
+- **Quality (criterion A):** raise **2000 → 5000** — closes the d14 gap to near-optimal (17.8 → 14.4 qt) and trims
+  d16–d22 by 1–2 qt, at ~2.4× the expansions.
+
+These pull in opposite directions; the choice is a product call (snappy solver vs. shortest solution). See W5 below.
+The eval-only length + sweep tooling stays so future training runs track length, not just solve rate.
 - Keep the eval-only length measurement in the campaign so future training runs **track length, not just solve rate**.
 
 ---
