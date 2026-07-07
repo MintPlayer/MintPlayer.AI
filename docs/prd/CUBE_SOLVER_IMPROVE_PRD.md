@@ -75,8 +75,27 @@ compute; PRD §13.1's laptop-GPU ceiling applies).
 The steps are ordered so each **unblocks** the next: you can't tune search without a length metric, and you can't
 justify value-guidance without a beam-width baseline.
 
-### W1 — Instrument solution length (E1)  *(tiny, unblocks everything)*
+### W1 — Instrument solution length (E1)  ✅ DONE 2026-07-07
 The eval already tracks `beamLen`; it just never leaves the console.
+
+> **✅ SHIPPED + BASELINED (2026-07-07, branch `cube-solver-improve`).** `Evaluate()` now emits `d{depth}_beamlen`
+> + `d{depth}_slack` metrics (→ `cube-policy-eval.csv`, routed separately so it can't misalign the training log);
+> `--eval-only` already existed (routes to `Evaluate()`); a `--optimal-probe` standalone mode (`TryRunStandaloneEval`)
+> compares the beam to `BreadthFirstPlanner` optimum at BFS-tractable depths 1–6.
+>
+> **Baseline of the shipped 346.8M net (beam 2000, 10 cubes/depth, RTX 3060):** beam solves **10/10 at every depth
+> d4→d26** (confirmed). **Length slack (beam − scramble depth):** d4 **0.0**, d8 **0.0**, d12 **−0.2**, d14 **+3.8**,
+> d16 **+5.2**, d18 **+6.0**, d20 +3.6, d22 +4.2, d24 +3.2, d26 +0.4. **Provable-optimality probe:** **100%
+> QTM-optimal at d1–d6** (beam length == BFS optimum on all 60 cubes) → criterion **C already met** at the shallow end.
+>
+> **Read:** the beam is optimal through ~d12, then opens a **~4–6 qt gap at d14–d18** — that mid-depth band is the
+> concrete headroom for W2/W3. Slack shrinks again at d24–d26 only because scramble-depth is a loose upper bound on
+> the true optimum there (a random d26 scramble usually solves in well under 26 qt), NOT because the beam is optimal.
+> So the honest target metric is the **d14–d18 slack**, not the deep-end numbers.
+
+**As-built note:** E1c capped at **d6** (not the planned d7) — the BFS radius-d ball grows ~9× per quarter-turn
+(d6 ≈ 1M states, d7 ≈ 9M), so d7 would blow past a sub-minute-per-cube budget; d1–6 at 100% optimal already
+satisfies criterion C. `--optimal-probe` implies `--eval-only`.
 - **E1a — persist length metrics.** In `CubeEfficientCampaign.Evaluate`, add per-depth metrics
   `d{depth}_beamlen` (mean quarter-turns over solved beams) and `d{depth}_slack` (`beamlen − depth`) to the
   `metrics` list so `CampaignRunner` writes them as new CSV columns. *(The CSV header is metric-derived, so this is

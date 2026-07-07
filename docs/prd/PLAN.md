@@ -1141,10 +1141,11 @@ game** (simpler than the glob-exclusion a shared `nn.pg` needs); the `.ckpt` par
 solves **100% beam at d4→d26**, so solve-rate is saturated. The honest lever is **solution length (optimality) +
 search cost**, not more training (loss is sample-bound per `OPTIMIZATIONS.md`; width settled by M17). Zero-retraining
 first, gated:
-- **W1 (E1) — instrument length.** Eval already computes `beamLen` but only *prints* it — add `d{depth}_beamlen` /
-  `_slack` metrics so it reaches the CSV; add a `--eval-only` mode to baseline the **shipped** checkpoint now; probe
-  provable QTM-optimality at depths ≤7 via `BreadthFirstPlanner`. **Unblocks everything — you can't improve an
-  unlogged metric.**
+- **W1 (E1) — instrument length. ✅ DONE 2026-07-07.** Added `d{depth}_beamlen`/`_slack` metrics (→ separate
+  `cube-policy-eval.csv`) + a `--optimal-probe` mode (beam vs `BreadthFirstPlanner`, d1–6). **Baseline of the shipped
+  346.8M net:** 10/10 solve d4→d26; **100% provably QTM-optimal d1–6** (criterion C met at the shallow end); length
+  slack ≈0 through d12 then **+4–6 qt at d14–d18** — that mid-depth band is the real headroom (deep-end slack is
+  small only because scramble-depth loosely upper-bounds the true optimum there). **Unblocks W2/W3.**
 - **W2 (E2) — beam-width sweep** {500…10000}: find the smallest width holding solve-rate+length (latency win on
   Hetzner CPU) and whether wider = shorter. Free (pure eval).
 - **W3 (E3) — value-guided beam.** The net's trained distance head is **thrown away** by `PolicyAsMlp()`; beam ranks

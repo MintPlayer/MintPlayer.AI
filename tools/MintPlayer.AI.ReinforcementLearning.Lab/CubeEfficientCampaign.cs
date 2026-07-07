@@ -2,6 +2,7 @@ using System.Text;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
+using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
@@ -17,7 +18,7 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 /// the Ilgpu.Hosting <c>AddGpuBackend()</c>; the container owns its lifetime). Resumes net + Adam + a persisted
 /// (samples, round) counter under distinct `policy-efficient*` ids, so the imitation net is never touched.
 /// </summary>
-internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes)
+internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes, bool optimalProbe = false)
     : ITrainingCampaign
 {
     private const string PolicyId = "policy-efficient";
@@ -26,6 +27,9 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     private const int BatchSize = 1000;
     private const int SamplesPerRound = 50_000;
     private static readonly int[] EvalDepths = [4, 8, 12, 14, 16, 18, 20, 22, 24, 26];
+    // BFS-optimal is the ground-truth reference for the provable-optimality probe, but the radius-d ball grows
+    // ~9× per quarter-turn (d6 ≈ 1M states, d7 ≈ 9M), so the probe caps at a depth that stays sub-minute per cube.
+    private static readonly int[] OptimalProbeDepths = [1, 2, 3, 4, 5, 6];
 
     private readonly Xoshiro256StarStar _rng = new(seed);
     private readonly int _generators = Math.Max(1, System.Environment.ProcessorCount - 2);
@@ -136,16 +140,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
         var report = new StringBuilder();
         report.Append($"samples {_totalSamples:N0}, CE {ce:F3}, acc {acc:P1}, value {huber:F4} | ");
 
-        // Beam search runs the bulk of the forwards — route them through a GPU-resident DeviceMlp over the
-        // policy head (weights uploaded once per eval) when a GPU is present; CPU autograd otherwise.
-        DeviceMlp? device = _adaptive.Gpu is { } gpu ? gpu.CreateResidentForward(_net.PolicyAsMlp()) : null;
-        Func<float[], int, float[]> beamLogits = device is not null
-            ? device.Forward
-            : (features, rows) =>
-            {
-                using (GradMode.NoGrad())
-                    return _net.Forward(new Tensor(features, rows, RubiksCubeEnv.ObservationSize)).Logits.Data;
-            };
+        var (beamLogits, device) = BuildBeamForward();
         try
         {
             foreach (int depth in EvalDepths)
@@ -162,9 +157,14 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
                     var beam = CubePolicySearch.BeamSearch(beamLogits, cube, beamWidth);
                     if (beam.Solved) { beamSolved++; beamLen += beam.Moves.Length; }
                 }
+                double meanLen = beamSolved > 0 ? beamLen / (double)beamSolved : 0;
                 metrics.Add(new($"d{depth}_greedy", greedySolved / (double)evalEpisodes, "F3"));
                 metrics.Add(new($"d{depth}_beam", beamSolved / (double)evalEpisodes, "F3"));
-                string lenTag = beamSolved > 0 ? $" ({beamLen / (double)beamSolved:F1}qt)" : "";
+                // Solution quality: mean beam length (quarter-turns) and its slack over the scramble depth, which
+                // upper-bounds the optimal (accidental cancellations only shorten it). Slack → 0 means near-optimal.
+                metrics.Add(new($"d{depth}_beamlen", meanLen, "F2"));
+                metrics.Add(new($"d{depth}_slack", beamSolved > 0 ? meanLen - depth : 0, "F2"));
+                string lenTag = beamSolved > 0 ? $" ({meanLen:F1}qt)" : "";
                 report.Append($"d{depth}: {greedySolved}/{evalEpisodes}g {beamSolved}/{evalEpisodes}b{lenTag} | ");
             }
         }
@@ -173,6 +173,74 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
             device?.Dispose();
         }
         return new CampaignEval(metrics, report.ToString());
+    }
+
+    /// <summary>
+    /// The beam-search forward: a GPU-resident <see cref="DeviceMlp"/> over the policy head (weights uploaded
+    /// once) when a device is present, else a CPU autograd forward. The returned <see cref="DeviceMlp"/> (if any)
+    /// is owned by the caller and must be disposed once the beam work is done.
+    /// </summary>
+    private (Func<float[], int, float[]> Forward, DeviceMlp? Device) BuildBeamForward()
+    {
+        DeviceMlp? device = _adaptive.Gpu is { } gpu ? gpu.CreateResidentForward(_net.PolicyAsMlp()) : null;
+        Func<float[], int, float[]> forward = device is not null
+            ? device.Forward
+            : (features, rows) =>
+            {
+                using (GradMode.NoGrad())
+                    return _net.Forward(new Tensor(features, rows, RubiksCubeEnv.ObservationSize)).Logits.Data;
+            };
+        return (forward, device);
+    }
+
+    /// <summary>
+    /// Eval-only provable-optimality probe (`--optimal-probe`): at the BFS-tractable low depths, compare the beam's
+    /// solution length against the <see cref="BreadthFirstPlanner"/> optimum (the ground truth — no Kociemba) and
+    /// report the fraction the beam solves in exactly the optimal number of quarter-turns. This is criterion C from
+    /// the M34 plan: "≥95% of depth ≤7 solved provably QTM-optimal". Prints its own table (it does not fit the
+    /// generic metric CSV), so <see cref="CampaignRunner"/> treats the run as fully handled.
+    /// </summary>
+    public bool TryRunStandaloneEval(IModelStore store)
+    {
+        if (!optimalProbe) return false;
+
+        int episodes = Math.Min(evalEpisodes, 10); // BFS dominates the cost here; a handful of cubes/depth suffices.
+        var model = new CubeModel();
+        var (beamLogits, device) = BuildBeamForward();
+        Log($"provable-optimality probe: beam (width {beamWidth}) vs BFS-optimal, {episodes} cubes/depth (quarter-turns)");
+        try
+        {
+            foreach (int depth in OptimalProbeDepths)
+            {
+                int solved = 0, provablyOptimal = 0;
+                double beamLenSum = 0, optLenSum = 0;
+                for (int episode = 0; episode < episodes; episode++)
+                {
+                    var evalRng = new Xoshiro256StarStar((ulong)(100_000 * depth + episode));
+                    var cube = new FaceletCube();
+                    cube.Apply(FaceletCube.ScrambleMoves(evalRng, depth, quarterTurnsOnly: true));
+
+                    // The scramble is itself a solution of length ≤ depth, so an optimum within `depth` always exists.
+                    int optLen = BreadthFirstPlanner.FindOptimal(model, cube, depth)?.Count ?? depth;
+                    var beam = CubePolicySearch.BeamSearch(beamLogits, cube, beamWidth);
+                    if (!beam.Solved) continue;
+
+                    solved++;
+                    beamLenSum += beam.Moves.Length;
+                    optLenSum += optLen;
+                    if (beam.Moves.Length == optLen) provablyOptimal++; // beam ≥ optimal always; equality ⇒ optimal
+                }
+                double beamMean = solved > 0 ? beamLenSum / solved : 0;
+                double optMean = solved > 0 ? optLenSum / solved : 0;
+                double pct = solved > 0 ? 100.0 * provablyOptimal / solved : 0;
+                Log($"  d{depth}: {solved}/{episodes} solved | beam {beamMean:F2}qt vs optimal {optMean:F2}qt | provably-optimal {provablyOptimal}/{solved} ({pct:F0}%)");
+            }
+        }
+        finally
+        {
+            device?.Dispose();
+        }
+        return true;
     }
 
     public void Checkpoint(IModelStore store)
