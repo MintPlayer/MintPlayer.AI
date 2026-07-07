@@ -1135,6 +1135,41 @@ game** (simpler than the glob-exclusion a shared `nn.pg` needs); the `.ckpt` par
   polynomial approximations) only if uniform single-source is a hard requirement, gated on an argmax-parity spike (MC0).
   Plan MC0–MC5. **Payoff:** the last two per-viewer AI sockets → zero server inference.
 
+## M34 — EfficientCube: shorter solutions + cheaper search  *(✅ DONE 2026-07-07, branch `cube-solver-improve` — see `CUBE_SOLVER_IMPROVE_PRD.md`)*
+
+"Can we improve the cube AI?" — the served EfficientCube net (1024-wide, teacher-free, 346.8M samples) already
+solves **100% beam at d4→d26**, so solve-rate is saturated. The honest lever is **solution length (optimality) +
+search cost**, not more training (loss is sample-bound per `OPTIMIZATIONS.md`; width settled by M17). Zero-retraining
+first, gated:
+- **W1 (E1) — instrument length. ✅ DONE 2026-07-07.** Added `d{depth}_beamlen`/`_slack` metrics (→ separate
+  `cube-policy-eval.csv`) + a `--optimal-probe` mode (beam vs `BreadthFirstPlanner`, d1–6). **Baseline of the shipped
+  346.8M net:** 10/10 solve d4→d26; **100% provably QTM-optimal d1–6** (criterion C met at the shallow end); length
+  slack ≈0 through d12 then **+4–6 qt at d14–d18** — that mid-depth band is the real headroom (deep-end slack is
+  small only because scramble-depth loosely upper-bounds the true optimum there). **Unblocks W2/W3.**
+- **W2 (E2) — beam-width sweep. ✅ DONE 2026-07-07.** Added `--beam-sweep` (→ `cube-policy-sweep.csv`, tracks mean
+  expansions). Findings: **width ≥1000 already solves 100%** (2000 is conservative → dropping web to 1000 ≈ halves
+  cost, tiny length cost = criterion B latency win); **wider = shorter mid-depth** (d14 17.8→**14.4**qt at b5000 ≈
+  optimal; d16–d22 −1–2qt) at ~2.4× expansions = criterion A. **Frames W3:** can value-guidance at beam 2000 buy
+  beam-5000 lengths at beam-2000 cost?
+- **W3 (E3) — value-guided beam. ✅ DONE 2026-07-07 — NULL RESULT, keep λ=0.** Built the combined policy+value
+  resident head (`PolicyAndValueAsMlp`) + `BeamSearchValueGuided` (`cumLogProb − λ·relu(value)`) + `--value-sweep`.
+  Value guidance genuinely shortens solutions (λ=8: d18 −2.4, d22 −2.6qt; fixed d16 9/10→10/10) **but loses at
+  matched compute** — the heuristic needs every child forwarded (~10×/step), so pure beam-widening is **3–11×
+  more compute-efficient** for the same length (d18 24.0qt: vg-500-λ8 @110k exp vs pure-2000 @39k). Signal real
+  but weak → not worth shipping. **The web win is W2's beam-width knob, not this.**
+- **W4 — more training: ⏭️ SKIPPED (not indicated).** W1–W3 showed no policy ceiling — the net is optimal through
+  d12, provably optimal d1–6, and the mid-depth gap is search-bound (W2 recovers it). Sample-bound loss ⇒ days for
+  incremental gain. Not run.
+- **W5 — ship: ✅ beam 2000 → 5000 (quality, owner's call).** `CubeController` beam width raised: d14 17.8→**14.4**qt
+  (~optimal), d16–d22 −1–2qt, at ~2.4× search cost (CPU-latency tradeoff accepted). Beam stays pure-policy.
+
+**Outcome:** the EfficientCube model was already optimal wherever verifiable; solve-rate had no headroom. The real,
+shipped improvement is a **search-width retune** (shorter mid-depth solutions) — plus permanent length/optimality
+instrumentation (`--eval-only` length metrics, `--optimal-probe`, `--beam-sweep`, `--value-sweep`). Value-guidance
+and more-training were investigated and rejected (measured, honest nulls). **Success met:** criterion A (shorter at
+fixed solve-rate) + criterion C (≥95% provably optimal d≤7 — actually 100% d1–6). **Non-goal:** god's-number /
+arbitrary-cube coverage (DeepCubeA-scale). Distinct lineage from the DAVI net (PRD §13.1) — nothing here touches DAVI.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.

@@ -62,10 +62,14 @@ public sealed class CubeController(CubeModelService model, GalleryStore gallery)
 
         // Beam search over the policy. The resident GPU forward (policy head on the device, weights uploaded
         // once) runs each step's batch; the CPU autograd forward is the fallback on a GPU-less host.
+        // Width 5000 (M34 W5): the sweep showed it near-optimalizes mid-depth solutions (d14 17.8→14.4qt, d16–d22
+        // −1–2qt) over the old 2000, at ~2.4× the search — a deliberate quality-over-latency choice. Value-guidance
+        // (M34 W3) was measured worse per-compute than simply widening, so the beam stays pure-policy.
+        const int beamWidth = 5_000;
         var resident = model.ResidentEfficientForward;
         var search = resident is not null
-            ? CubePolicySearch.BeamSearch(resident, cube, beamWidth: 2_000)
-            : CubePolicySearch.BeamSearch(net, cube, beamWidth: 2_000);
+            ? CubePolicySearch.BeamSearch(resident, cube, beamWidth)
+            : CubePolicySearch.BeamSearch(net, cube, beamWidth);
         var response = new CubeSolveAiResponse(
             search.Solved, search.Moves, search.Moves.Length, reference.Moves.Length, "efficient");
 
