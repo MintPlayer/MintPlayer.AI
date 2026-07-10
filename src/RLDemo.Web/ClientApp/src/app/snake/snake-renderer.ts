@@ -4,8 +4,9 @@
 // and the `eaten` count. Nothing in snake-logic.ts / snake-director.ts / snake_solver.ts changes.
 //
 // How the tube is drawn (see docs/prd/SNAKE_RENDER_PRD.md):
-//   • a Catmull-Rom spline through the (interpolated) cell centres → the body curves smoothly around corners;
-//   • one round-capped, round-joined stroke of constant width, one colour — no taper, outline, or shading;
+//   • a polyline through the (interpolated) cell centres with ONLY the corners rounded (arcTo) → straight runs
+//     stay perfectly straight, turns get a rounded elbow;
+//   • one round-capped stroke of constant width, one colour — no taper, outline, or shading;
 //   • requestAnimationFrame interpolation across each tick — the loop only READS the latest snapshot, so the game
 //     keeps ticking on its own setInterval. On a discontinuity (new game / teleport) we snap instead of gliding.
 
@@ -135,14 +136,13 @@ export class SnakeTubeRenderer {
       return;
     }
 
-    // One uniform-width, round-capped, round-joined stroke of the spline — rounded corners, same width everywhere.
+    // One uniform-width, round-capped stroke — straight runs stay straight, only the corners are rounded.
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.strokeStyle = BODY_COLOR;
     ctx.lineWidth = w;
     ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    this.splinePath(ctx, pts);
+    this.tubePath(ctx, pts);
     ctx.stroke();
 
     // Eyes on the (uniform-width) rounded head cap, oriented to the direction of travel.
@@ -163,19 +163,22 @@ export class SnakeTubeRenderer {
     ctx.restore();
   }
 
-  /** Emit the Catmull-Rom spline (as cubic Béziers) onto an open canvas path already moved to pts[0]. */
-  private splinePath(ctx: CanvasRenderingContext2D, pts: Pt[]): void {
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p0 = pts[i > 0 ? i - 1 : 0];
-      const p1 = pts[i];
-      const p2 = pts[i + 1];
-      const p3 = pts[i + 2 < pts.length ? i + 2 : pts.length - 1];
-      ctx.bezierCurveTo(
-        p1.x + (p2.x - p0.x) / 6, p1.y + (p2.y - p0.y) / 6,
-        p2.x - (p3.x - p1.x) / 6, p2.y - (p3.y - p1.y) / 6,
-        p2.x, p2.y,
-      );
+  /** Emit a polyline through `pts` with only the corners rounded (arcTo). Collinear points ⇒ dead-straight. */
+  private tubePath(ctx: CanvasRenderingContext2D, pts: Pt[]): void {
+    const n = pts.length;
+    const R = this.cell * 0.5; // corner radius — how rounded a 90° elbow is
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < n - 1; i++) {
+      // Clamp the radius to half of each adjacent segment so tight zig-zags (short interpolated head/tail spans)
+      // never overshoot; arcTo draws a straight line when the three points are collinear.
+      const r = Math.min(R, this.dist(pts[i - 1], pts[i]) / 2, this.dist(pts[i], pts[i + 1]) / 2);
+      ctx.arcTo(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, r);
     }
+    ctx.lineTo(pts[n - 1].x, pts[n - 1].y);
+  }
+
+  private dist(a: Pt, b: Pt): number {
+    return Math.hypot(a.x - b.x, a.y - b.y);
   }
 
   private drawFood(c: Pt): void {
