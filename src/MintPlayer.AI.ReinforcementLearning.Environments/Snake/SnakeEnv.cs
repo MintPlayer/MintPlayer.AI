@@ -98,6 +98,28 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
 
     public float[] CurrentObservation() => Observation();
 
+    private PgSnakeNet? _searchNet;
+
+    /// <summary>Loads the trained dueling-Q checkpoint the look-ahead planner uses as its leaf evaluator — the same
+    /// RLNC/"dueling-q" bytes the browser's <c>snake-net.ts</c> parses. Call once before <see cref="ChooseActionSearch"/>.</summary>
+    public void LoadSearchNet(Stream checkpoint) => _searchNet = SnakeNetIo.Parse(checkpoint);
+
+    /// <summary>
+    /// Net-guided multi-ply look-ahead move for the current state (M34): simulates every legal line to
+    /// <see cref="SnakeSearchConfig.MaxDepth"/> plies on cloned envs and plays the first move of the best-scoring
+    /// one. The planner supersedes the reactive 1-ply shield, so construct this env with <c>safeMask: false</c> —
+    /// the returned move is always a non-reversal, hence always legal under the reversal-only mask.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">No net loaded — call <see cref="LoadSearchNet"/> first.</exception>
+    public int ChooseActionSearch(SnakeSearchConfig config)
+    {
+        if (_searchNet is null)
+            throw new InvalidOperationException("Call LoadSearchNet(...) before ChooseActionSearch(...).");
+        return _core.chooseActionSearch(
+            _searchNet, config.MaxDepth, config.BeamWidth, config.FoodWeight, config.TrapPenalty,
+            config.NetWeight, config.SpaceWeight, config.FoodDistWeight, config.SpaceRatioWeight);
+    }
+
     private float[] Observation()
     {
         var core = _core.buildObservation();

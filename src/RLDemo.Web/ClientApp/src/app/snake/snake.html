@@ -1,8 +1,9 @@
 <h1>Snake</h1>
 <p class="subtitle">
-  A masked Double + Dueling DQN that learned Snake from scratch — <strong>watch it play</strong> or
-  <strong>play it yourself</strong>, both running <strong>entirely in your browser</strong> (no server).
-  Honest about its skill: it seeks food and dodges walls, but a from-scratch net eventually traps itself.
+  A masked Double + Dueling DQN <strong>guided by a multi-ply look-ahead search</strong> — <strong>watch it play</strong>
+  or <strong>play it yourself</strong>, both running <strong>entirely in your browser</strong> (no server).
+  The learned net evaluates moves; a flood-fill survival search plans several steps ahead to avoid boxing itself in,
+  so it fills much more of the board than the net alone.
 </p>
 
 <div class="layout">
