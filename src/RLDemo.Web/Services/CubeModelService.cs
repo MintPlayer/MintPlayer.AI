@@ -9,21 +9,45 @@ namespace RLDemo.Web.Services;
 /// <summary>
 /// Owns the Rubik's Cube nets: loads the shipped DQN baseline plus the imitation-policy, teacher-free DAVI value,
 /// and EfficientCube policy nets from the model store (all trained on a dev machine via the Lab campaigns and
-/// committed to <c>models/</c> via Git LFS — the web never trains, PRD §14). Holds the device-resident GPU
-/// forwards for the deep solvers when a CUDA device is present.
+/// committed to <c>models/</c> via Git LFS — the web never trains, PRD §14). The three deep-solver nets hot-reload
+/// during a training campaign via <see cref="RefreshingModel{T}"/>; for the two GPU-scored nets the reload hook
+/// rebuilds a device-resident forward (weights on device — the host-span path is transfer-bound and barely beats
+/// CPU, so the resident forward is what makes the deep solvers fast).
 /// </summary>
-public sealed class CubeModelService(IModelStore store, AdaptiveBackend backend, ILogger<CubeModelService> logger) : IModelStartupService, IDisposable
+public sealed class CubeModelService : StartupModelService, IDisposable
 {
     public const string EnvironmentId = "cube";
     public const string AlgorithmId = "dqn";
+    public const string PolicyAlgorithmId = "policy";
+    public const string ValueDaviAlgorithmId = "value-davi-res";
+    public const string EfficientPolicyAlgorithmId = "policy-efficient";
 
     public const int MaxMoves = 20;
 
-    private readonly object _lock = new();
-    private GreedyQAgent? _agent;
+    private readonly IModelStore _store;
+    private readonly AdaptiveBackend _backend;
+    private readonly ILogger<CubeModelService> _logger;
 
-    public ModelStatus Status { get; private set; } = ModelStatus.Loading;
-    public string? Error { get; private set; }
+    private GreedyQAgent? _agent;
+    private readonly RefreshingModel<CubePolicyNet> _policy;
+    private readonly RefreshingModel<ResidualMlp> _value;
+    private readonly RefreshingModel<CubePolicyNet> _efficient;
+    private DeviceResidualMlp? _residentValue;
+    private DeviceMlp? _residentEfficient;
+
+    public CubeModelService(IModelStore store, AdaptiveBackend backend, ILogger<CubeModelService> logger) : base(logger)
+    {
+        _store = store;
+        _backend = backend;
+        _logger = logger;
+        _policy = new(store, EnvironmentId, PolicyAlgorithmId, CubePolicyNet.Load, logger, "cube policy net");
+        _value = new(store, EnvironmentId, ValueDaviAlgorithmId, ResidualMlpCheckpoint.Load, logger, "cube DAVI value net",
+            onLoaded: RebuildResidentValue);
+        _efficient = new(store, EnvironmentId, EfficientPolicyAlgorithmId, CubePolicyNet.Load, logger, "EfficientCube policy net",
+            onLoaded: RebuildResidentEfficient);
+    }
+
+    protected override string ModelName => "Rubik's Cube";
 
     /// <summary>The greedy inference agent, or null while the model is not ready. Loads lazily from the store.</summary>
     public GreedyQAgent? Agent
@@ -35,175 +59,79 @@ public sealed class CubeModelService(IModelStore store, AdaptiveBackend backend,
         }
     }
 
-    public const string PolicyAlgorithmId = "policy";
-    private CubePolicyNet? _policyNet;
-    private DateTime _policyLoadedUtc = DateTime.MinValue;
-    private static readonly TimeSpan PolicyRefresh = TimeSpan.FromMinutes(5);
+    /// <summary>
+    /// The Kociemba-imitation policy/value net (preferred over the DQN when present, PLAN M16), or null if the store
+    /// has none. Re-read every few minutes so a long-running Lab campaign's checkpoints are picked up live.
+    /// </summary>
+    public CubePolicyNet? PolicyNet => _policy.Value;
 
     /// <summary>
-    /// The Kociemba-imitation policy/value net (preferred over the DQN when present, PLAN
-    /// M16), or null if the store has none. Re-read every few minutes so a long-running
-    /// Lab campaign's improving checkpoints are picked up without restarting the host.
+    /// The teacher-free DAVI value net (the "self-taught AI" shortest-move solver, PLAN M21), or null if the store
+    /// has none. Reading it also keeps <see cref="ResidentValueForward"/> in sync (rebuilt on the GPU on reload).
     /// </summary>
-    public CubePolicyNet? PolicyNet
+    public ResidualMlp? ValueNet => _value.Value;
+
+    /// <summary>
+    /// A device-resident GPU forward over the current value net, or null when no CUDA device is present (the solver
+    /// then scores on the CPU). Touching it applies any pending reload first. Thread-safe: the forward serializes
+    /// GPU access internally.
+    /// </summary>
+    public CubeValueSearch.BatchForward? ResidentValueForward
     {
-        get
-        {
-            if (DateTime.UtcNow - _policyLoadedUtc < PolicyRefresh) return _policyNet;
-            lock (_lock)
-            {
-                if (DateTime.UtcNow - _policyLoadedUtc < PolicyRefresh) return _policyNet;
-                try
-                {
-                    using var stream = store.TryOpenRead(EnvironmentId, PolicyAlgorithmId);
-                    if (stream is not null)
-                    {
-                        _policyNet = CubePolicyNet.Load(stream);
-                        logger.LogInformation("Loaded cube policy net from the store.");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // A mid-write or corrupt checkpoint must not break solving; keep the previous net.
-                    logger.LogWarning(ex, "Failed to (re)load the cube policy net; keeping the previous one.");
-                }
-                _policyLoadedUtc = DateTime.UtcNow;
-                return _policyNet;
-            }
-        }
+        get { _ = ValueNet; return _residentValue is { } dev ? dev.Forward : null; }
     }
-
-    public const string ValueDaviAlgorithmId = "value-davi-res";
-    private ResidualMlp? _valueNet;
-    private DeviceResidualMlp? _residentValue;
-    private DateTime _valueLoadedUtc = DateTime.MinValue;
-
-    /// <summary>
-    /// The teacher-free DAVI value net (the "self-taught AI" shortest-move solver, PLAN M21), or null
-    /// if the store has none. Re-read on the same cadence as <see cref="PolicyNet"/> so an improving
-    /// Lab campaign's checkpoints are picked up without restarting the host. Accessing this also keeps
-    /// <see cref="ResidentValueForward"/> in sync (rebuilt on the GPU whenever the net reloads).
-    /// </summary>
-    public ResidualMlp? ValueNet
-    {
-        get
-        {
-            if (DateTime.UtcNow - _valueLoadedUtc < PolicyRefresh) return _valueNet;
-            lock (_lock)
-            {
-                if (DateTime.UtcNow - _valueLoadedUtc < PolicyRefresh) return _valueNet;
-                try
-                {
-                    using var stream = store.TryOpenRead(EnvironmentId, ValueDaviAlgorithmId);
-                    if (stream is not null)
-                    {
-                        _valueNet = ResidualMlpCheckpoint.Load(stream);
-                        // Mirror the freshly-loaded weights onto the GPU as a resident forward when a CUDA
-                        // device is present — the host-span path is transfer-bound and barely beats CPU, so
-                        // the resident forward (weights on device) is what makes the deep solver fast.
-                        _residentValue?.Dispose();
-                        _residentValue = backend.Gpu is { } gpu ? gpu.CreateResidentForward(_valueNet) : null;
-                        logger.LogInformation("Loaded cube DAVI value net from the store ({Mode}).",
-                            _residentValue is not null ? "resident GPU forward" : "CPU forward");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // A mid-write or corrupt checkpoint must not break solving; keep the previous net.
-                    logger.LogWarning(ex, "Failed to (re)load the cube DAVI value net; keeping the previous one.");
-                }
-                _valueLoadedUtc = DateTime.UtcNow;
-                return _valueNet;
-            }
-        }
-    }
-
-    /// <summary>
-    /// A device-resident GPU forward over the current value net, or null when no CUDA device is present
-    /// (the solver then scores on the CPU). Kept in sync by the <see cref="ValueNet"/> getter — read that
-    /// first. Thread-safe: the underlying forward serializes GPU access internally.
-    /// </summary>
-    public CubeValueSearch.BatchForward? ResidentValueForward => _residentValue is { } dev ? dev.Forward : null;
-
-    public const string EfficientPolicyAlgorithmId = "policy-efficient";
-    private CubePolicyNet? _efficientNet;
-    private DeviceMlp? _residentEfficient;
-    private DateTime _efficientLoadedUtc = DateTime.MinValue;
 
     /// <summary>
     /// The teacher-free EfficientCube policy net (the website's "self-taught AI", trained self-supervised on
-    /// scramble reversals — no Kociemba, no value-iteration bootstrap), or null if the store has none. Solved
-    /// by beam search (<see cref="CubePolicySearch.BeamSearch(System.Func{float[],int,float[]}, FaceletCube, int, int)"/>).
-    /// Re-read on the same cadence as the other nets so an improving Lab campaign's checkpoints are picked up
-    /// without restarting the host; accessing this keeps <see cref="ResidentEfficientForward"/> in sync (the
-    /// policy head's weights mirrored onto the GPU whenever the net reloads).
+    /// scramble reversals — no Kociemba, no value-iteration bootstrap), or null if the store has none. Solved by
+    /// beam search; reading it keeps <see cref="ResidentEfficientForward"/> in sync.
     /// </summary>
-    public CubePolicyNet? EfficientPolicyNet
-    {
-        get
-        {
-            if (DateTime.UtcNow - _efficientLoadedUtc < PolicyRefresh) return _efficientNet;
-            lock (_lock)
-            {
-                if (DateTime.UtcNow - _efficientLoadedUtc < PolicyRefresh) return _efficientNet;
-                try
-                {
-                    using var stream = store.TryOpenRead(EnvironmentId, EfficientPolicyAlgorithmId);
-                    if (stream is not null)
-                    {
-                        _efficientNet = CubePolicyNet.Load(stream);
-                        // Beam search runs the bulk of the forwards; mirror the policy head onto the GPU as a
-                        // resident forward when a CUDA device is present (host-span is transfer-bound).
-                        _residentEfficient?.Dispose();
-                        _residentEfficient = backend.Gpu is { } gpu ? gpu.CreateResidentForward(_efficientNet.PolicyAsMlp()) : null;
-                        logger.LogInformation("Loaded EfficientCube policy net from the store ({Mode}).",
-                            _residentEfficient is not null ? "resident GPU forward" : "CPU forward");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // A mid-write or corrupt checkpoint must not break solving; keep the previous net.
-                    logger.LogWarning(ex, "Failed to (re)load the EfficientCube policy net; keeping the previous one.");
-                }
-                _efficientLoadedUtc = DateTime.UtcNow;
-                return _efficientNet;
-            }
-        }
-    }
+    public CubePolicyNet? EfficientPolicyNet => _efficient.Value;
 
     /// <summary>
-    /// A device-resident GPU forward over the current EfficientCube policy head (rows × 12 logits), or null when
-    /// no CUDA device is present (beam search then scores on the CPU). Kept in sync by the
-    /// <see cref="EfficientPolicyNet"/> getter — read that first. Thread-safe: the forward serializes GPU access.
+    /// A device-resident GPU forward over the current EfficientCube policy head (rows × 12 logits), or null when no
+    /// CUDA device is present (beam search then scores on the CPU). Touching it applies any pending reload first.
     /// </summary>
-    public Func<float[], int, float[]>? ResidentEfficientForward => _residentEfficient is { } dev ? dev.Forward : null;
-
-    public bool TryLoadFromStore()
+    public Func<float[], int, float[]>? ResidentEfficientForward
     {
-        lock (_lock)
+        get { _ = EfficientPolicyNet; return _residentEfficient is { } dev ? dev.Forward : null; }
+    }
+
+    private void RebuildResidentValue(ResidualMlp net)
+    {
+        // Serialized against Dispose via Lock (both are the only writer/disposer of _residentValue).
+        lock (Lock)
+        {
+            _residentValue?.Dispose();
+            _residentValue = _backend.Gpu is { } gpu ? gpu.CreateResidentForward(net) : null;
+        }
+        _logger.LogInformation("Cube DAVI value net scored on {Mode}.", _residentValue is not null ? "resident GPU forward" : "CPU");
+    }
+
+    private void RebuildResidentEfficient(CubePolicyNet net)
+    {
+        lock (Lock)
+        {
+            _residentEfficient?.Dispose();
+            // Beam search runs the bulk of the forwards; mirror the policy head onto the GPU when a device is present.
+            _residentEfficient = _backend.Gpu is { } gpu ? gpu.CreateResidentForward(net.PolicyAsMlp()) : null;
+        }
+        _logger.LogInformation("EfficientCube policy net scored on {Mode}.", _residentEfficient is not null ? "resident GPU forward" : "CPU");
+    }
+
+    public override bool TryLoadFromStore()
+    {
+        lock (Lock)
         {
             if (_agent is not null) return true;
-            using var stream = store.TryOpenRead(EnvironmentId, AlgorithmId);
+            using var stream = _store.TryOpenRead(EnvironmentId, AlgorithmId);
             if (stream is null) return false;
             var network = MlpCheckpoint.Load(stream);
             _agent = new GreedyQAgent(network, RubiksCubeEnv.ActionCount);
             Status = ModelStatus.Ready;
-            logger.LogInformation("Loaded Rubik's Cube model from the store.");
+            _logger.LogInformation("Loaded Rubik's Cube model from the store.");
             return true;
         }
-    }
-
-    /// <summary>Loads the shipped DQN baseline at startup. The web does not train (PRD §14); the deep solver
-    /// nets (policy / DAVI value / EfficientCube) load lazily through their getters.</summary>
-    public void Initialize(CancellationToken cancellationToken)
-    {
-        if (TryLoadFromStore()) return;
-        lock (_lock)
-        {
-            Status = ModelStatus.Failed;
-            Error = "No trained Rubik's Cube model in the store.";
-        }
-        logger.LogWarning("No Rubik's Cube DQN model in the store — train it on a dev machine and commit the checkpoint to models/ (Git LFS).");
     }
 
     /// <summary>
@@ -232,7 +160,7 @@ public sealed class CubeModelService(IModelStore store, AdaptiveBackend backend,
 
     public void Dispose()
     {
-        lock (_lock)
+        lock (Lock)
         {
             _residentValue?.Dispose();
             _residentValue = null;
