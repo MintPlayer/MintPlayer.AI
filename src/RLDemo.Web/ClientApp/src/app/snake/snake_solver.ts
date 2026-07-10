@@ -1,4 +1,17 @@
 export type Option<T> = { tag: "Some"; value: T } | { tag: "None" };
+export class PgSnakeBeamNode {
+    env: PgSnakeEnv;
+    firstMove: number;
+    score: number;
+    constructor(env: PgSnakeEnv, firstMove: number, score: number) {
+        this.env = env;
+        this.firstMove = firstMove;
+        this.score = score;
+    }
+    equals(other: PgSnakeBeamNode): boolean {
+        return this.env === other.env && this.firstMove === other.firstMove && this.score === other.score;
+    }
+}
 export class PgSnakeNet {
     inputSize: number;
     actions: number;
@@ -407,5 +420,159 @@ export class PgSnakeEnv {
             }
         }
         return best;
+    }
+    clone(): PgSnakeEnv {
+        const c = new PgSnakeEnv(this.size, this.stepPenalty, false);
+        for (const x of this.body) {
+            c.body.push(x);
+        }
+        for (let i = 0; i < this.cells; i++) {
+            c.occupied[i] = this.occupied[i];
+        }
+        c.food = this.food;
+        c.foodEaten = this.foodEaten;
+        c.heading = this.heading;
+        c.elapsedSteps = this.elapsedSteps;
+        c.stepsSinceFood = this.stepsSinceFood;
+        c.done = this.done;
+        return c;
+    }
+    simSpawnFood(): void {
+        for (let cell = 0; cell < this.cells; cell++) {
+            if (!this.occupied[cell]) {
+                this.food = cell;
+                return;
+            }
+        }
+    }
+    freeSpaceAhead(): number {
+        const head = this.headCell();
+        const hr = (head / this.size | 0);
+        const hc = (head % this.size | 0);
+        const tail = this.tailCell();
+        let best = 0;
+        for (let a = 0; a < PgSnakeEnv.ActionCount; a++) {
+            const v = this.reachableFreeSpace((hr + PgSnakeEnv.drOf(a) | 0), (hc + PgSnakeEnv.dcOf(a) | 0), tail);
+            if (v > best) {
+                best = v;
+            }
+        }
+        return best;
+    }
+    firstLegalAction(): number {
+        const mask = this.currentActionMask();
+        for (let a = 0; a < PgSnakeEnv.ActionCount; a++) {
+            if (mask[a]) {
+                return a;
+            }
+        }
+        return 0;
+    }
+    leafScoreSearch(rootFood: number, depth: number, foodWeight: number, trapPenalty: number, spaceWeight: number, foodDistWeight: number): number {
+        if (this.lastTerminated && this.body.length === this.cells) {
+            return 1000000000.0;
+        }
+        if (this.lastTerminated) {
+            return -1000000.0 + depth * 1000.0;
+        }
+        const foodGained = (this.foodEaten - rootFood | 0);
+        const free = this.freeSpaceAhead();
+        let score = foodGained * foodWeight;
+        if (free < this.body.length) {
+            score = score - trapPenalty;
+        }
+        score = score + free * spaceWeight;
+        const head = this.headCell();
+        const hr = (head / this.size | 0);
+        const hc = (head % this.size | 0);
+        const fr = (this.food / this.size | 0);
+        const fc = (this.food % this.size | 0);
+        const foodDist = (PgSnakeEnv.iabs((fr - hr | 0)) + PgSnakeEnv.iabs((fc - hc | 0)) | 0);
+        score = score - foodDist * foodDistWeight;
+        return score;
+    }
+    chooseActionSearch(net: PgSnakeNet, maxDepth: number, beamWidth: number, foodWeight: number, trapPenalty: number, netWeight: number, spaceWeight: number, foodDistWeight: number): number {
+        const rootFood = this.foodEaten;
+        let bestByRoot = [];
+        for (let a = 0; a < PgSnakeEnv.ActionCount; a++) {
+            bestByRoot.push(-1000000000000.0);
+        }
+        const root = this.clone();
+        let beam = [];
+        beam.push(new PgSnakeBeamNode(root, (-1 | 0), 0.0));
+        for (let depth = 0; depth < maxDepth; depth++) {
+            if (beam.length === 0) {
+                break;
+            }
+            let next = [];
+            for (const node of beam) {
+                const mask = node.env.currentActionMask();
+                for (let a = 0; a < PgSnakeEnv.ActionCount; a++) {
+                    if (!mask[a]) {
+                        continue;
+                    }
+                    const child = node.env.clone();
+                    child.step(a);
+                    if (child.needsFood) {
+                        child.simSpawnFood();
+                    }
+                    const childFirst = (node.firstMove < 0 ? a : node.firstMove);
+                    const score = child.leafScoreSearch(rootFood, (depth + 1 | 0), foodWeight, trapPenalty, spaceWeight, foodDistWeight);
+                    if (score > bestByRoot[childFirst]) {
+                        bestByRoot[childFirst] = score;
+                    }
+                    if (!child.done && (depth + 1 | 0) < maxDepth) {
+                        next.push(new PgSnakeBeamNode(child, childFirst, score));
+                    }
+                }
+            }
+            beam = PgSnakeEnv.pruneBeam(next, beamWidth);
+        }
+        const rootQ = net.forward(this.buildObservation());
+        let bestFinal = -1000000000000000.0;
+        let bestFirst = root.firstLegalAction();
+        for (let a = 0; a < PgSnakeEnv.ActionCount; a++) {
+            if (bestByRoot[a] <= -1000000000000.0) {
+                continue;
+            }
+            let v = bestByRoot[a];
+            if (netWeight !== 0.0) {
+                v = v + rootQ[a] * netWeight;
+            }
+            if (v > bestFinal) {
+                bestFinal = v;
+                bestFirst = a;
+            }
+        }
+        return bestFirst;
+    }
+    static pruneBeam(nodes: PgSnakeBeamNode[], k: number): PgSnakeBeamNode[] {
+        if (nodes.length <= k) {
+            return nodes;
+        }
+        let kept = [];
+        let used = [];
+        for (let i = 0; i < nodes.length; i++) {
+            used.push(false);
+        }
+        for (let _iter = 0; _iter < k; _iter++) {
+            let bestIdx = (-1 | 0);
+            let bestVal = 0.0;
+            for (let i = 0; i < nodes.length; i++) {
+                if (used[i]) {
+                    continue;
+                }
+                if (bestIdx < 0 || nodes[i].score > bestVal) {
+                    bestVal = nodes[i].score;
+                    bestIdx = i;
+                }
+            }
+            if (bestIdx < 0) {
+                break;
+            }
+            used[bestIdx] = true;
+            kept.push(nodes[bestIdx]);
+        }
+        return kept;
     }
 }

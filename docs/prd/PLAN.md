@@ -1135,6 +1135,46 @@ game** (simpler than the glob-exclusion a shared `nn.pg` needs); the `.ckpt` par
   polynomial approximations) only if uniform single-source is a hard requirement, gated on an argmax-parity spike (MC0).
   Plan MC0–MC5. **Payoff:** the last two per-viewer AI sockets → zero server inference.
 
+## M34 — Snake: look-ahead search (client-side, single-source)  *(branch `m34-snake-search`, off `master`; see `SNAKE_SEARCH_PRD.md`)* ⏳
+
+**Problem.** Shipped client-side Snake (M33) plays masked-greedy **one-step** over the 177-dim net and is stuck at the
+**~50 food@12** reactive plateau M27 already charted (capacity/features/reward/horizon all swept → ~50; a reactive net
+can't avoid a trap that forms several moves ahead). The reachable-free-space input + the 1-ply flood-fill shield M27
+added are *already shipped* — the missing lever is **planning more than one ply**, not more training.
+
+**Fix.** Port PR #11's proven idea — net-guided multi-ply look-ahead (food@12 ~50 → ~78.6) — into the **single-source
+`snake_solver.pg`**. (PR #11 itself is unmergeable: it predates M32/M33's Polyglot + client-side rewrite — server-side C#
+`SnakeSearchAgent` + 39-dim ray obs; `CONFLICTING`.) `chooseActionSearch` runs a receding-horizon **beam search** over
+cloned envs with **pure-survival leaf scoring** (board-full win ≫ everything; a death *delayed* beats a death now; else
+`food·w − trapPenalty·[reachable<len] + freeSpaceAhead·w − headFoodDist·w`), reusing the shipped `reachableFreeSpace`
+flood-fill. The trained net breaks ties between **equally-safe root moves** (one forward per move, not per node). No
+retrain, no obs change; runs in C# eval AND the browser director byte-identically.
+
+**Experiment ledger (food@12, 12×12, ≥12-ep mean unless noted; shipped 177-dim net, no retrain; greedy ≈ 50):**
+| config | food | latency | verdict |
+|---|---|---|---|
+| pure-survival d12/b16 (net 0) | **70.7** (51–88) | 10.7 ms/move | strongest; net unused |
+| **net-tiebreak d12/b16 (net 50)** | **≈ 70** | ~11 ms/move | **shipped** — ~= pure survival, keeps the model in the loop |
+| net-tiebreak d12/b16 (net 500) | 67.8 (52–81) | 10.6 ms/move | heavy net weight overrides survival → slightly worse |
+| net-guided *per node* d10/b16 | 74.0 (2 eps) | **89 ms/move** | rejected: ~9× cost, no strength gain |
+| pure-survival d20/b32 | 66.2 (62–70) | 38 ms/move | rejected: deeper/wider misranks under beam pruning |
+
+**Key findings.** (1) Depth has a **sweet spot ~12** — deeper+wider *misranks* under beam pruning and scores worse
+(matches PR #11's sweep). (2) Evaluating the net at every node buys **no** strength for ~9× the latency — the flood-fill
+survival term carries the search — so the net is demoted to a cheap **root-move tiebreak**. "Make the Snake net strong"
+resolves as: the net's reactive ceiling is real (~50) and can't be trained away; the **agent** is made strong by search,
+with the net as the leaf/tiebreak evaluator.
+
+**Client.** `snake-director.ts` swaps greedy `chooseAction` → `chooseActionSearch`, drives the live env with
+`safeMask: false` (planner supersedes the 1-ply shield); `snake_solver.ts` regenerated from the `.pg`; the shipped
+`snake-net.ckpt` reused verbatim.
+
+**Gate.** food@12 markedly past ~50 (≈70 measured, high per-episode variance), fully client-side, byte-identical C#/TS,
+watchable in-browser cadence (~11 ms/move C#). **Honest ceiling.** ~70–80; a clean 100 needs a **tail-reachability
+invariant / Hamiltonian endgame** (PR #11's stretch) — next milestone.
+**Transpiler note.** A multi-`.pg` **incremental**-rebuild codegen bug surfaced (stale out-dir → duplicate prelude /
+non-`partial` PolyglotProgram); clean/CI builds unaffected. Handoff: `polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md`.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.

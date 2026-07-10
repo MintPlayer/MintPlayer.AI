@@ -83,6 +83,11 @@ class PgSnakeNet {
   }
 }
 
+// A search-frontier node: a cloned env, the root move that first led here, and its leaf score. A record (typed list
+// element) — NOT parallel Lists — so the transpiled TS types the beam nominally; parallel `List<i32>` frontiers make
+// the emitted `let x = []` evolve to a circular `any` (childFirst ← beamFirst ← nextFirst ← childFirst → TS7022).
+record PgSnakeBeamNode(env: PgSnakeEnv, firstMove: i32, score: f64)
+
 // ── Snake environment (port of SnakeEnv.cs) ─────────────────────────────────────────────────────────────────
 class PgSnakeEnv {
   const ActionCount: i32 = 4
@@ -369,5 +374,159 @@ class PgSnakeEnv {
       else if q[a] > q[best] { best = a }
     }
     return best
+  }
+
+  // ── Look-ahead search (M34) ───────────────────────────────────────────────────────────────────────────────
+
+  // Deep copy of the live state for branching. safeMask is forced OFF: sims use reversal-only legality and let the
+  // survival SCORE — not a hard 1-ply shield — judge trapping, so the search can see, rank, and step through
+  // near-trap lines a shield would have pruned outright. body/occupied are copied element-wise (occupied already
+  // has `cells` entries from the ctor; body starts empty).
+  fn clone(): PgSnakeEnv {
+    let c = PgSnakeEnv(this.size, this.stepPenalty, false)
+    for x in this.body { c.body.add(x) }
+    for i in 0..this.cells { c.occupied[i] = this.occupied[i] }
+    c.food = this.food
+    c.foodEaten = this.foodEaten
+    c.heading = this.heading
+    c.elapsedSteps = this.elapsedSteps
+    c.stepsSinceFood = this.stepsSinceFood
+    c.done = this.done
+    return c
+  }
+
+  // Deterministic food placement for simulated lines. The real env's caller owns the RNG (see `needsFood`); the
+  // search must stay RNG-free so C# and TS branch byte-identically. The exact fictional cell barely matters —
+  // survival scoring drives the search and every tick re-plans — so "first free cell" is a fine, stable choice.
+  fn simSpawnFood() {
+    for cell in 0..this.cells {
+      if !this.occupied[cell] { this.food = cell; return }
+    }
+  }
+
+  // Max reachable open space over the 4 candidate next-head cells (the pre-Polyglot SnakeEnv.FreeSpaceAhead): the
+  // leaf survivability signal — a line that leaves no room for the body is a guaranteed future self-trap.
+  fn freeSpaceAhead(): i32 {
+    let head = this.headCell()
+    let hr = head / this.size
+    let hc = head % this.size
+    let tail = this.tailCell()
+    var best = 0
+    for a in 0..ActionCount {
+      let v = this.reachableFreeSpace(hr + drOf(a), hc + dcOf(a), tail)
+      if v > best { best = v }
+    }
+    return best
+  }
+
+  // First legal (non-reversal) move — the fallback when the horizon somehow yields no scored line.
+  fn firstLegalAction(): i32 {
+    let mask = this.currentActionMask()
+    for a in 0..ActionCount { if mask[a] { return a } }
+    return 0
+  }
+
+  // Score a simulated leaf just reached (this = the child after step). A board-full win dominates everything; a
+  // death is dominated by everything but ranked to prefer a LATER death (buys time for the tail to clear); a
+  // survived node scores food eaten − a hard trap penalty when the reachable region can no longer hold the body
+  // + free space + a food-proximity tiebreak. This is a PURE SURVIVAL score — the net does NOT enter here: a net
+  // forward at every node is ~9× the per-move cost and (measured, M34) buys no strength, forcing a shallower and
+  // thus WEAKER search. The trained net instead breaks ties between equally-safe ROOT moves in chooseActionSearch
+  // (one forward per move). Weights are passed in (not bundled in a record) so this file declares no top-level types.
+  fn leafScoreSearch(rootFood: i32, depth: i32, foodWeight: f64, trapPenalty: f64, spaceWeight: f64, foodDistWeight: f64): f64 {
+    if this.lastTerminated && this.body.count == this.cells { return 1000000000.0 }
+    if this.lastTerminated { return -1000000.0 + f64(depth) * 1000.0 }
+
+    let foodGained = this.foodEaten - rootFood
+    let free = this.freeSpaceAhead()
+    var score = f64(foodGained) * foodWeight
+    if free < this.body.count { score = score - trapPenalty }
+    score = score + f64(free) * spaceWeight
+
+    let head = this.headCell()
+    let hr = head / this.size
+    let hc = head % this.size
+    let fr = this.food / this.size
+    let fc = this.food % this.size
+    let foodDist = f64(iabs(fr - hr) + iabs(fc - hc))
+    score = score - foodDist * foodDistWeight
+    return score
+  }
+
+  // Net-tiebroken receding-horizon beam search — the M34 planner. Simulates every legal line to `maxDepth` plies on
+  // cloned envs (pure-survival leaf scoring), tracking the best line score achievable from each ROOT move; then
+  // plays the root move with the best line, breaking ties by the trained net's Q for that move from the current
+  // state. So the flood-fill survival search delivers the strength (depth is the lever) and the net decides "which
+  // of the equally-safe ways to go" — one forward per move, not per node. Re-planned every tick. The returned move
+  // is always a non-reversal, so a live env with safeMask on OR off accepts it (drive it with safeMask OFF — this
+  // planner supersedes the reactive 1-ply shield).
+  fn chooseActionSearch(net: PgSnakeNet, maxDepth: i32, beamWidth: i32, foodWeight: f64, trapPenalty: f64, netWeight: f64, spaceWeight: f64, foodDistWeight: f64): i32 {
+    let rootFood = this.foodEaten
+    // Best line score reachable from each root move (−inf = that move was never expanded, i.e. illegal at the root).
+    var bestByRoot: List<f64> = List<f64>()
+    for a in 0..ActionCount { bestByRoot.add(-1000000000000.0) }
+
+    let root = this.clone()
+    var beam: List<PgSnakeBeamNode> = List<PgSnakeBeamNode>()
+    beam.add(PgSnakeBeamNode(root, -1, 0.0))
+
+    for depth in 0..maxDepth {
+      if beam.count == 0 { break }
+      var next: List<PgSnakeBeamNode> = List<PgSnakeBeamNode>()
+      for node in beam {
+        let mask = node.env.currentActionMask()   // reversal-only (the clone's safeMask is off)
+        for a in 0..ActionCount {
+          if !mask[a] { continue }
+          let child = node.env.clone()
+          child.step(a)
+          if child.needsFood { child.simSpawnFood() }
+          let childFirst = if node.firstMove < 0 { a } else { node.firstMove }
+          let score = child.leafScoreSearch(rootFood, depth + 1, foodWeight, trapPenalty, spaceWeight, foodDistWeight)
+          if score > bestByRoot[childFirst] { bestByRoot[childFirst] = score }
+          if !child.done && depth + 1 < maxDepth { next.add(PgSnakeBeamNode(child, childFirst, score)) }
+        }
+      }
+      beam = pruneBeam(next, beamWidth)
+    }
+
+    // Pick the root move with the best line; the net's Q (one forward, from the current state) breaks near-ties so
+    // the trained model chooses among equally-safe directions. netWeight scales that nudge (0 ⇒ pure survival).
+    let rootQ = net.forward(this.buildObservation())
+    var bestFinal = -1000000000000000.0
+    var bestFirst = root.firstLegalAction()
+    for a in 0..ActionCount {
+      if bestByRoot[a] <= -1000000000000.0 { continue }
+      var v = bestByRoot[a]
+      if netWeight != 0.0 { v = v + rootQ[a] * netWeight }
+      if v > bestFinal {
+        bestFinal = v
+        bestFirst = a
+      }
+    }
+    return bestFirst
+  }
+
+  // Keep the `k` highest-scoring nodes (all of them if ≤ k). Manual top-k scan — a List sort with a comparator
+  // doesn't transpile cleanly (same reason FruitCake's selectTopK scans instead of sorting).
+  static fn pruneBeam(nodes: List<PgSnakeBeamNode>, k: i32): List<PgSnakeBeamNode> {
+    if nodes.count <= k { return nodes }
+    var kept: List<PgSnakeBeamNode> = List<PgSnakeBeamNode>()
+    var used: List<bool> = List<bool>()
+    for i in 0..nodes.count { used.add(false) }
+    for _iter in 0..k {
+      var bestIdx = -1
+      var bestVal = 0.0
+      for i in 0..nodes.count {
+        if used[i] { continue }
+        if bestIdx < 0 || nodes[i].score > bestVal {
+          bestVal = nodes[i].score
+          bestIdx = i
+        }
+      }
+      if bestIdx < 0 { break }
+      used[bestIdx] = true
+      kept.add(nodes[bestIdx])
+    }
+    return kept
   }
 }
