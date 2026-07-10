@@ -113,6 +113,18 @@ shades from the body green.
   host proxies the Angular dev server — **do not** run `ng serve`/`ng build`; save files and let it live-reload).
   Capture a before/after screenshot (or short clip) of both modes for the PR.
 
+## 5b. Style decisions settled during implementation (2026-07-10)
+
+Two user-driven refinements after the first working version:
+
+1. **Primitive over decorative.** The initial render (tapered ribbon, gradient spine, dark outline, enlarged head)
+   read as over-designed. Shipped instead: a **single-colour, uniform-width** tube — one round-capped stroke, no
+   taper/outline/shading — keeping only a simple two-eye face on the head and a plain food dot.
+2. **Straight segments must be straight.** A global Catmull-Rom spline bleeds corner curvature into the adjacent
+   straight runs, so "straight" body parts bowed. Shipped instead: a **polyline with only the corners rounded**
+   (`arcTo`, radius ≈ ½ cell, clamped to half each adjacent span). Collinear points draw dead-straight; only real
+   90° turns get a rounded elbow. This is the research's "rounded-corner (arc) approach", chosen over the spline.
+
 ## 6. Rollout
 
 Single small PR (view-only, no logic diff, no model change, no server change). Because nothing in the AI or physics
