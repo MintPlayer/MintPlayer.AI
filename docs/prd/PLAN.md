@@ -1178,6 +1178,37 @@ clean 100+ needs a **tail-reachability invariant / Hamiltonian endgame** (PR #11
 **Transpiler note.** A multi-`.pg` **incremental**-rebuild codegen bug surfaced (stale out-dir → duplicate prelude /
 non-`partial` PolyglotProgram); clean/CI builds unaffected. Handoff: `polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md`.
 
+## M35 — Snake: curved-tube rendering  *(view-only; planned 2026-07-10; branch `m35-snake-tube` off `master`; see `SNAKE_RENDER_PRD.md`)* 🔜
+
+**Problem.** The board renders as flat coloured `<div>` squares on a CSS grid (`snake.html` `@for` + `cellClass()` +
+`.cell/.body/.head/.food`), snapping one cell per `setInterval` tick (120 ms watch / 150 ms human — no rAF, no
+interpolation). It reads as a blocky 1980s snake: disconnected squares, hard elbows, no head, no glide.
+
+**Fix (view layer only — zero logic/AI change).** A 2-agent investigation (2026-07-10) mapped the renderer and the
+technique space. Introduce a `<canvas>` and a new pure-view `SnakeTubeRenderer` (`snake-renderer.ts`); route the
+existing `render(body, food, eaten)` writes into it. Draw the snake as a **curved tube**: a Catmull-Rom spline through
+the (interpolated) cell centres → cubic Béziers (`cp1 = p1+(p2−p0)/6`, `cp2 = p2−(p3−p1)/6`; `tension` knob), which
+**corners smoothly for free**; a **tapered tail** (ribbon polygon or stamped circles — stroke can't vary width); an
+oriented **head** drawn on top (`rotate(atan2(dir))`, eyes, optional tongue); cheap 3-D via a **multi-pass stroke** +
+highlight + cached gradient (no `shadowBlur`). The **biggest visual win is interpolation**: a `requestAnimationFrame`
+loop animates `p∈[0,1]` per tick over two consecutive states (head lerps old→new head; tail lerps old→new tail
+**unless growing**) so the tube glides instead of snapping — rAF only *reads* the latest snapshot, the game loop stays
+on `setInterval`. Hi-DPI crisp via `devicePixelRatio` backing-store scaling.
+
+**Decision.** Canvas 2D, not SVG (DOM/layout thrash, slower for a redrawn-every-frame loop, can't taper either) and
+not WebGL (only wins at scales we don't have; costs shaders/mesh for no visible gain on one ≤144-segment snake).
+
+**Scope.** Touches only `snake.html` (grid → `<canvas>`), `snake.scss` (drop `.cell*`; canvas is the board), `snake.ts`
+(construct renderer, route `render()` → `renderer.push()`, stop the loop on `stop()`/destroy), and new `snake-renderer.ts`.
+**Untouched:** `snake-logic.ts`, `snake-director.ts`, `snake_solver.ts`, `snake-net.ts`, `snake_solver.pg` — M34
+strength (~81 food@12) and all tests stand as-is.
+
+**Gate (visual, in-browser; no numeric metric).** One continuous rounded tube that curves through turns (no visible
+squares/elbows), a head facing travel, a tapered tail, smooth glide between ticks, distinct food; both Watch-AI and
+Play-yourself identical; steady 60 fps at full board; crisp on hi-DPI; rAF loop torn down cleanly with the game.
+Verify by save-and-live-reload against the running host (**do not** run `ng serve`/`ng build`); attach a before/after
+screenshot/clip to the PR. Single view-only PR.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.

@@ -18,23 +18,11 @@
 }
 
 .board {
-  display: grid;
-  grid-template-columns: repeat(var(--size), 1fr);
-  gap: 1px;
   width: 480px;
   height: 480px;
-  padding: 4px;
   background: #1c2230;
   border-radius: 8px;
-}
-
-.cell {
-  background: #2a3142;
-  border-radius: 2px;
-
-  &.body { background: #4caf82; }
-  &.head { background: #7cffb2; }
-  &.food { background: #ff6b6b; border-radius: 50%; }
+  display: block;
 }
 
 .side {
