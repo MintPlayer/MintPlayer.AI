@@ -574,3 +574,18 @@ byte-for-byte, lifts play to **~81 food@12 (+60% over the plateau)** with **no r
 > Snake net strong": the net's reactive ceiling is real and low, so the *agent* is made strong by search while the *net*
 > stays a leaf/tiebreak evaluator. The residual cap (~81 mean; single games hit ~106) is self-traps beyond the horizon —
 > left to a future tail-reachability / Hamiltonian endgame.
+
+## 16. Snake — curved-tube rendering  *(PRD §16; inserted 2026-07-10; see [SNAKE_RENDER_PRD.md](SNAKE_RENDER_PRD.md) + [PLAN.md](PLAN.md) M35)*
+
+Cosmetic, view-layer only — no AI or logic change. The board renders as flat coloured `<div>` squares on a CSS grid
+that snap one cell per tick; it reads as a blocky 1980s snake. M35 replaces the **view** with a Canvas 2D
+**curved-tube** renderer: a Catmull-Rom spline through the cell centres (corners smoothly for free), a tapered tail, an
+oriented head with eyes, cheap multi-pass 3-D shading, and — the biggest single win — `requestAnimationFrame`
+**interpolation** between the coarse (120/150 ms) game ticks so the tube *glides* instead of teleporting.
+
+> **Design decision (2026-07-10, 2-agent investigation).** Canvas 2D, not SVG (DOM/layout thrash, slower for a
+> full-redraw loop, and its stroke can't taper any better) and not WebGL (only wins at scales this game never reaches).
+> The game logic already funnels all display state through one `render(body, food, eaten)` call over a flat cell-index
+> body, so the renderer swaps in behind it with **zero change** to `snake-logic.ts` / `snake-director.ts` /
+> `snake_solver.ts` / the `.pg`. M34's ~81 food@12 strength and all tests are untouched — the gate is a purely visual
+> in-browser before/after.
