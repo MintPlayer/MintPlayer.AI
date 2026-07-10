@@ -1,7 +1,12 @@
-import { Component, DestroyRef, inject, signal } from '@angular/core';
-import { CELLS, Dir, SIZE, SnakeGame } from './snake-logic';
+import { Component, DestroyRef, ElementRef, afterNextRender, inject, signal, viewChild } from '@angular/core';
+import { Dir, SIZE, SnakeGame } from './snake-logic';
 import { SnakeDirector } from './snake-director';
+import { SnakeTubeRenderer } from './snake-renderer';
 import { ScreenWakeLock } from '../screen-wake-lock';
+
+const BOARD_PX = 480;
+const WATCH_TICK_MS = 120;
+const HUMAN_TICK_MS = 150;
 
 /**
  * Snake page. Both modes now run **entirely in the browser** (M33):
@@ -18,29 +23,22 @@ import { ScreenWakeLock } from '../screen-wake-lock';
 export class Snake {
   private readonly wakeLock = inject(ScreenWakeLock);
 
-  protected readonly size = SIZE;
-  protected readonly cells = Array.from({ length: CELLS }, (_, i) => i);
-
   protected readonly mode = signal<'idle' | 'watch' | 'human'>('idle');
-  protected readonly head = signal(-1);
-  protected readonly bodySet = signal<Set<number>>(new Set());
-  protected readonly food = signal(-1);
   protected readonly foodEaten = signal(0);
   protected readonly status = signal('Watch the self-taught AI play, or play it yourself.');
+
+  private readonly boardRef = viewChild.required<ElementRef<HTMLCanvasElement>>('board');
+  private renderer: SnakeTubeRenderer | null = null;
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private game: SnakeGame | null = null;
   private director: SnakeDirector | null = null;
 
   constructor() {
+    afterNextRender(() => {
+      this.renderer = new SnakeTubeRenderer(this.boardRef().nativeElement, SIZE, BOARD_PX);
+    });
     inject(DestroyRef).onDestroy(() => this.stop());
-  }
-
-  protected cellClass(i: number): string {
-    if (i === this.head()) return 'cell head';
-    if (this.bodySet().has(i)) return 'cell body';
-    if (i === this.food()) return 'cell food';
-    return 'cell';
   }
 
   // --- Watch AI: the whole AI (physics + net + masked-greedy policy) runs in the browser (M33) ---
@@ -49,6 +47,7 @@ export class Snake {
     this.mode.set('watch');
     void this.wakeLock.acquire(); // keep the phone screen on so an auto-lock doesn't freeze the game
     this.status.set('Loading the AI…');
+    this.renderer?.begin(WATCH_TICK_MS);
     this.director = new SnakeDirector();
     this.timer = setInterval(() => {
       const f = this.director?.step();
@@ -57,7 +56,7 @@ export class Snake {
       this.status.set(f.done
         ? `AI died after eating ${f.foodEaten} (length ${f.length}). Restarting…`
         : 'Watching the AI play — it all runs in your browser.');
-    }, 120);
+    }, WATCH_TICK_MS);
   }
 
   // --- Human play (client-side, JS timer) ---
@@ -65,6 +64,7 @@ export class Snake {
     this.stop();
     this.mode.set('human');
     this.status.set('Your game — arrow keys or WASD to steer.');
+    this.renderer?.begin(HUMAN_TICK_MS);
     const g = this.game = new SnakeGame();
     this.render(g.body, g.food, g.foodEaten);
     this.timer = setInterval(() => {
@@ -74,7 +74,7 @@ export class Snake {
         this.status.set(`Game over — you ate ${g.foodEaten} food.`);
         this.clearTimer();
       }
-    }, 150);
+    }, HUMAN_TICK_MS);
   }
 
   protected onKey(event: KeyboardEvent): void {
@@ -88,6 +88,7 @@ export class Snake {
 
   protected stop(): void {
     this.clearTimer();
+    this.renderer?.stop();
     this.game = null;
     this.director = null;
     void this.wakeLock.release();
@@ -101,10 +102,8 @@ export class Snake {
   }
 
   private render(body: number[], food: number, eaten: number): void {
-    this.head.set(body[0] ?? -1);
-    this.bodySet.set(new Set(body));
-    this.food.set(food);
     this.foodEaten.set(eaten);
+    this.renderer?.push(body, food, eaten);
   }
 
   private clearTimer(): void {

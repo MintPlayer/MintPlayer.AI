@@ -7,11 +7,7 @@
 </p>
 
 <div class="layout">
-  <div class="board" [style.--size]="size">
-    @for (i of cells; track i) {
-      <div [class]="cellClass(i)"></div>
-    }
-  </div>
+  <canvas #board class="board" width="480" height="480"></canvas>
 
   <div class="side">
     <h3>Food eaten: {{ foodEaten() }}</h3>
