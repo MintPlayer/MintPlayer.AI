@@ -48,6 +48,7 @@ internal static class SnakeLab
             else if (args[i] == "--w-net" && i + 1 < args.Length) cfg = cfg with { NetWeight = double.Parse(args[++i], CultureInfo.InvariantCulture) };
             else if (args[i] == "--w-space" && i + 1 < args.Length) cfg = cfg with { SpaceWeight = double.Parse(args[++i], CultureInfo.InvariantCulture) };
             else if (args[i] == "--w-dist" && i + 1 < args.Length) cfg = cfg with { FoodDistWeight = double.Parse(args[++i], CultureInfo.InvariantCulture) };
+            else if (args[i] == "--w-ratio" && i + 1 < args.Length) cfg = cfg with { SpaceRatioWeight = double.Parse(args[++i], CultureInfo.InvariantCulture) };
         }
 
         for (int i = 0; i < args.Length; i++)
@@ -110,7 +111,7 @@ internal static class SnakeLab
             env.LoadSearchNet(stream);
 
         Console.WriteLine($"Search eval: {episodes} episodes on {grid}×{grid}, net {Path.GetFileName(netPath)}");
-        Console.WriteLine($"  config: depth={cfg.MaxDepth} beam={cfg.BeamWidth} food={cfg.FoodWeight} trap={cfg.TrapPenalty} net={cfg.NetWeight} space={cfg.SpaceWeight} dist={cfg.FoodDistWeight}");
+        Console.WriteLine($"  config: depth={cfg.MaxDepth} beam={cfg.BeamWidth} food={cfg.FoodWeight} trap={cfg.TrapPenalty} net={cfg.NetWeight} space={cfg.SpaceWeight} dist={cfg.FoodDistWeight} ratio={cfg.SpaceRatioWeight}");
 
         int totalFood = 0, maxFood = 0, minFood = int.MaxValue;
         long totalMoves = 0;

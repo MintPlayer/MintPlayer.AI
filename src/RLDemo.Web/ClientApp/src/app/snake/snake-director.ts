@@ -22,6 +22,7 @@ const W_TRAP = 50_000;
 const W_NET = 50;   // small: the net only breaks ties between equally-safe root moves (a big weight slightly hurts — measured)
 const W_SPACE = 50;
 const W_DIST = 1;
+const W_RATIO = 100_000;   // anti-fragmentation: fraction of free cells still reachable. Biggest lever — ~71 → ~81 food@12 (M34)
 const DEAD_HOLD_TICKS = 8;       // show the dead board briefly before auto-restarting
 
 export interface SnakeAiFrame {
@@ -66,7 +67,7 @@ export class SnakeDirector {
     }
     if (this.net === null) return this.frame();
 
-    const action = this.core.chooseActionSearch(this.net, SEARCH_DEPTH, SEARCH_BEAM, W_FOOD, W_TRAP, W_NET, W_SPACE, W_DIST);
+    const action = this.core.chooseActionSearch(this.net, SEARCH_DEPTH, SEARCH_BEAM, W_FOOD, W_TRAP, W_NET, W_SPACE, W_DIST, W_RATIO);
     if (action < 0) { this.deadHold = DEAD_HOLD_TICKS; return this.frame(); } // no legal move (shouldn't happen)
     this.core.step(action);
     if (this.core.needsFood) this.core.spawnFood(this.randFree());

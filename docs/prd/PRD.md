@@ -562,12 +562,15 @@ serves. The campaigns stay `internal` to the Lab (no shared library needed — t
 
 A learned Snake policy is **structurally capped at ~50 food@12** (M27's sweep: capacity, features, reward and horizon
 all plateau there — a reactive net can't avoid a trap that forms several moves ahead). The lever is **planning, not
-training**: a net-guided multi-ply look-ahead, single-sourced in `snake_solver.pg` so C# eval and the browser director
-share it byte-for-byte, lifts play well past the plateau (~70–80) with **no retraining and no observation change**.
+training**: a multi-ply look-ahead, single-sourced in `snake_solver.pg` so C# eval and the browser director share it
+byte-for-byte, lifts play to **~81 food@12 (+60% over the plateau)** with **no retraining and no observation change**.
 
 > **Design decision (2026-07-10).** The strength comes from an exact **flood-fill survivability search** (reuses the
-> `reachableFreeSpace` the net already carries as an input); a per-node net evaluation was measured to add **no** strength
-> for ~9× the latency, so the trained net is kept in the loop as a cheap **tie-breaker between equally-safe moves** — the
-> model still chooses "which safe way to go" at ~zero cost. This reframes "make the Snake net strong": the net's reactive
-> ceiling is real and low, so the *agent* is made strong by search while the *net* stays the leaf/ tiebreak evaluator.
-> The residual ~80 cap (self-traps beyond the horizon) is left to a future tail-reachability / Hamiltonian endgame.
+> `reachableFreeSpace` the net already carries as an input). The **biggest single lever** turned out to be an
+> **anti-fragmentation term** — scoring the *fraction of currently-free cells still reachable* (the reachability-ratio
+> idea originally floated as a net input, but far more effective in the **search leaf score**): it lifts food@12 ~71 → ~81
+> (+14%, robust across seed bases). A per-node net evaluation, by contrast, added **no** strength for ~9× the latency, so
+> the trained net is kept in the loop only as a cheap **tie-breaker between equally-safe moves**. This reframes "make the
+> Snake net strong": the net's reactive ceiling is real and low, so the *agent* is made strong by search while the *net*
+> stays a leaf/tiebreak evaluator. The residual cap (~81 mean; single games hit ~106) is self-traps beyond the horizon —
+> left to a future tail-reachability / Hamiltonian endgame.

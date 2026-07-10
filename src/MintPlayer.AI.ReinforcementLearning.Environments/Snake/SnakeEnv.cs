@@ -117,7 +117,7 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
             throw new InvalidOperationException("Call LoadSearchNet(...) before ChooseActionSearch(...).");
         return _core.chooseActionSearch(
             _searchNet, config.MaxDepth, config.BeamWidth, config.FoodWeight, config.TrapPenalty,
-            config.NetWeight, config.SpaceWeight, config.FoodDistWeight);
+            config.NetWeight, config.SpaceWeight, config.FoodDistWeight, config.SpaceRatioWeight);
     }
 
     private float[] Observation()

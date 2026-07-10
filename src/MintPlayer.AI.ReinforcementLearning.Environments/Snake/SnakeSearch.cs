@@ -15,8 +15,11 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 /// <param name="FoodWeight">Reward per food eaten along a line — the dominant term; eating safely beats any non-eating line.</param>
 /// <param name="TrapPenalty">Penalty for a leaf whose reachable space can no longer hold the body (a guaranteed future self-trap).</param>
 /// <param name="NetWeight">Weight on the trained net's Q, applied ONCE per move as a root-move tiebreak (not per node). Small = pure tiebreak; 0 = ignore the net.</param>
-/// <param name="SpaceWeight">Weight on reachable free space — keep more room open.</param>
+/// <param name="SpaceWeight">Weight on reachable free space (absolute) — keep more room open.</param>
 /// <param name="FoodDistWeight">Pull toward food when no line eats within the horizon (tiebreak by L1 head→food distance).</param>
+/// <param name="SpaceRatioWeight">Weight on the FRACTION of currently-free cells still reachable (anti-fragmentation).
+/// The biggest single lever found: sweeping it lifted food@12 ~71 → ~81 (+14%, robust across seed bases), peaking
+/// ~100k–200k (400k over-weights connectivity and under-eats → back to ~76). 100k is the robust default.</param>
 public sealed record SnakeSearchConfig(
     int MaxDepth = 12,
     int BeamWidth = 16,
@@ -24,7 +27,8 @@ public sealed record SnakeSearchConfig(
     double TrapPenalty = 50_000,
     double NetWeight = 50,
     double SpaceWeight = 50,
-    double FoodDistWeight = 1);
+    double FoodDistWeight = 1,
+    double SpaceRatioWeight = 100_000);
 
 /// <summary>
 /// Reads a trained dueling-Q checkpoint (RLNC / kind <c>"dueling-q"</c>) into the single-source transpiled

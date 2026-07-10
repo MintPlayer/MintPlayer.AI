@@ -433,7 +433,7 @@ class PgSnakeEnv {
   // forward at every node is ~9× the per-move cost and (measured, M34) buys no strength, forcing a shallower and
   // thus WEAKER search. The trained net instead breaks ties between equally-safe ROOT moves in chooseActionSearch
   // (one forward per move). Weights are passed in (not bundled in a record) so this file declares no top-level types.
-  fn leafScoreSearch(rootFood: i32, depth: i32, foodWeight: f64, trapPenalty: f64, spaceWeight: f64, foodDistWeight: f64): f64 {
+  fn leafScoreSearch(rootFood: i32, depth: i32, foodWeight: f64, trapPenalty: f64, spaceWeight: f64, foodDistWeight: f64, spaceRatioWeight: f64): f64 {
     if this.lastTerminated && this.body.count == this.cells { return 1000000000.0 }
     if this.lastTerminated { return -1000000.0 + f64(depth) * 1000.0 }
 
@@ -442,6 +442,15 @@ class PgSnakeEnv {
     var score = f64(foodGained) * foodWeight
     if free < this.body.count { score = score - trapPenalty }
     score = score + f64(free) * spaceWeight
+
+    // Connectivity term: fraction of the currently-free cells still reachable going forward. Unlike the absolute
+    // `free < len` trap penalty, this catches FRAGMENTATION the body still fits into — the snake cutting itself off
+    // from most of the board — which is the failure mode a fixed-window view misses. The biggest single lever found
+    // (M34): a heavy weight (~100k) lifts food@12 ~71 → ~81. weight 0 disables it.
+    if spaceRatioWeight != 0.0 {
+      let freeCells = this.freeCount()
+      if freeCells > 0 { score = score + spaceRatioWeight * f64(free) / f64(freeCells) }
+    }
 
     let head = this.headCell()
     let hr = head / this.size
@@ -460,7 +469,7 @@ class PgSnakeEnv {
   // of the equally-safe ways to go" — one forward per move, not per node. Re-planned every tick. The returned move
   // is always a non-reversal, so a live env with safeMask on OR off accepts it (drive it with safeMask OFF — this
   // planner supersedes the reactive 1-ply shield).
-  fn chooseActionSearch(net: PgSnakeNet, maxDepth: i32, beamWidth: i32, foodWeight: f64, trapPenalty: f64, netWeight: f64, spaceWeight: f64, foodDistWeight: f64): i32 {
+  fn chooseActionSearch(net: PgSnakeNet, maxDepth: i32, beamWidth: i32, foodWeight: f64, trapPenalty: f64, netWeight: f64, spaceWeight: f64, foodDistWeight: f64, spaceRatioWeight: f64): i32 {
     let rootFood = this.foodEaten
     // Best line score reachable from each root move (−inf = that move was never expanded, i.e. illegal at the root).
     var bestByRoot: List<f64> = List<f64>()
@@ -481,7 +490,7 @@ class PgSnakeEnv {
           child.step(a)
           if child.needsFood { child.simSpawnFood() }
           let childFirst = if node.firstMove < 0 { a } else { node.firstMove }
-          let score = child.leafScoreSearch(rootFood, depth + 1, foodWeight, trapPenalty, spaceWeight, foodDistWeight)
+          let score = child.leafScoreSearch(rootFood, depth + 1, foodWeight, trapPenalty, spaceWeight, foodDistWeight, spaceRatioWeight)
           if score > bestByRoot[childFirst] { bestByRoot[childFirst] = score }
           if !child.done && depth + 1 < maxDepth { next.add(PgSnakeBeamNode(child, childFirst, score)) }
         }

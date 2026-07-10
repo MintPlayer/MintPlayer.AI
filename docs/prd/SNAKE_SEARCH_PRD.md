@@ -21,8 +21,8 @@ piece is **planning more than one ply ahead** with that signal.
 Make the demo Snake **strong** while keeping it the trained model playing (the net stays in the decision) and fully
 client-side (zero server inference, single-source `.pg`).
 
-- **Gate:** food@12 (12×12, ≥ 12-ep mean) **markedly past the ~50 reactive plateau** — measured **≈ 70** (per-episode
-  variance is high, ~50–88, since one bad trap ends a game). Stretch: a clean 100.
+- **Gate:** food@12 (12×12, ≥ 20-ep mean) **markedly past the ~50 reactive plateau** — measured **≈ 81** (per-episode
+  variance is high, ~55–108, since one bad trap ends a game; single games now reach a near-full board). Stretch: a clean 100.
 - **No retraining, no observation change** — the existing shipped `snake-net.ckpt` is reused verbatim.
 - **Single-source:** the search lives once in `snake_solver.pg` and transpiles to C# (training/eval) **and** the browser
   TS director, byte-identically.
@@ -48,10 +48,13 @@ it in the loop keeps the demo a genuine "watch the trained model" showcase).
 - **Receding-horizon beam search.** From the live state, simulate every legal (non-reversal) line to `maxDepth` plies
   on **cloned** envs, keeping the best `beamWidth` survivors per ply; play the first move of the best-scoring line and
   re-plan next tick. Snake is deterministic between food, so the look-ahead is exact.
-- **Leaf score** (mirrors PR #11's `LeafScore`): a board-full win dominates; a death is dominated but ranked to prefer a
-  *later* death; a survived leaf = `foodGained·FoodWeight − TrapPenalty·[reachable < length] + freeSpaceAhead·SpaceWeight
-  + maxQ·NetWeight − headФoodDist·FoodDistWeight`. `freeSpaceAhead` is the max `reachableFreeSpace` over the 4 next-head
-  cells — the exact survivability term. The net forward is **skipped entirely when `NetWeight == 0`**.
+- **Leaf score:** a board-full win dominates; a death is dominated but ranked to prefer a *later* death; a survived leaf =
+  `foodGained·FoodWeight − TrapPenalty·[reachable < length] + freeSpaceAhead·SpaceWeight
+  + SpaceRatioWeight·(freeSpaceAhead / freeCells) − headFoodDist·FoodDistWeight`. `freeSpaceAhead` is the max
+  `reachableFreeSpace` over the 4 next-head cells. The **`SpaceRatioWeight` term is the key addition** — the *fraction* of
+  currently-free cells still reachable, which penalizes fragmentation the absolute `reachable < length` test misses (the
+  snake cutting itself off from most of the board while its body still fits the pocket). The trained net enters only as a
+  **root-move tiebreak** (`maxQ·NetWeight`, one forward per move — see below), not per leaf.
 - **Reuses what M33 already shipped:** `reachableFreeSpace` (= PR #11's `FreeSpaceAhead`), deterministic dynamics, the
   177-dim observation, `PgSnakeNet`.
 - **RNG-free simulation:** when a simulated line eats, food is respawned at the **first free cell** (`simSpawnFood`), not
@@ -66,20 +69,34 @@ it in the loop keeps the demo a genuine "watch the trained model" showcase).
 
 ## 5. Results (measured — C#, shipped 177-dim net, **no retraining**)
 
-food@12 on 12×12 (mean, high variance — min/max in parens); greedy baseline ≈ 50 (M27):
+food@12 on 12×12 (mean, high variance — min/max in parens); greedy baseline ≈ 50 (M27). d12/b16, net-tiebreak 50.
+
+**The anti-fragmentation term (`SpaceRatioWeight`) is the biggest lever** — a paired sweep (same seeds), confirmed on a
+second seed base:
+
+| `SpaceRatioWeight` | food@12 (seed 1, 20 eps) | food@12 (seed 100, 30 eps) | note |
+|---|---|---|---|
+| 0 (survival only) | 70.3 | 72.6 | prior shipped baseline |
+| 50k | 75.8 | — | |
+| **100k (SHIPPED)** | **81.3** (max 108) | **80.6** (max 106) | robust peak; ~+10 food (+14%) |
+| 200k | 82.2 | 79.2 | ~tied with 100k but nearer the cliff |
+| 400k | 76.0 | — | over-weights connectivity → under-eats |
+
+Other levers (all d12/b16, at `SpaceRatioWeight` 0 unless noted):
 
 | config | food@12 | latency | verdict |
 |---|---|---|---|
-| pure-survival — d12/b16, net 0 | **70.7** (51–88, 12 eps) | 10.7 ms/move | strongest; net unused |
-| **net-tiebreak — d12/b16, net 50 (SHIPPED)** | **≈ 70** | ~11 ms/move | ~= pure survival; keeps the net in the loop as a true near-tie breaker |
-| net-tiebreak — d12/b16, net 500 | 67.8 (52–81, 12 eps) | 10.6 ms/move | a heavy net weight overrides survival moves and slightly hurts |
-| net-guided *per node* — d10/b16, net 500 | 74.0 (2 eps) | **89 ms/move** | rejected: ~9× cost, no strength gain (the survival term carries it) |
-| pure-survival — d20/b32, net 0 | 66.2 (62–70, 4 eps) | 38 ms/move | rejected: deeper/wider MISRANKS under beam pruning → weaker + slower |
+| **SHIPPED — d12/b16, net 50, ratio 100k** | **≈ 81** | ~11 ms/move | anti-fragmentation term + survival search + net near-tie breaker |
+| net-tiebreak, net 500 (ratio 0) | 67.8 | 10.6 ms/move | a heavy net weight overrides survival moves → slightly hurts |
+| net-guided *per node*, net 500 | 74.0 | **89 ms/move** | rejected: ~9× cost, no strength gain (survival carries it) |
+| d20/b32 (ratio 0) | 66.2 | 38 ms/move | rejected: deeper/wider MISRANKS under beam pruning |
 | _(reference)_ PR #11 net-guided d20/b32 | ~78.6 | server-side | the original pre-Polyglot result (39-dim ray obs) |
 
-All configs run the **identical** `.pg` search, so the browser reproduces them byte-for-byte. **Findings:** (1) depth
-has a sweet spot (~12) — deeper misranks; (2) evaluating the net at every node buys no strength for ~9× the latency, so
-the net is demoted to a cheap root-move tiebreak with a small weight. The search — not the net — is the strength lever.
+All configs run the **identical** `.pg` search, so the browser reproduces them byte-for-byte. **Findings:** (1) the
+fraction-of-free-cells-reachable term (the user's original reachability-ratio idea, used in the *search score* — not as
+a net input) is the strongest single lever, +14%; (2) depth has a sweet spot (~12) — deeper misranks; (3) evaluating the
+net at every node buys no strength for ~9× the latency, so the net is a cheap root-move tiebreak. The search — not the
+net — is the strength lever.
 
 ## 6. Client integration
 
@@ -95,9 +112,10 @@ the net is demoted to a cheap root-move tiebreak with a small weight. The search
 
 ## 8. Honest ceiling & follow-up
 
-The residual cap (~80) is self-traps that form *beyond* the search horizon. A clean **100** (filling ~70% of the board)
-needs a **tail-reachability survival invariant** (guarantee the head can always reach its own tail → follow it
-indefinitely) and/or explicit **Hamiltonian-style endgame** play. Proposed as the next milestone, not built here.
+The residual cap (~81 mean, though single games now hit 106–108 — a near-full board) is self-traps that form *beyond*
+the search horizon. A reliable clean **100+** needs a **tail-reachability survival invariant** (guarantee the head can
+always reach its own tail → follow it indefinitely) and/or explicit **Hamiltonian-style endgame** play. Proposed as the
+next milestone, not built here.
 
 ## 9. Transpiler findings (MintPlayer.Polyglot 0.3.1)
 

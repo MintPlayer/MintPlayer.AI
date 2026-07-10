@@ -1150,28 +1150,31 @@ cloned envs with **pure-survival leaf scoring** (board-full win ≫ everything; 
 flood-fill. The trained net breaks ties between **equally-safe root moves** (one forward per move, not per node). No
 retrain, no obs change; runs in C# eval AND the browser director byte-identically.
 
-**Experiment ledger (food@12, 12×12, ≥12-ep mean unless noted; shipped 177-dim net, no retrain; greedy ≈ 50):**
+**Experiment ledger (food@12, 12×12, shipped 177-dim net, no retrain; greedy ≈ 50; d12/b16, net-tiebreak 50):**
 | config | food | latency | verdict |
 |---|---|---|---|
-| pure-survival d12/b16 (net 0) | **70.7** (51–88) | 10.7 ms/move | strongest; net unused |
-| **net-tiebreak d12/b16 (net 50)** | **≈ 70** | ~11 ms/move | **shipped** — ~= pure survival, keeps the model in the loop |
-| net-tiebreak d12/b16 (net 500) | 67.8 (52–81) | 10.6 ms/move | heavy net weight overrides survival → slightly worse |
-| net-guided *per node* d10/b16 | 74.0 (2 eps) | **89 ms/move** | rejected: ~9× cost, no strength gain |
-| pure-survival d20/b32 | 66.2 (62–70) | 38 ms/move | rejected: deeper/wider misranks under beam pruning |
+| survival only (`SpaceRatioWeight` 0) | 70.3 / 72.6 (seed1/100) | 10.7 ms/move | prior baseline |
+| **+ anti-fragmentation ratio 100k (SHIPPED)** | **81.3 / 80.6** (max 106–108) | ~11 ms/move | **shipped** — +14%, robust across seeds |
+| ratio 200k / 400k | 82.2 / 76.0 | ~10 ms/move | 200k ~ties 100k; 400k over-weights → under-eats |
+| net-tiebreak net 500 (ratio 0) | 67.8 | 10.6 ms/move | heavy net weight overrides survival → worse |
+| net-guided *per node* d10/b16 | 74.0 | **89 ms/move** | rejected: ~9× cost, no strength gain |
+| d20/b32 (ratio 0) | 66.2 | 38 ms/move | rejected: deeper/wider misranks under beam pruning |
 
-**Key findings.** (1) Depth has a **sweet spot ~12** — deeper+wider *misranks* under beam pruning and scores worse
-(matches PR #11's sweep). (2) Evaluating the net at every node buys **no** strength for ~9× the latency — the flood-fill
-survival term carries the search — so the net is demoted to a cheap **root-move tiebreak**. "Make the Snake net strong"
-resolves as: the net's reactive ceiling is real (~50) and can't be trained away; the **agent** is made strong by search,
-with the net as the leaf/tiebreak evaluator.
+**Key findings.** (1) **The anti-fragmentation term is the biggest single lever** — scoring the *fraction of free cells
+still reachable* (the user's original reachability-ratio idea, applied in the **search leaf score**, not as a net input)
+lifts food@12 ~71 → ~81 (+14%, robust on a second seed base; single games now reach a near-full board, 106–108). It
+catches fragmentation the absolute `reachable < length` trap test misses. (2) Depth has a **sweet spot ~12** — deeper+wider
+*misranks* under beam pruning. (3) Evaluating the net at every node buys **no** strength for ~9× the latency — the search
+carries it — so the net is a cheap **root-move tiebreak**. "Make the Snake net strong" resolves as: the net's reactive
+ceiling is real (~50) and can't be trained away; the **agent** is made strong by search, the net a leaf/tiebreak evaluator.
 
-**Client.** `snake-director.ts` swaps greedy `chooseAction` → `chooseActionSearch`, drives the live env with
-`safeMask: false` (planner supersedes the 1-ply shield); `snake_solver.ts` regenerated from the `.pg`; the shipped
-`snake-net.ckpt` reused verbatim.
+**Client.** `snake-director.ts` swaps greedy `chooseAction` → `chooseActionSearch` (incl. `SpaceRatioWeight`), drives the
+live env with `safeMask: false` (planner supersedes the 1-ply shield); `snake_solver.ts` regenerated from the `.pg`; the
+shipped `snake-net.ckpt` reused verbatim.
 
-**Gate.** food@12 markedly past ~50 (≈70 measured, high per-episode variance), fully client-side, byte-identical C#/TS,
-watchable in-browser cadence (~11 ms/move C#). **Honest ceiling.** ~70–80; a clean 100 needs a **tail-reachability
-invariant / Hamiltonian endgame** (PR #11's stretch) — next milestone.
+**Gate.** food@12 ≈ **81** (markedly past ~50; high per-episode variance ~55–108), fully client-side, byte-identical
+C#/TS, watchable in-browser cadence (~11 ms/move C#). **Honest ceiling.** ~81 mean (single games hit ~106); a reliable
+clean 100+ needs a **tail-reachability invariant / Hamiltonian endgame** (PR #11's stretch) — next milestone.
 **Transpiler note.** A multi-`.pg` **incremental**-rebuild codegen bug surfaced (stale out-dir → duplicate prelude /
 non-`partial` PolyglotProgram); clean/CI builds unaffected. Handoff: `polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md`.
 

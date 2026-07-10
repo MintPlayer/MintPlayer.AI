@@ -468,7 +468,7 @@ export class PgSnakeEnv {
         }
         return 0;
     }
-    leafScoreSearch(rootFood: number, depth: number, foodWeight: number, trapPenalty: number, spaceWeight: number, foodDistWeight: number): number {
+    leafScoreSearch(rootFood: number, depth: number, foodWeight: number, trapPenalty: number, spaceWeight: number, foodDistWeight: number, spaceRatioWeight: number): number {
         if (this.lastTerminated && this.body.length === this.cells) {
             return 1000000000.0;
         }
@@ -482,6 +482,12 @@ export class PgSnakeEnv {
             score = score - trapPenalty;
         }
         score = score + free * spaceWeight;
+        if (spaceRatioWeight !== 0.0) {
+            const freeCells = this.freeCount();
+            if (freeCells > 0) {
+                score = score + spaceRatioWeight * free / freeCells;
+            }
+        }
         const head = this.headCell();
         const hr = (head / this.size | 0);
         const hc = (head % this.size | 0);
@@ -491,7 +497,7 @@ export class PgSnakeEnv {
         score = score - foodDist * foodDistWeight;
         return score;
     }
-    chooseActionSearch(net: PgSnakeNet, maxDepth: number, beamWidth: number, foodWeight: number, trapPenalty: number, netWeight: number, spaceWeight: number, foodDistWeight: number): number {
+    chooseActionSearch(net: PgSnakeNet, maxDepth: number, beamWidth: number, foodWeight: number, trapPenalty: number, netWeight: number, spaceWeight: number, foodDistWeight: number, spaceRatioWeight: number): number {
         const rootFood = this.foodEaten;
         let bestByRoot = [];
         for (let a = 0; a < PgSnakeEnv.ActionCount; a++) {
@@ -517,7 +523,7 @@ export class PgSnakeEnv {
                         child.simSpawnFood();
                     }
                     const childFirst = (node.firstMove < 0 ? a : node.firstMove);
-                    const score = child.leafScoreSearch(rootFood, (depth + 1 | 0), foodWeight, trapPenalty, spaceWeight, foodDistWeight);
+                    const score = child.leafScoreSearch(rootFood, (depth + 1 | 0), foodWeight, trapPenalty, spaceWeight, foodDistWeight, spaceRatioWeight);
                     if (score > bestByRoot[childFirst]) {
                         bestByRoot[childFirst] = score;
                     }
