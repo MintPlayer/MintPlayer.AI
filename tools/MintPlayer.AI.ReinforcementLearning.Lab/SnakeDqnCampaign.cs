@@ -17,9 +17,11 @@ using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 /// net under `snake`/`dqn` (the id the web's <c>SnakeModelService</c> loads) plus the full resume state under
 /// `snake`/`dqn-state`.
 /// </summary>
-internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, float stepPenalty, bool safeMask)
+internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, float stepPenalty, bool safeMask, bool grow = false, int growEvery = 5000)
     : ITrainingCampaign, INetworkTelemetrySource
 {
+    // Progressive-growth demo (shared with FruitCake via DqnGrowth): grow the net wider+deeper on the growEvery cadence.
+    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x9E3779B97F4A7C15UL);
     private const string NetId = "dqn";          // deployable DuelingQNet — the id the web loads
     private const string StateId = "dqn-state";  // full DqnTrainingState for lossless resume
 
@@ -106,6 +108,7 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
         // First chunk: resume the full state if present, else warm-start from the deployable net (if any).
         var result = DqnTrainer.Train(_env, options, _seeds, resume: _state, warmStart: _state is null ? _warmNet : null);
         _state = result.State;
+        _state = DqnGrowth.Maybe(_state, grow, growEvery, learningRate, _growRng, Log);
         return _state.StepsCompleted;
     }
 

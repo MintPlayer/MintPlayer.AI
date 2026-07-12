@@ -170,6 +170,19 @@ for every game — `snake`, `fruitcake`, `rushhour`, `cube`, `cube-policy`, `cub
 
 ![Live network visualizer](docs/screenshots/m36-network-visualizer.png)
 
+**Watch the net grow, too.** The DQN games can grow their network *wider and deeper* mid-training
+(function-preserving Net2WiderNet / Net2DeeperNet). Add `--grow` and watch the graph add units and layers live:
+
+```
+dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --game fruitcake --viz --grow
+```
+
+It starts from a tiny net and grows through `[16] → [32] → [32,32] → … → [128,128,128]` with no loss spike (each
+step preserves the function exactly). The cube's self-taught DAVI value net already grows its width during its
+campaign (`--auto-widen`).
+
+![The network after growing wider and deeper](docs/screenshots/m36-network-grows.png)
+
 It is a **development-only** tool: the socket only starts in a Development host environment (the Lab
 defaults to it; set `DOTNET_ENVIRONMENT=Production` to disable) and is never part of the deployed web app.
 Telemetry is read-only — a watched run trains bitwise-identically to an unwatched one. Design notes:

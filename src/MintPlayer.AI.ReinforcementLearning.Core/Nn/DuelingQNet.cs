@@ -103,6 +103,104 @@ public sealed class DuelingQNet : IValueNet
 
     public IValueNet CloneStructure() => new DuelingQNet(_inputSize, _hidden, _actions, new Xoshiro256StarStar(0), _noisy);
 
+    /// <summary>The shared-trunk hidden widths — used to drive progressive growth schedules.</summary>
+    public int[] Trunk => [.. _hidden];
+
+    /// <summary>
+    /// Net2WiderNet (Chen et al. 2016): a wider net that computes the <b>exact same function</b>. Each widened
+    /// trunk layer's new units duplicate a randomly-chosen existing unit; the next layer's incoming weights from a
+    /// duplicated unit are split evenly across its copies so every downstream sum is unchanged. Lets training add
+    /// capacity mid-run without the loss spike a cold-init would cause. Plain (non-noisy) nets only.
+    /// </summary>
+    public DuelingQNet WidenTo(int[] newHidden, Xoshiro256StarStar rng)
+    {
+        if (_noisy) throw new NotSupportedException("WidenTo is only supported for non-noisy DuelingQNet.");
+        if (newHidden.Length != _hidden.Length) throw new ArgumentException("WidenTo preserves depth; use Deepen to add a layer.");
+        for (int i = 0; i < _hidden.Length; i++)
+            if (newHidden[i] < _hidden[i]) throw new ArgumentException("WidenTo cannot shrink a layer.");
+
+        // Per trunk layer: map each new unit → an old unit (identity for originals, random for the extras) and
+        // count how many new units map to each old unit (the function-preserving outgoing-weight split factor).
+        var map = new int[_hidden.Length][];
+        var count = new int[_hidden.Length][];
+        for (int i = 0; i < _hidden.Length; i++)
+        {
+            int oldW = _hidden[i], newW = newHidden[i];
+            var g = new int[newW];
+            var cnt = new int[oldW];
+            for (int j = 0; j < oldW; j++) { g[j] = j; cnt[j] = 1; }
+            for (int j = oldW; j < newW; j++) { int s = rng.NextInt(oldW); g[j] = s; cnt[s]++; }
+            map[i] = g; count[i] = cnt;
+        }
+
+        var grown = new DuelingQNet(_inputSize, newHidden, _actions, rng, noisy: false);
+        for (int i = 0; i < _hidden.Length; i++)
+        {
+            Linear oldL = _trunk[i], newL = grown._trunk[i];
+            int oldOut = _hidden[i], newOut = newHidden[i];
+            int newIn = i == 0 ? _inputSize : newHidden[i - 1];
+            for (int r = 0; r < newIn; r++)
+            {
+                int sr = i == 0 ? r : map[i - 1][r];
+                float scale = i == 0 ? 1f : 1f / count[i - 1][sr];
+                for (int o = 0; o < newOut; o++)
+                    newL.Weight.Data[r * newOut + o] = oldL.Weight.Data[sr * oldOut + map[i][o]] * scale;
+            }
+            for (int o = 0; o < newOut; o++) newL.Bias.Data[o] = oldL.Bias.Data[map[i][o]];
+        }
+        WidenHeadInput((Linear)_valueHead, (Linear)grown._valueHead, map[^1], count[^1], 1);
+        WidenHeadInput((Linear)_advantageHead, (Linear)grown._advantageHead, map[^1], count[^1], _actions);
+        return grown;
+    }
+
+    // A head reads the last trunk layer's (now widened) output: split each duplicated unit's incoming weight
+    // across its copies so the head's pre-activation is unchanged. Output width (and bias) are untouched.
+    private static void WidenHeadInput(Linear oldHead, Linear newHead, int[] mapLast, int[] countLast, int outDim)
+    {
+        for (int r = 0; r < mapLast.Length; r++)
+        {
+            int sr = mapLast[r];
+            float scale = 1f / countLast[sr];
+            for (int o = 0; o < outDim; o++)
+                newHead.Weight.Data[r * outDim + o] = oldHead.Weight.Data[sr * outDim + o] * scale;
+        }
+        oldHead.Bias.Data.CopyTo(newHead.Bias.Data.AsSpan());
+    }
+
+    /// <summary>
+    /// Net2DeeperNet: a deeper net (one extra trunk layer, same width as the last) computing the <b>same
+    /// function</b>. The inserted layer is initialized to identity (W = I, b = 0); since it follows a ReLU its
+    /// input is already ≥ 0, so ReLU(I·x) = x. Plain (non-noisy) nets only.
+    /// </summary>
+    public DuelingQNet Deepen(Xoshiro256StarStar rng)
+    {
+        if (_noisy) throw new NotSupportedException("Deepen is only supported for non-noisy DuelingQNet.");
+        int w = _hidden[^1];
+        var newHidden = new int[_hidden.Length + 1];
+        Array.Copy(_hidden, newHidden, _hidden.Length);
+        newHidden[^1] = w;
+
+        var grown = new DuelingQNet(_inputSize, newHidden, _actions, rng, noisy: false);
+        for (int i = 0; i < _trunk.Length; i++)
+        {
+            _trunk[i].Weight.Data.CopyTo(grown._trunk[i].Weight.Data.AsSpan());
+            _trunk[i].Bias.Data.CopyTo(grown._trunk[i].Bias.Data.AsSpan());
+        }
+        var identity = grown._trunk[^1]; // new last trunk layer → identity (function-preserving after a ReLU)
+        Array.Clear(identity.Weight.Data);
+        for (int k = 0; k < w; k++) identity.Weight.Data[k * w + k] = 1f;
+        Array.Clear(identity.Bias.Data);
+        CopyLinear((Linear)_valueHead, (Linear)grown._valueHead);
+        CopyLinear((Linear)_advantageHead, (Linear)grown._advantageHead);
+        return grown;
+    }
+
+    private static void CopyLinear(Linear src, Linear dst)
+    {
+        src.Weight.Data.CopyTo(dst.Weight.Data.AsSpan());
+        src.Bias.Data.CopyTo(dst.Bias.Data.AsSpan());
+    }
+
     /// <inheritdoc/>
     public IValueNet GrowInput(int newInputSize)
     {

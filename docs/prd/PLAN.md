@@ -1254,8 +1254,32 @@ vs no-viz checkpoints are **SHA256-identical**. 314 fast tests green. Screenshot
 
 **Follow-ups (planned).** M36.2 — static `.ckpt` inspection as an Angular `/network` page reusing the browser
 `.ckpt` parsers (client-side, no server). M36.3 — signed (diverging) heatmaps; viewer→trainer controls over the
-existing WebSocket (pause/step, cadence, layer-select); activation tracing (needs a `Forward` hook); continuous-control
-PPO/SAC once they train through the Lab's `--game` dispatch.
+existing WebSocket (pause/step, cadence, layer-select); continuous-control PPO/SAC once they train through the Lab's
+`--game` dispatch.
+
+## M37 — Progressive net growth (Net2WiderNet / Net2DeeperNet)  *(2026-07-12; branch `m36-network-visualizer`)* ⏳
+
+**Problem.** A net trains at a fixed architecture; the visualizer made it natural to *watch* a net grow, but the DQN
+games had no growth to show.
+
+**Fix.** Function-preserving architecture growth on the shared `DuelingQNet`: `WidenTo` (Net2WiderNet — new units
+duplicate a random existing one, the next layer's incoming weights split evenly across copies) and `Deepen`
+(Net2DeeperNet — an extra trunk layer initialized to identity, exact after a ReLU). Both produce a net computing the
+**same function** (unit tests assert forward-equality). A shared `DqnGrowth` helper applies a staged schedule
+(`[16]→[32]→[32,32]→[64,64]→[64,64,64]→[128,128,128]`, alternating wider/deeper) on a step cadence, rebuilding the
+Adam optimizer (moments are keyed to the parameter set) via `DqnTrainingState.WithNetwork` (buffer/RNGs/n-step
+accumulator/step-count carried over; obs & action dims unchanged so they stay valid). Wired into **both DQN games**:
+`--game snake|fruitcake --grow [--grow-every N]` (starts from the tiny stage, grows mid-run).
+
+**Coverage.** DQN games (Snake, FruitCake) grow **wider and deeper** (new). The DAVI cube value net already grew
+**width** (pre-existing `--auto-widen` / `--grow-to` on `ResidualMlp`). The two-headed imitation policy nets
+(`CubePolicyNet`, `RushHourPolicyNet`) have a fixed 2-layer trunk — widening is feasible but *deepening* needs a
+trunk refactor to a variable-depth `Linear[]` (+ a checkpoint version bump); deferred.
+
+**Gate (met).** `--game fruitcake --viz --grow` from scratch → the graph grows live through all five stages
+(`[16]`→`[128,128,128]`) — wider **and** deeper — with **no loss spike** (function-preserving; the freshly-inserted
+identity layer is visible as a diagonal in its heatmap and trains away). 316 fast tests green (incl. 2 Net2Net
+forward-equality tests). Screenshot: `docs/screenshots/m36-network-grows.png`.
 
 ## Testing strategy (cross-cutting, from research)
 
@@ -1304,6 +1328,7 @@ PPO/SAC once they train through the Lab's `--game` dispatch.
 | M28 NoisyNets capability (2026-06-26) | learns, serializes, serves deterministically; no shipped checkpoint broken | 293/293; σ-grads flow; noisy resume bitwise; v1 ckpts load as plain; serving unchanged (noise off) |
 | M28 FruitCake NoisyNets empirical (2026-06-26) | match or beat ε-greedy at equal budget (multi-seed) | **matched** — 200-game paired A/B tie (702.1 vs 714.4, Δ −12.3 ± 29.8 SE); single-evals were seed-luck; not shipped |
 | M36.1 network visualizer — watch it train (2026-07-12) | see the net evolve live during training (all games); beginner-readable; zero training impact | **met** — pull-based seam; **all six `--game`s** stream topology + weight frames over a **WebSocket** to a self-contained page with **hover tooltips**; net visibly evolves (heatmaps/edges shift, eval 7.0→13.9); **Development-gated**; viz vs no-viz checkpoints **SHA256-identical**; 314 tests green |
+| M37 progressive net growth (2026-07-12) | grow the net wider+deeper mid-training without a loss spike | **met** — function-preserving `WidenTo` (Net2WiderNet) + `Deepen` (Net2DeeperNet) on `DuelingQNet`; `--grow` on Snake+FruitCake grows `[16]`→`[128,128,128]` live (verified in the visualizer); 2 forward-equality tests; DAVI already grew width; policy-net deepen deferred (fixed-trunk refactor) |
 
 ## Shipped (2026-06-11) — release engineering
 

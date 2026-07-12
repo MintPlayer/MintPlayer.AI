@@ -16,9 +16,11 @@ using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 /// <see cref="DqnOptions.MaxSteps"/> and continues. Persists the deployable net under `fruitcake`/`dqn` (the id
 /// the web's <c>FruitCakeModelService</c> will load, A3) plus the full resume state under `fruitcake`/`dqn-state`.
 /// </summary>
-internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false, int nStep = 1, bool shapeRewards = false)
+internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false, int nStep = 1, bool shapeRewards = false, bool grow = false, int growEvery = 2000)
     : ITrainingCampaign, INetworkTelemetrySource
 {
+    // Progressive-growth demo (shared with Snake via DqnGrowth): grow the net wider+deeper on the growEvery cadence.
+    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x9E3779B97F4A7C15UL);
     private const string NetId = "dqn";         // deployable DuelingQNet — the id the web loads (shared by both lines)
     // Noisy training is a SEPARATE line with its own resume state: it must never resume a PLAIN state as a plain
     // net (which would then train with ε=0 and NO exploration). The deployable NetId is shared and keep-best gated.
@@ -122,6 +124,7 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
         var options = BaseOptions with { MaxSteps = to, EvalEvery = Math.Max(1, chunkSteps) };
         var result = DqnTrainer.Train(_env, options, _seeds, resume: _state, warmStart: _state is null ? _warmNet : null);
         _state = result.State;
+        _state = DqnGrowth.Maybe(_state, grow, growEvery, learningRate, _growRng, Log);
         return _state.StepsCompleted;
     }
 

@@ -351,6 +351,13 @@ dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab --
   --game fruitcake --search-eval --data ./data --depth 3 --topk 5 --topk2 2
 ```
 
+**Grow the net mid-training (M37).** `DuelingQNet.WidenTo` (Net2WiderNet) and `.Deepen` (Net2DeeperNet) return a
+function-preserving larger net (unit-tested forward-equality); the shared `tools/…Lab/DqnGrowth.cs` applies a staged
+`[16]→…→[128,128,128]` schedule on a step cadence and rebuilds the state via `DqnTrainingState.WithNetwork` (fresh
+Adam, same buffer/RNGs). `--game snake|fruitcake --grow` starts tiny and grows wider+deeper live (watch it in `--viz`).
+DAVI's `ResidualMlp` already grows width (`--auto-widen`/`--grow-to`); the fixed-trunk policy nets can widen but need a
+refactor to deepen. *Change it:* schedule in `DqnGrowth.Stages`; operators in `DuelingQNet`.
+
 **Watch a net train (M36).** Add `--viz [port]` to **any** game (`--game snake --viz`, bare = 5250; works for all six
 `--game`s): the Lab hosts a localhost page that shows the net's topology + a live weight snapshot over a **WebSocket**
 (`/ws`), so you watch the weights move from random init toward a policy in-browser — with hover tooltips explaining

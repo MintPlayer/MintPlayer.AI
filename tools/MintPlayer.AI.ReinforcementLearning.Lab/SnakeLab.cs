@@ -32,6 +32,8 @@ internal static class SnakeLab
         float stepPenalty = -0.01f; // --step-penalty : per-step reward; ~0 removes the efficiency pressure that encourages safe starvation
         bool safeMask = false;     // --safe-mask : forbid moves that flood-fill into a region too small for the body (anti-self-trap shield)
         bool evalOnly = false;
+        bool grow = false;         // --grow : progressively grow the net wider+deeper mid-training (Net2Net demo)
+        int growEvery = 5000;      // --grow-every : steps between growth steps (with --grow)
 
         // --search : skip training and evaluate the net-guided look-ahead planner (M34) instead of greedy Q. The
         // net is only a leaf tiebreak, so the config defaults reproduce PR #11's shipped depth-20/beam-32 sweep.
@@ -69,7 +71,12 @@ internal static class SnakeLab
             else if (args[i] == "--step-penalty" && i + 1 < args.Length) stepPenalty = float.Parse(args[++i], CultureInfo.InvariantCulture);
             else if (args[i] == "--safe-mask") safeMask = true;
             else if (args[i] == "--eval-only") evalOnly = true;
+            else if (args[i] == "--grow") grow = true;
+            else if (args[i] == "--grow-every" && i + 1 < args.Length) growEvery = int.Parse(args[++i]);
         }
+
+        // A growing run starts from the tiny first stage and adds capacity mid-training (Net2Wider/DeeperNet).
+        if (grow) hidden = DqnGrowth.Start;
 
         if (search)
         {
@@ -83,7 +90,7 @@ internal static class SnakeLab
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         string csvPath = Path.Combine(dataDir, "logs", "snake-dqn.csv");
 
-        var campaign = new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, stepPenalty, safeMask);
+        var campaign = new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, stepPenalty, safeMask, grow, growEvery);
         using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
         runner.Run(campaign, store,
             new CampaignOptions
