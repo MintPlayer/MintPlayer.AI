@@ -28,6 +28,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     private readonly int[] _hidden;
     private readonly int _gamesPerChunk, _tempMoves, _evalGames, _windowCapacity, _maxPlies;
     private readonly long _targetGames;
+    private readonly double _opponentRandomFrac; // fraction of self-play games where the learner faces a random opponent
     private readonly Mcts.Config _selfPlayCfg, _evalCfg;
 
     private readonly SeedSequence _seeds;
@@ -42,8 +43,9 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
 
     public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, ulong seed, float learningRate,
         int hidden, Mcts.Config selfPlayCfg, int gamesPerChunk = 32, int tempMoves = 8, int evalGames = 20,
-        int windowCapacity = 40_000, int maxPlies = 512, long targetGames = 0)
+        int windowCapacity = 40_000, int maxPlies = 512, long targetGames = 0, double opponentRandomFrac = 0)
     {
+        _opponentRandomFrac = opponentRandomFrac;
         _game = game;
         _environmentId = environmentId;
         _learningRate = learningRate;
@@ -150,6 +152,20 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // ── Self-play ────────────────────────────────────────────────────────────────────────────────────────────────
     private void PlayGame()
     {
+        // A fraction of games pit the learner (MCTS) against a RANDOM opponent, so the net trains on the
+        // off-distribution positions a weak/unexpected move reaches — the direct fix for "a novel move disorients
+        // the AI" (PLAN M39.3). The rest are pure self-play. Opening variety otherwise comes from temperature.
+        if (_opponentRandomFrac > 0 && _searchRng.NextDouble() < _opponentRandomFrac)
+            PlayVsRandom(learnerFirst: (_totalGames & 1) == 0);
+        else
+            PlaySelfPlay();
+        _totalGames++;
+    }
+
+    // Both sides are the current net + MCTS; every position is a training sample. The outcome z alternates sign each
+    // ply (zero-sum): the terminal result is for the side to move there, so the LAST position played gets its negation.
+    private void PlaySelfPlay()
+    {
         var state = _game.Root();
         var obsHistory = new List<float[]>(64);
         var piHistory = new List<float[]>(64);
@@ -166,8 +182,6 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             ply++;
         }
 
-        // Assign the outcome z back through the game, alternating sign each ply (zero-sum): the terminal result is
-        // for the side to move in the terminal state, so the LAST position played (opposite mover) gets its negation.
         float zTerminalMover = _game.Result(state) switch { GameResult.Loss => -1f, GameResult.Win => 1f, _ => 0f };
         float z = -zTerminalMover;
         for (int i = obsHistory.Count - 1; i >= 0; i--)
@@ -175,7 +189,46 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             AddSample(new Sample(obsHistory[i], piHistory[i], z));
             z = -z;
         }
-        _totalGames++;
+    }
+
+    // The learner (net + MCTS) plays one colour and records its positions; the opponent plays random-legal moves. The
+    // learner's colour is constant, so every recorded position takes the same outcome z (from the learner's view).
+    private void PlayVsRandom(bool learnerFirst)
+    {
+        var state = _game.Root();
+        var obsHistory = new List<float[]>(64);
+        var piHistory = new List<float[]>(64);
+
+        bool learnerToMove = learnerFirst;
+        int ply = 0;
+        GameResult result;
+        while ((result = _game.Result(state)) == GameResult.Ongoing && ply < _maxPlies)
+        {
+            int move;
+            if (learnerToMove)
+            {
+                float[] pi = Mcts.Search(_game, state, Evaluate, _selfPlayCfg, _searchRng);
+                var obs = new float[_game.ObservationSize];
+                _game.WriteObservation(state, obs);
+                obsHistory.Add(obs);
+                piHistory.Add(pi);
+                move = SelectMove(pi, ply);
+            }
+            else move = RandomLegalMove(state, _searchRng);
+            state = _game.Apply(state, move);
+            learnerToMove = !learnerToMove;
+            ply++;
+        }
+
+        // learnerToMove now = the side to move in the terminal state. Result is for that side.
+        float z = result switch
+        {
+            GameResult.Loss => learnerToMove ? -1f : 1f, // side-to-move lost → learner lost iff it was to move
+            GameResult.Win => learnerToMove ? 1f : -1f,
+            _ => 0f,                                     // draw or ply-cap
+        };
+        for (int i = 0; i < obsHistory.Count; i++)
+            AddSample(new Sample(obsHistory[i], piHistory[i], z));
     }
 
     private void AddSample(Sample sample)
@@ -238,7 +291,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             GameResult result;
             while ((result = _game.Result(state)) == GameResult.Ongoing && ply < _maxPlies)
             {
-                int move = mover == modelSide ? ModelMove(state) : RandomLegalMove(state);
+                int move = mover == modelSide ? ModelMove(state) : RandomLegalMove(state, _evalRng);
                 state = _game.Apply(state, move);
                 mover = 3 - mover;
                 ply++;
@@ -258,10 +311,10 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         return best;
     }
 
-    private int RandomLegalMove(TState state)
+    private int RandomLegalMove(TState state, Xoshiro256StarStar rng)
     {
         var legal = _game.LegalMoves(state);
-        return legal[_evalRng.NextInt(legal.Count)];
+        return legal[rng.NextInt(legal.Count)];
     }
 
     // ── Live telemetry (INetworkTelemetrySource): read-only snapshot of the current net ──

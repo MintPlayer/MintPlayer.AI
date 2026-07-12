@@ -20,12 +20,14 @@ internal static class Connect4Lab
         int sims = a.Int("--sims", 100);          // MCTS simulations per move
         int gamesPerChunk = a.Int("--games", 32);
         int evalGames = a.Int("--eval-games", 20);
+        double opponentRandom = a.Dbl("--opponent-random", 0); // fraction of games vs a random opponent (robustness)
         bool evalOnly = a.Has("--eval-only");
 
         var game = new Connect4Game();
         var cfg = new Mcts.Config(Simulations: sims);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            _ => new SelfPlayCampaign<Connect4State>(game, "connect4", seed, learningRate, hidden, cfg, gamesPerChunk, evalGames: evalGames),
+            _ => new SelfPlayCampaign<Connect4State>(game, "connect4", seed, learningRate, hidden, cfg, gamesPerChunk,
+                evalGames: evalGames, opponentRandomFrac: opponentRandom),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "connect4-selfplay.csv")));
     }
 }

@@ -1359,7 +1359,19 @@ shallow/leaky, PR #27's correct call), the 3 imitation/policy campaigns *as whol
 policy campaign SHA256-bitwise-identical vs baseline; `--viz` live for every game; net **negative** line diff with
 every shared module carrying an interface comment. See `BOILERPLATE_REDUCTION_PRD.md`.
 
-## M39 — Self-play training (Connect-4 → chess)  *(planned 2026-07-12; see `CHESS_SELFPLAY_PRD.md`)* 🔜
+## M39 — Self-play training (Connect-4 → chess)  *(2026-07-12; branch `m39-chess-selfplay-plan`, PR #32; see `CHESS_SELFPLAY_PRD.md`)* — M39.1 + M39.2 SHIPPED
+
+**Status (2026-07-12):** **M39.1 (rails on Connect-4) and M39.2 (chess) SHIPPED**, each its own commit on
+`m39-chess-selfplay-plan`. The reusable stack — `IZeroSumGame<TState>` + `Core/Planning/Mcts.cs` (PUCT) +
+`PolicyValueTraining` + `SelfPlayCampaign<TState>` — is in Core/Lab; Connect-4 and chess are both consumers, the
+latter reusing the rails **unchanged**. Chess movegen is **perft-verified** (25/25 published counts, incl. startpos
+depth 5 and Kiwipete depth 4); the 4672 move encoding round-trips (encode→decode→apply) with no collisions; a
+`--game chess` run from random init plays legal chess and beats a random-legal opponent. A **robustness slice of
+M39.3** also shipped: `--opponent-random` mixes in learner-vs-random games so the net trains on the off-distribution
+positions an unexpected move reaches (the direct code answer to "a novel move disorients the AI"). 361 fast tests
+green (perft, MCTS-vs-negamax, encoding round-trip, both self-play contracts). The rest of M39.3 (batched-leaf MCTS,
+GPU/conv, league play, web page) remains optional future work. Honest scope holds: legal, steadily-improving play,
+not engine strength.
 
 **Problem.** The SDK trains via reward (DQN/PPO), a forward model (DAVI), or an exact oracle (cube/Rush Hour imitation). Chess
 has no cheap oracle and a reactive net plateaus — the repo's own history says **search is the lever**. The missing paradigm is

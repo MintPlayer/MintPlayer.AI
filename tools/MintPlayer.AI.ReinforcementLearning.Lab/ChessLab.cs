@@ -21,13 +21,14 @@ internal static class ChessLab
         int sims = a.Int("--sims", 64);           // modest — chess movegen per node is heavy on CPU
         int gamesPerChunk = a.Int("--games", 8);
         int evalGames = a.Int("--eval-games", 10);
+        double opponentRandom = a.Dbl("--opponent-random", 0); // fraction of games vs a random opponent (robustness)
         bool evalOnly = a.Has("--eval-only");
 
         var game = new ChessGame();
         var cfg = new Mcts.Config(Simulations: sims);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             _ => new SelfPlayCampaign<ChessState>(game, "chess", seed, learningRate, hidden, cfg, gamesPerChunk,
-                tempMoves: 12, evalGames: evalGames, maxPlies: 200),
+                tempMoves: 12, evalGames: evalGames, maxPlies: 200, opponentRandomFrac: opponentRandom),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")));
     }
 }

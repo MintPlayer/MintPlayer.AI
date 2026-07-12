@@ -54,4 +54,31 @@ public class SelfPlayCampaignTests
             dir.Delete(recursive: true);
         }
     }
+
+    /// <summary>The M39.3 robustness path: with <c>opponentRandomFrac = 1</c> every game is learner-vs-random, which
+    /// exercises the separate value-credit assignment (constant learner-perspective z, not the alternating self-play
+    /// z). Asserts it plays, records samples, trains, and evaluates without error.</summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public void SelfPlay_against_a_random_opponent_trains_and_evaluates()
+    {
+        var dir = Directory.CreateTempSubdirectory("connect4-selfplay-random");
+        try
+        {
+            var store = new FileModelStore(dir.FullName);
+            var c = new Lab::SelfPlayCampaign<Connect4State>(new Connect4Game(), "connect4", seed: 2,
+                learningRate: 1e-3f, hidden: 32, selfPlayCfg: new Mcts.Config(Simulations: 8),
+                gamesPerChunk: 6, tempMoves: 2, evalGames: 2, windowCapacity: 4000, maxPlies: 64,
+                targetGames: 0, opponentRandomFrac: 1.0);
+
+            Assert.False(c.Resume(store));
+            Assert.Equal(6, c.TrainChunk());
+            Assert.Contains(c.Evaluate().Metrics, m => m.Name == "winRate");
+            c.Dispose();
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
 }
