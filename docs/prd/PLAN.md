@@ -1435,12 +1435,19 @@ is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); th
   prefer `i32` consts + `if/else` over enums/`switch`.
 
 **Phases (each ends on a green build + its gate).**
-- **M40.1 — single-source the engine.** Port `ChessBoard`/`ChessRules` + `ChessMoveEncoding` into
-  `Environments/Chess/polyglot/chess_solver.pg`; the `MintPlayer.Polyglot.MSBuild` PackageReference already in the
-  Environments `.csproj` (v0.3.1) transpiles every `**/*.pg` to `obj/` before CoreCompile. Rewire `ChessGame`/a facade
-  onto the generated `Pg` core (replacing the hand-written engine internals). **Gate: perft 25/25 + the encoding
-  round-trip on the GENERATED engine** (the M39.2 gate carries onto the single source); the chess `SelfPlayCampaign`
-  contract test stays green.
+- **M40.1 — single-source the engine. ✅ SHIPPED 2026-07-12.** Ported `ChessBoard`/`ChessRules` + `ChessMoveEncoding`
+  into `Environments/Chess/polyglot/chess_solver.pg` (internal `Pg`-prefixed core: `PgChessState` + `PgChessMove` —
+  board `List<i32>[64]`, promotion/castling as `i32`, bounded `for`+`continue` rays, `List<(i32,i32)>` delta tables;
+  every construct proven by `fruitcake_solver.pg`). The `MintPlayer.Polyglot.MSBuild` PackageReference (v0.3.1) already
+  transpiles every `**/*.pg` to `obj/` before CoreCompile — 0.3.1 already bundles win-x64 + linux-x64 + linux-arm64,
+  so CI (ubuntu) is unaffected. `ChessState`/`ChessRules`/`ChessMoveEncoding` are now **thin C# facades** over the core
+  (public API + both test files unchanged); `ChessGame`'s seam (`LegalMoves`/`Apply`/`Result`) delegates to the core's
+  `legalMoveIndices`/`applyIndex`/`result` so training and the browser share one implementation; `perft` recurses
+  entirely in-core. **Gate MET: perft 25/25 on the generated engine** (incl. startpos d5 = 4,865,609, Kiwipete
+  d4 = 4,085,603, ~10 s), encoding round-trip + terminal-detection green, `SelfPlayCampaign` chess contract green, and
+  the full fast suite 355/355 (no FruitCake/Snake/MountainCar regression from the shared re-transpile). Note: the
+  multi-`.pg` stale-prelude codegen bug (CS0101/CS0260) reappears on incremental add of a new `.pg` — cleared per the
+  CLAUDE.md fix (`rm obj/*/net10.0/polyglot/*.cs`) then rebuilt clean.
 - **M40.2 — single-source the inference math + a TS `.ckpt` parser.** Add `PgPolicyValueNet.forward` (flat-array
   trunk + policy/value heads, `tanh` value), `writeObservation`, and a chess `mcts` (PUCT, masked-softmax, `sqrt`,
   **no Dirichlet** — inference only) to the `.pg`. Add `ClientApp/src/app/chess/chess-net.ts` (mirrors the C#

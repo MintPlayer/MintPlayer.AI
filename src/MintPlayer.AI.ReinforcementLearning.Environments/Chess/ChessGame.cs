@@ -19,33 +19,18 @@ public sealed class ChessGame : IZeroSumGame<ChessState>
 
     public ChessState Root(ulong? seed = null) => ChessState.StartPosition();
 
-    public IReadOnlyList<int> LegalMoves(ChessState state)
-    {
-        var moves = ChessRules.LegalMoves(state);
-        var indices = new int[moves.Count];
-        for (int i = 0; i < moves.Count; i++) indices[i] = ChessMoveEncoding.Encode(moves[i]);
-        return indices;
-    }
+    // The seam methods delegate to the single-source core so training and the browser client share one
+    // implementation of "legal indices / apply an index / terminal result".
+    public IReadOnlyList<int> LegalMoves(ChessState state) => state.Core.legalMoveIndices();
 
-    public ChessState Apply(ChessState state, int move)
-    {
-        var decoded = ChessMoveEncoding.Decode(move);
-        // A queen-promotion rides the queen planes and decodes as None → promote the pawn to a Queen by default.
-        if (decoded.Promotion == PieceType.None
-            && (PieceType)Math.Abs(state.Squares[decoded.From]) == PieceType.Pawn
-            && (decoded.To >> 3) is 0 or 7)
-            decoded = decoded with { Promotion = PieceType.Queen };
-        return ChessRules.MakeMove(state, decoded);
-    }
+    public ChessState Apply(ChessState state, int move) => new(state.Core.applyIndex(move));
 
-    public GameResult Result(ChessState state)
+    public GameResult Result(ChessState state) => state.Core.result() switch
     {
-        if (ChessRules.LegalMoves(state).Count == 0)
-            return ChessRules.InCheck(state, state.WhiteToMove) ? GameResult.Loss : GameResult.Draw; // mate vs stalemate
-        if (ChessRules.IsFiftyMove(state) || ChessRules.IsInsufficientMaterial(state))
-            return GameResult.Draw;
-        return GameResult.Ongoing;
-    }
+        1 => GameResult.Loss,   // side to move is checkmated
+        2 => GameResult.Draw,   // stalemate / 50-move / insufficient material
+        _ => GameResult.Ongoing,
+    };
 
     public void WriteObservation(ChessState state, Span<float> destination)
     {
