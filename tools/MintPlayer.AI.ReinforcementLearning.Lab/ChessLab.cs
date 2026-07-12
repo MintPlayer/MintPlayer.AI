@@ -24,6 +24,9 @@ internal static class ChessLab
         double opponentRandom = a.Dbl("--opponent-random", 0); // fraction of games vs a random opponent (robustness)
         bool evalOnly = a.Has("--eval-only");
 
+        // --demo: play one self-play game with the (trained) net and print FENs to watch — no training.
+        if (a.Has("--demo")) { ChessDemo.Run(dataDir, sims, seed, a.Int("--demo-plies", 100)); return; }
+
         var game = new ChessGame();
         var cfg = new Mcts.Config(Simulations: sims);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
