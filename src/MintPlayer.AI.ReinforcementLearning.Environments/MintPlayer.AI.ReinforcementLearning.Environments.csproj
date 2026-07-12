@@ -20,8 +20,9 @@
        clashes with the other solvers' generated files (CS0101 duplicate Option/Some/None, CS0260 missing
        partial). Force all-or-nothing: whenever ANY .pg is newer than the shared prelude, wipe the generated dir
        so PolyglotTranspile regenerates the FULL set in one CLI call. Single static Output (not a per-file
-       transform) ⇒ MSBuild can't partially batch this target. (Durable fix belongs upstream in the .targets;
-       tracked for a MintPlayer.Polyglot PR.) -->
+       transform) ⇒ MSBuild can't partially batch this target. Durable fix + verified .targets patch:
+       docs/prd/polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md (2026-07-12 update) — delete this target once it
+       ships upstream. -->
   <Target Name="_PolyglotForceFullRetranspile" BeforeTargets="PolyglotTranspile"
           Inputs="@(PolyglotFile)" Outputs="$(IntermediateOutputPath)polyglot\__polyglot_prelude.cs">
     <RemoveDir Directories="$(IntermediateOutputPath)polyglot" />
