@@ -4,13 +4,28 @@
     <ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
   </ItemGroup>
 
-  <!-- Single-source FruitCake solver: FruitCake/polyglot/fruitcake_solver.pg is transpiled to C# at build
-       time (into obj/, before CoreCompile) by MintPlayer.Polyglot.MSBuild. PrivateAssets=all keeps the
-       build-only transpiler OUT of this published package's dependencies. The 0.1.3+ CLI is bundled for
-       win-x64/linux-x64/linux-arm64 (covers Windows dev + Linux CI/deploy); macOS dev must set $(PolyglotTool). -->
+  <!-- Single-source solvers: every FruitCake/Snake/MountainCar/Chess `polyglot/*.pg` is transpiled to C# at
+       build time (into obj/, before CoreCompile) by MintPlayer.Polyglot.MSBuild. PrivateAssets=all keeps the
+       build-only transpiler OUT of this published package's dependencies. The 0.5.3 CLI is bundled for
+       win-x64/linux-x64/linux-arm64/osx-x64/osx-arm64 (covers Windows/macOS dev + Linux CI/deploy). -->
   <ItemGroup>
-    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.3.1" PrivateAssets="all" />
+    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.5.3" PrivateAssets="all" />
   </ItemGroup>
+
+  <!-- Work around a MintPlayer.Polyglot.MSBuild incremental-build bug (present through 0.5.3): the package's
+       PolyglotTranspile target uses per-file Inputs/Outputs, so when only ONE .pg changes MSBuild's *partial
+       incremental build* invokes the CLI with just that file. But the CLI must see the whole .pg set in one
+       invocation — it links the modules and emits a single shared __polyglot_prelude.cs + `partial class
+       PolyglotProgram`. A single-file invocation instead re-emits an INLINE, non-partial prelude, which then
+       clashes with the other solvers' generated files (CS0101 duplicate Option/Some/None, CS0260 missing
+       partial). Force all-or-nothing: whenever ANY .pg is newer than the shared prelude, wipe the generated dir
+       so PolyglotTranspile regenerates the FULL set in one CLI call. Single static Output (not a per-file
+       transform) ⇒ MSBuild can't partially batch this target. (Durable fix belongs upstream in the .targets;
+       tracked for a MintPlayer.Polyglot PR.) -->
+  <Target Name="_PolyglotForceFullRetranspile" BeforeTargets="PolyglotTranspile"
+          Inputs="@(PolyglotFile)" Outputs="$(IntermediateOutputPath)polyglot\__polyglot_prelude.cs">
+    <RemoveDir Directories="$(IntermediateOutputPath)polyglot" />
+  </Target>
 
   <!-- The generated solver types (PgFruitCakeWorld etc.) are internal; the public FruitCakeWorld facade wraps
        them and the parity test compares the two. -->
