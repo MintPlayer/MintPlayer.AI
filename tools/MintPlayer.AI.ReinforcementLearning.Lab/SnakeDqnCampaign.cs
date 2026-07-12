@@ -183,5 +183,28 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
     NetworkMetrics INetworkTelemetrySource.Sample()
         => new(_state?.StepsCompleted ?? 0, targetSteps, _state?.LastLoss ?? double.NaN, _lastEvalFood, double.NaN);
 
+    // Environment-aware neuron labels + live values: inputs are named observation features (177-dim egocentric
+    // vision + scalars), outputs are the 4 move directions with their Q-values, hidden neurons show activations.
+    IReadOnlyList<string>? INetworkTelemetrySource.InputLabels => SnakeEnv.ObservationLabels;
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => SnakeEnv.ActionLabels;
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo()
+    {
+        var obs = _state?.CurrentObs;
+        if ((_state?.Online ?? _warmNet) is not { } net || obs is null || obs.Length != SnakeEnv.ObservationSize) return null;
+        try
+        {
+            var input = (float[])obs.Clone();
+            return (input, net.Forward(new Tensor(input, 1, input.Length)).Data.AsSpan().ToArray());
+        }
+        catch { return null; }
+    }
+    float[][]? INetworkTelemetrySource.SampleActivations()
+    {
+        var obs = _state?.CurrentObs;
+        if ((_state?.Online ?? _warmNet) is not DuelingQNet dqn || obs is null || obs.Length != SnakeEnv.ObservationSize) return null;
+        try { return dqn.LayerActivations(new Tensor((float[])obs.Clone(), 1, obs.Length)); }
+        catch { return null; }
+    }
+
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }

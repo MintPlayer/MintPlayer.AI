@@ -158,7 +158,7 @@ internal sealed class VizServer : IDisposable
                 }
 
                 var io = _source.SampleIo();
-                var frame = NetworkInspector.CaptureFrame(parameters, _source.Sample(), io?.Input, io?.Output);
+                var frame = NetworkInspector.CaptureFrame(parameters, _source.Sample(), io?.Input, io?.Output, _source.SampleActivations());
                 Broadcast(Envelope("frame", JsonSerializer.Serialize(frame, Json)));
             }
             catch { /* transient (e.g. net swapped mid-sample) — skip this frame */ }
@@ -271,6 +271,7 @@ let topo = null, frame = null;
 const lossHist = [];
 // hit-test regions rebuilt each draw() for the hover tooltips
 let hitNodes = [], hitGaps = [], hitHeat = [], graphBottom = 320;
+let inputColG = -1, outputColG = -1;   // which columns carry input / output(action) labels+values
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -319,16 +320,16 @@ function draw() {
     return;
   }
   const cols = [topo.inputSize, ...topo.layers.map(l => l.outputSize)];
-  const capN = 16, capLabeled = 120;   // labeled input/output columns draw all their neurons (up to this)
+  const capN = 16, capLabeled = 260;   // labeled input/output columns draw all their neurons (up to this)
   const inLbl = topo.inputLabels, outLbl = topo.outputLabels;
-  // Display count per column: labeled input/output columns show every neuron so each is individually hoverable;
-  // unlabeled (and hidden) columns stay capped.
-  const dispCount = ci => {
-    const n = cols[ci];
-    if (ci === 0 && inLbl) return Math.min(n, capLabeled);
-    if (ci === cols.length-1 && outLbl) return Math.min(n, capLabeled);
-    return Math.min(n, capN);
-  };
+  // Which columns the labels describe. Input = first column (if it matches). Output(action) labels attach to the
+  // LAST column whose size matches the label count — for a policy/dueling net the action head isn't the final
+  // column (a size-1 value head follows it), so we search rather than assume "last".
+  inputColG = (inLbl && cols[0] === inLbl.length) ? 0 : -1;
+  outputColG = -1;
+  if (outLbl) for (let ci=cols.length-1; ci>=0; ci--) if (cols[ci] === outLbl.length) { outputColG = ci; break; }
+
+  const dispCount = ci => (ci===inputColG || ci===outputColG) ? Math.min(cols[ci], capLabeled) : Math.min(cols[ci], capN);
   let maxDisp = 0; for (let ci=0; ci<cols.length; ci++) maxDisp = Math.max(maxDisp, dispCount(ci));
   const padX = 60, padTop = 30;
   const H = Math.max(320, Math.min(1200, maxDisp*10));      // grow to keep dense columns hoverable
@@ -363,13 +364,13 @@ function draw() {
   // Nodes + column labels.
   for (let ci=0; ci<cols.length; ci++) {
     const n = cols[ci], d = dispCount(ci), x = colX(ci);
-    const role = ci===0 ? 'input' : (ci===cols.length-1 ? 'output' : 'hidden');
     for (let k=0;k<d;k++){ const y = nodeY(k,d);
       ctx.beginPath(); ctx.arc(x, y, nodeR, 0, 7); ctx.fillStyle='#12202f';
       ctx.strokeStyle='#3a5570'; ctx.lineWidth=1.5; ctx.fill(); ctx.stroke();
-      hitNodes.push({ x, y, r: Math.max(nodeR+3, 6), ci, role, n, idx: featureIdx(k,d,n), capped: d<n }); }
+      hitNodes.push({ x, y, r: Math.max(nodeR+3, 6), ci, n, idx: featureIdx(k,d,n), capped: d<n }); }
     ctx.fillStyle='#9aa7b4'; ctx.font='11px monospace'; ctx.textAlign='center';
-    ctx.fillText(ci===0?`in ${n}`:(ci===cols.length-1?`out ${n}`:`${n}`), x, padTop-12);
+    const head = ci===inputColG ? `in ${n}` : ci===outputColG ? `out ${n}` : (n===1 ? 'V' : `${n}`);
+    ctx.fillText(head, x, padTop-12);
     if (n>d){ ctx.fillStyle='#5a6570'; ctx.fillText(`(${n}, capped)`, x, H-padTop+22); }
   }
 
@@ -416,23 +417,33 @@ function outputMeaning() {
   return "the network's score (a \"Q-value\") for one possible action; the AI plays the highest-scoring one.";
 }
 function fmt(v, d) { return (v != null && isFinite(v)) ? v.toFixed(d) : null; }
+// A node's live value: input observation, output Q/score, or a hidden layer's activation.
+function nodeValue(hn) {
+  if (!frame) return null;
+  if (hn.ci === 0 && frame.inputValues) return frame.inputValues[hn.idx];
+  if (hn.ci === outputColG && frame.outputValues) return frame.outputValues[hn.idx];
+  if (frame.activations && hn.ci >= 1 && frame.activations[hn.ci-1]) return frame.activations[hn.ci-1][hn.idx];
+  return null;
+}
 function nodeTip(hn) {
   const approx = hn.capped ? '≈ ' : '';
-  if (hn.role === 'input') {
+  const v = fmt(nodeValue(hn), 3);
+  if (hn.ci === 0) {   // the input column is always the observation, labeled or not
     const lbl = (topo.inputLabels && topo.inputLabels[hn.idx]) || 'one number the AI reads from the game (its observation)';
-    const v = fmt(frame && frame.inputValues ? frame.inputValues[hn.idx] : null, 3);
     return `<b>Input ${hn.idx}</b> — ${approx}${lbl}` + (v ? `<br>value right now: <b>${v}</b>` : '');
   }
-  if (hn.role === 'output') {
-    const v = fmt(frame && frame.outputValues ? frame.outputValues[hn.idx] : null, 2);
+  if (hn.ci === outputColG) {
+    const q = fmt(nodeValue(hn), 2);
     if (topo.outputLabels && topo.outputLabels[hn.idx])
       return `<b>Output ${hn.idx}</b> — ${approx}${topo.outputLabels[hn.idx]}` +
-             (v ? `<br>the network's current score for this: <b>${v}</b>` : '');
-    return `<b>Output neuron</b><br>` + outputMeaning() + (v ? `<br>current value: <b>${v}</b>` : '');
+             (q ? `<br>the network's current score for this: <b>${q}</b>` : '');
+    return `<b>Output neuron</b><br>` + outputMeaning() + (q ? `<br>current value: <b>${q}</b>` : '');
   }
   if (hn.n === 1)
-    return `<b>State-value head V(s)</b><br>The dueling net's single estimate of how good the current situation is, before it adds a per-action bonus (advantage) to form each output score.`;
-  return `<b>Hidden neuron</b><br>It blends the previous layer's numbers using learned "weights", then keeps the result only if positive (a ReLU). Each one learns to detect a useful pattern. ${hn.n} in this layer.`;
+    return `<b>State-value head V(s)</b><br>The dueling net's single estimate of how good the current situation is, before it adds a per-action bonus (advantage) to form each output score.` +
+           (v ? `<br>current value: <b>${v}</b>` : '');
+  return `<b>Hidden neuron</b><br>It blends the previous layer's numbers using learned "weights", then keeps the result only if positive (a ReLU). Each one learns to detect a useful pattern. ${hn.n} in this layer.` +
+         (v ? `<br>activation right now: <b>${v}</b>` : '');
 }
 function gapTip(g) {
   const w = isFinite(g.meanAbs) ? `<br>Average strength right now: <b>${g.meanAbs.toFixed(3)}</b>.` : '';

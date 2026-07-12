@@ -28,11 +28,12 @@ We want two things:
   `cube-davi`) — DQN, imitation-policy, EfficientCube-policy, and DAVI value nets alike — through one generic seam,
   with no per-trainer code.
 - **Beginner-friendly & environment-aware:** hovering any neuron, connection, or heatmap shows a plain-language
-  tooltip. Where the environment supplies semantics (FruitCake does), each **input** names the exact observation
-  feature it is (e.g. "Column 7: surface height") with its **current value**, and each **output** names the action
-  it controls ("Drop the current fruit in column 7 of 14") with its **live Q-value** — so a newcomer can read not
-  just the shape but what the net is actually seeing and deciding right now. Environments without labels fall back to
-  generic per-role tooltips.
+  tooltip. Each **input** names the exact observation feature it is (FruitCake: "Column 7: surface height"; Snake:
+  "Vision: is a wall/body 4 up, 1 left?"), each **output** names the action it controls (Snake: "Move Up"; Cube:
+  "R' — turn the Right face counter-clockwise"; Rush Hour: "Move the red car one cell up/left") and — for the games
+  with a running observation (Snake, FruitCake) — every neuron shows its **live value**: input feature values, output
+  Q-values, and **hidden-neuron activations**. Labels cover Snake, FruitCake, Cube, and Rush Hour; other nets fall
+  back to generic per-role tooltips.
 - **Dev-only, gated:** the live socket only comes up in a **Development** host environment; a Production-configured
   process ignores `--viz` (with a note). It is never part of the deployed web app.
 - **Zero training impact:** attaching the visualizer leaves training **bitwise-identical** (verified: viz vs no-viz
@@ -43,8 +44,9 @@ We want two things:
   native `WebSocket`); the viewer page is a single self-contained HTML file (inline CSS/JS, no external requests).
 
 **Non-goals (v1).** No editing/altering weights from the UI. No viewer→trainer control messages *yet* (the WebSocket
-is chosen so they can be added without changing transport). No gradient-flow animation or **hidden-neuron**
-activation tracing (input/output values are shown; interior activations aren't exposed — see §7). No 3-D layout. No serving the live stream from the public
+is chosen so they can be added without changing transport). No gradient-flow animation. Hidden-neuron
+activations are shown for nets with a running observation (Snake, FruitCake); the batch-trained policy/DAVI nets
+(Cube, Rush Hour) get labels but no live values — see §7. No 3-D layout. No serving the live stream from the public
 web app (training is dev-side; see §3). No diffing two checkpoints. Continuous-control PPO/SAC (Pendulum, MountainCar)
 aren't trained through the Lab's `--game` dispatch, so they're out of scope until they are.
 
@@ -99,14 +101,18 @@ public interface INetworkTelemetrySource
     IReadOnlyList<string>? InputLabels => null;     // name of each input feature
     IReadOnlyList<string>? OutputLabels => null;    // name of each action/output
     (float[] Input, float[] Output)? SampleIo() => null;  // current observation + the net's output for it
+    float[][]? SampleActivations() => null;               // each layer's live activation vector
 }
 ```
 
 The label/IO members are **default-implemented** (null), so a game opts in without every other campaign changing.
-`FruitCakeEnv` publishes `ObservationLabels` (all 89 features, mirroring `fruitcake_solver.pg`) + `ActionLabels`
-(the 14 drop columns); `FruitCakeDqnCampaign.SampleIo()` returns the most-recent observation and the net's forward
-pass on it (per-column Q-values). The forward is read-only (no `Backward`) so it can't perturb training — verified
-SHA256-identical **with a viewer connected** during a run.
+Labels are published on the environments (`FruitCakeEnv.ObservationLabels`/`ActionLabels`, `SnakeEnv`,
+`RubiksCubeEnv.ActionLabels` = the 12 quarter-turns, `RushHourBoard.ActionLabels` = the 32 vehicle×dir moves) and
+attached by whichever campaign owns that net. For the DQN games the campaign's `SampleIo()`/`SampleActivations()`
+forward the most-recent observation (`DqnTrainingState.CurrentObs`) through the net to get per-action Q-values and
+each hidden layer's activations (`DuelingQNet.LayerActivations`). The forwards are read-only (no `Backward`) so they
+can't perturb training — verified SHA256-identical **with a viewer connected** during a run. The batch-trained
+policy/DAVI campaigns (Cube, Rush Hour) have no single "current observation", so they supply labels only.
 
 - `NetworkInspector.Describe(parameters, kind)` / `.CaptureFrame(parameters, metrics)` turn **any** net's parameter
   tensors into telemetry by pairing each rank-2 weight with the rank-1 bias that follows it — the layout every net in
@@ -180,11 +186,13 @@ language of the live page.
 
 ## 7. Honest ceiling
 
-This shows **weights** evolving, which is what "watch it learn" most directly means and what the tensors make cheap
-to observe. It does **not** show per-neuron **activations** or gradient flow — those intermediate tensors aren't
-currently surfaced by the forward pass (they'd need an interception hook in each net's `Forward`). That's a
-deliberate v1 boundary, not an oversight; activation tracing is a clean follow-up once the weight view proves its
-worth.
+This shows **weights** evolving, plus live **input/output values and hidden-neuron activations** for the games with a
+running observation (Snake, FruitCake) — computed by an extra read-only forward pass per sampled frame. What it does
+**not** show: activations/values for the **batch-trained** nets (Cube, Rush Hour), which have no single "current
+observation" to forward — they get static labels only; **gradient** flow (grads aren't retained at sample time); and
+**per-connection** signed weights (the heatmap is magnitude-only). The activation forward is a second forward per
+frame — negligible for these small nets at a few Hz, but a knob to watch if applied to a much larger net. These are
+deliberate boundaries; each is a clean follow-up (M36.3).
 
 ## 8. Sources
 

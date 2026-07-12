@@ -202,6 +202,7 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
     IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
         => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
     NetworkMetrics INetworkTelemetrySource.Sample() => new(_totalSamples, 0, _liveLoss, _liveAcc, double.NaN);
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => RubiksCubeEnv.ActionLabels; // 12 quarter-turns
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }

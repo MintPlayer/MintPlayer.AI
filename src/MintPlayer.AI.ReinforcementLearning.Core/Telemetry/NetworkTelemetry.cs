@@ -40,6 +40,11 @@ public interface INetworkTelemetrySource
     /// <summary>The net's current input vector and the output it produces for it (e.g. per-action Q-values), so a
     /// viewer can show "what this input is right now" and "what each output computes". Null when unavailable.</summary>
     (float[] Input, float[] Output)? SampleIo() => null;
+
+    /// <summary>Each layer's current activation vector (post-activation output), in the same order as the layers
+    /// <see cref="NetworkInspector"/> recovers — so a viewer can show every hidden neuron's live value, not just the
+    /// input/output. Null when the net can't (cheaply) expose its intermediate activations.</summary>
+    float[][]? SampleActivations() => null;
 }
 
 /// <summary>The run's scalar read-outs at a moment in training. Any field may be <see cref="double.NaN"/> when a
@@ -77,7 +82,8 @@ public sealed record NetworkFrame(
     long Step, long MaxSteps,
     double Loss, double Eval, double Epsilon,
     IReadOnlyList<LayerFrame> Layers,
-    float[]? InputValues = null, float[]? OutputValues = null);
+    float[]? InputValues = null, float[]? OutputValues = null,
+    float[][]? Activations = null);
 
 /// <summary>
 /// Turns a net's parameter tensors into telemetry. It pairs each rank-2 weight tensor with the rank-1 bias that
@@ -115,10 +121,10 @@ public static class NetworkInspector
         }
         int inputSize = layers.Count > 0 ? layers[0].Weight.Rows : 0;
         int outputSize = layers.Count > 0 ? layers[^1].Weight.Cols : 0;
-        // Only attach labels whose length matches the layer they describe (defensive against a stale label list).
-        var inLabels = inputLabels is not null && inputLabels.Count == inputSize ? inputLabels : null;
-        var outLabels = outputLabels is not null && outputLabels.Count == outputSize ? outputLabels : null;
-        return new NetworkTopology(netKind, inputSize, outputSize, infos, inLabels, outLabels);
+        // Pass labels through as-is: the viewer attaches input labels to the input column and output labels to
+        // whichever column matches their count. (A multi-head net's action head isn't the final column — a scalar
+        // value head follows it — so we deliberately do NOT force output labels to match the last layer here.)
+        return new NetworkTopology(netKind, inputSize, outputSize, infos, inputLabels, outputLabels);
     }
 
     /// <summary>
@@ -127,7 +133,7 @@ public static class NetworkInspector
     /// frame size is bounded no matter how wide the layer is.
     /// </summary>
     public static NetworkFrame CaptureFrame(IReadOnlyList<Tensor> parameters, NetworkMetrics metrics,
-        float[]? inputValues = null, float[]? outputValues = null, int maxHeat = 24)
+        float[]? inputValues = null, float[]? outputValues = null, float[][]? activations = null, int maxHeat = 24)
     {
         var layers = Layers(parameters);
         var frames = new LayerFrame[layers.Count];
@@ -158,7 +164,7 @@ public static class NetworkInspector
             frames[i] = new LayerFrame(i, rows, cols, min, max, meanAbs, l2, biasMeanAbs, hRows, hCols, heat);
         }
         return new NetworkFrame(metrics.Step, metrics.MaxSteps, metrics.Loss, metrics.Eval, metrics.Epsilon, frames,
-            inputValues, outputValues);
+            inputValues, outputValues, activations);
     }
 
     /// <summary>Block-mean of |weight| onto an at-most maxHeat² grid (row-major), preserving aspect within the cap.</summary>

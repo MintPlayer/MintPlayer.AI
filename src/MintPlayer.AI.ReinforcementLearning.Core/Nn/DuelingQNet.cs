@@ -81,6 +81,26 @@ public sealed class DuelingQNet : IValueNet
         foreach (var p in _advantageHead.Parameters()) yield return p;
     }
 
+    /// <summary>
+    /// Per-layer activations for a single input row, in <see cref="Parameters()"/> layer order: each trunk layer's
+    /// post-ReLU output, then the value head V(s) and the advantage head A(s,·). Lets a telemetry viewer show every
+    /// hidden neuron's current value (not just input/output). Read-only — allocates throwaway intermediates and
+    /// never touches parameters, so it's safe to call while training runs.
+    /// </summary>
+    public float[][] LayerActivations(Tensor input)
+    {
+        var acts = new List<float[]>(_trunk.Length + 2);
+        var x = input;
+        foreach (var layer in _trunk)
+        {
+            x = layer.Forward(x).Relu();
+            acts.Add([.. x.Data]);
+        }
+        acts.Add([.. _valueHead.Forward(x).Data]);
+        acts.Add([.. _advantageHead.Forward(x).Data]);
+        return [.. acts];
+    }
+
     public IValueNet CloneStructure() => new DuelingQNet(_inputSize, _hidden, _actions, new Xoshiro256StarStar(0), _noisy);
 
     /// <inheritdoc/>

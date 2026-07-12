@@ -221,6 +221,13 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
         }
         catch { return null; }
     }
+    float[][]? INetworkTelemetrySource.SampleActivations()
+    {
+        var obs = _state?.CurrentObs;
+        if ((_state?.Online ?? _warmNet) is not DuelingQNet dqn || obs is null || obs.Length != FruitCakeEnv.ObservationSize) return null;
+        try { return dqn.LayerActivations(new Tensor((float[])obs.Clone(), 1, obs.Length)); }
+        catch { return null; }
+    }
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }

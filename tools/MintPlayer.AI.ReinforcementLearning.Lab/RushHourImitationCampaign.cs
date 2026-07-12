@@ -319,6 +319,7 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate) 
     IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
         => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
     NetworkMetrics INetworkTelemetrySource.Sample() => new(_totalSamples, 0, _liveLoss, _liveAcc, double.NaN);
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => RushHourBoard.ActionLabels; // 32 vehicle×dir moves
 
     private sealed record Sample(float[] Obs, float[] MaskOffsets, uint LabelMask, float Distance);
 }

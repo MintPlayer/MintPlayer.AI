@@ -1228,11 +1228,14 @@ lives; and on the CPU path every parameter is host-resident `float[]`, so readin
   metrics it already tracks) — DQN, imitation-policy, EfficientCube-policy, and DAVI value nets alike. No trainer
   changes. Sampling on a background thread is a benign race with training writes and **provably harmless** (no writes/
   RNG/ordering) — **verified**: viz vs no-viz `snake.dqn.ckpt` + `snake.dqn-state.ckpt` are SHA256-identical.
-- **Environment-aware tooltips**: the source optionally exposes `InputLabels`/`OutputLabels` + `SampleIo()` (default
-  null → generic). `FruitCakeEnv` names all 89 observation features + 14 actions; the campaign's `SampleIo()` returns
-  the latest observation + the net's forward Q-values, so hovering an **input** shows the feature it is *and its
-  current value*, and an **output** shows the column it drops in *and its live Q*. Read-only forward → still
-  SHA256-identical with a viewer connected.
+- **Environment-aware tooltips (all games)**: the source optionally exposes `InputLabels`/`OutputLabels` +
+  `SampleIo()` + `SampleActivations()` (default null → generic). Labels live on the envs — `FruitCakeEnv` (89
+  features + 14 columns), `SnakeEnv` (177 egocentric-vision features + 4 directions), `RubiksCubeEnv` (12
+  quarter-turns), `RushHourBoard` (32 vehicle×dir moves). For the DQN games (Snake, FruitCake) the campaign forwards
+  `CurrentObs` so **every neuron shows a live value** — input feature values, output Q-values, and **hidden-neuron
+  activations** (`DuelingQNet.LayerActivations`). Read-only forwards → still SHA256-identical with a viewer connected.
+  The viewer attaches output labels to the column matching their count (a policy net's action head precedes its
+  value head) and draws labeled columns in full.
 - **Live viewer** (`tools/…Lab/VizServer.cs` + shared `VizLauncher.cs`): an `HttpListener` on localhost serving one
   self-contained HTML page (Canvas 2D node-link graph + weight-heatmap strip + loss sparkline + **beginner hover
   tooltips**; labeled input/output columns drawn in full so each neuron is hoverable) and a **WebSocket** (`GET /ws`). WebSocket (not
