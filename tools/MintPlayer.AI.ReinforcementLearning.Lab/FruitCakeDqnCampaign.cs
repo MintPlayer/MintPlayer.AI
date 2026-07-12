@@ -201,5 +201,26 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
     NetworkMetrics INetworkTelemetrySource.Sample()
         => new(_state?.StepsCompleted ?? 0, targetSteps, _state?.LastLoss ?? double.NaN, _lastEvalScore, double.NaN);
 
+    // Environment-aware neuron labels + live values, so the viewer can say what each input/output MEANS and its
+    // current value: each input is a named observation feature; each output is the Q-value of dropping in a column.
+    IReadOnlyList<string>? INetworkTelemetrySource.InputLabels => FruitCakeEnv.ObservationLabels;
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => FruitCakeEnv.ActionLabels;
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo()
+    {
+        var net = _state?.Online ?? _warmNet;
+        var obs = _state?.CurrentObs;
+        if (net is null || obs is null || obs.Length != FruitCakeEnv.ObservationSize) return null;
+        try
+        {
+            // Forward the most-recent observation to get the net's current per-column Q-values. Read-only: it never
+            // writes weights/grads (no Backward), so a concurrent training step is unaffected (torn reads only
+            // flicker a displayed number). A fresh input array so the viewer never sees it mutated mid-serialize.
+            var input = (float[])obs.Clone();
+            float[] q = net.Forward(new Tensor(input, 1, input.Length)).Data;
+            return (input, q.AsSpan().ToArray());
+        }
+        catch { return null; }
+    }
+
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }

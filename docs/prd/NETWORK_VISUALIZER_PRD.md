@@ -27,8 +27,12 @@ We want two things:
 - **All games:** `--viz` works for **every trainable game** (`snake`, `fruitcake`, `rushhour`, `cube`, `cube-policy`,
   `cube-davi`) — DQN, imitation-policy, EfficientCube-policy, and DAVI value nets alike — through one generic seam,
   with no per-trainer code.
-- **Beginner-friendly:** hovering any neuron, connection, or heatmap shows a plain-language tooltip explaining what
-  it is and what "learning" is doing to it — so someone new to neural nets can read the picture.
+- **Beginner-friendly & environment-aware:** hovering any neuron, connection, or heatmap shows a plain-language
+  tooltip. Where the environment supplies semantics (FruitCake does), each **input** names the exact observation
+  feature it is (e.g. "Column 7: surface height") with its **current value**, and each **output** names the action
+  it controls ("Drop the current fruit in column 7 of 14") with its **live Q-value** — so a newcomer can read not
+  just the shape but what the net is actually seeing and deciding right now. Environments without labels fall back to
+  generic per-role tooltips.
 - **Dev-only, gated:** the live socket only comes up in a **Development** host environment; a Production-configured
   process ignores `--viz` (with a note). It is never part of the deployed web app.
 - **Zero training impact:** attaching the visualizer leaves training **bitwise-identical** (verified: viz vs no-viz
@@ -39,8 +43,8 @@ We want two things:
   native `WebSocket`); the viewer page is a single self-contained HTML file (inline CSS/JS, no external requests).
 
 **Non-goals (v1).** No editing/altering weights from the UI. No viewer→trainer control messages *yet* (the WebSocket
-is chosen so they can be added without changing transport). No gradient-flow animation or per-neuron activation
-tracing (activations aren't currently exposed — see §7). No 3-D layout. No serving the live stream from the public
+is chosen so they can be added without changing transport). No gradient-flow animation or **hidden-neuron**
+activation tracing (input/output values are shown; interior activations aren't exposed — see §7). No 3-D layout. No serving the live stream from the public
 web app (training is dev-side; see §3). No diffing two checkpoints. Continuous-control PPO/SAC (Pendulum, MountainCar)
 aren't trained through the Lab's `--game` dispatch, so they're out of scope until they are.
 
@@ -91,8 +95,18 @@ public interface INetworkTelemetrySource
     string NetKind { get; }                        // e.g. "dueling-q", "cube-policy", "value-davi-res"
     IReadOnlyList<Tensor>? SnapshotParameters();   // current weights+biases, or null until the net exists
     NetworkMetrics Sample();                        // step / maxSteps / loss / eval / epsilon (NaN where N/A)
+    // Optional semantics (default null → generic tooltips):
+    IReadOnlyList<string>? InputLabels => null;     // name of each input feature
+    IReadOnlyList<string>? OutputLabels => null;    // name of each action/output
+    (float[] Input, float[] Output)? SampleIo() => null;  // current observation + the net's output for it
 }
 ```
+
+The label/IO members are **default-implemented** (null), so a game opts in without every other campaign changing.
+`FruitCakeEnv` publishes `ObservationLabels` (all 89 features, mirroring `fruitcake_solver.pg`) + `ActionLabels`
+(the 14 drop columns); `FruitCakeDqnCampaign.SampleIo()` returns the most-recent observation and the net's forward
+pass on it (per-column Q-values). The forward is read-only (no `Backward`) so it can't perturb training — verified
+SHA256-identical **with a viewer connected** during a run.
 
 - `NetworkInspector.Describe(parameters, kind)` / `.CaptureFrame(parameters, metrics)` turn **any** net's parameter
   tensors into telemetry by pairing each rank-2 weight with the rank-1 bias that follows it — the layout every net in
@@ -117,9 +131,9 @@ the source every ~150 ms and broadcasts:
 
 - `GET /` → one self-contained HTML page (Canvas 2D): a node-link graph (layers as columns of neurons, capped for
   display; edge brightness = weight magnitude) + a per-layer weight-heatmap strip + a loss sparkline, and — for
-  newcomers to neural nets — a **hover tooltip** on every neuron / connection / heatmap explaining what it is and
-  what training is doing to it. Tooltip wording adapts to the net (`NetKind`, output width): input neurons, hidden
-  neurons + ReLU, and outputs as Q-values / move-preferences / a single "value".
+  newcomers to neural nets — a **hover tooltip** on every neuron / connection / heatmap. Labeled input/output
+  columns are drawn in full (not capped) so each neuron is individually hoverable and shows its name + live value;
+  the canvas grows in height to fit. Unlabeled/hidden columns stay capped with generic wording.
 - `GET /ws` → the WebSocket. Messages self-describe (`{"type":"topology"|"frame","data":…}`). Topology is broadcast
   only when the shape changes (e.g. a DAVI widen/grow); the latest is retained so a mid-run joiner gets the graph at
   once. The client auto-reconnects on drop.

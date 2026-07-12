@@ -149,7 +149,7 @@ internal sealed class VizServer : IDisposable
                 var parameters = _source.SnapshotParameters();
                 if (parameters is null || parameters.Count == 0) continue;
 
-                var topology = NetworkInspector.Describe(parameters, _source.NetKind);
+                var topology = NetworkInspector.Describe(parameters, _source.NetKind, _source.InputLabels, _source.OutputLabels);
                 string topologyJson = JsonSerializer.Serialize(topology, Json);
                 if (topologyJson != lastTopologyJson)
                 {
@@ -157,7 +157,8 @@ internal sealed class VizServer : IDisposable
                     Broadcast(Envelope("topology", topologyJson));
                 }
 
-                var frame = NetworkInspector.CaptureFrame(parameters, _source.Sample());
+                var io = _source.SampleIo();
+                var frame = NetworkInspector.CaptureFrame(parameters, _source.Sample(), io?.Input, io?.Output);
                 Broadcast(Envelope("frame", JsonSerializer.Serialize(frame, Json)));
             }
             catch { /* transient (e.g. net swapped mid-sample) — skip this frame */ }
@@ -171,7 +172,8 @@ internal sealed class VizServer : IDisposable
         {
             var parameters = _source.SnapshotParameters();
             if (parameters is null || parameters.Count == 0) return null;
-            return Envelope("topology", JsonSerializer.Serialize(NetworkInspector.Describe(parameters, _source.NetKind), Json));
+            var topology = NetworkInspector.Describe(parameters, _source.NetKind, _source.InputLabels, _source.OutputLabels);
+            return Envelope("topology", JsonSerializer.Serialize(topology, Json));
         }
         catch { return null; }
     }
@@ -268,7 +270,7 @@ const $ = id => document.getElementById(id);
 let topo = null, frame = null;
 const lossHist = [];
 // hit-test regions rebuilt each draw() for the hover tooltips
-let hitNodes = [], hitGaps = [], hitHeat = [];
+let hitNodes = [], hitGaps = [], hitHeat = [], graphBottom = 320;
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -317,19 +319,33 @@ function draw() {
     return;
   }
   const cols = [topo.inputSize, ...topo.layers.map(l => l.outputSize)];
-  const capN = 16;
-  const H = 320, padX = 60, padTop = 30, nodeR = 6;
+  const capN = 16, capLabeled = 120;   // labeled input/output columns draw all their neurons (up to this)
+  const inLbl = topo.inputLabels, outLbl = topo.outputLabels;
+  // Display count per column: labeled input/output columns show every neuron so each is individually hoverable;
+  // unlabeled (and hidden) columns stay capped.
+  const dispCount = ci => {
+    const n = cols[ci];
+    if (ci === 0 && inLbl) return Math.min(n, capLabeled);
+    if (ci === cols.length-1 && outLbl) return Math.min(n, capLabeled);
+    return Math.min(n, capN);
+  };
+  let maxDisp = 0; for (let ci=0; ci<cols.length; ci++) maxDisp = Math.max(maxDisp, dispCount(ci));
+  const padX = 60, padTop = 30;
+  const H = Math.max(320, Math.min(1200, maxDisp*10));      // grow to keep dense columns hoverable
+  graphBottom = H;
+  const nodeR = maxDisp>48 ? 3 : (maxDisp>24 ? 4 : 6);
   cv.width = W*dpr; cv.height = (H+150)*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.clearRect(0,0,W,H+150);
 
   const colX = i => padX + (W-2*padX) * (cols.length===1?0.5:i/(cols.length-1));
-  const disp = n => Math.min(n, capN);
-  const nodeY = (k, n) => { const d = disp(n); return padTop + (H-2*padTop) * (d===1?0.5:k/(d-1)); };
+  const nodeY = (k, d) => padTop + (H-2*padTop) * (d===1?0.5:k/(d-1));
+  // Map a drawn node k (of d shown) back to the real neuron index in a column of n.
+  const featureIdx = (k, d, n) => d===n ? k : Math.round(k*(n-1)/(d-1));
   const frameLayers = frame ? frame.layers : null;
 
-  // Edges: per layer, brightness from the downsampled heatmap sampled onto the capped node pairs.
+  // Edges: per layer, brightness from the downsampled heatmap sampled onto the displayed node pairs.
   for (let li=0; li<topo.layers.length; li++) {
-    const inN = disp(cols[li]), outN = disp(cols[li+1]);
+    const inN = dispCount(li), outN = dispCount(li+1);
     const lf = frameLayers && frameLayers[li];
     let hmax = 1e-9, heat=null, hR=0, hC=0;
     if (lf) { heat=lf.heat; hR=lf.hRows; hC=lf.hCols; for (const v of heat) if (v>hmax) hmax=v; }
@@ -338,7 +354,7 @@ function draw() {
       let t = 0.12;
       if (heat && hR && hC) { const hr = Math.floor(a*hR/inN), hc = Math.floor(b*hC/outN); t = heat[hr*hC+hc]/hmax; }
       ctx.strokeStyle = ramp(t); ctx.globalAlpha = 0.10 + 0.7*t; ctx.lineWidth = 0.5 + 1.2*t;
-      ctx.beginPath(); ctx.moveTo(x1, nodeY(a,cols[li])); ctx.lineTo(x2, nodeY(b,cols[li+1])); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x1, nodeY(a,inN)); ctx.lineTo(x2, nodeY(b,outN)); ctx.stroke();
     }
     hitGaps.push({ x1, x2, li, rows: cols[li], cols: cols[li+1], meanAbs: lf ? lf.wMeanAbs : NaN });
   }
@@ -346,15 +362,15 @@ function draw() {
 
   // Nodes + column labels.
   for (let ci=0; ci<cols.length; ci++) {
-    const n = cols[ci], d = disp(n), x = colX(ci);
+    const n = cols[ci], d = dispCount(ci), x = colX(ci);
     const role = ci===0 ? 'input' : (ci===cols.length-1 ? 'output' : 'hidden');
-    for (let k=0;k<d;k++){ const y = nodeY(k,n);
+    for (let k=0;k<d;k++){ const y = nodeY(k,d);
       ctx.beginPath(); ctx.arc(x, y, nodeR, 0, 7); ctx.fillStyle='#12202f';
       ctx.strokeStyle='#3a5570'; ctx.lineWidth=1.5; ctx.fill(); ctx.stroke();
-      hitNodes.push({ x, y, r: nodeR+4, ci, role, n }); }
+      hitNodes.push({ x, y, r: Math.max(nodeR+3, 6), ci, role, n, idx: featureIdx(k,d,n), capped: d<n }); }
     ctx.fillStyle='#9aa7b4'; ctx.font='11px monospace'; ctx.textAlign='center';
     ctx.fillText(ci===0?`in ${n}`:(ci===cols.length-1?`out ${n}`:`${n}`), x, padTop-12);
-    if (n>capN){ ctx.fillStyle='#5a6570'; ctx.fillText(`(${n}, capped)`, x, H-padTop+22); }
+    if (n>d){ ctx.fillStyle='#5a6570'; ctx.fillText(`(${n}, capped)`, x, H-padTop+22); }
   }
 
   // Per-layer weight heatmaps in a strip beneath the graph.
@@ -399,11 +415,23 @@ function outputMeaning() {
   if (k.indexOf('policy') >= 0) return "the network's preference for one possible move; higher means more likely to be chosen.";
   return "the network's score (a \"Q-value\") for one possible action; the AI plays the highest-scoring one.";
 }
+function fmt(v, d) { return (v != null && isFinite(v)) ? v.toFixed(d) : null; }
 function nodeTip(hn) {
-  if (hn.role === 'input')
-    return `<b>Input neuron</b><br>One number the AI reads from the game each step — its "observation" (e.g. a board cell, a distance, a speed). This layer takes in ${hn.n} such numbers.`;
-  if (hn.role === 'output')
-    return `<b>Output neuron</b><br>` + outputMeaning();
+  const approx = hn.capped ? '≈ ' : '';
+  if (hn.role === 'input') {
+    const lbl = (topo.inputLabels && topo.inputLabels[hn.idx]) || 'one number the AI reads from the game (its observation)';
+    const v = fmt(frame && frame.inputValues ? frame.inputValues[hn.idx] : null, 3);
+    return `<b>Input ${hn.idx}</b> — ${approx}${lbl}` + (v ? `<br>value right now: <b>${v}</b>` : '');
+  }
+  if (hn.role === 'output') {
+    const v = fmt(frame && frame.outputValues ? frame.outputValues[hn.idx] : null, 2);
+    if (topo.outputLabels && topo.outputLabels[hn.idx])
+      return `<b>Output ${hn.idx}</b> — ${approx}${topo.outputLabels[hn.idx]}` +
+             (v ? `<br>the network's current score for this: <b>${v}</b>` : '');
+    return `<b>Output neuron</b><br>` + outputMeaning() + (v ? `<br>current value: <b>${v}</b>` : '');
+  }
+  if (hn.n === 1)
+    return `<b>State-value head V(s)</b><br>The dueling net's single estimate of how good the current situation is, before it adds a per-action bonus (advantage) to form each output score.`;
   return `<b>Hidden neuron</b><br>It blends the previous layer's numbers using learned "weights", then keeps the result only if positive (a ReLU). Each one learns to detect a useful pattern. ${hn.n} in this layer.`;
 }
 function gapTip(g) {
@@ -425,7 +453,7 @@ $('net').addEventListener('mousemove', ev => {
   const x = ev.offsetX, y = ev.offsetY;
   for (const hn of hitNodes) { const dx=x-hn.x, dy=y-hn.y; if (dx*dx+dy*dy <= hn.r*hn.r) return showTip(nodeTip(hn), ev); }
   for (const h of hitHeat) { if (x>=h.x && x<=h.x+h.w && y>=h.y && y<=h.y+h.h) return showTip(heatTip(h), ev); }
-  for (const g of hitGaps) { if (x>g.x1+8 && x<g.x2-8 && y>=10 && y<=320) return showTip(gapTip(g), ev); }
+  for (const g of hitGaps) { if (x>g.x1+8 && x<g.x2-8 && y>=10 && y<=graphBottom) return showTip(gapTip(g), ev); }
   hideTip();
 });
 $('net').addEventListener('mouseleave', hideTip);

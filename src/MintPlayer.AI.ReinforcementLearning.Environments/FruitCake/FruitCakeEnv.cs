@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text;
 using MintPlayer.AI.ReinforcementLearning.Core.Environments;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
@@ -29,6 +30,41 @@ public sealed class FruitCakeEnv : IEnvironment<float[], int>, IStatefulEnvironm
     // the pineapple plateau (PRD §4.B); the big-fruit block is FRUITCAKE_BIGFRUIT_INPUTS_PRD §4.A — absolute
     // positions the bare skyline collapses, so the net can locate where the (possibly buried) biggest fruit sits.
     public const int ObservationSize = ColumnCount * 5 + 5 + 5 + 3 + 6; // 89
+
+    /// <summary>Plain-language name for each of the <see cref="ObservationSize"/> observation features, in index
+    /// order (mirrors <c>fruitcake_solver.pg</c> <c>buildObservation</c>). Lets a visualizer say what each input
+    /// neuron actually represents. Built once; safe to share.</summary>
+    public static readonly IReadOnlyList<string> ObservationLabels = BuildObservationLabels();
+
+    /// <summary>Plain-language name for each of the <see cref="ColumnCount"/> actions (drop columns).</summary>
+    public static readonly IReadOnlyList<string> ActionLabels =
+        [.. Enumerable.Range(0, ColumnCount).Select(c => $"Drop the current fruit in column {c + 1} of {ColumnCount}")];
+
+    private static string[] BuildObservationLabels()
+    {
+        var labels = new List<string>(ObservationSize);
+        // Block A — per column, interleaved (surface height, top-fruit tier).
+        for (int c = 0; c < ColumnCount; c++)
+        {
+            labels.Add($"Column {c + 1}: surface height (0 = empty … 1 = piled to the top)");
+            labels.Add($"Column {c + 1}: tier of the fruit on top (÷11)");
+        }
+        for (int c = 0; c < ColumnCount; c++) labels.Add($"Column {c + 1}: danger margin (1 = safe, 0 = at the danger line)");
+        for (int c = 0; c < ColumnCount; c++) labels.Add($"Column {c + 1}: dropping the current fruit here merges immediately (1/0)");
+        for (int c = 0; c < ColumnCount; c++) labels.Add($"Column {c + 1}: the top fruit already has a same-tier neighbour (1/0)");
+        for (int t = 1; t <= FruitCatalog.MaxDroppableTier; t++) labels.Add($"Current fruit is tier {t} (one-hot)");
+        for (int t = 1; t <= FruitCatalog.MaxDroppableTier; t++) labels.Add($"Next fruit is tier {t} (one-hot)");
+        labels.Add("Fruit count on the board (÷100)");
+        labels.Add("Board fill ratio (area covered)");
+        labels.Add("Highest surface overall (0 = pile at the very top)");
+        labels.Add("Biggest fruit: x position (÷ width)");
+        labels.Add("Biggest fruit: y position (÷ height)");
+        labels.Add("Biggest fruit: tier (÷11)");
+        labels.Add("2nd-biggest fruit: x position (÷ width)");
+        labels.Add("2nd-biggest fruit: y position (÷ height)");
+        labels.Add("2nd-biggest fruit: tier (÷11)");
+        return [.. labels];
+    }
 
     private const float RewardScale = 10f;       // normalize merge points
     private const float TerminalPenalty = -1f;

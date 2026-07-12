@@ -26,6 +26,20 @@ public interface INetworkTelemetrySource
 
     /// <summary>The run's scalar metrics at this instant (step, loss, eval, …). Cheap; called once per frame.</summary>
     NetworkMetrics Sample();
+
+    // ── Optional semantics (default: none → the viewer shows generic tooltips). An environment that knows what its
+    // observation features and actions MEAN can override these so a viewer can say, per neuron, what it represents
+    // and — via SampleIo — its current value. Static labels live on the topology; live values on each frame. ──
+
+    /// <summary>Human-readable name for each INPUT neuron (length = input width), or null if unknown.</summary>
+    IReadOnlyList<string>? InputLabels => null;
+
+    /// <summary>Human-readable name for each OUTPUT neuron / action (length = output width), or null if unknown.</summary>
+    IReadOnlyList<string>? OutputLabels => null;
+
+    /// <summary>The net's current input vector and the output it produces for it (e.g. per-action Q-values), so a
+    /// viewer can show "what this input is right now" and "what each output computes". Null when unavailable.</summary>
+    (float[] Input, float[] Output)? SampleIo() => null;
 }
 
 /// <summary>The run's scalar read-outs at a moment in training. Any field may be <see cref="double.NaN"/> when a
@@ -38,8 +52,12 @@ public readonly record struct NetworkMetrics(long Step, long MaxSteps, double Lo
 public sealed record LayerInfo(int Index, int InputSize, int OutputSize, string Role);
 
 /// <summary>A network's structure: the input width and the ordered fully-connected layers recovered from the
-/// parameter tensors. Stable for the whole run — the viewer lays the graph out from this once.</summary>
-public sealed record NetworkTopology(string NetKind, int InputSize, int OutputSize, IReadOnlyList<LayerInfo> Layers);
+/// parameter tensors. Stable for the whole run — the viewer lays the graph out from this once.
+/// <paramref name="InputLabels"/>/<paramref name="OutputLabels"/> name each input/output neuron when the
+/// environment supplies them (null otherwise).</summary>
+public sealed record NetworkTopology(
+    string NetKind, int InputSize, int OutputSize, IReadOnlyList<LayerInfo> Layers,
+    IReadOnlyList<string>? InputLabels = null, IReadOnlyList<string>? OutputLabels = null);
 
 /// <summary>
 /// One layer's weights at a moment in training: summary stats plus a <b>downsampled magnitude heatmap</b>
@@ -53,11 +71,13 @@ public sealed record LayerFrame(
     int HRows, int HCols, float[] Heat);
 
 /// <summary>A whole-network snapshot: the training scalars at this step plus every layer's
-/// <see cref="LayerFrame"/>. This is the unit a viewer renders to show the net evolving.</summary>
+/// <see cref="LayerFrame"/>, and (when the source supplies them) the net's current input vector and the output it
+/// produces — so a viewer can show each input/output neuron's live value.</summary>
 public sealed record NetworkFrame(
     long Step, long MaxSteps,
     double Loss, double Eval, double Epsilon,
-    IReadOnlyList<LayerFrame> Layers);
+    IReadOnlyList<LayerFrame> Layers,
+    float[]? InputValues = null, float[]? OutputValues = null);
 
 /// <summary>
 /// Turns a net's parameter tensors into telemetry. It pairs each rank-2 weight tensor with the rank-1 bias that
@@ -81,8 +101,10 @@ public static class NetworkInspector
         return layers;
     }
 
-    /// <summary>The net's fixed structure. <paramref name="netKind"/> is a free-form label (e.g. "dueling-q").</summary>
-    public static NetworkTopology Describe(IReadOnlyList<Tensor> parameters, string netKind)
+    /// <summary>The net's fixed structure. <paramref name="netKind"/> is a free-form label (e.g. "dueling-q");
+    /// <paramref name="inputLabels"/>/<paramref name="outputLabels"/> name the input/output neurons when known.</summary>
+    public static NetworkTopology Describe(IReadOnlyList<Tensor> parameters, string netKind,
+        IReadOnlyList<string>? inputLabels = null, IReadOnlyList<string>? outputLabels = null)
     {
         var layers = Layers(parameters);
         var infos = new LayerInfo[layers.Count];
@@ -93,7 +115,10 @@ public static class NetworkInspector
         }
         int inputSize = layers.Count > 0 ? layers[0].Weight.Rows : 0;
         int outputSize = layers.Count > 0 ? layers[^1].Weight.Cols : 0;
-        return new NetworkTopology(netKind, inputSize, outputSize, infos);
+        // Only attach labels whose length matches the layer they describe (defensive against a stale label list).
+        var inLabels = inputLabels is not null && inputLabels.Count == inputSize ? inputLabels : null;
+        var outLabels = outputLabels is not null && outputLabels.Count == outputSize ? outputLabels : null;
+        return new NetworkTopology(netKind, inputSize, outputSize, infos, inLabels, outLabels);
     }
 
     /// <summary>
@@ -101,7 +126,8 @@ public static class NetworkInspector
     /// Each weight matrix is block-averaged (of |value|) down to at most <paramref name="maxHeat"/>² cells so the
     /// frame size is bounded no matter how wide the layer is.
     /// </summary>
-    public static NetworkFrame CaptureFrame(IReadOnlyList<Tensor> parameters, NetworkMetrics metrics, int maxHeat = 24)
+    public static NetworkFrame CaptureFrame(IReadOnlyList<Tensor> parameters, NetworkMetrics metrics,
+        float[]? inputValues = null, float[]? outputValues = null, int maxHeat = 24)
     {
         var layers = Layers(parameters);
         var frames = new LayerFrame[layers.Count];
@@ -131,7 +157,8 @@ public static class NetworkInspector
             var (heat, hRows, hCols) = Downsample(w, rows, cols, maxHeat);
             frames[i] = new LayerFrame(i, rows, cols, min, max, meanAbs, l2, biasMeanAbs, hRows, hCols, heat);
         }
-        return new NetworkFrame(metrics.Step, metrics.MaxSteps, metrics.Loss, metrics.Eval, metrics.Epsilon, frames);
+        return new NetworkFrame(metrics.Step, metrics.MaxSteps, metrics.Loss, metrics.Eval, metrics.Epsilon, frames,
+            inputValues, outputValues);
     }
 
     /// <summary>Block-mean of |weight| onto an at-most maxHeat² grid (row-major), preserving aspect within the cap.</summary>

@@ -355,7 +355,9 @@ dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab --
 `--game`s): the Lab hosts a localhost page that shows the net's topology + a live weight snapshot over a **WebSocket**
 (`/ws`), so you watch the weights move from random init toward a policy in-browser — with hover tooltips explaining
 each part. It's a **pull** model: each campaign implements `INetworkTelemetrySource`, and `VizServer`'s async sample
-loop reads `SnapshotParameters()`/`Sample()` on a cadence. Reading the parameter `float[]`s never mutates anything, so
+loop reads `SnapshotParameters()`/`Sample()` on a cadence. A source may also expose `InputLabels`/`OutputLabels` +
+`SampleIo()` (default null) to name each input/output neuron and stream its live value — FruitCake does, so its
+inputs read as named observation features and its outputs as per-column Q-values. Reading the parameter `float[]`s never mutates anything, so
 a viz run is byte-identical to a no-viz one (SHA256-verified). The socket is **gated to a Development environment**
 (`VizLauncher`); dev-only, never in the deployed web app. See `prd/NETWORK_VISUALIZER_PRD.md`. *Change it:* frame
 contents/heatmap in `NetworkInspector`; each campaign's `SnapshotParameters()`/`Sample()`; page/tooltips/transport in
