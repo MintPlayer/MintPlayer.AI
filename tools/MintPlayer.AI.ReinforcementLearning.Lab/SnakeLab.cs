@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 
 /// <summary>
@@ -12,63 +11,41 @@ internal static class SnakeLab
 {
     public static void Run(string[] args)
     {
-        double hours = 1;
-        string dataDir = "data";
-        ulong seed = 1;
-        int trainGrid = 6;
-        int evalGrid = 12;
-        int chunkSteps = 5_000;
-        long targetSteps = 100_000; // the proven M22 budget (curve plateaus ~30k); --steps 0 = time-bounded only
-        int evalEpisodes = 20;
-        float learningRate = 5e-4f;
-        float explore = 1.0f; // ε-start; pass a low value (e.g. 0.2) to refine a warm-started net rather than re-randomize it
-        int[] hidden = [128, 128]; // --hidden 256,256 : trunk widths for the Dueling Q-net
-        double gamma = 0.99;       // --gamma : discount; higher = longer planning horizon (needed for long-snake routing)
-        float stepPenalty = -0.01f; // --step-penalty : per-step reward; ~0 removes the efficiency pressure that encourages safe starvation
-        bool safeMask = false;     // --safe-mask : forbid moves that flood-fill into a region too small for the body (anti-self-trap shield)
-        bool evalOnly = false;
-        bool grow = false;         // --grow : progressively grow the net wider+deeper mid-training (Net2Net demo)
-        int growEvery = 5000;      // --grow-every : steps between growth steps (with --grow)
+        var a = new CliArgs(args);
+        double hours = a.Dbl("--hours", 1);
+        string dataDir = a.Str("--data", "data");
+        ulong seed = a.ULong("--seed", 1);
+        int trainGrid = a.Int("--train-grid", 6);
+        int evalGrid = a.Int("--eval-grid", 12);
+        int chunkSteps = a.Int("--chunk-steps", 5_000);
+        long targetSteps = a.Long("--steps", 100_000); // the proven M22 budget (curve plateaus ~30k); --steps 0 = time-bounded only
+        int evalEpisodes = a.Int("--episodes", 20);
+        float learningRate = a.Flt("--lr", 5e-4f);
+        float explore = a.Flt("--explore", 1.0f);      // ε-start; pass a low value (e.g. 0.2) to refine a warm-started net
+        int[] hidden = a.Ints("--hidden", [128, 128]); // trunk widths for the Dueling Q-net
+        double gamma = a.Dbl("--gamma", 0.99);         // discount; higher = longer planning horizon (long-snake routing)
+        float stepPenalty = a.Flt("--step-penalty", -0.01f); // per-step reward; ~0 removes the safe-starvation pressure
+        bool safeMask = a.Has("--safe-mask");          // forbid moves that flood-fill into too-small a region (anti-self-trap)
+        bool evalOnly = a.Has("--eval-only");
+        bool grow = a.Has("--grow");                   // progressively grow the net wider+deeper mid-training (Net2Net demo)
+        int growEvery = a.Int("--grow-every", 5000);   // steps between growth steps (with --grow)
 
-        // --search : skip training and evaluate the net-guided look-ahead planner (M34) instead of greedy Q. The
-        // net is only a leaf tiebreak, so the config defaults reproduce PR #11's shipped depth-20/beam-32 sweep.
-        bool search = false;
-        string netPath = Path.Combine("src", "RLDemo.Web", "wwwroot", "models", "snake-net.ckpt");
+        // --search : skip training and evaluate the net-guided look-ahead planner (M34) instead of greedy Q. The net
+        // is only a leaf tiebreak, so the config defaults reproduce PR #11's shipped depth-20/beam-32 sweep.
+        bool search = a.Has("--search");
+        string netPath = a.Str("--net", Path.Combine("src", "RLDemo.Web", "wwwroot", "models", "snake-net.ckpt"));
         var cfg = new SnakeSearchConfig();
-        for (int i = 0; i < args.Length; i++)
+        cfg = cfg with
         {
-            if (args[i] == "--search") search = true;
-            else if (args[i] == "--net" && i + 1 < args.Length) netPath = args[++i];
-            else if (args[i] == "--depth" && i + 1 < args.Length) cfg = cfg with { MaxDepth = int.Parse(args[++i]) };
-            else if (args[i] == "--beam" && i + 1 < args.Length) cfg = cfg with { BeamWidth = int.Parse(args[++i]) };
-            else if (args[i] == "--w-food" && i + 1 < args.Length) cfg = cfg with { FoodWeight = double.Parse(args[++i], CultureInfo.InvariantCulture) };
-            else if (args[i] == "--w-trap" && i + 1 < args.Length) cfg = cfg with { TrapPenalty = double.Parse(args[++i], CultureInfo.InvariantCulture) };
-            else if (args[i] == "--w-net" && i + 1 < args.Length) cfg = cfg with { NetWeight = double.Parse(args[++i], CultureInfo.InvariantCulture) };
-            else if (args[i] == "--w-space" && i + 1 < args.Length) cfg = cfg with { SpaceWeight = double.Parse(args[++i], CultureInfo.InvariantCulture) };
-            else if (args[i] == "--w-dist" && i + 1 < args.Length) cfg = cfg with { FoodDistWeight = double.Parse(args[++i], CultureInfo.InvariantCulture) };
-            else if (args[i] == "--w-ratio" && i + 1 < args.Length) cfg = cfg with { SpaceRatioWeight = double.Parse(args[++i], CultureInfo.InvariantCulture) };
-        }
-
-        for (int i = 0; i < args.Length; i++)
-        {
-            if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], CultureInfo.InvariantCulture);
-            else if (args[i] == "--data" && i + 1 < args.Length) dataDir = args[++i];
-            else if (args[i] == "--seed" && i + 1 < args.Length) seed = ulong.Parse(args[++i]);
-            else if (args[i] == "--train-grid" && i + 1 < args.Length) trainGrid = int.Parse(args[++i]);
-            else if (args[i] == "--eval-grid" && i + 1 < args.Length) evalGrid = int.Parse(args[++i]);
-            else if (args[i] == "--chunk-steps" && i + 1 < args.Length) chunkSteps = int.Parse(args[++i]);
-            else if (args[i] == "--steps" && i + 1 < args.Length) targetSteps = long.Parse(args[++i], CultureInfo.InvariantCulture);
-            else if (args[i] == "--episodes" && i + 1 < args.Length) evalEpisodes = int.Parse(args[++i]);
-            else if (args[i] == "--lr" && i + 1 < args.Length) learningRate = float.Parse(args[++i], CultureInfo.InvariantCulture);
-            else if (args[i] == "--explore" && i + 1 < args.Length) explore = float.Parse(args[++i], CultureInfo.InvariantCulture);
-            else if (args[i] == "--hidden" && i + 1 < args.Length) hidden = args[++i].Split(',').Select(int.Parse).ToArray();
-            else if (args[i] == "--gamma" && i + 1 < args.Length) gamma = double.Parse(args[++i], CultureInfo.InvariantCulture);
-            else if (args[i] == "--step-penalty" && i + 1 < args.Length) stepPenalty = float.Parse(args[++i], CultureInfo.InvariantCulture);
-            else if (args[i] == "--safe-mask") safeMask = true;
-            else if (args[i] == "--eval-only") evalOnly = true;
-            else if (args[i] == "--grow") grow = true;
-            else if (args[i] == "--grow-every" && i + 1 < args.Length) growEvery = int.Parse(args[++i]);
-        }
+            MaxDepth = a.Int("--depth", cfg.MaxDepth),
+            BeamWidth = a.Int("--beam", cfg.BeamWidth),
+            FoodWeight = a.Dbl("--w-food", cfg.FoodWeight),
+            TrapPenalty = a.Dbl("--w-trap", cfg.TrapPenalty),
+            NetWeight = a.Dbl("--w-net", cfg.NetWeight),
+            SpaceWeight = a.Dbl("--w-space", cfg.SpaceWeight),
+            FoodDistWeight = a.Dbl("--w-dist", cfg.FoodDistWeight),
+            SpaceRatioWeight = a.Dbl("--w-ratio", cfg.SpaceRatioWeight),
+        };
 
         // A growing run starts from the tiny first stage and adds capacity mid-training (Net2Wider/DeeperNet).
         if (grow) hidden = DqnGrowth.Start;
