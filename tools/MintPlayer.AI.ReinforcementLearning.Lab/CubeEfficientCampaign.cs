@@ -36,8 +36,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     private CubePolicyNet _net = null!;
     private Adam _adam = null!;
     private long _round, _totalSamples;
-    private double _windowCe, _windowHuber, _windowAcc;
-    private long _windowCount;
+    private TrainWindow _window;
     private double _liveLoss = double.NaN, _liveAcc = double.NaN; // most-recent batch, for the live viewer
 
     public string Environment => CubeIds.Environment;
@@ -67,17 +66,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
                 resumed = false;
             }
         }
-        using (var adamState = store.TryOpenRead(CubeIds.Environment, PolicyAdamId))
-        {
-            if (adamState is not null)
-            {
-                using var reader = new BinaryReader(adamState, Encoding.UTF8, leaveOpen: true);
-                _adam = AdamCheckpoint.Read(_net.Parameters(), reader);
-                _adam.LearningRate = learningRate;
-                Log($"resumed Adam state (lr set to {learningRate:E1})");
-            }
-            else _adam = new Adam(_net.Parameters(), learningRate);
-        }
+        _adam = AdamState.LoadOrInit(store, CubeIds.Environment, PolicyAdamId, _net.Parameters(), learningRate, Log);
         // Persisted progress: cumulative samples (displayed count) + the round counter (so the scramble RNG
         // continues its stream on resume rather than regenerating the same scrambles).
         using (var progress = store.TryOpenRead(CubeIds.Environment, PolicyProgressId))
@@ -115,10 +104,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
         for (int offset = 0; offset + BatchSize <= samples.Count; offset += BatchSize)
         {
             var (ce, huber, acc) = CubePolicyTraining.TrainStep(_net, _adam, samples, offset, BatchSize);
-            _windowCe += ce;
-            _windowHuber += huber;
-            _windowAcc += acc;
-            _windowCount++;
+            _window.Add(ce, huber, acc);
             _totalSamples += BatchSize;
             _liveLoss = ce + huber;
             _liveAcc = acc;
@@ -130,11 +116,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
 
     public CampaignEval Evaluate()
     {
-        double ce = _windowCount > 0 ? _windowCe / _windowCount : 0;
-        double acc = _windowCount > 0 ? _windowAcc / _windowCount : 0;
-        double huber = _windowCount > 0 ? _windowHuber / _windowCount : 0;
-        _windowCe = _windowHuber = _windowAcc = 0;
-        _windowCount = 0;
+        var (ce, huber, acc) = _window.MeanAndReset();
 
         var metrics = new List<CampaignMetric>
         {
@@ -188,11 +170,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     public void Checkpoint(IModelStore store)
     {
         store.Save(CubeIds.Environment, PolicyId, s => _net.Save(s));
-        store.Save(CubeIds.Environment, PolicyAdamId, s =>
-        {
-            using var writer = new BinaryWriter(s, Encoding.UTF8, leaveOpen: true);
-            AdamCheckpoint.Write(_adam, writer);
-        });
+        AdamState.Save(store, CubeIds.Environment, PolicyAdamId, _adam);
         store.Save(CubeIds.Environment, PolicyProgressId, s =>
         {
             using var writer = new BinaryWriter(s, Encoding.UTF8, leaveOpen: true);
