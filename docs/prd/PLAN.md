@@ -1209,6 +1209,83 @@ Play-yourself identical; steady 60 fps at full board; crisp on hi-DPI; rAF loop 
 Verify by save-and-live-reload against the running host (**do not** run `ng serve`/`ng build`); attach a before/after
 screenshot/clip to the PR. Single view-only PR.
 
+## M36 — Network visualizer: see the net, and watch it learn  *(2026-07-12; branch `m36-network-visualizer` off `master`; see `NETWORK_VISUALIZER_PRD.md`)* ✅
+
+**Problem.** A trained net is only ever visible as numbers — a `.ckpt` on disk, a CSV of eval scalars, a console line
+per eval. You cannot *see* a network's shape or structure, and — the real gap — you cannot **watch it change as it
+trains**. Learning itself is invisible.
+
+**Fix (M36.1 — shipped; the priority "watch it evolve" gate).** A read-only **pull** telemetry seam plus a viewer
+served by the training process itself. A 4-agent investigation (2026-07-12) established the constraint: the web app is
+train-free (its server WS infra was removed in M32/M33), so live telemetry must come from the **Lab CLI** where the net
+lives; and on the CPU path every parameter is host-resident `float[]`, so reading weights mid-training is free. Design:
+- **Core seam** (`Core/Telemetry/NetworkTelemetry.cs`): `INetworkTelemetrySource` (`NetKind` + `SnapshotParameters()` +
+  `Sample()`) — a **pull** model, so no trainer calls anything. `NetworkInspector` turns any net's parameter tensors
+  into telemetry by pairing each rank-2 weight with the rank-1 bias after it — keying off `Parameters()` (not a
+  concrete type) so even the non-`IModule` policy nets work. Frame = per-layer stats + a block-averaged ≤24² magnitude
+  **heatmap** (payload bounded regardless of width).
+- **All six games**: each `ITrainingCampaign` also implements the source in ~4 lines (return the live net's params +
+  metrics it already tracks) — DQN, imitation-policy, EfficientCube-policy, and DAVI value nets alike. No trainer
+  changes. Sampling on a background thread is a benign race with training writes and **provably harmless** (no writes/
+  RNG/ordering) — **verified**: viz vs no-viz `snake.dqn.ckpt` + `snake.dqn-state.ckpt` are SHA256-identical.
+- **Environment-aware tooltips (all games)**: the source optionally exposes `InputLabels`/`OutputLabels` +
+  `SampleIo()` + `SampleActivations()` (default null → generic). Labels live on the envs — `FruitCakeEnv` (89
+  features + 14 columns), `SnakeEnv` (177 egocentric-vision features + 4 directions), `RubiksCubeEnv` (12
+  quarter-turns), `RushHourBoard` (32 vehicle×dir moves). **Every neuron shows a live value** in all five games — input feature
+  values, output Q-values/scores, and **hidden-neuron activations** (each net type exposes `LayerActivations`). The
+  DQN games forward their actual `CurrentObs`; the batch-trained nets (Cube, Rush Hour, DAVI) forward a **fixed probe
+  state** (constant-seed scramble / level-1 puzzle), so you watch the net's opinion of one board evolve. Read-only
+  forwards, CPU for a single row even under the GPU backend → still SHA256-identical with a viewer connected. The
+  viewer attaches output labels to the column matching their count (a policy net's action head precedes its value
+  head) and draws labeled columns in full.
+- **Live viewer** (`tools/…Lab/VizServer.cs` + shared `VizLauncher.cs`): an `HttpListener` on localhost serving one
+  self-contained HTML page (Canvas 2D node-link graph + weight-heatmap strip + loss sparkline + **beginner hover
+  tooltips**; labeled input/output columns drawn in full so each neuron is hoverable) and a **WebSocket** (`GET /ws`). WebSocket (not
+  SSE) is the owner's call — bidirectional-ready for future viewer→trainer controls. **Fully async** (per-viewer
+  bounded `Channel` + async send pump + async sample loop; no blocking I/O; costs nothing with no viewer connected).
+  **Gated to a Development host environment** (`VizLauncher` skips it in Production; the Lab defaults to Development).
+  `--game <snake|fruitcake|rushhour|cube|cube-policy|cube-davi> --viz [port]` (bare `--viz` = 5250).
+
+**Gate (met).** `--game snake --viz` → the net **visibly evolves while training** (weight heatmaps/edges shift,
+per-layer |w| grows, eval climbs); **hover tooltips** explain each part for RL newcomers; a **Production** process
+skips the socket (prints a note) while training proceeds; opening the page mid-run shows the graph instantly; and viz
+vs no-viz checkpoints are **SHA256-identical**. 314 fast tests green. Screenshot (with tooltip):
+`docs/screenshots/m36-network-visualizer.png`.
+
+**Follow-ups (planned).** M36.2 — static `.ckpt` inspection as an Angular `/network` page reusing the browser
+`.ckpt` parsers (client-side, no server). M36.3 — signed (diverging) heatmaps; viewer→trainer controls over the
+existing WebSocket (pause/step, cadence, layer-select); continuous-control PPO/SAC once they train through the Lab's
+`--game` dispatch.
+
+## M37 — Progressive net growth (Net2WiderNet / Net2DeeperNet)  *(2026-07-12; branch `m36-network-visualizer`)* ✅
+
+**Problem.** A net trains at a fixed architecture; the visualizer made it natural to *watch* a net grow, but the DQN
+games had no growth to show.
+
+**Fix.** Function-preserving architecture growth on the shared `DuelingQNet`: `WidenTo` (Net2WiderNet — new units
+duplicate a random existing one, the next layer's incoming weights split evenly across copies) and `Deepen`
+(Net2DeeperNet — an extra trunk layer initialized to identity, exact after a ReLU). Both produce a net computing the
+**same function** (unit tests assert forward-equality). A shared `DqnGrowth` helper applies a staged schedule
+(`[16]→[32]→[32,32]→[64,64]→[64,64,64]→[128,128,128]`, alternating wider/deeper) on a step cadence, rebuilding the
+Adam optimizer (moments are keyed to the parameter set) via `DqnTrainingState.WithNetwork` (buffer/RNGs/n-step
+accumulator/step-count carried over; obs & action dims unchanged so they stay valid). Wired into **both DQN games**:
+`--game snake|fruitcake --grow [--grow-every N]` (starts from the tiny stage, grows mid-run).
+
+**Coverage — every trainable net now grows.** The growth math is factored into `Net2Net` (`WidenTrunk` + `SetIdentity`)
+and shared:
+- **DQN games** (Snake, FruitCake) — `DuelingQNet` grows wider+deeper via `--grow` (`DqnGrowth`).
+- **Imitation/EfficientCube policy nets** (Cube, Cube-policy, Rush Hour) — the two-headed nets were **refactored** from
+  a fixed 2-layer trunk to a variable-depth `PolicyValueNet` core (shared by `CubePolicyNet`/`RushHourPolicyNet`).
+  Checkpoint format bumped to **v2** (stores the trunk-widths array); **v1 shipped files still load** (one hidden width
+  → a two-layer trunk), guarded by a test. They grow wider+deeper via `--grow` (`PolicyGrowth`, same schedule).
+- **DAVI value net** (`ResidualMlp`, cube-davi) — already grew **width** (pre-existing `--auto-widen` / `--grow-to`).
+
+**Gate (met).** `--game fruitcake --viz --grow` grows the DQN net `[16]`→`[128,128,128]` live (wider **and** deeper),
+and `--game rushhour --viz --grow` grows the **policy** net the same way (`docs/screenshots/m37-policy-net-grows.png` —
+note the identity diagonals in the just-deepened layers' heatmaps), both with **no loss spike** (function-preserving).
+320 fast tests green (incl. Net2Net forward-equality for DuelingQNet + PolicyValueNet, and a v1-checkpoint-load test).
+Screenshots: `docs/screenshots/m36-network-grows.png` (DQN), `m37-policy-net-grows.png` (policy).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -1255,6 +1332,8 @@ screenshot/clip to the PR. Single view-only PR.
 | M28 2048 expectimax (2026-06-26) | beat the shipped n-tuple greedy on score, serving-viable | **~84k vs ~44k (1.9×)**, best tile 4096→8192 over 100 games, *no retrain*; ~1.2 s/playout at depth 1 |
 | M28 NoisyNets capability (2026-06-26) | learns, serializes, serves deterministically; no shipped checkpoint broken | 293/293; σ-grads flow; noisy resume bitwise; v1 ckpts load as plain; serving unchanged (noise off) |
 | M28 FruitCake NoisyNets empirical (2026-06-26) | match or beat ε-greedy at equal budget (multi-seed) | **matched** — 200-game paired A/B tie (702.1 vs 714.4, Δ −12.3 ± 29.8 SE); single-evals were seed-luck; not shipped |
+| M36.1 network visualizer — watch it train (2026-07-12) | see the net evolve live during training (all games); beginner-readable; zero training impact | **met** — pull-based seam; **all six `--game`s** stream topology + weight frames over a **WebSocket** to a self-contained page with **hover tooltips**; net visibly evolves (heatmaps/edges shift, eval 7.0→13.9); **Development-gated**; viz vs no-viz checkpoints **SHA256-identical**; 314 tests green |
+| M37 progressive net growth (2026-07-12) | grow the net wider+deeper mid-training without a loss spike, everywhere possible | **met** — shared `Net2Net` (WidenTrunk/SetIdentity); `--grow` grows **all** trainable nets live: `DuelingQNet` (Snake, FruitCake) and the refactored variable-depth `PolicyValueNet` (Cube, Cube-policy, Rush Hour), `[16]`→`[128,128,128]`; DAVI `ResidualMlp` already grew width. Policy checkpoint → v2 with v1 back-compat (tested). 320 tests (4 new: widen/deepen forward-equality ×2, v1 load, grown round-trip) |
 
 ## Shipped (2026-06-11) — release engineering
 

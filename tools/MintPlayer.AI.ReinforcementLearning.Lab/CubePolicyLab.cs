@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Hosting;
@@ -24,6 +25,8 @@ internal static class CubePolicyLab
         int beamWidth = 2_000;
         int evalEpisodes = 20;
         bool evalOnly = false;
+        bool grow = false;         // --grow : progressively grow the net wider+deeper mid-training (Net2Net)
+        int growEvery = 50_000;    // --grow-every : samples between growth steps (with --grow)
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], CultureInfo.InvariantCulture);
@@ -35,6 +38,8 @@ internal static class CubePolicyLab
             else if (args[i] == "--beam" && i + 1 < args.Length) beamWidth = int.Parse(args[++i]);
             else if (args[i] == "--episodes" && i + 1 < args.Length) evalEpisodes = int.Parse(args[++i]);
             else if (args[i] == "--eval-only") evalOnly = true;
+            else if (args[i] == "--grow") grow = true;
+            else if (args[i] == "--grow-every" && i + 1 < args.Length) growEvery = int.Parse(args[++i]);
         }
 
         // DI all the way: the model store, clock, GPU backend and CampaignRunner are resolved from the AIHost
@@ -46,14 +51,16 @@ internal static class CubePolicyLab
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         var backend = host.Services.GetRequiredService<AdaptiveBackend>();
         string csvPath = Path.Combine(dataDir, "logs", "cube-policy.csv");
-        runner.Run(
-            new CubeEfficientCampaign(backend, seed, learningRate, width, maxScramble, beamWidth, evalEpisodes),
-            store,
+
+        var campaign = new CubeEfficientCampaign(backend, seed, learningRate, width, maxScramble, beamWidth, evalEpisodes, grow, growEvery);
+        using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
+        runner.Run(campaign, store,
             new CampaignOptions
             {
                 Duration = TimeSpan.FromHours(hours),
                 EvalOnly = evalOnly,
                 OnEval = CampaignCli.ConsoleAndCsv(csvPath),
             });
+        SnakeLab.WaitForViewer(viz);
     }
 }

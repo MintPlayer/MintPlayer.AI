@@ -333,6 +333,8 @@ stops early) and **score-maximizing** (eval = mean return; runs to the wall-cloc
 | [`tools/…Lab/FruitCakeAb.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCakeAb.cs) | Paired-seed A/B of two nets → mean±SD, paired Δ±SE, verdict. |
 | [`tools/…Lab/FruitCakeSearchEval.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCakeSearchEval.cs) | Same net, **search vs greedy** on paired seeds → score + max-tier distribution + watermelon count. |
 | [`tools/…Lab/CampaignCli.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CampaignCli.cs) | `ConsoleAndCsv(path)` — the `OnEval` IO bridge (console + CSV). |
+| [`Core/Telemetry/NetworkTelemetry.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Telemetry/NetworkTelemetry.cs) | Live-network telemetry seam (**pull** model): `INetworkTelemetrySource` (`NetKind`/`SnapshotParameters()`/`Sample()`) + `NetworkInspector` (describes/snapshots any net from its parameter tensors; bounded ≤24² weight heatmap). Read-only — training stays bitwise-identical. Every campaign implements the source. |
+| [`tools/…Lab/VizServer.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/VizServer.cs) + [`VizLauncher.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/VizLauncher.cs) | `--viz [port]` live viewer: an `HttpListener` on localhost serving one self-contained Canvas 2D page (node-link graph + heatmaps + **beginner hover tooltips**) + a **WebSocket** (`/ws`). Fully async (per-viewer `Channel` + async pump + async sample loop). `VizLauncher` is the shared flag handler, **gated to a Development environment**. Bidirectional-ready for future viewer→trainer controls. |
 
 ```bash
 # Train (score-maximizing, resumable): writes <data>/<env>.dqn.ckpt (deployable, save-best) + .dqn-state.ckpt (resume)
@@ -348,6 +350,30 @@ dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab --
 dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab -- \
   --game fruitcake --search-eval --data ./data --depth 3 --topk 5 --topk2 2
 ```
+
+**Grow the net mid-training (M37).** Function-preserving growth (Net2WiderNet/Net2DeeperNet) is factored into
+`Core/Nn/Net2Net.cs` (`WidenTrunk` splits duplicated units' outgoing weights; `SetIdentity` inserts an identity layer)
+and shared by every trainable net. `--grow` (`[16]→…→[128,128,128]` schedule, watch it in `--viz`) works for: **DQN**
+games via `DuelingQNet.WidenTo`/`.Deepen` + `DqnGrowth` (rebuilds state via `DqnTrainingState.WithNetwork`); the
+**imitation/EfficientCube policy nets** — `CubePolicyNet`/`RushHourPolicyNet` were refactored onto a shared
+variable-depth `PolicyValueNet` core — via `PolicyGrowth` (their checkpoint is now v2 with a trunk-widths array; v1
+shipped files still load). DAVI's `ResidualMlp` already grows width (`--auto-widen`/`--grow-to`). *Change it:* schedule
+in `DqnGrowth.Stages`; operators in `Net2Net`.
+
+**Watch a net train (M36).** Add `--viz [port]` to **any** game (`--game snake --viz`, bare = 5250; works for all six
+`--game`s): the Lab hosts a localhost page that shows the net's topology + a live weight snapshot over a **WebSocket**
+(`/ws`), so you watch the weights move from random init toward a policy in-browser — with hover tooltips explaining
+each part. It's a **pull** model: each campaign implements `INetworkTelemetrySource`, and `VizServer`'s async sample
+loop reads `SnapshotParameters()`/`Sample()` on a cadence. A source may also expose `InputLabels`/`OutputLabels` +
+`SampleIo()` + `SampleActivations()` (default null) to name each neuron and stream its live value. Labels live on the
+envs (`SnakeEnv`, `FruitCakeEnv`, `RubiksCubeEnv`, `RushHourBoard`); every neuron — input, hidden (each net exposes
+`LayerActivations`), and output — shows a live value. The DQN games forward their actual `CurrentObs`; the
+batch-trained nets (Cube/Rush Hour/DAVI) forward a fixed probe state (see `CubeViz`). The viewer attaches output
+labels to the column matching their count (an action head can precede a value head) and draws labeled columns in full. Reading the parameter `float[]`s never mutates anything, so
+a viz run is byte-identical to a no-viz one (SHA256-verified). The socket is **gated to a Development environment**
+(`VizLauncher`); dev-only, never in the deployed web app. See `prd/NETWORK_VISUALIZER_PRD.md`. *Change it:* frame
+contents/heatmap in `NetworkInspector`; each campaign's `SnapshotParameters()`/`Sample()`; page/tooltips/transport in
+`VizServer`; the `--viz` gate in `VizLauncher`.
 
 **Resume contract:** a campaign saves a *deployable* net (`<env>.dqn.ckpt`, **save-best guarded** for noisy
 DQN eval) and a *full resume state* (`<env>.dqn-state.ckpt`: optimizer + replay buffer + RNG + env snapshot).

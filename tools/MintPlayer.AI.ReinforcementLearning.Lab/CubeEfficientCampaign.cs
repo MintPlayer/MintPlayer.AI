@@ -3,6 +3,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -17,9 +18,10 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 /// the Ilgpu.Hosting <c>AddGpuBackend()</c>; the container owns its lifetime). Resumes net + Adam + a persisted
 /// (samples, round) counter under distinct `policy-efficient*` ids, so the imitation net is never touched.
 /// </summary>
-internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes)
-    : ITrainingCampaign
+internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes, bool grow = false, int growEvery = 50_000)
+    : ITrainingCampaign, INetworkTelemetrySource
 {
+    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const string PolicyId = "policy-efficient";
     private const string PolicyAdamId = "policy-efficient-adam";
     private const string PolicyProgressId = "policy-efficient-progress";
@@ -36,6 +38,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     private long _round, _totalSamples;
     private double _windowCe, _windowHuber, _windowAcc;
     private long _windowCount;
+    private double _liveLoss = double.NaN, _liveAcc = double.NaN; // most-recent batch, for the live viewer
 
     public string Environment => CubeIds.Environment;
 
@@ -56,8 +59,11 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
             }
             else
             {
-                _net = new CubePolicyNet(new Xoshiro256StarStar(seed ^ 0xC0FFEE), hidden: width);
-                Log($"initialized a fresh EfficientCube net '{PolicyId}' (trunk width {width})");
+                var initRng = new Xoshiro256StarStar(seed ^ 0xC0FFEE);
+                _net = grow ? new CubePolicyNet(initRng, DqnGrowth.Start) : new CubePolicyNet(initRng, hidden: width);
+                Log(grow
+                    ? $"initialized a fresh GROWING EfficientCube net '{PolicyId}' (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                    : $"initialized a fresh EfficientCube net '{PolicyId}' (trunk width {width})");
                 resumed = false;
             }
         }
@@ -114,7 +120,11 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
             _windowAcc += acc;
             _windowCount++;
             _totalSamples += BatchSize;
+            _liveLoss = ce + huber;
+            _liveAcc = acc;
         }
+        if (PolicyGrowth.Maybe(_net, _totalSamples, grow, growEvery, learningRate, _growRng, Log) is var g && g.HasValue)
+            (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }
 
@@ -194,6 +204,16 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     // The AdaptiveBackend is owned by the DI container (disposed with the host), not the campaign. The per-eval
     // device-resident DeviceMlp is created and disposed inside Evaluate, so there is nothing campaign-owned here.
     public void Dispose() { }
+
+    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
+    string INetworkTelemetrySource.NetKind => "cube-policy";
+    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
+        => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
+    NetworkMetrics INetworkTelemetrySource.Sample() => new(_totalSamples, 0, _liveLoss, _liveAcc, double.NaN);
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => RubiksCubeEnv.ActionLabels; // 12 quarter-turns
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo() => CubeViz.SampleIo(_net, ref _probeObs);
+    float[][]? INetworkTelemetrySource.SampleActivations() => CubeViz.SampleActivations(_net, ref _probeObs);
+    private float[]? _probeObs;
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }

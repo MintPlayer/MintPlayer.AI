@@ -1,5 +1,3 @@
-using System.Text;
-using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
@@ -7,42 +5,52 @@ using MintPlayer.AI.ReinforcementLearning.Core.Random;
 namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 
 /// <summary>
-/// Two-headed policy/value network for cube imitation learning (PLAN M16), mirroring
-/// <see cref="RushHour.RushHourPolicyNet"/>: a shared ReLU trunk over the one-hot
-/// sticker observation, a 12-way quarter-turn policy head and a scalar value head
-/// predicting quarter-turn distance-to-solved (normalized by <see cref="DistanceScale"/>).
-/// The value head doubles as the heuristic for policy-guided A*.
+/// Two-headed policy/value network for cube imitation / EfficientCube learning: a shared ReLU trunk over the
+/// one-hot sticker observation, a 12-way quarter-turn policy head and a scalar value head predicting quarter-turn
+/// distance-to-solved. A thin wrapper over the shared <see cref="PolicyValueNet"/> that fixes the cube's
+/// observation/action sizes and checkpoint kind; the trunk is variable-depth, so the net can grow wider
+/// (<see cref="WidenTo"/>) and deeper (<see cref="Deepen"/>) mid-training (Net2Net).
 /// </summary>
-public sealed class CubePolicyNet
+public sealed class CubePolicyNet : IGrowableTrunkNet<CubePolicyNet>
 {
     public const string CheckpointKind = "cube-policy";
-    private const int Version = 1;
     public const float DistanceScale = 30f;
 
-    private readonly Linear _trunk1, _trunk2, _policyHead, _valueHead;
+    private readonly PolicyValueNet _core;
 
+    /// <summary>A fresh net with the classic two-layer trunk of the given width.</summary>
     public CubePolicyNet(Xoshiro256StarStar rng, int hidden = 512)
-    {
-        _trunk1 = new Linear(RubiksCubeEnv.ObservationSize, hidden, rng, Activation.Relu);
-        _trunk2 = new Linear(hidden, hidden, rng, Activation.Relu);
-        _policyHead = new Linear(hidden, RubiksCubeEnv.ActionCount, rng, Activation.None);
-        _valueHead = new Linear(hidden, 1, rng, Activation.None);
-    }
+        : this(new PolicyValueNet(RubiksCubeEnv.ObservationSize, [hidden, hidden], RubiksCubeEnv.ActionCount, rng)) { }
 
-    public IEnumerable<Tensor> Parameters()
-        => _trunk1.Parameters().Concat(_trunk2.Parameters())
-            .Concat(_policyHead.Parameters()).Concat(_valueHead.Parameters());
+    /// <summary>A fresh net with an explicit trunk shape (e.g. a small stage for a growing run).</summary>
+    public CubePolicyNet(Xoshiro256StarStar rng, int[] trunk)
+        : this(new PolicyValueNet(RubiksCubeEnv.ObservationSize, trunk, RubiksCubeEnv.ActionCount, rng)) { }
+
+    private CubePolicyNet(PolicyValueNet core) => _core = core;
+
+    /// <summary>The shared-trunk hidden widths (drives growth schedules).</summary>
+    public int[] Trunk => _core.Trunk;
+
+    public IEnumerable<Tensor> Parameters() => _core.Parameters();
 
     /// <summary>Batched forward pass (autograd-recorded): raw policy logits [B,12] + value [B,1].</summary>
-    public (Tensor Logits, Tensor Value) Forward(Tensor observations)
-    {
-        var h = _trunk2.Forward(_trunk1.Forward(observations).Relu()).Relu();
-        return (_policyHead.Forward(h), _valueHead.Forward(h));
-    }
+    public (Tensor Logits, Tensor Value) Forward(Tensor observations) => _core.Forward(observations);
+
+    /// <summary>Per-layer activations for one input row (for the live-network viewer).</summary>
+    public float[][] LayerActivations(Tensor observation) => _core.LayerActivations(observation);
+
+    /// <summary>Net2WiderNet: a wider net computing the same function.</summary>
+    public CubePolicyNet WidenTo(int[] newHidden, Xoshiro256StarStar rng) => new(_core.WidenTo(newHidden, rng));
+
+    /// <summary>Net2DeeperNet: a deeper net (one extra trunk layer) computing the same function.</summary>
+    public CubePolicyNet Deepen(Xoshiro256StarStar rng) => new(_core.Deepen(rng));
+
+    /// <summary>The policy path as a standalone <see cref="Mlp"/> for a GPU-resident beam-search forward.</summary>
+    public Mlp PolicyAsMlp() => _core.PolicyAsMlp();
 
     /// <summary>
-    /// Single-state inference: logits (the inverse of <paramref name="lastAction"/> masked
-    /// to −∞, −1 = none) and predicted distance-to-solved in quarter-turn MOVES.
+    /// Single-state inference: logits (the inverse of <paramref name="lastAction"/> masked to −∞, −1 = none) and
+    /// predicted distance-to-solved in quarter-turn MOVES.
     /// </summary>
     public (float[] Logits, float Distance) Evaluate(FaceletCube cube, int lastAction = -1)
     {
@@ -51,7 +59,7 @@ public sealed class CubePolicyNet
 
         using (GradMode.NoGrad())
         {
-            var (logits, value) = Forward(new Tensor(obs, 1, obs.Length));
+            var (logits, value) = _core.Forward(new Tensor(obs, 1, obs.Length));
             var masked = new float[RubiksCubeEnv.ActionCount];
             int undo = RubiksCubeEnv.InverseAction(lastAction);
             for (int a = 0; a < masked.Length; a++)
@@ -60,50 +68,8 @@ public sealed class CubePolicyNet
         }
     }
 
-    /// <summary>
-    /// The policy path (trunk → trunk → policy head) as a standalone <see cref="Mlp"/>, so a GPU backend
-    /// can build a device-resident forward over it (the value head is irrelevant to beam search). Weights
-    /// are COPIED, so the result is a frozen snapshot — rebuild it after training to pick up new weights.
-    /// </summary>
-    public Mlp PolicyAsMlp()
-    {
-        int hidden = _trunk1.Weight.Cols;
-        var mlp = new Mlp([RubiksCubeEnv.ObservationSize, hidden, hidden, RubiksCubeEnv.ActionCount],
-            new Xoshiro256StarStar(0), Activation.Relu);
-        var source = new[] { _trunk1, _trunk2, _policyHead };
-        for (int i = 0; i < source.Length; i++)
-        {
-            source[i].Weight.Data.CopyTo(mlp.Layers[i].Weight.Data.AsSpan());
-            source[i].Bias.Data.CopyTo(mlp.Layers[i].Bias.Data.AsSpan());
-        }
-        return mlp;
-    }
-
-    public void Save(Stream destination)
-    {
-        using var writer = new BinaryWriter(destination, Encoding.UTF8, leaveOpen: true);
-        CheckpointFormat.WriteHeader(writer, CheckpointKind, Version);
-        writer.Write(_trunk1.Weight.Cols); // hidden size
-        foreach (var layer in Layers())
-        {
-            CheckpointFormat.WriteFloats(writer, layer.Weight.Data);
-            CheckpointFormat.WriteFloats(writer, layer.Bias.Data);
-        }
-    }
+    public void Save(Stream destination) => _core.Save(destination, CheckpointKind);
 
     public static CubePolicyNet Load(Stream source)
-    {
-        using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
-        CheckpointFormat.ReadHeader(reader, CheckpointKind, Version);
-        int hidden = reader.ReadInt32();
-        var net = new CubePolicyNet(new Xoshiro256StarStar(0), hidden);
-        foreach (var layer in net.Layers())
-        {
-            CheckpointFormat.ReadFloats(reader).CopyTo(layer.Weight.Data.AsSpan());
-            CheckpointFormat.ReadFloats(reader).CopyTo(layer.Bias.Data.AsSpan());
-        }
-        return net;
-    }
-
-    private IEnumerable<Linear> Layers() => [_trunk1, _trunk2, _policyHead, _valueHead];
+        => new(PolicyValueNet.Load(source, CheckpointKind, RubiksCubeEnv.ObservationSize, RubiksCubeEnv.ActionCount));
 }

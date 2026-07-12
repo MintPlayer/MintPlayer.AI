@@ -27,6 +27,53 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
     public const int ScalarFeatures = 15;                                   // foodΔ(2)+dist(1)+heading(4)+len(1)+free(4)+tailΔ(2)+tailDist(1)
     public const int ObservationSize = PatchSize + ScalarFeatures;          // 177
 
+    /// <summary>Plain-language name for each of the 4 actions (absolute directions), index = action id.</summary>
+    public static readonly IReadOnlyList<string> ActionLabels = ["Move Up", "Move Down", "Move Left", "Move Right"];
+
+    /// <summary>Plain-language name for each of the <see cref="ObservationSize"/> observation features, in index
+    /// order (mirrors <c>snake_solver.pg</c> <c>buildObservation</c>): a 9×9 egocentric obstacle plane, a 9×9 food
+    /// plane, then the scalar block. Lets a visualizer say what each input neuron represents.</summary>
+    public static readonly IReadOnlyList<string> ObservationLabels = BuildObservationLabels();
+
+    private static string[] BuildObservationLabels()
+    {
+        const int plane = PatchSide * PatchSide; // 81
+        var labels = new string[ObservationSize];
+        for (int i = 0; i < plane; i++)
+        {
+            int dr = i / PatchSide - PatchRadius, dc = i % PatchSide - PatchRadius;
+            string where = PatchWhere(dr, dc);
+            labels[i] = $"Vision: is a wall/body {where}? (egocentric, head-relative)";
+            labels[plane + i] = $"Vision: is the food {where}? (egocentric, head-relative)";
+        }
+        int s = PatchSize;
+        labels[s++] = "Food offset: columns right of the head (− = left)";
+        labels[s++] = "Food offset: rows below the head (− = above)";
+        labels[s++] = "Distance to the food (normalized)";
+        labels[s++] = "Current heading is Up";
+        labels[s++] = "Current heading is Down";
+        labels[s++] = "Current heading is Left";
+        labels[s++] = "Current heading is Right";
+        labels[s++] = "Snake length (÷ board cells)";
+        labels[s++] = "Reachable free space if it moves Up (÷ cells)";
+        labels[s++] = "Reachable free space if it moves Down (÷ cells)";
+        labels[s++] = "Reachable free space if it moves Left (÷ cells)";
+        labels[s++] = "Reachable free space if it moves Right (÷ cells)";
+        labels[s++] = "Tail offset: columns right of the head (− = left)";
+        labels[s++] = "Tail offset: rows below the head (− = above)";
+        labels[s++] = "Distance to the tail (normalized)";
+        return labels;
+    }
+
+    // Describe an egocentric patch cell's offset from the head, e.g. (-3, 2) → "3 up, 2 right".
+    private static string PatchWhere(int dr, int dc)
+    {
+        if (dr == 0 && dc == 0) return "at the head";
+        string? v = dr < 0 ? $"{-dr} up" : dr > 0 ? $"{dr} down" : null;
+        string? h = dc < 0 ? $"{-dc} left" : dc > 0 ? $"{dc} right" : null;
+        return v is null ? h! : h is null ? v : $"{v}, {h}";
+    }
+
     public const float FoodReward = 1f;
     public const float StepPenalty = -0.01f;
     public const float DeathReward = -1f;

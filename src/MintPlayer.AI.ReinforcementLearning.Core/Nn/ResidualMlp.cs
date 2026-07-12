@@ -79,6 +79,28 @@ public sealed class ResidualMlp : IValueNet
         return _head.Forward(x);
     }
 
+    /// <summary>
+    /// Per-layer activations for one input row, aligned to the fully-connected layers a telemetry viewer recovers
+    /// from <see cref="Parameters()"/> (input projection, then each block's two Linears, then the head): the
+    /// projected+normed trunk, and per block the inner ReLU output and the post-skip residual sum. Read-only —
+    /// allocates throwaway intermediates, so it's safe to call while training runs.
+    /// </summary>
+    public float[][] LayerActivations(Tensor input)
+    {
+        var acts = new List<float[]>(2 + 2 * _block1.Length);
+        var x = _inProj.Forward(input).LayerNorm(_inGamma, _inBeta).Relu();
+        acts.Add([.. x.Data]);
+        for (int i = 0; i < _block1.Length; i++)
+        {
+            var h = _block1[i].Forward(x).LayerNorm(_blockGamma[i], _blockBeta[i]).Relu();
+            acts.Add([.. h.Data]);
+            x = x.Add(_block2[i].Forward(h)); // residual skip
+            acts.Add([.. x.Data]);
+        }
+        acts.Add([.. _head.Forward(x).Data]);
+        return [.. acts];
+    }
+
     public IEnumerable<Tensor> Parameters()
     {
         foreach (var p in _inProj.Parameters()) yield return p;

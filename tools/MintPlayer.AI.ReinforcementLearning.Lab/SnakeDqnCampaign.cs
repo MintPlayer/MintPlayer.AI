@@ -1,7 +1,9 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
+using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 
@@ -15,9 +17,11 @@ using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 /// net under `snake`/`dqn` (the id the web's <c>SnakeModelService</c> loads) plus the full resume state under
 /// `snake`/`dqn-state`.
 /// </summary>
-internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, float stepPenalty, bool safeMask)
-    : ITrainingCampaign
+internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, float stepPenalty, bool safeMask, bool grow = false, int growEvery = 5000)
+    : ITrainingCampaign, INetworkTelemetrySource
 {
+    // Progressive-growth demo (shared with FruitCake via DqnGrowth): grow the net wider+deeper on the growEvery cadence.
+    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x9E3779B97F4A7C15UL);
     private const string NetId = "dqn";          // deployable DuelingQNet — the id the web loads
     private const string StateId = "dqn-state";  // full DqnTrainingState for lossless resume
 
@@ -104,6 +108,7 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
         // First chunk: resume the full state if present, else warm-start from the deployable net (if any).
         var result = DqnTrainer.Train(_env, options, _seeds, resume: _state, warmStart: _state is null ? _warmNet : null);
         _state = result.State;
+        _state = DqnGrowth.Maybe(_state, grow, growEvery, learningRate, _growRng, Log);
         return _state.StepsCompleted;
     }
 
@@ -172,6 +177,36 @@ internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, 
             totalReturn += epReturn;
         }
         return (totalFood / evalEpisodes, totalReturn / evalEpisodes);
+    }
+
+    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
+    string INetworkTelemetrySource.NetKind => "dueling-q";
+    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
+        => (_state?.Online ?? _warmNet) is { } net ? [.. net.Parameters()] : null;
+    NetworkMetrics INetworkTelemetrySource.Sample()
+        => new(_state?.StepsCompleted ?? 0, targetSteps, _state?.LastLoss ?? double.NaN, _lastEvalFood, double.NaN);
+
+    // Environment-aware neuron labels + live values: inputs are named observation features (177-dim egocentric
+    // vision + scalars), outputs are the 4 move directions with their Q-values, hidden neurons show activations.
+    IReadOnlyList<string>? INetworkTelemetrySource.InputLabels => SnakeEnv.ObservationLabels;
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => SnakeEnv.ActionLabels;
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo()
+    {
+        var obs = _state?.CurrentObs;
+        if ((_state?.Online ?? _warmNet) is not { } net || obs is null || obs.Length != SnakeEnv.ObservationSize) return null;
+        try
+        {
+            var input = (float[])obs.Clone();
+            return (input, net.Forward(new Tensor(input, 1, input.Length)).Data.AsSpan().ToArray());
+        }
+        catch { return null; }
+    }
+    float[][]? INetworkTelemetrySource.SampleActivations()
+    {
+        var obs = _state?.CurrentObs;
+        if ((_state?.Online ?? _warmNet) is not DuelingQNet dqn || obs is null || obs.Length != SnakeEnv.ObservationSize) return null;
+        try { return dqn.LayerActivations(new Tensor((float[])obs.Clone(), 1, obs.Length)); }
+        catch { return null; }
     }
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");

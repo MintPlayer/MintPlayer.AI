@@ -46,6 +46,30 @@ public sealed class DqnTrainingState
     /// <summary>Opaque environment snapshot; null when the env is not IStatefulEnvironment (resume then re-Resets, losing bitwise equality).</summary>
     public byte[]? EnvState { get; set; }
 
+    /// <summary>
+    /// A copy of this state with the network swapped for a (function-preservingly) grown one and a fresh optimizer
+    /// for its new parameter set — carrying the replay buffer, RNG streams, n-step accumulator, step count and
+    /// current observation forward unchanged. Used to grow the architecture mid-training (Net2WiderNet/DeeperNet):
+    /// the observation/action dimensions are unchanged, so the buffer and accumulator stay valid. The optimizer must
+    /// be new because Adam's moments are keyed to the parameter set.
+    /// </summary>
+    public DqnTrainingState WithNetwork(IValueNet online, IValueNet target, Adam optimizer) => new()
+    {
+        Online = online,
+        Target = target,
+        Optimizer = optimizer,
+        Buffer = Buffer,
+        PolicyRng = PolicyRng,
+        BufferRng = BufferRng,
+        NoiseRng = NoiseRng,
+        Accumulator = Accumulator,
+        CurrentObs = CurrentObs,
+        StepsCompleted = StepsCompleted,
+        LastLoss = LastLoss,
+        LastEval = LastEval,
+        EnvState = EnvState,
+    };
+
     public void Save(Stream destination)
     {
         using var writer = new BinaryWriter(destination, Encoding.UTF8, leaveOpen: true);

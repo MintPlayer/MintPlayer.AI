@@ -62,6 +62,32 @@ public class DuelingDqnTests
     }
 
     [Fact]
+    public void DuelingQNet_WidenTo_IsFunctionPreserving()
+    {
+        var net = new DuelingQNet(6, [10, 14], 4, new Xoshiro256StarStar(9));
+        var x = new Tensor([0.4f, -0.2f, 0.1f, 0.3f, -0.5f, 0.2f], 1, 6);
+        var before = (float[])net.Forward(x).Data.Clone();
+
+        var wider = net.WidenTo([20, 30], new Xoshiro256StarStar(3)); // Net2WiderNet
+        Assert.Equal([20, 30], wider.HiddenSizes);
+        var after = wider.Forward(x).Data;
+        for (int a = 0; a < before.Length; a++) Assert.Equal(before[a], after[a], 3);
+    }
+
+    [Fact]
+    public void DuelingQNet_Deepen_IsFunctionPreserving()
+    {
+        var net = new DuelingQNet(6, [12, 12], 4, new Xoshiro256StarStar(11));
+        var x = new Tensor([0.2f, 0.5f, -0.3f, 0.1f, 0.0f, -0.4f], 1, 6);
+        var before = (float[])net.Forward(x).Data.Clone();
+
+        var deeper = net.Deepen(new Xoshiro256StarStar(4)); // Net2DeeperNet (identity-init layer)
+        Assert.Equal([12, 12, 12], deeper.HiddenSizes);
+        var after = deeper.Forward(x).Data;
+        for (int a = 0; a < before.Length; a++) Assert.Equal(before[a], after[a], 3);
+    }
+
+    [Fact]
     public void QNetCheckpoint_RoundTrips_BothNetworkTypes()
     {
         IValueNet mlp = new Mlp([4, 8, 3], new Xoshiro256StarStar(2), Activation.Relu);

@@ -1,7 +1,9 @@
 using System.Text;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
+using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 
@@ -12,8 +14,9 @@ using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 /// quarter-turn + Huber on distance-to-go), and reports per-depth greedy/search solve rates. Resumes the net +
 /// Adam from `cube.policy` / `cube.policy-adam` (width-ladder ids via <see cref="CubeIds.ForWidth"/>).
 /// </summary>
-internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int width) : ITrainingCampaign
+internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int width, bool grow = false, int growEvery = 4096) : ITrainingCampaign, INetworkTelemetrySource
 {
+    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const int BatchSize = 256;
     private const int SamplesPerRound = 4096;
     private static readonly int[] EvalDepths = [2, 4, 6, 8, 10, 12, 16, 20];
@@ -27,6 +30,7 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
     private long _round, _totalSamples, _totalSolves;
     private double _windowCe, _windowHuber, _windowAcc;
     private long _windowCount;
+    private double _liveLoss = double.NaN, _liveAcc = double.NaN; // most-recent batch, for the live viewer
 
     public string Environment => CubeIds.Environment;
 
@@ -43,8 +47,11 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
             }
             else
             {
-                _net = new CubePolicyNet(new Xoshiro256StarStar(seed ^ 0xDEADBEEF), hidden: width);
-                Log($"initialized a fresh cube policy net '{_ids.Policy}' (trunk width {width})");
+                var initRng = new Xoshiro256StarStar(seed ^ 0xDEADBEEF);
+                _net = grow ? new CubePolicyNet(initRng, DqnGrowth.Start) : new CubePolicyNet(initRng, hidden: width);
+                Log(grow
+                    ? $"initialized a fresh GROWING cube policy net '{_ids.Policy}' (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                    : $"initialized a fresh cube policy net '{_ids.Policy}' (trunk width {width})");
                 resumed = false;
             }
         }
@@ -97,7 +104,11 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
             _windowAcc += acc;
             _windowCount++;
             _totalSamples += BatchSize;
+            _liveLoss = ce + huber;
+            _liveAcc = acc;
         }
+        if (PolicyGrowth.Maybe(_net, _totalSamples, grow, growEvery, learningRate, _growRng, Log) is var g && g.HasValue)
+            (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }
 
@@ -191,6 +202,18 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
         }
         Log($"gate: {totalSolved}/100 solved ({totalSolved}%, target >= 90%); greedy alone {totalGreedy}%");
     }
+
+    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
+    string INetworkTelemetrySource.NetKind => "cube-policy";
+    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
+        => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
+    NetworkMetrics INetworkTelemetrySource.Sample() => new(_totalSamples, 0, _liveLoss, _liveAcc, double.NaN);
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => RubiksCubeEnv.ActionLabels; // 12 quarter-turns
+    // No running env, so the viewer forwards a FIXED scramble each frame — you watch the net's move preferences +
+    // hidden activations for that one board evolve as it learns.
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo() => CubeViz.SampleIo(_net, ref _probeObs);
+    float[][]? INetworkTelemetrySource.SampleActivations() => CubeViz.SampleActivations(_net, ref _probeObs);
+    private float[]? _probeObs;
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }

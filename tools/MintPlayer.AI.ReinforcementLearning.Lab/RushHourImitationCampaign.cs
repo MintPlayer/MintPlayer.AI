@@ -2,6 +2,7 @@ using System.Text;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RushHour;
 using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
@@ -14,8 +15,9 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 /// distance) on a DAgger mix of on-policy and stratified samples. Eval tracks the held-out official ThinkFun cards
 /// (1, 38, 39, 40) with reactive play and policy-guided A*, plus a 30-puzzle random hold-out set.
 /// </summary>
-internal sealed class RushHourImitationCampaign(ulong seed, float learningRate) : ITrainingCampaign
+internal sealed class RushHourImitationCampaign(ulong seed, float learningRate, bool grow = false, int growEvery = 2048) : ITrainingCampaign, INetworkTelemetrySource
 {
+    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const int BatchSize = 256;
     private const int SamplesPerConfig = 1024;
     private const int MaxStatesPerConfig = 150_000;
@@ -29,6 +31,7 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate) 
     private double _windowCe, _windowHuber, _windowAcc;
     private long _windowCount;
     private long _windowOnPolicy, _windowDrawn;
+    private double _liveLoss = double.NaN, _liveAcc = double.NaN; // most-recent batch, for the live viewer
 
     // Held-out official ThinkFun cards (never produced by the random generator).
     private readonly (string Name, RushHourPuzzle Puzzle, int Optimal)[] _cards =
@@ -72,8 +75,10 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate) 
             }
             else
             {
-                _net = new RushHourPolicyNet(new Xoshiro256StarStar(seed ^ 0xDEADBEEF));
-                Log("initialized a fresh policy net");
+                var initRng = new Xoshiro256StarStar(seed ^ 0xDEADBEEF);
+                _net = grow ? new RushHourPolicyNet(initRng, DqnGrowth.Start) : new RushHourPolicyNet(initRng);
+                Log(grow ? $"initialized a fresh GROWING policy net (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                         : "initialized a fresh policy net");
                 resumed = false;
             }
         }
@@ -118,7 +123,11 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate) 
             _windowAcc += acc;
             _windowCount++;
             _totalSamples += BatchSize;
+            _liveLoss = ce + huber;
+            _liveAcc = acc;
         }
+        if (PolicyGrowth.Maybe(_net, _totalSamples, grow, growEvery, learningRate, _growRng, Log) is var g && g.HasValue)
+            (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }
 
@@ -309,6 +318,39 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate) 
     }
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+
+    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
+    string INetworkTelemetrySource.NetKind => "rushhour-policy";
+    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
+        => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
+    NetworkMetrics INetworkTelemetrySource.Sample() => new(_totalSamples, 0, _liveLoss, _liveAcc, double.NaN);
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => RushHourBoard.ActionLabels; // 32 vehicle×dir moves
+    // No running env, so the viewer forwards ONE fixed puzzle (the level-1 card's start) each frame — you watch the
+    // net's move preferences + hidden activations for that board evolve. Read-only forward; CPU (imitation has no GPU).
+    private float[]? _probeObs;
+    private float[] ProbeObs()
+    {
+        if (_probeObs is null)
+        {
+            var puzzle = _cards[0].Puzzle;
+            var obs = new float[RushHourBoard.ObservationSize];
+            RushHourBoard.WriteObservation(puzzle, RushHourBoard.InitialPositions(puzzle), obs);
+            _probeObs = obs;
+        }
+        return _probeObs;
+    }
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo()
+    {
+        if (ReferenceEquals(_net, null)) return null;
+        try { var obs = ProbeObs(); var (logits, _) = _net.Forward(new Tensor((float[])obs.Clone(), 1, obs.Length)); return ((float[])obs.Clone(), [.. logits.Data]); }
+        catch { return null; }
+    }
+    float[][]? INetworkTelemetrySource.SampleActivations()
+    {
+        if (ReferenceEquals(_net, null)) return null;
+        try { var obs = ProbeObs(); return _net.LayerActivations(new Tensor((float[])obs.Clone(), 1, obs.Length)); }
+        catch { return null; }
+    }
 
     private sealed record Sample(float[] Obs, float[] MaskOffsets, uint LabelMask, float Distance);
 }

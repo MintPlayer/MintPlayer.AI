@@ -20,6 +20,25 @@ public sealed class RubiksCubeEnv : IEnvironment<float[], int>, IActionMaskProvi
     public const int ObservationSize = FaceletCube.FaceletCount * FaceletCube.FaceCount; // 324
     public const int ActionCount = 12;
 
+    /// <summary>Plain-language name for each of the 12 quarter-turn actions (index = action id), e.g.
+    /// "R' — turn the Right face counter-clockwise". Lets a visualizer label the policy head's outputs.</summary>
+    public static readonly IReadOnlyList<string> ActionLabels = BuildActionLabels();
+
+    private static string[] BuildActionLabels()
+    {
+        var faceName = new Dictionary<char, string>
+            { ['U'] = "Up", ['D'] = "Down", ['L'] = "Left", ['R'] = "Right", ['F'] = "Front", ['B'] = "Back" };
+        var moves = FaceletCube.QuarterTurnMoves;
+        var labels = new string[moves.Length];
+        for (int i = 0; i < moves.Length; i++)
+        {
+            string m = moves[i];
+            bool ccw = m.Length > 1 && m[1] == '\'';
+            labels[i] = $"{m} — turn the {faceName[m[0]]} face {(ccw ? "counter-clockwise" : "clockwise")}";
+        }
+        return labels;
+    }
+
     private readonly int _maxScrambleDepth;
     private readonly int _maxMoves;
     private Xoshiro256StarStar _rng = new(0);

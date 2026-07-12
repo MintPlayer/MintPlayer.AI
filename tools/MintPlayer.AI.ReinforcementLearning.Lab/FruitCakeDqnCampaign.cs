@@ -1,7 +1,9 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
+using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 
@@ -14,9 +16,11 @@ using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 /// <see cref="DqnOptions.MaxSteps"/> and continues. Persists the deployable net under `fruitcake`/`dqn` (the id
 /// the web's <c>FruitCakeModelService</c> will load, A3) plus the full resume state under `fruitcake`/`dqn-state`.
 /// </summary>
-internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false, int nStep = 1, bool shapeRewards = false)
-    : ITrainingCampaign
+internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false, int nStep = 1, bool shapeRewards = false, bool grow = false, int growEvery = 2000)
+    : ITrainingCampaign, INetworkTelemetrySource
 {
+    // Progressive-growth demo (shared with Snake via DqnGrowth): grow the net wider+deeper on the growEvery cadence.
+    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x9E3779B97F4A7C15UL);
     private const string NetId = "dqn";         // deployable DuelingQNet — the id the web loads (shared by both lines)
     // Noisy training is a SEPARATE line with its own resume state: it must never resume a PLAIN state as a plain
     // net (which would then train with ε=0 and NO exploration). The deployable NetId is shared and keep-best gated.
@@ -120,6 +124,7 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
         var options = BaseOptions with { MaxSteps = to, EvalEvery = Math.Max(1, chunkSteps) };
         var result = DqnTrainer.Train(_env, options, _seeds, resume: _state, warmStart: _state is null ? _warmNet : null);
         _state = result.State;
+        _state = DqnGrowth.Maybe(_state, grow, growEvery, learningRate, _growRng, Log);
         return _state.StepsCompleted;
     }
 
@@ -190,6 +195,41 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
             totalReturn += epReturn;
         }
         return (totalScore / evalEpisodes, totalMaxTier / evalEpisodes, totalReturn / evalEpisodes);
+    }
+
+    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
+    string INetworkTelemetrySource.NetKind => "dueling-q";
+    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
+        => (_state?.Online ?? _warmNet) is { } net ? [.. net.Parameters()] : null;
+    NetworkMetrics INetworkTelemetrySource.Sample()
+        => new(_state?.StepsCompleted ?? 0, targetSteps, _state?.LastLoss ?? double.NaN, _lastEvalScore, double.NaN);
+
+    // Environment-aware neuron labels + live values, so the viewer can say what each input/output MEANS and its
+    // current value: each input is a named observation feature; each output is the Q-value of dropping in a column.
+    IReadOnlyList<string>? INetworkTelemetrySource.InputLabels => FruitCakeEnv.ObservationLabels;
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => FruitCakeEnv.ActionLabels;
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo()
+    {
+        var net = _state?.Online ?? _warmNet;
+        var obs = _state?.CurrentObs;
+        if (net is null || obs is null || obs.Length != FruitCakeEnv.ObservationSize) return null;
+        try
+        {
+            // Forward the most-recent observation to get the net's current per-column Q-values. Read-only: it never
+            // writes weights/grads (no Backward), so a concurrent training step is unaffected (torn reads only
+            // flicker a displayed number). A fresh input array so the viewer never sees it mutated mid-serialize.
+            var input = (float[])obs.Clone();
+            float[] q = net.Forward(new Tensor(input, 1, input.Length)).Data;
+            return (input, q.AsSpan().ToArray());
+        }
+        catch { return null; }
+    }
+    float[][]? INetworkTelemetrySource.SampleActivations()
+    {
+        var obs = _state?.CurrentObs;
+        if ((_state?.Online ?? _warmNet) is not DuelingQNet dqn || obs is null || obs.Length != FruitCakeEnv.ObservationSize) return null;
+        try { return dqn.LayerActivations(new Tensor((float[])obs.Clone(), 1, obs.Length)); }
+        catch { return null; }
     }
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");

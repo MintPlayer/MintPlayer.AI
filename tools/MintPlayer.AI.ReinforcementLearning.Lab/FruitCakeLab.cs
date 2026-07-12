@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Hosting;
@@ -36,6 +37,8 @@ internal static class FruitCakeLab
         int topK = 5;              // --topk : depth-2 first-ply expansion width
         int topK2 = 3;             // --topk2 : deeper-ply expansion width (depth 3)
         string leaf = "net";       // --leaf : search leaf value (net | height | tierpot | blend)
+        bool grow = false;         // --grow : progressively grow the net wider+deeper mid-training (Net2Net demo)
+        int growEvery = 2000;      // --grow-every : drops between growth steps (with --grow)
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], CultureInfo.InvariantCulture);
@@ -60,7 +63,12 @@ internal static class FruitCakeLab
             else if (args[i] == "--topk" && i + 1 < args.Length) topK = int.Parse(args[++i]);
             else if (args[i] == "--topk2" && i + 1 < args.Length) topK2 = int.Parse(args[++i]);
             else if (args[i] == "--leaf" && i + 1 < args.Length) leaf = args[++i];
+            else if (args[i] == "--grow") grow = true;
+            else if (args[i] == "--grow-every" && i + 1 < args.Length) growEvery = int.Parse(args[++i]);
         }
+
+        // A growing run starts from the tiny first stage and adds capacity mid-training (Net2Wider/DeeperNet).
+        if (grow) hidden = DqnGrowth.Start;
 
         if (searchEval)
         {
@@ -80,14 +88,16 @@ internal static class FruitCakeLab
         var store = host.Services.GetRequiredService<IModelStore>();
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         string csvPath = Path.Combine(dataDir, "logs", "fruitcake-dqn.csv");
-        runner.Run(
-            new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, noisy, nStep, shape),
-            store,
+
+        var campaign = new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, noisy, nStep, shape, grow, growEvery);
+        using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
+        runner.Run(campaign, store,
             new CampaignOptions
             {
                 Duration = TimeSpan.FromHours(hours),
                 EvalOnly = evalOnly,
                 OnEval = CampaignCli.ConsoleAndCsv(csvPath),
             });
+        SnakeLab.WaitForViewer(viz);
     }
 }

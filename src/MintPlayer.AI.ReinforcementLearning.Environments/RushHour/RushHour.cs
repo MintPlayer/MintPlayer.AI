@@ -59,6 +59,19 @@ public static class RushHourBoard
     public const int MaxVehicles = 16;
     public const int ActionCount = MaxVehicles * 2;
 
+    /// <summary>Plain-language name for each of the <see cref="ActionCount"/> actions (index = <c>vehicle·2 + dir</c>,
+    /// dir 0 = toward smaller coords). Vehicle 0 is the red car. Lets a visualizer label the policy head's outputs.</summary>
+    public static readonly IReadOnlyList<string> ActionLabels =
+    [
+        .. Enumerable.Range(0, ActionCount).Select(a =>
+        {
+            int v = a / 2, dir = a % 2;
+            string who = v == 0 ? "the red car (vehicle 0)" : $"vehicle {v}";
+            string d = dir == 0 ? "up / left (toward the top-left)" : "down / right (toward the bottom-right)";
+            return $"Move {who} one cell {d}";
+        })
+    ];
+
     public static int[] InitialPositions(RushHourPuzzle puzzle)
         => [.. puzzle.Vehicles.Select(v => v.Horizontal ? v.Col : v.Row)];
 
