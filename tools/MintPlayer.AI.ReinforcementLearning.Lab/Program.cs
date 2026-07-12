@@ -25,6 +25,7 @@ for (int i = 0; i < args.Length; i++)
         if (game.Equals("rushhour", StringComparison.OrdinalIgnoreCase)) { RushHourLab.Run(args); return; }
         if (game.Equals("snake", StringComparison.OrdinalIgnoreCase)) { SnakeLab.Run(args); return; }
         if (game.Equals("fruitcake", StringComparison.OrdinalIgnoreCase)) { FruitCakeLab.Run(args); return; }
+        if (game.Equals("connect4", StringComparison.OrdinalIgnoreCase)) { Connect4Lab.Run(args); return; }
     }
 }
 
