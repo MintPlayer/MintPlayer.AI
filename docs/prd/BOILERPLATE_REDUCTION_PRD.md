@@ -1,6 +1,6 @@
 # Reduce per-game boilerplate — campaigns, web services, frontend — PRD
 
-**Status:** B0–B5 landed · 2026-07-12 · branch `m38-reduce-boilerplate-plan`, [PR #31](https://github.com/MintPlayer/MintPlayer.AI/pull/31) · **supersedes the stale [PR #27](https://github.com/MintPlayer/MintPlayer.AI/pull/27)** · (deferred: B3 `CliArgs`, B5 frontend P7/P8 — see PLAN M38)
+**Status:** B0–B5 complete (incl. B3 `CliArgs` + B5 P7) · 2026-07-12 · branch `m38-reduce-boilerplate-plan`, [PR #31](https://github.com/MintPlayer/MintPlayer.AI/pull/31) · **supersedes the stale [PR #27](https://github.com/MintPlayer/MintPlayer.AI/pull/27)** · verified live (web host + Playwright) — see PLAN M38. (Only B5 P8, a shallow director-loop wrapper, intentionally left.)
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M38 · **Depends on:** nothing new — a behaviour-preserving refactor across the Lab training harness (§8 of [../ARCHITECTURE.md](../ARCHITECTURE.md)), the web model-service layer (§7), and the Angular playground (§10).
 

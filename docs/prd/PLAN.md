@@ -1288,15 +1288,19 @@ Screenshots: `docs/screenshots/m36-network-grows.png` (DQN), `m37-policy-net-gro
 
 ## M38 — Reduce per-game boilerplate (campaigns · web services · frontend)  *(2026-07-12; branch `m38-reduce-boilerplate-plan`, PR #31; supersedes stale PR #27; see `BOILERPLATE_REDUCTION_PRD.md`)* ✅
 
-**Status (2026-07-12):** B0–B5 landed on `m38-reduce-boilerplate-plan` (PR #31), each behaviour-preserving with its
-own commit; solution builds 0/0 and 320 fast tests stay green after every step. **B2 is SHA256-bitwise-verified**
-(fresh seed-1 `snake`/`fruitcake` produce byte-identical deployable + resume checkpoints vs the pre-refactor build).
-Two sub-items are **deliberately deferred**: the B3 `CliArgs`/`CommonLabArgs` parse-loop rewrite (the culture
-inconsistency it targets is theoretical for integer CLI args, and rewriting all six parse loops has real regression
-risk with no automated gate — low reward, higher risk), and the B5 frontend watch-scaffolding dedup (P7/P8 — the
-wake lock is already a deep shared service, the residual per-component wiring is ~3 lines, and this repo forbids
-running the Angular build/test locally so the change can't be verified here). `LabHost.Run` (B3) still removed the
-bulk of the Lab boilerplate (the ~15-line bootstrap tail × 6).
+**Status (2026-07-12):** B0–B5 complete on `m38-reduce-boilerplate-plan` (PR #31), each behaviour-preserving with its
+own commit; solution builds 0/0 and the fast suite (now **326** tests) stays green after every step. **B2 is
+SHA256-bitwise-verified** (fresh seed-1 `snake`/`fruitcake` produce byte-identical deployable + resume checkpoints vs
+the pre-refactor build), and the whole branch was independently re-reviewed line-by-line (no behavioural divergence)
+and **exercised live**: the web host loaded the real shipped checkpoints (`StartupCheckpoint`/`RefreshingCheckpoint`,
+incl. the Cube `onReload` GPU-resident rebuild on a real RTX 3060), the Lab games ran through `LabHost` (CPU + GPU),
+and the Snake page's Watch-AI was Playwright-verified (plays, survives a visibility toggle, zero console errors).
+**B3 `CliArgs`** landed too (typed, bounds-safe, culture-invariant flag reads across five labs — the int/long/ulong
+locale inconsistency fixed; `CubeDaviLab`'s bespoke config-precedence block left as-is; 6 new unit tests incl. a
+comma-decimal culture test). **B5 P7** landed as a *removal*: the byte-identical per-component `onVisibilityChange`
+was redundant with `ScreenWakeLock`'s own re-acquire, so it's deleted from all three components. The one item
+**intentionally not done** is B5 P8 (a shared director watch-loop) — its shared part is a 3-line `setInterval`
+wrapper around game-specific render/status, a shallow abstraction not worth extracting.
 
 
 **Problem.** Adding each game left near-identical copy-paste in three layers, and several copies have already
