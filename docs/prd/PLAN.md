@@ -1286,7 +1286,18 @@ note the identity diagonals in the just-deepened layers' heatmaps), both with **
 320 fast tests green (incl. Net2Net forward-equality for DuelingQNet + PolicyValueNet, and a v1-checkpoint-load test).
 Screenshots: `docs/screenshots/m36-network-grows.png` (DQN), `m37-policy-net-grows.png` (policy).
 
-## M38 — Reduce per-game boilerplate (campaigns · web services · frontend)  *(planned 2026-07-12; supersedes stale PR #27; see `BOILERPLATE_REDUCTION_PRD.md`)* 🔜
+## M38 — Reduce per-game boilerplate (campaigns · web services · frontend)  *(2026-07-12; branch `m38-reduce-boilerplate-plan`, PR #31; supersedes stale PR #27; see `BOILERPLATE_REDUCTION_PRD.md`)* ✅
+
+**Status (2026-07-12):** B0–B5 landed on `m38-reduce-boilerplate-plan` (PR #31), each behaviour-preserving with its
+own commit; solution builds 0/0 and 320 fast tests stay green after every step. **B2 is SHA256-bitwise-verified**
+(fresh seed-1 `snake`/`fruitcake` produce byte-identical deployable + resume checkpoints vs the pre-refactor build).
+Two sub-items are **deliberately deferred**: the B3 `CliArgs`/`CommonLabArgs` parse-loop rewrite (the culture
+inconsistency it targets is theoretical for integer CLI args, and rewriting all six parse loops has real regression
+risk with no automated gate — low reward, higher risk), and the B5 frontend watch-scaffolding dedup (P7/P8 — the
+wake lock is already a deep shared service, the residual per-component wiring is ~3 lines, and this repo forbids
+running the Angular build/test locally so the change can't be verified here). `LabHost.Run` (B3) still removed the
+bulk of the Lab boilerplate (the ~15-line bootstrap tail × 6).
+
 
 **Problem.** Adding each game left near-identical copy-paste in three layers, and several copies have already
 **drifted** (one has a bug its siblings don't). PR #27 took a first cut on 2026-07-10 but is now stale/conflicting:
