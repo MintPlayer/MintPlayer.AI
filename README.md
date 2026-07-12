@@ -120,6 +120,36 @@ checkpoints live (it re-reads them every few minutes), or at `models/` to refres
 committed seeds. The DQN fallbacks can be retrained from the console:
 `dotnet run --project src/RLDemo.Console -c Release -- rushhour|cube --save --data models`.
 
+### Training flags
+
+Every campaign is launched by `tools/MintPlayer.AI.ReinforcementLearning.Lab` and shares a common set of flags,
+plus a few per-game knobs.
+
+**Common (all `--game`s):**
+
+| Flag | Meaning |
+|---|---|
+| `--game <name>` | `rushhour` (default), `snake`, `fruitcake`, `cube`, `cube-policy`, `cube-davi` |
+| `--hours H` | wall-clock training budget |
+| `--data DIR` | model-store directory to read/write checkpoints (e.g. `src/RLDemo.Web/data` or `models`) |
+| `--seed S` | RNG seed (runs are reproducible) |
+| `--lr LR` | learning rate |
+| `--eval-only` | evaluate the stored net and exit — no training |
+| `--viz [port]` | live [network visualizer](#watch-the-network-train-live-visualizer) (Development only; bare `--viz` = 5250) |
+| `--grow` / `--grow-every N` | progressively grow the net wider+deeper (all games **except** `cube-davi`, which grows via `--auto-widen`) |
+
+**Per-game knobs:**
+
+| Game | Flags |
+|---|---|
+| `snake`, `fruitcake` (DQN) | `--steps N` (absolute step cap), `--chunk-steps N`, `--episodes N` (eval games), `--explore E` (ε-start), `--hidden a,b` (trunk widths), `--gamma G` |
+| `snake` (extra) | `--train-grid`, `--eval-grid`, `--step-penalty`, `--safe-mask`; `--search` evaluates the look-ahead planner (with `--depth`/`--beam`/`--w-*`/`--net`) instead of training |
+| `fruitcake` (extra) | `--nstep N`, `--shape` (reward shaping), `--noisy` (NoisyNets); offline comparison modes `--ab` (`--baseline`, `--ab-episodes`) and `--search-eval` (`--depth`/`--topk`/`--topk2`/`--leaf`) |
+| `cube` (imitation) | `--width W` (trunk width) |
+| `cube-policy` (EfficientCube) | `--width W`, `--max-scramble D`, `--beam W`, `--episodes N` |
+| `rushhour` (imitation) | common flags only |
+| `cube-davi` (self-taught value net) | its own set — see the section below (`--net residual`, `--width`, `--max-depth`, `--samples`, `--auto-widen`, `--grow-to`, and the `--eval-only --search --batched …` measurement mode) |
+
 ### Train / further-train the self-taught cube solver (DAVI)
 
 The cube's strongest net is trained *teacher-free* by deep approximate value iteration
