@@ -30,10 +30,11 @@ We want two things:
 - **Beginner-friendly & environment-aware:** hovering any neuron, connection, or heatmap shows a plain-language
   tooltip. Each **input** names the exact observation feature it is (FruitCake: "Column 7: surface height"; Snake:
   "Vision: is a wall/body 4 up, 1 left?"), each **output** names the action it controls (Snake: "Move Up"; Cube:
-  "R' — turn the Right face counter-clockwise"; Rush Hour: "Move the red car one cell up/left") and — for the games
-  with a running observation (Snake, FruitCake) — every neuron shows its **live value**: input feature values, output
-  Q-values, and **hidden-neuron activations**. Labels cover Snake, FruitCake, Cube, and Rush Hour; other nets fall
-  back to generic per-role tooltips.
+  "R' — turn the Right face counter-clockwise"; Rush Hour: "Move the red car one cell up/left"; DAVI: "Estimated
+  distance to solved"), and **every neuron shows a live value** — input feature values, output Q-values/scores, and
+  **hidden-neuron activations** — for all five trainable games. The DQN games (Snake, FruitCake) forward their actual
+  current observation; the batch-trained nets (Cube, Rush Hour, DAVI), which have no running env, forward a **fixed
+  probe state** each frame, so you watch the net's opinion of one specific board evolve as it learns.
 - **Dev-only, gated:** the live socket only comes up in a **Development** host environment; a Production-configured
   process ignores `--viz` (with a note). It is never part of the deployed web app.
 - **Zero training impact:** attaching the visualizer leaves training **bitwise-identical** (verified: viz vs no-viz
@@ -45,8 +46,8 @@ We want two things:
 
 **Non-goals (v1).** No editing/altering weights from the UI. No viewer→trainer control messages *yet* (the WebSocket
 is chosen so they can be added without changing transport). No gradient-flow animation. Hidden-neuron
-activations are shown for nets with a running observation (Snake, FruitCake); the batch-trained policy/DAVI nets
-(Cube, Rush Hour) get labels but no live values — see §7. No 3-D layout. No serving the live stream from the public
+activations and live values are shown for every trainable game — the batch-trained nets (Cube, Rush Hour, DAVI) via a
+fixed probe state rather than their actual training batch (see §7). No 3-D layout. No serving the live stream from the public
 web app (training is dev-side; see §3). No diffing two checkpoints. Continuous-control PPO/SAC (Pendulum, MountainCar)
 aren't trained through the Lab's `--game` dispatch, so they're out of scope until they are.
 
@@ -108,11 +109,14 @@ public interface INetworkTelemetrySource
 The label/IO members are **default-implemented** (null), so a game opts in without every other campaign changing.
 Labels are published on the environments (`FruitCakeEnv.ObservationLabels`/`ActionLabels`, `SnakeEnv`,
 `RubiksCubeEnv.ActionLabels` = the 12 quarter-turns, `RushHourBoard.ActionLabels` = the 32 vehicle×dir moves) and
-attached by whichever campaign owns that net. For the DQN games the campaign's `SampleIo()`/`SampleActivations()`
-forward the most-recent observation (`DqnTrainingState.CurrentObs`) through the net to get per-action Q-values and
-each hidden layer's activations (`DuelingQNet.LayerActivations`). The forwards are read-only (no `Backward`) so they
-can't perturb training — verified SHA256-identical **with a viewer connected** during a run. The batch-trained
-policy/DAVI campaigns (Cube, Rush Hour) have no single "current observation", so they supply labels only.
+attached by whichever campaign owns that net. The campaign's `SampleIo()`/`SampleActivations()`
+forward one observation through the net to get per-action Q-values/scores and each hidden layer's activations
+(`DuelingQNet`/`CubePolicyNet`/`RushHourPolicyNet`/`ResidualMlp` each expose a `LayerActivations`). The DQN games
+forward their actual `DqnTrainingState.CurrentObs`; the batch-trained nets (Cube, Rush Hour, DAVI) have no running env,
+so they forward a **fixed probe state** (a constant-seed depth-8 scramble / the level-1 puzzle) built once. Every
+forward is read-only (no `Backward`) so it can't perturb training — verified SHA256-identical **with a viewer
+connected** — and for a single row it stays on the CPU even under the GPU backend, so it never contends with a
+GPU training step.
 
 - `NetworkInspector.Describe(parameters, kind)` / `.CaptureFrame(parameters, metrics)` turn **any** net's parameter
   tensors into telemetry by pairing each rank-2 weight with the rank-1 bias that follows it — the layout every net in
@@ -186,13 +190,13 @@ language of the live page.
 
 ## 7. Honest ceiling
 
-This shows **weights** evolving, plus live **input/output values and hidden-neuron activations** for the games with a
-running observation (Snake, FruitCake) — computed by an extra read-only forward pass per sampled frame. What it does
-**not** show: activations/values for the **batch-trained** nets (Cube, Rush Hour), which have no single "current
-observation" to forward — they get static labels only; **gradient** flow (grads aren't retained at sample time); and
-**per-connection** signed weights (the heatmap is magnitude-only). The activation forward is a second forward per
-frame — negligible for these small nets at a few Hz, but a knob to watch if applied to a much larger net. These are
-deliberate boundaries; each is a clean follow-up (M36.3).
+This shows **weights** evolving, plus live **input/output values and hidden-neuron activations** for every trainable
+game — via a read-only forward per sampled frame. The honest caveat: the batch-trained nets (Cube, Rush Hour, DAVI)
+have no running env, so their live values are for a **fixed probe state** (one representative board), not the actual
+training batch — so you see how the net's response to that *one* board evolves, which is the point, but it isn't a
+random sample of what training currently sees. What it still does **not** show: **gradient** flow (grads aren't
+retained at sample time) and **per-connection signed** weights (the heatmap is magnitude-only). Each forward is an
+extra pass — negligible for these nets at a few Hz. These are deliberate boundaries; each is a clean follow-up.
 
 ## 8. Sources
 

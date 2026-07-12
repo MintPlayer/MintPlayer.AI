@@ -40,6 +40,15 @@ public sealed class CubePolicyNet
         return (_policyHead.Forward(h), _valueHead.Forward(h));
     }
 
+    /// <summary>Per-layer activations for one input row, in <see cref="Parameters()"/> order (trunk1, trunk2,
+    /// policy head, value head) — for a live-network viewer. Read-only; safe to call while training runs.</summary>
+    public float[][] LayerActivations(Tensor observation)
+    {
+        var h1 = _trunk1.Forward(observation).Relu();
+        var h2 = _trunk2.Forward(h1).Relu();
+        return [[.. h1.Data], [.. h2.Data], [.. _policyHead.Forward(h2).Data], [.. _valueHead.Forward(h2).Data]];
+    }
+
     /// <summary>
     /// Single-state inference: logits (the inverse of <paramref name="lastAction"/> masked
     /// to −∞, −1 = none) and predicted distance-to-solved in quarter-turn MOVES.

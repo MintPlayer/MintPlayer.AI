@@ -1231,11 +1231,13 @@ lives; and on the CPU path every parameter is host-resident `float[]`, so readin
 - **Environment-aware tooltips (all games)**: the source optionally exposes `InputLabels`/`OutputLabels` +
   `SampleIo()` + `SampleActivations()` (default null → generic). Labels live on the envs — `FruitCakeEnv` (89
   features + 14 columns), `SnakeEnv` (177 egocentric-vision features + 4 directions), `RubiksCubeEnv` (12
-  quarter-turns), `RushHourBoard` (32 vehicle×dir moves). For the DQN games (Snake, FruitCake) the campaign forwards
-  `CurrentObs` so **every neuron shows a live value** — input feature values, output Q-values, and **hidden-neuron
-  activations** (`DuelingQNet.LayerActivations`). Read-only forwards → still SHA256-identical with a viewer connected.
-  The viewer attaches output labels to the column matching their count (a policy net's action head precedes its
-  value head) and draws labeled columns in full.
+  quarter-turns), `RushHourBoard` (32 vehicle×dir moves). **Every neuron shows a live value** in all five games — input feature
+  values, output Q-values/scores, and **hidden-neuron activations** (each net type exposes `LayerActivations`). The
+  DQN games forward their actual `CurrentObs`; the batch-trained nets (Cube, Rush Hour, DAVI) forward a **fixed probe
+  state** (constant-seed scramble / level-1 puzzle), so you watch the net's opinion of one board evolve. Read-only
+  forwards, CPU for a single row even under the GPU backend → still SHA256-identical with a viewer connected. The
+  viewer attaches output labels to the column matching their count (a policy net's action head precedes its value
+  head) and draws labeled columns in full.
 - **Live viewer** (`tools/…Lab/VizServer.cs` + shared `VizLauncher.cs`): an `HttpListener` on localhost serving one
   self-contained HTML page (Canvas 2D node-link graph + weight-heatmap strip + loss sparkline + **beginner hover
   tooltips**; labeled input/output columns drawn in full so each neuron is hoverable) and a **WebSocket** (`GET /ws`). WebSocket (not

@@ -320,6 +320,32 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate) 
         => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
     NetworkMetrics INetworkTelemetrySource.Sample() => new(_totalSamples, 0, _liveLoss, _liveAcc, double.NaN);
     IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => RushHourBoard.ActionLabels; // 32 vehicle×dir moves
+    // No running env, so the viewer forwards ONE fixed puzzle (the level-1 card's start) each frame — you watch the
+    // net's move preferences + hidden activations for that board evolve. Read-only forward; CPU (imitation has no GPU).
+    private float[]? _probeObs;
+    private float[] ProbeObs()
+    {
+        if (_probeObs is null)
+        {
+            var puzzle = _cards[0].Puzzle;
+            var obs = new float[RushHourBoard.ObservationSize];
+            RushHourBoard.WriteObservation(puzzle, RushHourBoard.InitialPositions(puzzle), obs);
+            _probeObs = obs;
+        }
+        return _probeObs;
+    }
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo()
+    {
+        if (ReferenceEquals(_net, null)) return null;
+        try { var obs = ProbeObs(); var (logits, _) = _net.Forward(new Tensor((float[])obs.Clone(), 1, obs.Length)); return ((float[])obs.Clone(), [.. logits.Data]); }
+        catch { return null; }
+    }
+    float[][]? INetworkTelemetrySource.SampleActivations()
+    {
+        if (ReferenceEquals(_net, null)) return null;
+        try { var obs = ProbeObs(); return _net.LayerActivations(new Tensor((float[])obs.Clone(), 1, obs.Length)); }
+        catch { return null; }
+    }
 
     private sealed record Sample(float[] Obs, float[] MaskOffsets, uint LabelMask, float Distance);
 }

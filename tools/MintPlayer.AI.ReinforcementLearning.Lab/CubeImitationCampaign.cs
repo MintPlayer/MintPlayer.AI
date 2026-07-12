@@ -203,6 +203,11 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
         => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
     NetworkMetrics INetworkTelemetrySource.Sample() => new(_totalSamples, 0, _liveLoss, _liveAcc, double.NaN);
     IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => RubiksCubeEnv.ActionLabels; // 12 quarter-turns
+    // No running env, so the viewer forwards a FIXED scramble each frame — you watch the net's move preferences +
+    // hidden activations for that one board evolve as it learns.
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo() => CubeViz.SampleIo(_net, ref _probeObs);
+    float[][]? INetworkTelemetrySource.SampleActivations() => CubeViz.SampleActivations(_net, ref _probeObs);
+    private float[]? _probeObs;
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }

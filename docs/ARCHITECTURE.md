@@ -357,10 +357,10 @@ dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab --
 each part. It's a **pull** model: each campaign implements `INetworkTelemetrySource`, and `VizServer`'s async sample
 loop reads `SnapshotParameters()`/`Sample()` on a cadence. A source may also expose `InputLabels`/`OutputLabels` +
 `SampleIo()` + `SampleActivations()` (default null) to name each neuron and stream its live value. Labels live on the
-envs (`SnakeEnv`, `FruitCakeEnv`, `RubiksCubeEnv`, `RushHourBoard`); the DQN games forward `CurrentObs` so every
-neuron — input, hidden (via `DuelingQNet.LayerActivations`), and output — shows a live value. Batch-trained
-policy/DAVI nets get labels only. The viewer attaches output labels to the column matching their count (an action
-head can precede a value head) and draws labeled columns in full. Reading the parameter `float[]`s never mutates anything, so
+envs (`SnakeEnv`, `FruitCakeEnv`, `RubiksCubeEnv`, `RushHourBoard`); every neuron — input, hidden (each net exposes
+`LayerActivations`), and output — shows a live value. The DQN games forward their actual `CurrentObs`; the
+batch-trained nets (Cube/Rush Hour/DAVI) forward a fixed probe state (see `CubeViz`). The viewer attaches output
+labels to the column matching their count (an action head can precede a value head) and draws labeled columns in full. Reading the parameter `float[]`s never mutates anything, so
 a viz run is byte-identical to a no-viz one (SHA256-verified). The socket is **gated to a Development environment**
 (`VizLauncher`); dev-only, never in the deployed web app. See `prd/NETWORK_VISUALIZER_PRD.md`. *Change it:* frame
 contents/heatmap in `NetworkInspector`; each campaign's `SnapshotParameters()`/`Sample()`; page/tooltips/transport in

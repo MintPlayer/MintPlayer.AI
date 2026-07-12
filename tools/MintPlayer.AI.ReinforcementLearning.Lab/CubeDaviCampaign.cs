@@ -105,6 +105,12 @@ internal sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSetting
     IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
         => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
     NetworkMetrics INetworkTelemetrySource.Sample() => new(Samples, _s.TargetSamples, _lastLoss, _curriculumDepth, double.NaN);
+    // Single scalar output = the learned cost-to-go; forward a fixed scramble so its estimate + hidden activations
+    // are visible live (the GPU-resident weights are mirrored by this CPU master, read lock-free).
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => ["Estimated distance to solved (quarter-turn moves)"];
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo() => CubeViz.SampleValueIo(_net, ref _probeObs);
+    float[][]? INetworkTelemetrySource.SampleActivations() => CubeViz.SampleValueActivations(_net, ref _probeObs);
+    private float[]? _probeObs;
 
     public bool Resume(IModelStore store)
     {

@@ -39,6 +39,15 @@ public sealed class RushHourPolicyNet
         return (_policyHead.Forward(h), _valueHead.Forward(h));
     }
 
+    /// <summary>Per-layer activations for one input row, in <see cref="Parameters()"/> order (trunk1, trunk2,
+    /// policy head, value head) — for a live-network viewer. Read-only; safe to call while training runs.</summary>
+    public float[][] LayerActivations(Tensor observation)
+    {
+        var h1 = _trunk1.Forward(observation).Relu();
+        var h2 = _trunk2.Forward(h1).Relu();
+        return [[.. h1.Data], [.. h2.Data], [.. _policyHead.Forward(h2).Data], [.. _valueHead.Forward(h2).Data]];
+    }
+
     /// <summary>Single-state inference: masked logits (illegal = −∞) and predicted distance-to-goal in MOVES.</summary>
     public (float[] Logits, float Distance) Evaluate(RushHourPuzzle puzzle, ReadOnlySpan<int> positions)
     {
