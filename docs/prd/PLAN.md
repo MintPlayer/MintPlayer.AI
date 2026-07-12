@@ -1416,6 +1416,47 @@ chess is the headline consumer. **Left out of v1:** DQN/PPO for self-play (wrong
 window instead), bitboards (unless a bench forces it), superhuman strength. **Whole-milestone gate:** builds 0/0; fast suite green;
 perft passes; both games' self-play win-rate rises vs a fixed baseline; resume roundtrips. See `CHESS_SELFPLAY_PRD.md`.
 
+## M40 — Play the chess AI in the browser (single-source via MintPlayer.Polyglot)  *(planned 2026-07-12; see `CHESS_WEB_POLYGLOT_PRD.md`)* 🔜
+
+**Goal.** Play the self-taught chess AI (M39) **in the browser**, client-side, with **zero server inference** — the
+FruitCake pattern (ARCHITECTURE §10): write the inference path once in a `.pg`, transpile to C# (training/serving) +
+TypeScript (browser); the browser downloads and parses the `.ckpt` and runs the net + MCTS locally. The wrong path
+is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); the right path is single-source.
+
+**Feasibility — VERIFIED (2026-07-12)** by transpiling a probe with the bundled `polyglot.exe`:
+- `Math.exp`, `Math.tanh`, `Math.log`, `Math.sqrt` all transpile (need `import { Math } from "std.math"`), so MCTS's
+  masked-softmax priors + `tanh` value + PUCT `sqrt` are expressible. Transcendentals are **not** bit-exact across
+  C#/JS (only `+ - * / sqrt` are — the reason FruitCake avoided them) but chess **inference doesn't need bit-exactness**
+  (the browser AI must play well, not match C# to the ULP), so `exp`/`tanh` are fine.
+- Bitwise ops `& | << >>` transpile (castling flags; booleans also fine).
+- **Polyglot itself is extendable:** the toolchain lives at `C:\Repos\MintPlayer.Polyglot` — a missing feature
+  (`switch`/enum/Math fn) can be **added there and PR'd** (owner-authorized). Known limits to design around
+  (from the FruitCake solver): **no nested-generic params** (use flat `List<f64>` + offsets like `PgDuelingNet`),
+  prefer `i32` consts + `if/else` over enums/`switch`.
+
+**Phases (each ends on a green build + its gate).**
+- **M40.1 — single-source the engine.** Port `ChessBoard`/`ChessRules` + `ChessMoveEncoding` into
+  `Environments/Chess/polyglot/chess_solver.pg`; the `MintPlayer.Polyglot.MSBuild` PackageReference already in the
+  Environments `.csproj` (v0.3.1) transpiles every `**/*.pg` to `obj/` before CoreCompile. Rewire `ChessGame`/a facade
+  onto the generated `Pg` core (replacing the hand-written engine internals). **Gate: perft 25/25 + the encoding
+  round-trip on the GENERATED engine** (the M39.2 gate carries onto the single source); the chess `SelfPlayCampaign`
+  contract test stays green.
+- **M40.2 — single-source the inference math + a TS `.ckpt` parser.** Add `PgPolicyValueNet.forward` (flat-array
+  trunk + policy/value heads, `tanh` value), `writeObservation`, and a chess `mcts` (PUCT, masked-softmax, `sqrt`,
+  **no Dirichlet** — inference only) to the `.pg`. Add `ClientApp/src/app/chess/chess-net.ts` (mirrors the C#
+  `PolicyValueNet` reader — see the PRD appendix for the exact bytes). **Gate:** C#-vs-generated parity within f32
+  tol on a fixed position; committed `chess_solver.ts` emitted.
+- **M40.3 — the browser page.** `chess-director.ts` (runs the transpiled `mcts`+net over the loaded `.ckpt`, like
+  `fruit-cake-director.ts`) + an Angular chess component (board, click-to-move validated by the transpiled
+  `legalMoves`, AI reply, check/mate/draw, last-move highlight) + route/nav; ship `wwwroot/models/chess.az.ckpt`
+  (LFS) + the `.ckpt` MIME mapping in `Program.cs`. **Gate:** a full legal game vs the AI in-browser with **no
+  `/api/chess/*` move calls** (Network panel/Playwright); tune inference sims (~100–300) for ~1–2 s/move latency.
+  Train a longer run first for a worthier opponent.
+
+**Honest scope:** the M39 net is a small, briefly-CPU-trained MLP → legal, still-learning chess, beatable by a decent
+human. **Non-goals:** engine strength, a server chess endpoint, bit-exact transcendentals, browser training. See
+`CHESS_WEB_POLYGLOT_PRD.md` (incl. its reference appendix: files to port, checkpoint byte-format, commands).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
