@@ -1209,7 +1209,7 @@ Play-yourself identical; steady 60 fps at full board; crisp on hi-DPI; rAF loop 
 Verify by save-and-live-reload against the running host (**do not** run `ng serve`/`ng build`); attach a before/after
 screenshot/clip to the PR. Single view-only PR.
 
-## M36 — Network visualizer: see the net, and watch it learn  *(2026-07-12; branch `m36-network-visualizer` off `master`; see `NETWORK_VISUALIZER_PRD.md`)* ⏳
+## M36 — Network visualizer: see the net, and watch it learn  *(2026-07-12; branch `m36-network-visualizer` off `master`; see `NETWORK_VISUALIZER_PRD.md`)* ✅
 
 **Problem.** A trained net is only ever visible as numbers — a `.ckpt` on disk, a CSV of eval scalars, a console line
 per eval. You cannot *see* a network's shape or structure, and — the real gap — you cannot **watch it change as it
@@ -1257,7 +1257,7 @@ vs no-viz checkpoints are **SHA256-identical**. 314 fast tests green. Screenshot
 existing WebSocket (pause/step, cadence, layer-select); continuous-control PPO/SAC once they train through the Lab's
 `--game` dispatch.
 
-## M37 — Progressive net growth (Net2WiderNet / Net2DeeperNet)  *(2026-07-12; branch `m36-network-visualizer`)* ⏳
+## M37 — Progressive net growth (Net2WiderNet / Net2DeeperNet)  *(2026-07-12; branch `m36-network-visualizer`)* ✅
 
 **Problem.** A net trains at a fixed architecture; the visualizer made it natural to *watch* a net grow, but the DQN
 games had no growth to show.

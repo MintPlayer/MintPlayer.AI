@@ -1,6 +1,6 @@
 # Network Visualizer — see the net, and watch it learn — PRD
 
-**Status:** in progress · 2026-07-12 · branch `m36-network-visualizer` (off `master`)
+**Status:** M36.1 complete (+ M37 net growth) — PR #30, ready to merge · 2026-07-12 · branch `m36-network-visualizer` (off `master`)
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M36 · **Depends on:** the Core NN + checkpoint layer (§2/§5 of [../ARCHITECTURE.md](../ARCHITECTURE.md)) and the Lab training harness (§8) — additive, no change to existing training behaviour.
 
