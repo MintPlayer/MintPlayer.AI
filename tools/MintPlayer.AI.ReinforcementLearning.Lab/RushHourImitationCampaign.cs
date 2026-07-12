@@ -15,8 +15,9 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 /// distance) on a DAgger mix of on-policy and stratified samples. Eval tracks the held-out official ThinkFun cards
 /// (1, 38, 39, 40) with reactive play and policy-guided A*, plus a 30-puzzle random hold-out set.
 /// </summary>
-internal sealed class RushHourImitationCampaign(ulong seed, float learningRate) : ITrainingCampaign, INetworkTelemetrySource
+internal sealed class RushHourImitationCampaign(ulong seed, float learningRate, bool grow = false, int growEvery = 2048) : ITrainingCampaign, INetworkTelemetrySource
 {
+    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const int BatchSize = 256;
     private const int SamplesPerConfig = 1024;
     private const int MaxStatesPerConfig = 150_000;
@@ -74,8 +75,10 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate) 
             }
             else
             {
-                _net = new RushHourPolicyNet(new Xoshiro256StarStar(seed ^ 0xDEADBEEF));
-                Log("initialized a fresh policy net");
+                var initRng = new Xoshiro256StarStar(seed ^ 0xDEADBEEF);
+                _net = grow ? new RushHourPolicyNet(initRng, DqnGrowth.Start) : new RushHourPolicyNet(initRng);
+                Log(grow ? $"initialized a fresh GROWING policy net (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                         : "initialized a fresh policy net");
                 resumed = false;
             }
         }
@@ -123,6 +126,8 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate) 
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
+        if (PolicyGrowth.Maybe(_net, _totalSamples, grow, growEvery, learningRate, _growRng, Log) is var g && g.HasValue)
+            (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }
 

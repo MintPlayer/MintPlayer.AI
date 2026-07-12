@@ -14,8 +14,9 @@ using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 /// quarter-turn + Huber on distance-to-go), and reports per-depth greedy/search solve rates. Resumes the net +
 /// Adam from `cube.policy` / `cube.policy-adam` (width-ladder ids via <see cref="CubeIds.ForWidth"/>).
 /// </summary>
-internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int width) : ITrainingCampaign, INetworkTelemetrySource
+internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int width, bool grow = false, int growEvery = 4096) : ITrainingCampaign, INetworkTelemetrySource
 {
+    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const int BatchSize = 256;
     private const int SamplesPerRound = 4096;
     private static readonly int[] EvalDepths = [2, 4, 6, 8, 10, 12, 16, 20];
@@ -46,8 +47,11 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
             }
             else
             {
-                _net = new CubePolicyNet(new Xoshiro256StarStar(seed ^ 0xDEADBEEF), hidden: width);
-                Log($"initialized a fresh cube policy net '{_ids.Policy}' (trunk width {width})");
+                var initRng = new Xoshiro256StarStar(seed ^ 0xDEADBEEF);
+                _net = grow ? new CubePolicyNet(initRng, DqnGrowth.Start) : new CubePolicyNet(initRng, hidden: width);
+                Log(grow
+                    ? $"initialized a fresh GROWING cube policy net '{_ids.Policy}' (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                    : $"initialized a fresh cube policy net '{_ids.Policy}' (trunk width {width})");
                 resumed = false;
             }
         }
@@ -103,6 +107,8 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
+        if (PolicyGrowth.Maybe(_net, _totalSamples, grow, growEvery, learningRate, _growRng, Log) is var g && g.HasValue)
+            (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }
 

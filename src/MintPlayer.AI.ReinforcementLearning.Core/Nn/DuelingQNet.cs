@@ -119,52 +119,11 @@ public sealed class DuelingQNet : IValueNet
         for (int i = 0; i < _hidden.Length; i++)
             if (newHidden[i] < _hidden[i]) throw new ArgumentException("WidenTo cannot shrink a layer.");
 
-        // Per trunk layer: map each new unit → an old unit (identity for originals, random for the extras) and
-        // count how many new units map to each old unit (the function-preserving outgoing-weight split factor).
-        var map = new int[_hidden.Length][];
-        var count = new int[_hidden.Length][];
-        for (int i = 0; i < _hidden.Length; i++)
-        {
-            int oldW = _hidden[i], newW = newHidden[i];
-            var g = new int[newW];
-            var cnt = new int[oldW];
-            for (int j = 0; j < oldW; j++) { g[j] = j; cnt[j] = 1; }
-            for (int j = oldW; j < newW; j++) { int s = rng.NextInt(oldW); g[j] = s; cnt[s]++; }
-            map[i] = g; count[i] = cnt;
-        }
-
         var grown = new DuelingQNet(_inputSize, newHidden, _actions, rng, noisy: false);
-        for (int i = 0; i < _hidden.Length; i++)
-        {
-            Linear oldL = _trunk[i], newL = grown._trunk[i];
-            int oldOut = _hidden[i], newOut = newHidden[i];
-            int newIn = i == 0 ? _inputSize : newHidden[i - 1];
-            for (int r = 0; r < newIn; r++)
-            {
-                int sr = i == 0 ? r : map[i - 1][r];
-                float scale = i == 0 ? 1f : 1f / count[i - 1][sr];
-                for (int o = 0; o < newOut; o++)
-                    newL.Weight.Data[r * newOut + o] = oldL.Weight.Data[sr * oldOut + map[i][o]] * scale;
-            }
-            for (int o = 0; o < newOut; o++) newL.Bias.Data[o] = oldL.Bias.Data[map[i][o]];
-        }
-        WidenHeadInput((Linear)_valueHead, (Linear)grown._valueHead, map[^1], count[^1], 1);
-        WidenHeadInput((Linear)_advantageHead, (Linear)grown._advantageHead, map[^1], count[^1], _actions);
+        Net2Net.WidenTrunk(_inputSize, _trunk, _hidden, grown._trunk, newHidden,
+            [((Linear)_valueHead, (Linear)grown._valueHead, 1),
+             ((Linear)_advantageHead, (Linear)grown._advantageHead, _actions)], rng);
         return grown;
-    }
-
-    // A head reads the last trunk layer's (now widened) output: split each duplicated unit's incoming weight
-    // across its copies so the head's pre-activation is unchanged. Output width (and bias) are untouched.
-    private static void WidenHeadInput(Linear oldHead, Linear newHead, int[] mapLast, int[] countLast, int outDim)
-    {
-        for (int r = 0; r < mapLast.Length; r++)
-        {
-            int sr = mapLast[r];
-            float scale = 1f / countLast[sr];
-            for (int o = 0; o < outDim; o++)
-                newHead.Weight.Data[r * outDim + o] = oldHead.Weight.Data[sr * outDim + o] * scale;
-        }
-        oldHead.Bias.Data.CopyTo(newHead.Bias.Data.AsSpan());
     }
 
     /// <summary>
@@ -186,19 +145,10 @@ public sealed class DuelingQNet : IValueNet
             _trunk[i].Weight.Data.CopyTo(grown._trunk[i].Weight.Data.AsSpan());
             _trunk[i].Bias.Data.CopyTo(grown._trunk[i].Bias.Data.AsSpan());
         }
-        var identity = grown._trunk[^1]; // new last trunk layer → identity (function-preserving after a ReLU)
-        Array.Clear(identity.Weight.Data);
-        for (int k = 0; k < w; k++) identity.Weight.Data[k * w + k] = 1f;
-        Array.Clear(identity.Bias.Data);
-        CopyLinear((Linear)_valueHead, (Linear)grown._valueHead);
-        CopyLinear((Linear)_advantageHead, (Linear)grown._advantageHead);
+        Net2Net.SetIdentity(grown._trunk[^1]); // new last trunk layer → identity (function-preserving after a ReLU)
+        Net2Net.CopyLinear((Linear)_valueHead, (Linear)grown._valueHead);
+        Net2Net.CopyLinear((Linear)_advantageHead, (Linear)grown._advantageHead);
         return grown;
-    }
-
-    private static void CopyLinear(Linear src, Linear dst)
-    {
-        src.Weight.Data.CopyTo(dst.Weight.Data.AsSpan());
-        src.Bias.Data.CopyTo(dst.Bias.Data.AsSpan());
     }
 
     /// <inheritdoc/>

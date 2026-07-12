@@ -18,9 +18,10 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 /// the Ilgpu.Hosting <c>AddGpuBackend()</c>; the container owns its lifetime). Resumes net + Adam + a persisted
 /// (samples, round) counter under distinct `policy-efficient*` ids, so the imitation net is never touched.
 /// </summary>
-internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes)
+internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes, bool grow = false, int growEvery = 50_000)
     : ITrainingCampaign, INetworkTelemetrySource
 {
+    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const string PolicyId = "policy-efficient";
     private const string PolicyAdamId = "policy-efficient-adam";
     private const string PolicyProgressId = "policy-efficient-progress";
@@ -58,8 +59,11 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
             }
             else
             {
-                _net = new CubePolicyNet(new Xoshiro256StarStar(seed ^ 0xC0FFEE), hidden: width);
-                Log($"initialized a fresh EfficientCube net '{PolicyId}' (trunk width {width})");
+                var initRng = new Xoshiro256StarStar(seed ^ 0xC0FFEE);
+                _net = grow ? new CubePolicyNet(initRng, DqnGrowth.Start) : new CubePolicyNet(initRng, hidden: width);
+                Log(grow
+                    ? $"initialized a fresh GROWING EfficientCube net '{PolicyId}' (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                    : $"initialized a fresh EfficientCube net '{PolicyId}' (trunk width {width})");
                 resumed = false;
             }
         }
@@ -119,6 +123,8 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
+        if (PolicyGrowth.Maybe(_net, _totalSamples, grow, growEvery, learningRate, _growRng, Log) is var g && g.HasValue)
+            (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }
 

@@ -1271,15 +1271,20 @@ Adam optimizer (moments are keyed to the parameter set) via `DqnTrainingState.Wi
 accumulator/step-count carried over; obs & action dims unchanged so they stay valid). Wired into **both DQN games**:
 `--game snake|fruitcake --grow [--grow-every N]` (starts from the tiny stage, grows mid-run).
 
-**Coverage.** DQN games (Snake, FruitCake) grow **wider and deeper** (new). The DAVI cube value net already grew
-**width** (pre-existing `--auto-widen` / `--grow-to` on `ResidualMlp`). The two-headed imitation policy nets
-(`CubePolicyNet`, `RushHourPolicyNet`) have a fixed 2-layer trunk — widening is feasible but *deepening* needs a
-trunk refactor to a variable-depth `Linear[]` (+ a checkpoint version bump); deferred.
+**Coverage — every trainable net now grows.** The growth math is factored into `Net2Net` (`WidenTrunk` + `SetIdentity`)
+and shared:
+- **DQN games** (Snake, FruitCake) — `DuelingQNet` grows wider+deeper via `--grow` (`DqnGrowth`).
+- **Imitation/EfficientCube policy nets** (Cube, Cube-policy, Rush Hour) — the two-headed nets were **refactored** from
+  a fixed 2-layer trunk to a variable-depth `PolicyValueNet` core (shared by `CubePolicyNet`/`RushHourPolicyNet`).
+  Checkpoint format bumped to **v2** (stores the trunk-widths array); **v1 shipped files still load** (one hidden width
+  → a two-layer trunk), guarded by a test. They grow wider+deeper via `--grow` (`PolicyGrowth`, same schedule).
+- **DAVI value net** (`ResidualMlp`, cube-davi) — already grew **width** (pre-existing `--auto-widen` / `--grow-to`).
 
-**Gate (met).** `--game fruitcake --viz --grow` from scratch → the graph grows live through all five stages
-(`[16]`→`[128,128,128]`) — wider **and** deeper — with **no loss spike** (function-preserving; the freshly-inserted
-identity layer is visible as a diagonal in its heatmap and trains away). 316 fast tests green (incl. 2 Net2Net
-forward-equality tests). Screenshot: `docs/screenshots/m36-network-grows.png`.
+**Gate (met).** `--game fruitcake --viz --grow` grows the DQN net `[16]`→`[128,128,128]` live (wider **and** deeper),
+and `--game rushhour --viz --grow` grows the **policy** net the same way (`docs/screenshots/m37-policy-net-grows.png` —
+note the identity diagonals in the just-deepened layers' heatmaps), both with **no loss spike** (function-preserving).
+320 fast tests green (incl. Net2Net forward-equality for DuelingQNet + PolicyValueNet, and a v1-checkpoint-load test).
+Screenshots: `docs/screenshots/m36-network-grows.png` (DQN), `m37-policy-net-grows.png` (policy).
 
 ## Testing strategy (cross-cutting, from research)
 
@@ -1328,7 +1333,7 @@ forward-equality tests). Screenshot: `docs/screenshots/m36-network-grows.png`.
 | M28 NoisyNets capability (2026-06-26) | learns, serializes, serves deterministically; no shipped checkpoint broken | 293/293; σ-grads flow; noisy resume bitwise; v1 ckpts load as plain; serving unchanged (noise off) |
 | M28 FruitCake NoisyNets empirical (2026-06-26) | match or beat ε-greedy at equal budget (multi-seed) | **matched** — 200-game paired A/B tie (702.1 vs 714.4, Δ −12.3 ± 29.8 SE); single-evals were seed-luck; not shipped |
 | M36.1 network visualizer — watch it train (2026-07-12) | see the net evolve live during training (all games); beginner-readable; zero training impact | **met** — pull-based seam; **all six `--game`s** stream topology + weight frames over a **WebSocket** to a self-contained page with **hover tooltips**; net visibly evolves (heatmaps/edges shift, eval 7.0→13.9); **Development-gated**; viz vs no-viz checkpoints **SHA256-identical**; 314 tests green |
-| M37 progressive net growth (2026-07-12) | grow the net wider+deeper mid-training without a loss spike | **met** — function-preserving `WidenTo` (Net2WiderNet) + `Deepen` (Net2DeeperNet) on `DuelingQNet`; `--grow` on Snake+FruitCake grows `[16]`→`[128,128,128]` live (verified in the visualizer); 2 forward-equality tests; DAVI already grew width; policy-net deepen deferred (fixed-trunk refactor) |
+| M37 progressive net growth (2026-07-12) | grow the net wider+deeper mid-training without a loss spike, everywhere possible | **met** — shared `Net2Net` (WidenTrunk/SetIdentity); `--grow` grows **all** trainable nets live: `DuelingQNet` (Snake, FruitCake) and the refactored variable-depth `PolicyValueNet` (Cube, Cube-policy, Rush Hour), `[16]`→`[128,128,128]`; DAVI `ResidualMlp` already grew width. Policy checkpoint → v2 with v1 back-compat (tested). 320 tests (4 new: widen/deepen forward-equality ×2, v1 load, grown round-trip) |
 
 ## Shipped (2026-06-11) — release engineering
 

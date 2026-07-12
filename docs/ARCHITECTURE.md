@@ -351,12 +351,14 @@ dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab --
   --game fruitcake --search-eval --data ./data --depth 3 --topk 5 --topk2 2
 ```
 
-**Grow the net mid-training (M37).** `DuelingQNet.WidenTo` (Net2WiderNet) and `.Deepen` (Net2DeeperNet) return a
-function-preserving larger net (unit-tested forward-equality); the shared `tools/…Lab/DqnGrowth.cs` applies a staged
-`[16]→…→[128,128,128]` schedule on a step cadence and rebuilds the state via `DqnTrainingState.WithNetwork` (fresh
-Adam, same buffer/RNGs). `--game snake|fruitcake --grow` starts tiny and grows wider+deeper live (watch it in `--viz`).
-DAVI's `ResidualMlp` already grows width (`--auto-widen`/`--grow-to`); the fixed-trunk policy nets can widen but need a
-refactor to deepen. *Change it:* schedule in `DqnGrowth.Stages`; operators in `DuelingQNet`.
+**Grow the net mid-training (M37).** Function-preserving growth (Net2WiderNet/Net2DeeperNet) is factored into
+`Core/Nn/Net2Net.cs` (`WidenTrunk` splits duplicated units' outgoing weights; `SetIdentity` inserts an identity layer)
+and shared by every trainable net. `--grow` (`[16]→…→[128,128,128]` schedule, watch it in `--viz`) works for: **DQN**
+games via `DuelingQNet.WidenTo`/`.Deepen` + `DqnGrowth` (rebuilds state via `DqnTrainingState.WithNetwork`); the
+**imitation/EfficientCube policy nets** — `CubePolicyNet`/`RushHourPolicyNet` were refactored onto a shared
+variable-depth `PolicyValueNet` core — via `PolicyGrowth` (their checkpoint is now v2 with a trunk-widths array; v1
+shipped files still load). DAVI's `ResidualMlp` already grows width (`--auto-widen`/`--grow-to`). *Change it:* schedule
+in `DqnGrowth.Stages`; operators in `Net2Net`.
 
 **Watch a net train (M36).** Add `--viz [port]` to **any** game (`--game snake --viz`, bare = 5250; works for all six
 `--game`s): the Lab hosts a localhost page that shows the net's topology + a live weight snapshot over a **WebSocket**

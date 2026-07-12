@@ -178,8 +178,9 @@ dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release --
 ```
 
 It starts from a tiny net and grows through `[16] → [32] → [32,32] → … → [128,128,128]` with no loss spike (each
-step preserves the function exactly). The cube's self-taught DAVI value net already grows its width during its
-campaign (`--auto-widen`).
+step preserves the function exactly). `--grow` works for **every trainable game** — the DQN nets (Snake, FruitCake)
+and the two-headed imitation policy nets (`--game cube|rushhour --grow`); the cube's self-taught DAVI value net
+already grows its width during its campaign (`--auto-widen`).
 
 ![The network after growing wider and deeper](docs/screenshots/m36-network-grows.png)
 

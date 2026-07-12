@@ -19,6 +19,8 @@ internal static class RushHourLab
         ulong seed = 1;
         float learningRate = 3e-4f;
         bool evalOnly = false;
+        bool grow = false;         // --grow : progressively grow the net wider+deeper mid-training (Net2Net)
+        int growEvery = 2048;      // --grow-every : samples between growth steps (with --grow)
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--hours" && i + 1 < args.Length) hours = double.Parse(args[++i], CultureInfo.InvariantCulture);
@@ -26,6 +28,8 @@ internal static class RushHourLab
             else if (args[i] == "--seed" && i + 1 < args.Length) seed = ulong.Parse(args[++i]);
             else if (args[i] == "--lr" && i + 1 < args.Length) learningRate = float.Parse(args[++i], CultureInfo.InvariantCulture);
             else if (args[i] == "--eval-only") evalOnly = true;
+            else if (args[i] == "--grow") grow = true;
+            else if (args[i] == "--grow-every" && i + 1 < args.Length) growEvery = int.Parse(args[++i]);
         }
 
         // DI all the way: the model store, clock and CampaignRunner are resolved from the AIHost container.
@@ -34,7 +38,7 @@ internal static class RushHourLab
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         string csvPath = Path.Combine(dataDir, "logs", "imitation.csv");
 
-        var campaign = new RushHourImitationCampaign(seed, learningRate);
+        var campaign = new RushHourImitationCampaign(seed, learningRate, grow, growEvery);
         using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
         runner.Run(campaign, store, new CampaignOptions
         {
