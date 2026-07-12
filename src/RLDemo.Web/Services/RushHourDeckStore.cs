@@ -76,10 +76,5 @@ public sealed class RushHourDeckStore(string filePath)
     }
 
     private void Write(List<DeckLevel> levels)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        string temp = FilePath + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(new RushHourDeck(1, levels), Json));
-        File.Move(temp, FilePath, overwrite: true);
-    }
+        => AtomicFile.Write(FilePath, JsonSerializer.Serialize(new RushHourDeck(1, levels), Json));
 }
