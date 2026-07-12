@@ -7,7 +7,40 @@ namespace RLDemo.Web.Controllers;
 /// <summary>A vehicle as drawn in the browser; index 0 in the array is the red car.</summary>
 public sealed record VehicleDto(int Row, int Col, int Length, bool Horizontal);
 
-public sealed record RushHourBoardDto(VehicleDto[] Vehicles);
+public sealed record RushHourBoardDto(VehicleDto[] Vehicles)
+{
+    /// <summary>
+    /// The single drawn-board → <see cref="RushHourPuzzle"/> contract (index 0 is the red car): validates the
+    /// vehicle list and reports a user-facing reason when it is illegal. Shared by the solve/analyze endpoints
+    /// and the deck store so a board the solver would reject can never be admitted to the curated deck.
+    /// </summary>
+    public static bool TryBuildPuzzle(VehicleDto[] vehicles, out RushHourPuzzle puzzle, out string? error)
+    {
+        puzzle = null!;
+        error = null;
+        if (vehicles is not { Length: > 0 })
+        {
+            error = "Draw at least the red car.";
+            return false;
+        }
+
+        try
+        {
+            puzzle = new RushHourPuzzle([.. vehicles.Select(v => new Vehicle(v.Row, v.Col, v.Length, v.Horizontal))]);
+            if (puzzle.Vehicles.Any(v => v.Length is < 2 or > 3))
+            {
+                error = "Vehicles must have length 2 (car) or 3 (truck).";
+                return false;
+            }
+            return true;
+        }
+        catch (ArgumentException ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+}
 
 public sealed record AnalyzeResponse(bool Valid, string? Error, bool Solvable, int OptimalMoves);
 
@@ -25,8 +58,6 @@ public sealed record SolveResponse(
     TrajectoryStepDto[] OptimalTrajectory,
     string AiMode); // "greedy" (reactive policy) | "search" (policy-guided A*) | "dqn" (legacy fallback)
 
-public sealed record StatusResponse(string Status, string? Error);
-
 [ApiController]
 [Route("api/rushhour")]
 public sealed class RushHourController(RushHourModelService model, GalleryStore gallery) : ControllerBase
@@ -42,7 +73,7 @@ public sealed class RushHourController(RushHourModelService model, GalleryStore 
     [HttpPost("analyze")]
     public ActionResult<AnalyzeResponse> Analyze(RushHourBoardDto board)
     {
-        if (TryBuildPuzzle(board, out var puzzle, out string? error))
+        if (RushHourBoardDto.TryBuildPuzzle(board.Vehicles, out var puzzle, out string? error))
         {
             int optimal = RushHourSolver.Solve(puzzle);
             return new AnalyzeResponse(true, null, optimal >= 0, optimal);
@@ -54,7 +85,7 @@ public sealed class RushHourController(RushHourModelService model, GalleryStore 
     [HttpPost("solve")]
     public ActionResult<SolveResponse> Solve(RushHourBoardDto board)
     {
-        if (!TryBuildPuzzle(board, out var puzzle, out string? error))
+        if (!RushHourBoardDto.TryBuildPuzzle(board.Vehicles, out var puzzle, out string? error))
             return BadRequest(new AnalyzeResponse(false, error, false, -1));
 
         var policy = model.PolicyNet;
@@ -123,32 +154,5 @@ public sealed class RushHourController(RushHourModelService model, GalleryStore 
             steps[i] = new TrajectoryStepDto(actions[i] / 2, actions[i] % 2, [.. positions]);
         }
         return steps;
-    }
-
-    private static bool TryBuildPuzzle(RushHourBoardDto board, out RushHourPuzzle puzzle, out string? error)
-    {
-        puzzle = null!;
-        error = null;
-        if (board.Vehicles is not { Length: > 0 })
-        {
-            error = "Draw at least the red car.";
-            return false;
-        }
-
-        try
-        {
-            puzzle = new RushHourPuzzle([.. board.Vehicles.Select(v => new Vehicle(v.Row, v.Col, v.Length, v.Horizontal))]);
-            if (puzzle.Vehicles.Any(v => v.Length is < 2 or > 3))
-            {
-                error = "Vehicles must have length 2 (car) or 3 (truck).";
-                return false;
-            }
-            return true;
-        }
-        catch (ArgumentException ex)
-        {
-            error = ex.Message;
-            return false;
-        }
     }
 }

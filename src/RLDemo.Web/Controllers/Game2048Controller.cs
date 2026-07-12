@@ -24,14 +24,12 @@ public sealed record SolveResponse2048(
     int MaxTile,
     bool Reached2048);
 
-public sealed record Status2048Response(string Status, string? Error);
-
 [ApiController]
 [Route("api/2048")]
 public sealed class Game2048Controller(Game2048ModelService model, GalleryStore gallery) : ControllerBase
 {
     [HttpGet("status")]
-    public Status2048Response Status()
+    public StatusResponse Status()
     {
         _ = model.Agent; // touch: lazily loads a stored checkpoint
         return new(model.Status.ToString().ToLowerInvariant(), model.Error);

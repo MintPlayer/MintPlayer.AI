@@ -2,6 +2,7 @@ import { Component, DestroyRef, ElementRef, computed, effect, inject, isDevMode,
 import { ActivatedRoute } from '@angular/router';
 import { AnalyzeResponse, DeckLevel, RushHourApi, SolveResponse, StatusResponse, VehicleDto } from './rush-hour-api';
 import { EXIT_ROW, SIZE, canMove, canPlace, initialPositions, isSolved, occupancy } from './rush-hour-logic';
+import { pollModelStatus } from '../model-status';
 
 type Mode = 'edit' | 'play' | 'playback';
 type Tool = 'red' | 'red-truck' | 'car-h' | 'car-v' | 'truck-h' | 'truck-v' | 'erase';
@@ -361,13 +362,7 @@ export class RushHour {
   // ------------------------------------------------------------------ model status
 
   private pollStatus(): void {
-    void (async () => {
-      const status = await this.api.status();
-      this.modelStatus.set(status);
-      if (status.status === 'loading') {
-        setTimeout(() => this.pollStatus(), 2000);
-      }
-    })();
+    pollModelStatus(() => this.api.status(), (s) => this.modelStatus.set(s));
   }
 
   // ------------------------------------------------------------------ canvas
