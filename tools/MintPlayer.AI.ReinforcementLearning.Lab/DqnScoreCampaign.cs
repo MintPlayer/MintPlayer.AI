@@ -65,6 +65,10 @@ internal abstract class DqnScoreCampaign(ulong seed, int chunkSteps, long target
     /// <summary>The net being trained/served: the live online net, else the warm-start net (for eval-only runs).</summary>
     protected IValueNet? CurrentNet => State?.Online ?? _warmNet;
 
+    /// <summary>The learning rate, exposed so a subclass's <see cref="BaseOptions"/> reuses the value it already
+    /// hands the base (which owns it for optimizer rebuilds on growth) rather than capturing the ctor param twice.</summary>
+    protected float LearningRate => learningRate;
+
     public bool Resume(IModelStore store)
     {
         bool resumed = false;

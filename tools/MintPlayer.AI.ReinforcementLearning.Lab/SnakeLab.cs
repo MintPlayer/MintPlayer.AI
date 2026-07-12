@@ -1,11 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
-using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
-using MintPlayer.AI.ReinforcementLearning.Hosting;
 
 /// <summary>
 /// `--game snake` entry point: parses the campaign flags and runs the score-maximizing
@@ -84,30 +79,9 @@ internal static class SnakeLab
             return;
         }
 
-        // DI all the way: the model store, clock and CampaignRunner are resolved from the AIHost container.
-        using var host = AIHost.CreateBuilder(dataDir).Build();
-        var store = host.Services.GetRequiredService<IModelStore>();
-        var runner = host.Services.GetRequiredService<CampaignRunner>();
-        string csvPath = Path.Combine(dataDir, "logs", "snake-dqn.csv");
-
-        var campaign = new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, stepPenalty, safeMask, grow, growEvery);
-        using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
-        runner.Run(campaign, store,
-            new CampaignOptions
-            {
-                Duration = TimeSpan.FromHours(hours),
-                EvalOnly = evalOnly,
-                OnEval = CampaignCli.ConsoleAndCsv(csvPath),
-            });
-        WaitForViewer(viz);
-    }
-
-    /// <summary>Keep the process (and its live viewer) alive after training so the final net can be inspected.</summary>
-    internal static void WaitForViewer(VizServer? viz)
-    {
-        if (viz is null || Console.IsInputRedirected) return;
-        Console.WriteLine($"training finished — viewer still live at {viz.Url}; press Enter to exit.");
-        Console.ReadLine();
+        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
+            _ => new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, stepPenalty, safeMask, grow, growEvery),
+            CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "snake-dqn.csv")));
     }
 
     /// <summary>

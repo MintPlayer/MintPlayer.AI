@@ -1,10 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
-using MintPlayer.AI.ReinforcementLearning.Core.Training;
-using MintPlayer.AI.ReinforcementLearning.Hosting;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
-using MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting;
 
 /// <summary>
 /// `--game cube-davi` entry point: resolves the long-lived campaign config (code defaults → appsettings.json →
@@ -158,23 +153,10 @@ internal static class CubeDaviLab
             EvalEpisodes = evalEpisodes,
         };
 
-        // DI all the way: the model store, clock, GPU backend and CampaignRunner are resolved from the AIHost
-        // container. AddGpuBackend() registers the shared AdaptiveBackend (DAVI's wide value net wins on GPU).
-        var builder = AIHost.CreateBuilder(dataDir);
-        builder.Services.AddGpuBackend();
-        using var host = builder.Build();
-        var store = host.Services.GetRequiredService<IModelStore>();
-        var runner = host.Services.GetRequiredService<CampaignRunner>();
-        var backend = host.Services.GetRequiredService<AdaptiveBackend>();
-
-        var campaign = new CubeDaviCampaign(backend, settings);
-        using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
-        runner.Run(campaign, store, new CampaignOptions
-        {
-            Duration = TimeSpan.FromHours(hours),
-            EvalOnly = evalOnly,
-            OnEval = CampaignCli.Console(),
-        });
-        SnakeLab.WaitForViewer(viz);
+        // GPU: DAVI's wide value net wins on GPU, so the campaign runs on the AdaptiveBackend (useGpu: true).
+        // The campaign owns its two depth-column CSVs, so the console-only eval hook is used (no generic metric CSV).
+        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: true,
+            sp => new CubeDaviCampaign(sp.GetRequiredService<AdaptiveBackend>(), settings),
+            CampaignCli.Console());
     }
 }

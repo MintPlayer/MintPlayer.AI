@@ -43,7 +43,7 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
         Hidden = hidden,
         Gamma = gamma,
         NStep = nStep, // n-step returns: propagate the sparse high-tier reward backward faster (PRD §4.C C4)
-        LearningRate = learningRate,
+        LearningRate = LearningRate,
         BufferCapacity = 100_000,
         BatchSize = 128,
         WarmupSteps = 2_000,

@@ -1,9 +1,4 @@
 using System.Globalization;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
-using MintPlayer.AI.ReinforcementLearning.Core.Training;
-using MintPlayer.AI.ReinforcementLearning.Hosting;
 
 /// <summary>
 /// `--game fruitcake` entry point: parses the campaign flags and runs the score-maximizing
@@ -84,20 +79,8 @@ internal static class FruitCakeLab
             return;
         }
 
-        using var host = AIHost.CreateBuilder(dataDir).Build();
-        var store = host.Services.GetRequiredService<IModelStore>();
-        var runner = host.Services.GetRequiredService<CampaignRunner>();
-        string csvPath = Path.Combine(dataDir, "logs", "fruitcake-dqn.csv");
-
-        var campaign = new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, noisy, nStep, shape, grow, growEvery);
-        using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
-        runner.Run(campaign, store,
-            new CampaignOptions
-            {
-                Duration = TimeSpan.FromHours(hours),
-                EvalOnly = evalOnly,
-                OnEval = CampaignCli.ConsoleAndCsv(csvPath),
-            });
-        SnakeLab.WaitForViewer(viz);
+        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
+            _ => new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, noisy, nStep, shape, grow, growEvery),
+            CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "fruitcake-dqn.csv")));
     }
 }

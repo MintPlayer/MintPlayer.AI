@@ -1,11 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
-using MintPlayer.AI.ReinforcementLearning.Core.Training;
-using MintPlayer.AI.ReinforcementLearning.Hosting;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
-using MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting;
 
 /// <summary>
 /// `--game cube-policy` entry point: parses the campaign flags and runs the EfficientCube
@@ -42,25 +37,10 @@ internal static class CubePolicyLab
             else if (args[i] == "--grow-every" && i + 1 < args.Length) growEvery = int.Parse(args[++i]);
         }
 
-        // DI all the way: the model store, clock, GPU backend and CampaignRunner are resolved from the AIHost
-        // container. AddGpuBackend() registers the shared AdaptiveBackend (the cube nets are large enough to win on GPU).
-        var builder = AIHost.CreateBuilder(dataDir);
-        builder.Services.AddGpuBackend();
-        using var host = builder.Build();
-        var store = host.Services.GetRequiredService<IModelStore>();
-        var runner = host.Services.GetRequiredService<CampaignRunner>();
-        var backend = host.Services.GetRequiredService<AdaptiveBackend>();
-        string csvPath = Path.Combine(dataDir, "logs", "cube-policy.csv");
-
-        var campaign = new CubeEfficientCampaign(backend, seed, learningRate, width, maxScramble, beamWidth, evalEpisodes, grow, growEvery);
-        using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
-        runner.Run(campaign, store,
-            new CampaignOptions
-            {
-                Duration = TimeSpan.FromHours(hours),
-                EvalOnly = evalOnly,
-                OnEval = CampaignCli.ConsoleAndCsv(csvPath),
-            });
-        SnakeLab.WaitForViewer(viz);
+        // GPU: the cube nets are large enough to win on GPU, so the campaign runs on the AdaptiveBackend
+        // (useGpu: true → LabHost registers it and this build pulls it from the container).
+        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: true,
+            sp => new CubeEfficientCampaign(sp.GetRequiredService<AdaptiveBackend>(), seed, learningRate, width, maxScramble, beamWidth, evalEpisodes, grow, growEvery),
+            CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "cube-policy.csv")));
     }
 }

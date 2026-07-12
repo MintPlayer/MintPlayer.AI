@@ -1,9 +1,4 @@
 using System.Globalization;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
-using MintPlayer.AI.ReinforcementLearning.Core.Training;
-using MintPlayer.AI.ReinforcementLearning.Hosting;
 
 /// <summary>
 /// The Lab's default `--game rushhour` entry point: parses the campaign flags and runs the
@@ -32,20 +27,8 @@ internal static class RushHourLab
             else if (args[i] == "--grow-every" && i + 1 < args.Length) growEvery = int.Parse(args[++i]);
         }
 
-        // DI all the way: the model store, clock and CampaignRunner are resolved from the AIHost container.
-        using var host = AIHost.CreateBuilder(dataDir).Build();
-        var store = host.Services.GetRequiredService<IModelStore>();
-        var runner = host.Services.GetRequiredService<CampaignRunner>();
-        string csvPath = Path.Combine(dataDir, "logs", "imitation.csv");
-
-        var campaign = new RushHourImitationCampaign(seed, learningRate, grow, growEvery);
-        using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
-        runner.Run(campaign, store, new CampaignOptions
-        {
-            Duration = TimeSpan.FromHours(hours),
-            EvalOnly = evalOnly,
-            OnEval = CampaignCli.ConsoleAndCsv(csvPath),
-        });
-        SnakeLab.WaitForViewer(viz);
+        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
+            _ => new RushHourImitationCampaign(seed, learningRate, grow, growEvery),
+            CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "imitation.csv")));
     }
 }
