@@ -15,7 +15,6 @@ import { ScreenWakeLock } from '../screen-wake-lock';
   host: {
     '(window:keydown)': 'onKeyDown($event)',
     '(window:keyup)': 'onKeyUp($event)',
-    '(document:visibilitychange)': 'onVisibilityChange()',
   },
 })
 export class MountainCar {
@@ -86,12 +85,6 @@ export class MountainCar {
     this.director = null;
     void this.wakeLock.release();
     if (this.mode() !== 'idle') this.mode.set('idle');
-  }
-
-  // A backgrounded tab is throttled by the OS and drops the wake-lock; on returning to the foreground still in
-  // watch mode, re-acquire it (the director keeps ticking — no socket to reopen).
-  protected onVisibilityChange(): void {
-    if (document.visibilityState === 'visible' && this.mode() === 'watch') void this.wakeLock.acquire();
   }
 
   private clearTimer(): void {

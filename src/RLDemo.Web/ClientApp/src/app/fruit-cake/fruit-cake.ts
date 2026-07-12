@@ -22,7 +22,6 @@ import { ScreenWakeLock } from '../screen-wake-lock';
   host: {
     '(document:fullscreenchange)': 'onFullscreenChange()',
     '(document:webkitfullscreenchange)': 'onFullscreenChange()',
-    '(document:visibilitychange)': 'onVisibilityChange()',
   },
 })
 export class FruitCake implements AfterViewInit {
@@ -80,12 +79,6 @@ export class FruitCake implements AfterViewInit {
       this.accumulator = 0;
       void this.wakeLock.release();
     }
-  }
-
-  // A backgrounded tab is throttled/frozen by the OS, which also drops the screen wake-lock. On return to the
-  // foreground still in watch mode, re-acquire it; the director just resumes on the next animation frame.
-  protected onVisibilityChange(): void {
-    if (document.visibilityState === 'visible' && this.mode() === 'watch') void this.wakeLock.acquire();
   }
 
   private readonly frame = (nowMs: number): void => {

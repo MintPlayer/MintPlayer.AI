@@ -18,7 +18,7 @@ const HUMAN_TICK_MS = 150;
   selector: 'app-snake',
   templateUrl: './snake.html',
   styleUrl: './snake.scss',
-  host: { '(window:keydown)': 'onKey($event)', '(document:visibilitychange)': 'onVisibilityChange()' },
+  host: { '(window:keydown)': 'onKey($event)' },
 })
 export class Snake {
   private readonly wakeLock = inject(ScreenWakeLock);
@@ -93,12 +93,6 @@ export class Snake {
     this.director = null;
     void this.wakeLock.release();
     if (this.mode() !== 'idle') this.mode.set('idle');
-  }
-
-  // A backgrounded tab is throttled by the OS and drops the wake-lock; on returning to the foreground still in
-  // watch mode, re-acquire it (the director just keeps ticking — no socket to reopen).
-  protected onVisibilityChange(): void {
-    if (document.visibilityState === 'visible' && this.mode() === 'watch') void this.wakeLock.acquire();
   }
 
   private render(body: number[], food: number, eaten: number): void {
