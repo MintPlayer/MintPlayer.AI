@@ -129,9 +129,32 @@ and clean the out dir so a removed/renamed `.pg` leaves no orphan `.cs`. A singl
 
 `_PolyglotAddGenerated` already globs `$(PolyglotOutDir)*.cs`, so the `.stamp` is not compiled; add it to `FileWrites`
 too so `dotnet clean` removes it. A no-op rebuild stays up-to-date (stamp newer than every `.pg` and the tool); any
-`.pg`/tool change re-runs the full set. **This is the recommended upstream change.** A defensive
-`--clean-out`/idempotent-prelude on the CLI is a fine belt-and-braces addition but is not sufficient on its own (see
-above).
+`.pg`/tool change re-runs the full set. A defensive `--clean-out`/idempotent-prelude on the CLI is a fine
+belt-and-braces addition but is not sufficient on its own (see above).
+
+**This exact patch is VERIFIED (2026-07-12), not just proposed.** A drop-in copy of the fixed target file is staged
+alongside this doc: **`docs/prd/polyglot-pilot/MintPlayer.Polyglot.MSBuild.targets.FIXED`** — its only diff vs the
+current upstream `build/MintPlayer.Polyglot.MSBuild.targets` is the four lines above (stamp `Outputs`, `RemoveDir`,
+`Touch`, `FileWrites` stamp) plus the rationale comment. Session B in `C:\Repos\MintPlayer.Polyglot` can copy it over
+`src/MintPlayer.Polyglot.MSBuild/build/MintPlayer.Polyglot.MSBuild.targets`, then branch + PR.
+
+**How it was verified — a 2-`.pg` repro harness importing the source `.targets` directly** (no NuGet cache mutation):
+
+```bash
+D=/tmp/pgfix; mkdir -p "$D"; cd "$D"
+printf 'fn aHello(): i32 => 1\n' > a.pg
+printf 'fn bHello(): i32 => 2\n' > b.pg
+# Test.csproj: net10.0 project that <Import>s the .props then the .targets under test, and sets
+#   <PolyglotTool> to ~/.nuget/packages/mintplayer.polyglot.msbuild/0.5.3/tools/win-x64/polyglot.exe
+dotnet build -c Release            # clean build: succeeds
+touch a.pg && dotnet build -c Release   # UNPATCHED .targets → a.cs emitted standalone → CS0101/CS0260/CS8863
+```
+
+Against the **unpatched** source `.targets` the `touch a.pg` rebuild fails exactly as reported (`a.cs:7` non-`partial`
+PolyglotProgram + duplicate prelude). Against the **patched** `.targets` (the `.FIXED` file): the same `touch`
+rebuild **succeeds**, a no-op rebuild logs *"Skipping target PolyglotTranspile because all output files are
+up-to-date"* (incrementality preserved), a touch logs *"Touching …/__polyglot.stamp"* (full re-transpile), and a fully
+clean build succeeds. All four states green.
 
 ### Consumer-side mitigation already shipped (so this repo no longer needs the `rm`)
 
