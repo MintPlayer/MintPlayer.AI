@@ -1,48 +1,40 @@
-using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.AI.ReinforcementLearning.Core.Environments;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
-using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
-using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 
 /// <summary>
-/// FruitCake DQN campaign (`--game fruitcake`, PRD FRUITCAKE_AI §4.4/§7-A2) as an <see cref="ITrainingCampaign"/>
-/// on <see cref="CampaignRunner"/> — the score-maximizing paradigm (an open-ended game whose eval is the mean
-/// episodic score, not a solve rate). Trains a Double+Dueling <see cref="DuelingQNet"/> on the headless
-/// <see cref="FruitCakeEnv"/> (one step = one drop, simulated to rest in pure compute; rotation off). Resumable
-/// bitwise-identically via <see cref="DqnTrainingState"/>; each chunk raises the absolute
-/// <see cref="DqnOptions.MaxSteps"/> and continues. Persists the deployable net under `fruitcake`/`dqn` (the id
-/// the web's <c>FruitCakeModelService</c> will load, A3) plus the full resume state under `fruitcake`/`dqn-state`.
+/// FruitCake DQN campaign (`--game fruitcake`, PRD FRUITCAKE_AI §4.4/§7-A2) on the shared
+/// <see cref="DqnScoreCampaign"/> spine — the score-maximizing paradigm (an open-ended game whose eval is the mean
+/// episodic score). Trains a Double+Dueling <see cref="DuelingQNet"/> on the headless <see cref="FruitCakeEnv"/>
+/// (one step = one drop, simulated to rest in pure compute; rotation off). This type supplies the env + reward
+/// shaping, the hyperparameters, the mean-score eval, and the plain→noisy / grow-input warm-net adaptation; the
+/// base owns resume/train/keep-best/checkpoint/growth/telemetry.
 /// </summary>
 internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false, int nStep = 1, bool shapeRewards = false, bool grow = false, int growEvery = 2000)
-    : ITrainingCampaign, INetworkTelemetrySource
+    : DqnScoreCampaign(seed, chunkSteps, targetSteps, learningRate, grow, growEvery)
 {
-    // Progressive-growth demo (shared with Snake via DqnGrowth): grow the net wider+deeper on the growEvery cadence.
-    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x9E3779B97F4A7C15UL);
-    private const string NetId = "dqn";         // deployable DuelingQNet — the id the web loads (shared by both lines)
-    // Noisy training is a SEPARATE line with its own resume state: it must never resume a PLAIN state as a plain
-    // net (which would then train with ε=0 and NO exploration). The deployable NetId is shared and keep-best gated.
-    private string StateId => noisy ? "dqn-noisy-state" : "dqn-state";
-
-    // Training env carries the reward shaping (ShapingGamma matches the learner's γ for policy-invariance); the
-    // eval env stays a plain game so keep-best/A/B always judge real merge points, never the shaped signal.
+    // Training env carries the reward shaping (ShapingGamma matches the learner's γ for policy-invariance); the eval
+    // env stays a plain game so keep-best/A/B always judge real merge points, never the shaped signal.
     private readonly FruitCakeEnv _env = new() { ShapeRewards = shapeRewards, ShapingGamma = gamma };
     private readonly FruitCakeEnv _evalEnv = new();
-    private readonly SeedSequence _seeds = new(seed);
 
-    private DqnTrainingState? _state;
-    private IValueNet? _warmNet; // deployable net to warm-start from when there's no full resume state
-    // Save-best: DQN eval is noisy, so the deployable net is only overwritten when the eval mean-score IMPROVES on
-    // the best seen (seeded from the starting net, so a noisy dip never regresses a good shipped model).
-    private double _bestScore = double.NegativeInfinity;
-    private double _lastEvalScore = double.NegativeInfinity;
-
-    public string Environment => "fruitcake";
+    public override string Environment => "fruitcake";
+    // Noisy training is a SEPARATE line with its own resume state: it must never resume a PLAIN state as a plain net
+    // (which would then train with ε=0 and NO exploration). The deployable NetId is shared and keep-best gated.
+    protected override string StateId => noisy ? "dqn-noisy-state" : "dqn-state";
+    protected override IEnvironment<float[], int> TrainEnv => _env;
+    protected override string StepNoun => "drops";
+    protected override string GateLabel => "mean score";
+    protected override string DisplayName => "FruitCake DQN";
+    protected override int ObservationSize => FruitCakeEnv.ObservationSize;
+    protected override IReadOnlyList<string>? InputLabels => FruitCakeEnv.ObservationLabels;
+    protected override IReadOnlyList<string>? OutputLabels => FruitCakeEnv.ActionLabels;
 
     /// <summary>Double+Dueling DQN; MaxSteps is managed per chunk by the runner (drops, not physics sub-steps).</summary>
-    private DqnOptions BaseOptions => new()
+    protected override DqnOptions BaseOptions => new()
     {
         Dueling = true,
         DoubleDqn = true,
@@ -62,113 +54,34 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
         EvalEpisodes = 10,
     };
 
-    public bool Resume(IModelStore store)
+    protected override IValueNet AdaptWarmNet(DuelingQNet loaded)
     {
-        bool resumed = false;
-        using (var s = store.TryOpenRead(Environment, StateId))
+        // Promote-plain→noisy: the shipped net is plain, but a noisy run needs a noisy net. Copy its trained weights
+        // into the means + add fresh σ — behaviorally identical with noise off, so the run continues the ~current
+        // policy and merely adds learnable exploration.
+        IValueNet warm = noisy && !loaded.Noisy ? loaded.ToNoisy(Seeds.CreateRng(RngStreams.Init)) : loaded;
+        // If the observation has gained features since this net was trained (e.g. the big-fruit-position inputs),
+        // grow its input to fit — function-preserving (new inputs zero-init), so the baseline eval and warm-start
+        // continue the trained net rather than retraining from scratch.
+        if (warm.InputSize != FruitCakeEnv.ObservationSize)
         {
-            if (s is not null)
-            {
-                _state = DqnTrainingState.Load(s);
-                Log($"resumed FruitCake DQN at {_state.StepsCompleted:N0} drops (last eval return {_state.LastEval:F2})");
-                resumed = true;
-            }
+            Log($"growing the loaded net's input {warm.InputSize} → {FruitCakeEnv.ObservationSize} (observation gained features; weights preserved)");
+            warm = warm.GrowInput(FruitCakeEnv.ObservationSize);
         }
-        // No full resume state, but the deployable net may exist (e.g. the shipped checkpoint). Warm-start from it:
-        // a fresh optimizer/replay buffer continues the trained net rather than discarding its weights.
-        if (!resumed)
-        {
-            using var net = store.TryOpenRead(Environment, NetId);
-            if (net is not null)
-            {
-                var loaded = DuelingQNetCheckpoint.Load(net);
-                // Promote-plain→noisy: the shipped net is plain, but a noisy run needs a noisy net. Copy its
-                // trained weights into the means + add fresh σ — behaviorally identical with noise off, so the
-                // run continues the ~current policy and merely adds learnable exploration.
-                IValueNet warm = noisy && !loaded.Noisy ? loaded.ToNoisy(_seeds.CreateRng(RngStreams.Init)) : loaded;
-                // If the observation has gained features since this net was trained (e.g. the big-fruit-position
-                // inputs), grow its input to fit — function-preserving (new inputs zero-init), so the baseline eval
-                // and warm-start continue the trained net rather than retraining from scratch.
-                if (warm.InputSize != FruitCakeEnv.ObservationSize)
-                {
-                    Log($"growing the loaded net's input {warm.InputSize} → {FruitCakeEnv.ObservationSize} (observation gained features; weights preserved)");
-                    warm = warm.GrowInput(FruitCakeEnv.ObservationSize);
-                }
-                _warmNet = warm;
-                Log($"warm-starting from the deployable FruitCake net '{NetId}'{(noisy ? " (promoted to noisy)" : "")} (fresh optimizer + replay buffer)");
-                resumed = true;
-            }
-        }
-
-        // Seed save-best from the starting net's score so training only ever ships a net that BEATS it.
-        var startNet = _state?.Online ?? _warmNet;
-        if (startNet is not null)
-        {
-            _bestScore = EvalNet(startNet).Score;
-            Log($"baseline mean score: {_bestScore:F2} (will only re-save the deployable net when an eval beats this)");
-        }
-        else
-        {
-            Log("starting fresh FruitCake DQN training");
-        }
-        return resumed;
+        return warm;
     }
 
-    public long TrainChunk()
+    protected override (double Gate, IReadOnlyList<CampaignMetric> Metrics, string Summary) EvaluateNet(IValueNet net)
     {
-        int from = _state?.StepsCompleted ?? 0;
-        int to = from + chunkSteps;
-        if (targetSteps > 0) to = (int)Math.Min(to, targetSteps);
-        // EvalEvery == the chunk size so the trainer's own eval fires at most once per chunk — the campaign's
-        // authoritative eval is the mean score in Evaluate(). MaxSteps is ABSOLUTE: resuming raises the ceiling.
-        var options = BaseOptions with { MaxSteps = to, EvalEvery = Math.Max(1, chunkSteps) };
-        var result = DqnTrainer.Train(_env, options, _seeds, resume: _state, warmStart: _state is null ? _warmNet : null);
-        _state = result.State;
-        _state = DqnGrowth.Maybe(_state, grow, growEvery, learningRate, _growRng, Log);
-        return _state.StepsCompleted;
-    }
-
-    /// <summary>Score-maximizing: no hard goal. Stops on the runner's time budget, or an optional absolute drop cap.</summary>
-    public bool IsComplete => targetSteps > 0 && (_state?.StepsCompleted ?? 0) >= targetSteps;
-
-    public CampaignEval Evaluate()
-    {
-        int steps = _state?.StepsCompleted ?? 0;
-        var net = _state?.Online ?? _warmNet;
-        if (net is null)
-            return new CampaignEval([new("drops", 0, "0")], "no model yet (train first)");
-
         var (score, maxTier, meanReturn) = EvalNet(net);
-        _lastEvalScore = score; // Checkpoint() ships the net only when this beats the best seen
-
-        float loss = _state?.LastLoss ?? 0f;
-        var metrics = new List<CampaignMetric>
+        var metrics = new CampaignMetric[]
         {
-            new("drops", steps, "0"),
             new("score", score, "F2"),
             new("maxTier", maxTier, "F2"),
             new("return", meanReturn, "F2"),
-            new("loss", loss, "F4"),
         };
-        return new CampaignEval(metrics,
-            $"drops {steps:N0} | score {score:F2} | maxTier {maxTier:F2} | return {meanReturn:F2} | loss {loss:F4}");
+        return (score, metrics, $"score {score:F2} | maxTier {maxTier:F2} | return {meanReturn:F2}");
     }
-
-    public void Checkpoint(IModelStore store)
-    {
-        if (_state is null) return;
-        // The resume state always tracks the latest net (so a continuation picks up where it left off).
-        store.Save(Environment, StateId, s => _state.Save(s));
-        // The DEPLOYABLE net is save-best: only overwrite it when this eval beat the best seen (DQN eval is noisy).
-        if (_lastEvalScore > _bestScore)
-        {
-            _bestScore = _lastEvalScore;
-            store.Save(Environment, NetId, s => DuelingQNetCheckpoint.Save((DuelingQNet)_state.Online, s));
-            Log($"new best mean score {_bestScore:F2} → saved deployable net '{NetId}'");
-        }
-    }
-
-    public void Dispose() { }
 
     /// <summary>Mean episodic score, mean max-tier reached, and mean return over fixed-seed greedy episodes.</summary>
     private (double Score, double MaxTier, double Return) EvalNet(IValueNet net)
@@ -196,41 +109,4 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
         }
         return (totalScore / evalEpisodes, totalMaxTier / evalEpisodes, totalReturn / evalEpisodes);
     }
-
-    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
-    string INetworkTelemetrySource.NetKind => "dueling-q";
-    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
-        => (_state?.Online ?? _warmNet) is { } net ? [.. net.Parameters()] : null;
-    NetworkMetrics INetworkTelemetrySource.Sample()
-        => new(_state?.StepsCompleted ?? 0, targetSteps, _state?.LastLoss ?? double.NaN, _lastEvalScore, double.NaN);
-
-    // Environment-aware neuron labels + live values, so the viewer can say what each input/output MEANS and its
-    // current value: each input is a named observation feature; each output is the Q-value of dropping in a column.
-    IReadOnlyList<string>? INetworkTelemetrySource.InputLabels => FruitCakeEnv.ObservationLabels;
-    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => FruitCakeEnv.ActionLabels;
-    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo()
-    {
-        var net = _state?.Online ?? _warmNet;
-        var obs = _state?.CurrentObs;
-        if (net is null || obs is null || obs.Length != FruitCakeEnv.ObservationSize) return null;
-        try
-        {
-            // Forward the most-recent observation to get the net's current per-column Q-values. Read-only: it never
-            // writes weights/grads (no Backward), so a concurrent training step is unaffected (torn reads only
-            // flicker a displayed number). A fresh input array so the viewer never sees it mutated mid-serialize.
-            var input = (float[])obs.Clone();
-            float[] q = net.Forward(new Tensor(input, 1, input.Length)).Data;
-            return (input, q.AsSpan().ToArray());
-        }
-        catch { return null; }
-    }
-    float[][]? INetworkTelemetrySource.SampleActivations()
-    {
-        var obs = _state?.CurrentObs;
-        if ((_state?.Online ?? _warmNet) is not DuelingQNet dqn || obs is null || obs.Length != FruitCakeEnv.ObservationSize) return null;
-        try { return dqn.LayerActivations(new Tensor((float[])obs.Clone(), 1, obs.Length)); }
-        catch { return null; }
-    }
-
-    private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }
