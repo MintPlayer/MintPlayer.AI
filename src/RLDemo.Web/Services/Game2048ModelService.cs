@@ -13,45 +13,14 @@ public sealed class Game2048ModelService(IModelStore store, ILogger<Game2048Mode
     public const string EnvironmentId = "2048";
     public const string AlgorithmId = "ntuple";
 
-    private readonly object _lock = new();
-    private NTuple2048Agent? _agent;
+    private readonly StartupCheckpoint<NTuple2048Agent> _model =
+        new(store, EnvironmentId, AlgorithmId, NTuple2048Agent.Load, logger, "2048 n-tuple model");
 
-    public ModelStatus Status { get; private set; } = ModelStatus.Loading;
-    public string? Error { get; private set; }
+    public ModelStatus Status => _model.Status;
+    public string? Error => _model.Error;
 
     /// <summary>The trained agent, or null while not ready. Loads lazily from the store.</summary>
-    public NTuple2048Agent? Agent
-    {
-        get
-        {
-            if (_agent is null && Status == ModelStatus.Loading) TryLoadFromStore();
-            return _agent;
-        }
-    }
+    public NTuple2048Agent? Agent => _model.Value;
 
-    public bool TryLoadFromStore()
-    {
-        lock (_lock)
-        {
-            if (_agent is not null) return true;
-            using var stream = store.TryOpenRead(EnvironmentId, AlgorithmId);
-            if (stream is null) return false;
-            _agent = NTuple2048Agent.Load(stream);
-            Status = ModelStatus.Ready;
-            logger.LogInformation("Loaded 2048 n-tuple model from the store.");
-            return true;
-        }
-    }
-
-    /// <summary>Loads the shipped checkpoint at startup. The web does not train (PRD §14).</summary>
-    public void Initialize(CancellationToken cancellationToken)
-    {
-        if (TryLoadFromStore()) return;
-        lock (_lock)
-        {
-            Status = ModelStatus.Failed;
-            Error = "No trained 2048 model in the store.";
-        }
-        logger.LogWarning("No 2048 model in the store — game unavailable. Train it on a dev machine and commit the checkpoint to models/ (Git LFS).");
-    }
+    public void Initialize(CancellationToken cancellationToken) => _model.Initialize();
 }
