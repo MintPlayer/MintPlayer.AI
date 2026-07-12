@@ -163,15 +163,18 @@ language of the live page.
 
 ## 5. Milestone plan
 
-- **M36.1 — live during training, all games, beginner tooltips (this PRD's gate; SHIPPED).** Pull-based Core seam +
-  every campaign as a source + the async Lab `--viz` viewer with hover tooltips, gated to Development. **Gate (met):**
-  `--game snake --viz` → the net visibly evolves in-browser; tooltips explain each part; a Production process skips
-  the socket; viz vs no-viz checkpoints are SHA256-identical.
+- **M36.1 — live during training, all games, beginner tooltips + per-neuron live values (this PRD's gate; SHIPPED).**
+  Pull-based Core seam + every campaign as a source + the async Lab `--viz` viewer with hover tooltips, gated to
+  Development. Environment-aware labels (Snake, FruitCake, Cube, Rush Hour, DAVI) and **live per-neuron values**
+  (input feature values, output Q/scores, hidden-neuron activations) — the DQN games forward their real observation,
+  the batch nets a fixed probe state. **Gate (met):** `--game <any> --viz` → the net visibly evolves in-browser;
+  tooltips name each neuron and show its live value; a Production process skips the socket; viz vs no-viz checkpoints
+  are SHA256-identical (verified with a viewer connected). Verified in-browser on Snake, FruitCake, Rush Hour, DAVI.
 - **M36.2 — static `.ckpt` inspection in the web app (planned).** Angular `/network` route reusing the browser
   `.ckpt` parsers to render the same graph/heatmap for a chosen shipped checkpoint, client-side.
 - **M36.3 — richer live view (optional, planned).** Signed (diverging) heatmaps; viewer→trainer controls over the
-  existing WebSocket (pause/step, cadence, layer-select); activation tracing (needs a `Forward` hook, see §7);
-  continuous-control PPO/SAC once they train through the Lab.
+  existing WebSocket (pause/step, cadence, layer-select); gradient-flow overlay; continuous-control PPO/SAC once they
+  train through the Lab's `--game` dispatch.
 
 ## 6. Risks / watch-items
 

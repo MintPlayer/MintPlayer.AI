@@ -24,7 +24,7 @@ See also:
 | `src/RLDemo.Console` | Console demo — watch agents learn and play (`--save`/`--load` persist trained models) |
 | `src/RLDemo.Web` | **MintPlayer.AI.ReinforcementLearning Playground** — ASP.NET Core + Angular web app: three games (Rush Hour, classic-feel 2048, a 3D Rubik's Cube), each playable yourself and solvable by the trained AI with step-through playback, plus a public gallery of every submitted board |
 | `tests/MintPlayer.AI.ReinforcementLearning.Tests` | xUnit suite incl. solved-threshold gates, determinism tests and web API integration tests |
-| `tools/MintPlayer.AI.ReinforcementLearning.Lab` | Long-running imitation-learning campaigns (Rush Hour from the BFS oracle, Rubik's Cube from Kociemba) — resumable, checkpointing into the model store |
+| `tools/MintPlayer.AI.ReinforcementLearning.Lab` | Long-running training campaigns (Rush Hour, Rubik's Cube, Snake, FruitCake) — resumable, checkpointing into the model store. Add `--viz` for a live in-browser **network visualizer** (see below) |
 
 ## Run the playground
 
@@ -152,6 +152,28 @@ dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release --
 
 Full recipe + expected single-GPU wall-clock:
 [`tools/…/Lab/CUBE_CAMPAIGN.md`](tools/MintPlayer.AI.ReinforcementLearning.Lab/CUBE_CAMPAIGN.md).
+
+## Watch the network train (live visualizer)
+
+Add `--viz` to **any** Lab training run to open a live, in-browser view of the neural network as it learns:
+
+```
+dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --game snake --viz
+```
+
+Open the printed URL (default `http://localhost:5250`). The page draws the network as a node-link graph
+with per-layer weight heatmaps and a loss sparkline, all repainting live — you watch the weights move
+from random init toward a policy. **Hover any neuron, connection, or heatmap** for a plain-language
+explanation: each input names the observation feature it is (and its current value), each output the
+action it controls (and its live Q-value/score), and hidden neurons show their current activation. Works
+for every game — `snake`, `fruitcake`, `rushhour`, `cube`, `cube-policy`, `cube-davi`.
+
+![Live network visualizer](docs/screenshots/m36-network-visualizer.png)
+
+It is a **development-only** tool: the socket only starts in a Development host environment (the Lab
+defaults to it; set `DOTNET_ENVIRONMENT=Production` to disable) and is never part of the deployed web app.
+Telemetry is read-only — a watched run trains bitwise-identically to an unwatched one. Design notes:
+[docs/prd/NETWORK_VISUALIZER_PRD.md](docs/prd/NETWORK_VISUALIZER_PRD.md).
 
 ## Run the tests
 
