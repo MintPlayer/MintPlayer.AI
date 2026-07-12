@@ -1286,6 +1286,64 @@ note the identity diagonals in the just-deepened layers' heatmaps), both with **
 320 fast tests green (incl. Net2Net forward-equality for DuelingQNet + PolicyValueNet, and a v1-checkpoint-load test).
 Screenshots: `docs/screenshots/m36-network-grows.png` (DQN), `m37-policy-net-grows.png` (policy).
 
+## M38 — Reduce per-game boilerplate (campaigns · web services · frontend)  *(planned 2026-07-12; supersedes stale PR #27; see `BOILERPLATE_REDUCTION_PRD.md`)* 🔜
+
+**Problem.** Adding each game left near-identical copy-paste in three layers, and several copies have already
+**drifted** (one has a bug its siblings don't). PR #27 took a first cut on 2026-07-10 but is now stale/conflicting:
+M36 (`INetworkTelemetrySource`) and M37 (`DqnGrowth`) edited exactly the campaign bodies/fields PR #27 relocates,
+so a rebase would silently drop net-growth. This milestone re-scopes: keep what still applies, re-cut the campaign
+refactor to **absorb** the M36/M37 duplication, and add the further duplication a three-agent audit surfaced. A
+**behaviour-preserving** refactor — training stays SHA256-bitwise-identical.
+
+**Audit (2026-07-12, 3 parallel agents; counts verified vs `master`).** Lab: two DQN campaign twins (~200 shared
+lines), `INetworkTelemetrySource` copied **6×**, net-growth wiring per campaign, CLI flag parsing hand-rolled 6×
+(with an ad-hoc-culture latent bug), host-bootstrap tail 6×, imitation/policy plumbing 3×. Web: the cadence-refresh
+"keep-previous-on-corrupt" checkpoint getter **4×** (highest bug-risk), startup/readiness quartet 3×, `TryBuildPuzzle`
+duplicated controller↔deck-store (drift bug), `/status`+503 3× (+ a needless `Status2048Response` fork). Frontend:
+`pollStatus()` 3× (2 **missing the `try/catch`** cube has — a latent unhandled-rejection bug), `*-api.ts` status/503
+3×, watch wake-lock scaffolding 3×, director loop 2×, atomic-write 2×.
+
+**Phased plan (each step ends on a green build + the relevant test suite; ordered low-risk→high-risk so a regression
+is bisectable).**
+
+- **B0 — docs + standalone bug-fix extracts (no behaviour risk).** Land `Core/Checkpoints/README.md` (the
+  when-to-use-which-checkpoint table, from PR #27, still accurate). Fix + de-dup the two drift bugs: one
+  `RushHourPuzzleDto.TryBuild` on the Environments layer (controller + `RushHourDeckStore` both call it), and a
+  frontend `pollModelStatus(api, set, ms)` with `try/catch` built in (fixes 2048 + rush-hour). Delete
+  `Status2048Response` in favour of the shared `StatusResponse`. **Gate:** web API tests green; frontend builds.
+- **B1 — web checkpoint concern (deep pair).** `RefreshingCheckpoint<T>` (`.Current` hides TTL + double-checked
+  lock + keep-previous-on-corrupt + `onReload` hook) and `StartupCheckpoint<T>` (readiness holder, applied by
+  **composition** — no shallow `ModelService<T>` base). Collapse the 4 refreshing getters + 3 startup quartets in
+  Cube/Game2048/RushHour services; Cube's GPU resident-forward rebuild rides `onReload`. `ModelStatusResult`
+  controller extension for the `/status` trio (solve endpoints stay bespoke). **Gate:** web service + API tests
+  green; net negative diff.
+- **B2 — re-cut `DqnScoreCampaign` base (the M36/M37 absorption).** Shared score-max DQN spine owning
+  resume/train/save-best/checkpoint **plus** net-growth (`grow`/`growEvery` + `_growRng` + `DqnGrowth.Maybe` in its
+  `TrainChunk`) **plus** `INetworkTelemetrySource` itself; Snake/FruitCake supply only env + `BaseOptions` +
+  `EvaluateNet` + labels + FruitCake's `AdaptWarmNet` (plain→noisy + `GrowInput`). **Gate (the hard one):** a
+  fixed-seed `--game snake`/`fruitcake` run yields a **SHA256-equal** `*.dqn.ckpt` + `*.dqn-state.ckpt` vs a
+  pre-refactor baseline; `--viz` still streams both nets live.
+- **B3 — Lab CLI + host plumbing.** `CliArgs` value-reader (hides bounds-check + `++i` + `InvariantCulture` — fixes
+  the locale inconsistency) + `CommonLabArgs.Parse` for the shared 6 flags; `LabHost.Run(...)` owning
+  DI+GPU+CSV+viz+viewer-lifetime (`WaitForViewer` moves off `SnakeLab`). Apply to all 6 labs. `LabLog.Line`,
+  `GrowthRng(seed)` trivia. **Gate:** every `--game` still parses + runs identically (bitwise spot-check retained).
+- **B4 — imitation/policy plumbing extract.** `SupervisedNetState` (net+Adam load-or-init/save + growth one-liner)
+  + `WindowMean`, applied to RushHour/CubeImitation/CubeEfficient. **Campaigns stay separate** — only plumbing is
+  shared (their `Evaluate`/data-gen are different algorithms). **Gate:** a short imitation/policy run is
+  SHA256-equal to baseline.
+- **B5 — frontend watch scaffolding (optional polish).** `WatchWakeLock` (mode-signal-driven; hides sentinel +
+  `visibilitychange`) for snake/mountaincar/fruit-cake; `runDirectorLoop(...)` for the 2 `setInterval` directors;
+  `fetchStatus`/`classifySolve` in `*-api.ts`; `AtomicFile.Write` for the 2 temp writes. **Gate:** frontend builds;
+  manual watch-mode smoke.
+
+**Deliberately left alone:** per-game *solve* controllers/DTOs (different algorithms — a shared base would be
+shallow/leaky, PR #27's correct call), the 3 imitation/policy campaigns *as wholes*, `CubeDaviLab`'s 46-flag block,
+`CampaignRunner`/`DqnGrowth`/`PolicyGrowth`/`VizServer` (already deep), fruit-cake's rAF loop.
+
+**Gate (whole milestone):** full solution builds 0/0; `dotnet test --filter "Category!=Slow"` green; DQN + a
+policy campaign SHA256-bitwise-identical vs baseline; `--viz` live for every game; net **negative** line diff with
+every shared module carrying an interface comment. See `BOILERPLATE_REDUCTION_PRD.md`.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
