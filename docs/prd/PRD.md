@@ -589,3 +589,23 @@ oriented head with eyes, cheap multi-pass 3-D shading, and — the biggest singl
 > body, so the renderer swaps in behind it with **zero change** to `snake-logic.ts` / `snake-director.ts` /
 > `snake_solver.ts` / the `.pg`. M34's ~81 food@12 strength and all tests are untouched — the gate is a purely visual
 > in-browser before/after.
+
+## 17. Network visualizer — see the net, and watch it learn  *(PRD §17; inserted 2026-07-12; see [NETWORK_VISUALIZER_PRD.md](NETWORK_VISUALIZER_PRD.md) + [PLAN.md](PLAN.md) M36)*
+
+A network is otherwise only ever visible as numbers — a `.ckpt` on disk, a CSV of eval scalars. This feature makes a
+net **visible**, and in particular lets you **watch it change as it trains** — the priority — and lets a newcomer to
+neural nets *read* the picture. It adds a read-only **pull** seam in Core (`INetworkTelemetrySource` + `NetworkInspector`,
+which describes any net from its parameter tensors), which every training campaign implements in a few lines, so
+`--viz` works for **all six trainable games** with no per-trainer code. The Lab-hosted viewer shows a live node-link
+graph + weight heatmaps + a loss sparkline, with **hover tooltips** explaining each neuron/connection in plain
+language. Because sampling only *reads* the host-resident parameter arrays (on a background thread), a run being
+watched is **bitwise-identical** to one that isn't (verified: viz vs no-viz checkpoints are SHA256-equal).
+
+> **Design decision (2026-07-12, 4-agent investigation).** The live view is served **by the training process itself**,
+> not the web app: `RLDemo.Web` is train-free and training lives in the Lab CLI where the net actually is. So the Lab
+> hosts a tiny localhost `HttpListener` + **WebSocket** (`/ws`) feeding one self-contained Canvas 2D page, driven by an
+> async background sample loop that pulls the campaign's telemetry source. WebSocket (over one-way SSE) is a deliberate
+> call so the channel can become bidirectional — viewer→trainer control (pause/step, cadence, layer-select) — without
+> swapping transport. It is **dev-only**: the socket is gated to a Development host environment and is not the web-app
+> WS stack removed in M32/M33. Static `.ckpt` inspection instead belongs client-side in the Angular app (it already
+> ships `.ckpt` parsers) as a follow-on `/network` page.

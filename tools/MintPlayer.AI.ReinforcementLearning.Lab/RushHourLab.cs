@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Hosting;
@@ -32,11 +33,15 @@ internal static class RushHourLab
         var store = host.Services.GetRequiredService<IModelStore>();
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         string csvPath = Path.Combine(dataDir, "logs", "imitation.csv");
-        runner.Run(new RushHourImitationCampaign(seed, learningRate), store, new CampaignOptions
+
+        var campaign = new RushHourImitationCampaign(seed, learningRate);
+        using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
+        runner.Run(campaign, store, new CampaignOptions
         {
             Duration = TimeSpan.FromHours(hours),
             EvalOnly = evalOnly,
             OnEval = CampaignCli.ConsoleAndCsv(csvPath),
         });
+        SnakeLab.WaitForViewer(viz);
     }
 }

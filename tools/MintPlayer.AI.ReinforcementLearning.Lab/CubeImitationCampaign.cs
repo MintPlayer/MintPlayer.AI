@@ -1,7 +1,9 @@
 using System.Text;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
+using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 
@@ -12,7 +14,7 @@ using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 /// quarter-turn + Huber on distance-to-go), and reports per-depth greedy/search solve rates. Resumes the net +
 /// Adam from `cube.policy` / `cube.policy-adam` (width-ladder ids via <see cref="CubeIds.ForWidth"/>).
 /// </summary>
-internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int width) : ITrainingCampaign
+internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int width) : ITrainingCampaign, INetworkTelemetrySource
 {
     private const int BatchSize = 256;
     private const int SamplesPerRound = 4096;
@@ -27,6 +29,7 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
     private long _round, _totalSamples, _totalSolves;
     private double _windowCe, _windowHuber, _windowAcc;
     private long _windowCount;
+    private double _liveLoss = double.NaN, _liveAcc = double.NaN; // most-recent batch, for the live viewer
 
     public string Environment => CubeIds.Environment;
 
@@ -97,6 +100,8 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
             _windowAcc += acc;
             _windowCount++;
             _totalSamples += BatchSize;
+            _liveLoss = ce + huber;
+            _liveAcc = acc;
         }
         return _totalSamples;
     }
@@ -191,6 +196,12 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
         }
         Log($"gate: {totalSolved}/100 solved ({totalSolved}%, target >= 90%); greedy alone {totalGreedy}%");
     }
+
+    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
+    string INetworkTelemetrySource.NetKind => "cube-policy";
+    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
+        => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
+    NetworkMetrics INetworkTelemetrySource.Sample() => new(_totalSamples, 0, _liveLoss, _liveAcc, double.NaN);
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }

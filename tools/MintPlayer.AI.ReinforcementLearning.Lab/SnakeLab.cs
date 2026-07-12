@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
@@ -81,15 +82,25 @@ internal static class SnakeLab
         var store = host.Services.GetRequiredService<IModelStore>();
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         string csvPath = Path.Combine(dataDir, "logs", "snake-dqn.csv");
-        runner.Run(
-            new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, stepPenalty, safeMask),
-            store,
+
+        var campaign = new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, stepPenalty, safeMask);
+        using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
+        runner.Run(campaign, store,
             new CampaignOptions
             {
                 Duration = TimeSpan.FromHours(hours),
                 EvalOnly = evalOnly,
                 OnEval = CampaignCli.ConsoleAndCsv(csvPath),
             });
+        WaitForViewer(viz);
+    }
+
+    /// <summary>Keep the process (and its live viewer) alive after training so the final net can be inspected.</summary>
+    internal static void WaitForViewer(VizServer? viz)
+    {
+        if (viz is null || Console.IsInputRedirected) return;
+        Console.WriteLine($"training finished — viewer still live at {viz.Url}; press Enter to exit.");
+        Console.ReadLine();
     }
 
     /// <summary>

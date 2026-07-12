@@ -1,7 +1,9 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
+using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 
@@ -15,7 +17,7 @@ using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 /// the web's <c>FruitCakeModelService</c> will load, A3) plus the full resume state under `fruitcake`/`dqn-state`.
 /// </summary>
 internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false, int nStep = 1, bool shapeRewards = false)
-    : ITrainingCampaign
+    : ITrainingCampaign, INetworkTelemetrySource
 {
     private const string NetId = "dqn";         // deployable DuelingQNet — the id the web loads (shared by both lines)
     // Noisy training is a SEPARATE line with its own resume state: it must never resume a PLAIN state as a plain
@@ -191,6 +193,13 @@ internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targ
         }
         return (totalScore / evalEpisodes, totalMaxTier / evalEpisodes, totalReturn / evalEpisodes);
     }
+
+    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
+    string INetworkTelemetrySource.NetKind => "dueling-q";
+    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
+        => (_state?.Online ?? _warmNet) is { } net ? [.. net.Parameters()] : null;
+    NetworkMetrics INetworkTelemetrySource.Sample()
+        => new(_state?.StepsCompleted ?? 0, targetSteps, _state?.LastLoss ?? double.NaN, _lastEvalScore, double.NaN);
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }

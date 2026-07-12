@@ -3,8 +3,16 @@
 // the runner owns the loop/resume/eval cadence/checkpointing, the per-game *Lab files own the flags.
 //
 // Usage: MintPlayer.AI.ReinforcementLearning.Lab [--game rushhour|snake|fruitcake|cube|cube-policy|cube-davi]
-//                                                [--hours H] [--data DIR] [--seed S] [--lr LR] [--eval-only] ...
+//                                                [--hours H] [--data DIR] [--seed S] [--lr LR] [--eval-only]
+//                                                [--viz [port]] ...
 // Default game: rushhour (the original Kociemba-free BFS-oracle imitation campaign, PLAN M16).
+
+// The Lab is a development tool: default to the Development environment (unless the operator set one) so the
+// `--viz` live network viewer — gated to Development on purpose — works out of the box. Set
+// DOTNET_ENVIRONMENT=Production to run without ever exposing the viewer socket.
+if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"))
+    && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")))
+    Environment.SetEnvironmentVariable("DOTNET_ENVIRONMENT", "Development");
 
 for (int i = 0; i < args.Length; i++)
 {

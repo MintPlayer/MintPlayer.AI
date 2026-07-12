@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Hosting;
@@ -165,11 +166,15 @@ internal static class CubeDaviLab
         var store = host.Services.GetRequiredService<IModelStore>();
         var runner = host.Services.GetRequiredService<CampaignRunner>();
         var backend = host.Services.GetRequiredService<AdaptiveBackend>();
-        runner.Run(new CubeDaviCampaign(backend, settings), store, new CampaignOptions
+
+        var campaign = new CubeDaviCampaign(backend, settings);
+        using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
+        runner.Run(campaign, store, new CampaignOptions
         {
             Duration = TimeSpan.FromHours(hours),
             EvalOnly = evalOnly,
             OnEval = CampaignCli.Console(),
         });
+        SnakeLab.WaitForViewer(viz);
     }
 }

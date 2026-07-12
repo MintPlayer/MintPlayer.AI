@@ -1209,6 +1209,44 @@ Play-yourself identical; steady 60 fps at full board; crisp on hi-DPI; rAF loop 
 Verify by save-and-live-reload against the running host (**do not** run `ng serve`/`ng build`); attach a before/after
 screenshot/clip to the PR. Single view-only PR.
 
+## M36 — Network visualizer: see the net, and watch it learn  *(2026-07-12; branch `m36-network-visualizer` off `master`; see `NETWORK_VISUALIZER_PRD.md`)* ⏳
+
+**Problem.** A trained net is only ever visible as numbers — a `.ckpt` on disk, a CSV of eval scalars, a console line
+per eval. You cannot *see* a network's shape or structure, and — the real gap — you cannot **watch it change as it
+trains**. Learning itself is invisible.
+
+**Fix (M36.1 — shipped; the priority "watch it evolve" gate).** A read-only **pull** telemetry seam plus a viewer
+served by the training process itself. A 4-agent investigation (2026-07-12) established the constraint: the web app is
+train-free (its server WS infra was removed in M32/M33), so live telemetry must come from the **Lab CLI** where the net
+lives; and on the CPU path every parameter is host-resident `float[]`, so reading weights mid-training is free. Design:
+- **Core seam** (`Core/Telemetry/NetworkTelemetry.cs`): `INetworkTelemetrySource` (`NetKind` + `SnapshotParameters()` +
+  `Sample()`) — a **pull** model, so no trainer calls anything. `NetworkInspector` turns any net's parameter tensors
+  into telemetry by pairing each rank-2 weight with the rank-1 bias after it — keying off `Parameters()` (not a
+  concrete type) so even the non-`IModule` policy nets work. Frame = per-layer stats + a block-averaged ≤24² magnitude
+  **heatmap** (payload bounded regardless of width).
+- **All six games**: each `ITrainingCampaign` also implements the source in ~4 lines (return the live net's params +
+  metrics it already tracks) — DQN, imitation-policy, EfficientCube-policy, and DAVI value nets alike. No trainer
+  changes. Sampling on a background thread is a benign race with training writes and **provably harmless** (no writes/
+  RNG/ordering) — **verified**: viz vs no-viz `snake.dqn.ckpt` + `snake.dqn-state.ckpt` are SHA256-identical.
+- **Live viewer** (`tools/…Lab/VizServer.cs` + shared `VizLauncher.cs`): an `HttpListener` on localhost serving one
+  self-contained HTML page (Canvas 2D node-link graph + weight-heatmap strip + loss sparkline + **beginner hover
+  tooltips** on neurons/connections/heatmaps) and a **WebSocket** (`GET /ws`; messages self-describe). WebSocket (not
+  SSE) is the owner's call — bidirectional-ready for future viewer→trainer controls. **Fully async** (per-viewer
+  bounded `Channel` + async send pump + async sample loop; no blocking I/O; costs nothing with no viewer connected).
+  **Gated to a Development host environment** (`VizLauncher` skips it in Production; the Lab defaults to Development).
+  `--game <snake|fruitcake|rushhour|cube|cube-policy|cube-davi> --viz [port]` (bare `--viz` = 5250).
+
+**Gate (met).** `--game snake --viz` → the net **visibly evolves while training** (weight heatmaps/edges shift,
+per-layer |w| grows, eval climbs); **hover tooltips** explain each part for RL newcomers; a **Production** process
+skips the socket (prints a note) while training proceeds; opening the page mid-run shows the graph instantly; and viz
+vs no-viz checkpoints are **SHA256-identical**. 314 fast tests green. Screenshot (with tooltip):
+`docs/screenshots/m36-network-visualizer.png`.
+
+**Follow-ups (planned).** M36.2 — static `.ckpt` inspection as an Angular `/network` page reusing the browser
+`.ckpt` parsers (client-side, no server). M36.3 — signed (diverging) heatmaps; viewer→trainer controls over the
+existing WebSocket (pause/step, cadence, layer-select); activation tracing (needs a `Forward` hook); continuous-control
+PPO/SAC once they train through the Lab's `--game` dispatch.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -1255,6 +1293,7 @@ screenshot/clip to the PR. Single view-only PR.
 | M28 2048 expectimax (2026-06-26) | beat the shipped n-tuple greedy on score, serving-viable | **~84k vs ~44k (1.9×)**, best tile 4096→8192 over 100 games, *no retrain*; ~1.2 s/playout at depth 1 |
 | M28 NoisyNets capability (2026-06-26) | learns, serializes, serves deterministically; no shipped checkpoint broken | 293/293; σ-grads flow; noisy resume bitwise; v1 ckpts load as plain; serving unchanged (noise off) |
 | M28 FruitCake NoisyNets empirical (2026-06-26) | match or beat ε-greedy at equal budget (multi-seed) | **matched** — 200-game paired A/B tie (702.1 vs 714.4, Δ −12.3 ± 29.8 SE); single-evals were seed-luck; not shipped |
+| M36.1 network visualizer — watch it train (2026-07-12) | see the net evolve live during training (all games); beginner-readable; zero training impact | **met** — pull-based seam; **all six `--game`s** stream topology + weight frames over a **WebSocket** to a self-contained page with **hover tooltips**; net visibly evolves (heatmaps/edges shift, eval 7.0→13.9); **Development-gated**; viz vs no-viz checkpoints **SHA256-identical**; 314 tests green |
 
 ## Shipped (2026-06-11) — release engineering
 

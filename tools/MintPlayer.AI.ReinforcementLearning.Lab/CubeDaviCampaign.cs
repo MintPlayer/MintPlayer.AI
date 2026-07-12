@@ -3,6 +3,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -61,7 +62,7 @@ internal sealed record CubeDaviSettings
 /// eval-only modes (greedy / A* / BWAS / time-budget / value-curve). The two depth-column CSVs are campaign-owned.
 /// </para>
 /// </summary>
-internal sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSettings settings) : ITrainingCampaign
+internal sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSettings settings) : ITrainingCampaign, INetworkTelemetrySource
 {
     private const int TrainChunkIterations = 1000; // P.8: train in 1000-iter chunks so the GPU-idle eval runs less
     private const long ProbeEvery = 15_000;        // iters between in-loop BWAS capability probes
@@ -97,6 +98,13 @@ internal sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSetting
 
     public long Samples => _totalIterations * _s.BatchSize;
     public bool IsComplete => _s.TargetSamples > 0 && Samples >= _s.TargetSamples;
+
+    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains.
+    // On the GPU-resident path the CPU net is the periodically-synced master, so this reads the last synced weights. ---
+    string INetworkTelemetrySource.NetKind => _valueId;
+    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
+        => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
+    NetworkMetrics INetworkTelemetrySource.Sample() => new(Samples, _s.TargetSamples, _lastLoss, _curriculumDepth, double.NaN);
 
     public bool Resume(IModelStore store)
     {

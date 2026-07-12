@@ -3,6 +3,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -18,7 +19,7 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 /// (samples, round) counter under distinct `policy-efficient*` ids, so the imitation net is never touched.
 /// </summary>
 internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes)
-    : ITrainingCampaign
+    : ITrainingCampaign, INetworkTelemetrySource
 {
     private const string PolicyId = "policy-efficient";
     private const string PolicyAdamId = "policy-efficient-adam";
@@ -36,6 +37,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     private long _round, _totalSamples;
     private double _windowCe, _windowHuber, _windowAcc;
     private long _windowCount;
+    private double _liveLoss = double.NaN, _liveAcc = double.NaN; // most-recent batch, for the live viewer
 
     public string Environment => CubeIds.Environment;
 
@@ -114,6 +116,8 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
             _windowAcc += acc;
             _windowCount++;
             _totalSamples += BatchSize;
+            _liveLoss = ce + huber;
+            _liveAcc = acc;
         }
         return _totalSamples;
     }
@@ -194,6 +198,12 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     // The AdaptiveBackend is owned by the DI container (disposed with the host), not the campaign. The per-eval
     // device-resident DeviceMlp is created and disposed inside Evaluate, so there is nothing campaign-owned here.
     public void Dispose() { }
+
+    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
+    string INetworkTelemetrySource.NetKind => "cube-policy";
+    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
+        => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
+    NetworkMetrics INetworkTelemetrySource.Sample() => new(_totalSamples, 0, _liveLoss, _liveAcc, double.NaN);
 
     private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
 }
