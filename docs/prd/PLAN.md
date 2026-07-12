@@ -1390,8 +1390,13 @@ self-play loop, and each game's rules.
   + `--game chess` Lab dispatch; an Elo eval (`ChessAb`, mirroring `FruitCakeAb`). **Gate (the hard one): perft** node-counts matched
   to published values (startpos, Kiwipete, …) to depth 5–6 *before any training*; move encode/decode round-trips; terminated-vs-truncated
   split correct; win-rate vs random-legal climbs; contract-test resume; ship `models/chess.az.ckpt` (LFS).
-- **M39.3 — scale (optional).** Batched-leaf MCTS; GPU-resident forward *if* the net grows enough to clear the routing threshold
-  (honest: a small chess MLP won't); conv-backend support for positional strength (a separate backend workstream); a web showcase page.
+- **M39.3 — scale + robustness (optional).** Batched-leaf MCTS; GPU-resident forward *if* the net grows enough to clear the
+  routing threshold (honest: a small chess MLP won't); conv-backend support for positional strength (a separate backend workstream);
+  a web showcase page. **Anti-exploitation levers** (so a novel/weak human move can't disorient the net into losing — real even at
+  superhuman level, cf. the KataGo cyclic-group exploit): opponent-**pool/league** play + an occasional random/weak mover, diverse
+  randomized opening positions, and adversarial fine-tune on any discovered exploit. (Dirichlet root noise + temperature already ship
+  in the M39.1 MCTS/campaign; search-from-the-actual-position is the primary defence. NoisyNets is *not* the right tool — it perturbs
+  the policy globally rather than broadening position coverage.)
 
 **Honest scope.** MLP-only net (no conv) over a flattened board → *legal, steadily-improving* play, not engine strength; self-play is
 CPU-bound (the small MLP won't hit the GPU lever that helps the cube). Connect-4 is where the self-improvement curve is unmistakable;
