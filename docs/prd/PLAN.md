@@ -1359,6 +1359,46 @@ shallow/leaky, PR #27's correct call), the 3 imitation/policy campaigns *as whol
 policy campaign SHA256-bitwise-identical vs baseline; `--viz` live for every game; net **negative** line diff with
 every shared module carrying an interface comment. See `BOILERPLATE_REDUCTION_PRD.md`.
 
+## M39 — Self-play training (Connect-4 → chess)  *(planned 2026-07-12; see `CHESS_SELFPLAY_PRD.md`)* 🔜
+
+**Problem.** The SDK trains via reward (DQN/PPO), a forward model (DAVI), or an exact oracle (cube/Rush Hour imitation). Chess
+has no cheap oracle and a reactive net plateaus — the repo's own history says **search is the lever**. The missing paradigm is
+**self-play**: the improving net plays itself and the games *are* the training signal (AlphaZero-style). Add it as a **reusable**
+capability — chess is the headline, but the machinery is shared so the next two-player game plugs in by writing only its rules.
+
+**Key decision (design-it-twice, 3-agent investigation 2026-07-12).** AlphaZero-style (MCTS-guided self-play + the two-headed
+`PolicyValueNet`), **not** plain reactive self-play (tactically blind — the documented plateau). The chess rules engine is the
+same irreducible cost either way, so the marginal cost of "real improvement" is just MCTS + visit-count targets. One new **deep**
+seam — `IZeroSumGame<TState>` in `Core/Planning` (a *sibling* to `IDeterministicModel`: side-to-move + win/loss/draw + per-state
+legal moves, which `IDeterministicModel` can't honestly express) — consumed by both MCTS and the self-play campaign. **Reuse-first:**
+~70% of the outer loop already exists (`PolicyValueNet` unchanged, the soft-CE+value train step from the imitation campaigns,
+`ITrainingCampaign`/`CampaignRunner`, model store + checkpoint format, the M38 `AdamState`/`TrainWindow`/`PolicyGrowth` plumbing,
+action masking, RNG streams, `--viz`, the A/B harness → Elo gate). New code is confined to the seam, MCTS, the `(obs,π,z)`
+self-play loop, and each game's rules.
+
+**Phased plan (each step ends on a green build + its gate; ordered to de-risk the *novel* machinery before the huge rules surface).**
+
+- **M39.1 — the rails, proven on Connect-4.** `IZeroSumGame<TState>` + `Core/Planning/Mcts.cs` (PUCT, sign-flipping value backup,
+  Dirichlet root noise, temperature → root visit-count π) + `PolicyValueTraining.TrainStep` (generalized from
+  `CubePolicyTraining.TrainStep`: soft-CE + value regression) + `SelfPlayCampaign : ITrainingCampaign` (reusing
+  `AdamState`/`TrainWindow`/`PolicyGrowth`/telemetry) + `Connect4Game : IZeroSumGame` + a **negamax** oracle for tests. **Gate:**
+  MCTS unit-tested vs negamax on forced-win/draw positions; from random init, self-play win-rate vs negamax/random **climbs**;
+  `CampaignContractTests` resume roundtrip; fast suite green. This validates the self-play machinery cheaply, away from chess rules.
+- **M39.2 — chess as consumer #2.** `ChessBoard` + full legal movegen + draw/mate detection; the 8×8×73 = 4672 move encoding;
+  `ChessGame`/`ChessEnv` (`IEnvironment` + `IActionMaskProvider` + `IStatefulEnvironment`); flattened-plane observation (static,
+  train==serve); a thin `ChessPolicyNet` wrapper over `PolicyValueNet` (policy head 4672, value `tanh` → WDL); `ChessSelfPlayCampaign`
+  + `--game chess` Lab dispatch; an Elo eval (`ChessAb`, mirroring `FruitCakeAb`). **Gate (the hard one): perft** node-counts matched
+  to published values (startpos, Kiwipete, …) to depth 5–6 *before any training*; move encode/decode round-trips; terminated-vs-truncated
+  split correct; win-rate vs random-legal climbs; contract-test resume; ship `models/chess.az.ckpt` (LFS).
+- **M39.3 — scale (optional).** Batched-leaf MCTS; GPU-resident forward *if* the net grows enough to clear the routing threshold
+  (honest: a small chess MLP won't); conv-backend support for positional strength (a separate backend workstream); a web showcase page.
+
+**Honest scope.** MLP-only net (no conv) over a flattened board → *legal, steadily-improving* play, not engine strength; self-play is
+CPU-bound (the small MLP won't hit the GPU lever that helps the cube). Connect-4 is where the self-improvement curve is unmistakable;
+chess is the headline consumer. **Left out of v1:** DQN/PPO for self-play (wrong fit), the DQN `ReplayBuffer` (uses an `(obs,π,z)`
+window instead), bitboards (unless a bench forces it), superhuman strength. **Whole-milestone gate:** builds 0/0; fast suite green;
+perft passes; both games' self-play win-rate rises vs a fixed baseline; resume roundtrips. See `CHESS_SELFPLAY_PRD.md`.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
