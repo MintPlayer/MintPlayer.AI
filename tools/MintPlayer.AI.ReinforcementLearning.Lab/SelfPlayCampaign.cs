@@ -240,7 +240,13 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         }
 
         var samples = new List<Sample>(obsHistory.Count);
-        float zTerminalMover = _game.Result(state) switch { GameResult.Loss => -1f, GameResult.Win => 1f, _ => 0f };
+        float zTerminalMover = _game.Result(state) switch
+        {
+            GameResult.Loss => -1f,
+            GameResult.Win => 1f,
+            GameResult.Ongoing => AdjudicateCapped(state), // hit the ply cap → decide by material, not a forced draw
+            _ => 0f,                                       // true draw (stalemate / repetition / insufficient material)
+        };
         float z = -zTerminalMover;
         for (int i = obsHistory.Count - 1; i >= 0; i--)
         {
@@ -286,7 +292,8 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         {
             GameResult.Loss => learnerToMove ? -1f : 1f, // side-to-move lost → learner lost iff it was to move
             GameResult.Win => learnerToMove ? 1f : -1f,
-            _ => 0f,                                     // draw or ply-cap
+            GameResult.Ongoing => learnerToMove ? AdjudicateCapped(state) : -AdjudicateCapped(state), // ply cap → material
+            _ => 0f,                                     // true draw
         };
         var samples = new List<Sample>(obsHistory.Count);
         for (int i = 0; i < obsHistory.Count; i++)
@@ -296,6 +303,19 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
 
     // Per-position material target from the side-to-move's view, squashed to [-1,1] (0 when the game has no material).
     private float MaterialTarget(TState state) => _material is null ? 0f : MathF.Tanh(_material.MaterialAdvantage(state) / MaterialScale);
+
+    // A game that hit the ply cap is NOT a genuine draw — training a materially winning position as z=0 starves the
+    // outcome signal and collapses the net onto passive, shuffle-to-the-cap play (observed overnight: the net's
+    // material vs its own baseline slid −2 → −9 pawns while value loss fell to ~0). Adjudicate the capped position by
+    // material from the side-to-move's view: a decisive edge (≥ margin pawns) trains as a win/loss, otherwise a true
+    // 0. No-op when the game has no material notion (_material null), so Connect-4 etc. are unaffected.
+    private const float AdjudicationMargin = 1.5f; // pawns — a clearly decisive material edge
+    private float AdjudicateCapped(TState state)
+    {
+        if (_material is null) return 0f;
+        float m = _material.MaterialAdvantage(state);
+        return m > AdjudicationMargin ? 1f : m < -AdjudicationMargin ? -1f : 0f;
+    }
 
     // Blend the sparse game outcome z with the dense material target (α = _materialWeight); pure z when no material.
     private float Blend(float z, float mat) => _material is null ? z : (1f - _materialWeight) * z + _materialWeight * mat;
