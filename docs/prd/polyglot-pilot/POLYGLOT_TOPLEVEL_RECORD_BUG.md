@@ -1,5 +1,10 @@
 # Polyglot bug handoff — incremental re-transpile emits a duplicate prelude / non-`partial` PolyglotProgram
 
+> **✅ RESOLVED 2026-07-13 in `MintPlayer.Polyglot.MSBuild` 0.6.0 (PR #26).** The verified stamp-`Outputs` +
+> `RemoveDir` fix (see the 2026-07-12 update below) shipped upstream. This repo is on 0.6.0; the local
+> `_PolyglotForceFullRetranspile` workaround and the `MintPlayer.Polyglot.MSBuild.targets.FIXED` drop-in were
+> removed. Kept for history / root-cause reference.
+
 **Found:** 2026-07-10, during Snake M34 (adding look-ahead search to `snake_solver.pg`).
 **Polyglot:** `MintPlayer.Polyglot.MSBuild` **0.3.1** — **still present in 0.5.3** (verified 2026-07-12; see the update at
 the bottom). This is an **MSBuild `.targets` bug, not a CLI/version bug**, so bumping the package does not fix it.

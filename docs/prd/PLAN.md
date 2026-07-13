@@ -1439,18 +1439,18 @@ is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); th
   into `Environments/Chess/polyglot/chess_solver.pg` (internal `Pg`-prefixed core: `PgChessState` + `PgChessMove` —
   board `List<i32>[64]`, promotion/castling as `i32`, bounded `for`+`continue` rays, `List<(i32,i32)>` delta tables;
   every construct proven by `fruitcake_solver.pg`). `MintPlayer.Polyglot.MSBuild` transpiles every `**/*.pg` to `obj/`
-  before CoreCompile (bumped 0.3.1 → **0.5.3**, which bundles win-x64 + linux-x64 + linux-arm64 + osx-x64 + osx-arm64,
+  before CoreCompile (bumped 0.3.1 → **0.6.0**, which bundles win-x64 + linux-x64 + linux-arm64 + osx-x64 + osx-arm64,
   so CI/ubuntu is unaffected and macOS dev no longer needs `$(PolyglotTool)`). `ChessState`/`ChessRules`/
   `ChessMoveEncoding` are now **thin C# facades** over the core (public API + both test files unchanged); `ChessGame`'s
   seam (`LegalMoves`/`Apply`/`Result`) delegates to the core's `legalMoveIndices`/`applyIndex`/`result` so training and
   the browser share one implementation; `perft` recurses entirely in-core. **Gate MET: perft 25/25 on the generated
   engine** (incl. startpos d5 = 4,865,609, Kiwipete d4 = 4,085,603, ~10 s), encoding round-trip + terminal-detection
   green, `SelfPlayCampaign` chess contract green, full suite 362/362 (no FruitCake/Snake/MountainCar regression from
-  the shared re-transpile). **Polyglot MSBuild incremental bug (NOT fixed by 0.5.3):** when only one `.pg` changes,
-  MSBuild's partial-incremental build invokes the CLI with just that file, but the CLI must see the whole set to emit
-  one shared prelude → a single-file run re-emits an inline non-partial prelude that clashes (CS0101/CS0260). Fixed at
-  our project layer with a `_PolyglotForceFullRetranspile` target (wipes the generated dir whenever any `.pg` is newer
-  than the shared prelude, forcing a full-set re-transpile); durable fix belongs upstream in the package `.targets`.
+  the shared re-transpile). **Polyglot MSBuild multi-`.pg` incremental bug — FIXED upstream in 0.6.0 (PR #26):** a
+  single-`.pg` edit used to make MSBuild's partial-incremental build hand the CLI a subset → inline duplicate prelude
+  clash (CS0101/CS0260). Diagnosed here, verified a stamp-`Outputs` + `RemoveDir` fix against the source `.targets`,
+  and it shipped in 0.6.0; the temporary local `_PolyglotForceFullRetranspile` workaround has been removed
+  (`docs/prd/polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md`).
 - **M40.2 — single-source the inference math + a TS `.ckpt` parser.** Add `PgPolicyValueNet.forward` (flat-array
   trunk + policy/value heads, `tanh` value), `writeObservation`, and a chess `mcts` (PUCT, masked-softmax, `sqrt`,
   **no Dirichlet** — inference only) to the `.pg`. Add `ClientApp/src/app/chess/chess-net.ts` (mirrors the C#

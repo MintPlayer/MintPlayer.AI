@@ -6,27 +6,13 @@
 
   <!-- Single-source solvers: every FruitCake/Snake/MountainCar/Chess `polyglot/*.pg` is transpiled to C# at
        build time (into obj/, before CoreCompile) by MintPlayer.Polyglot.MSBuild. PrivateAssets=all keeps the
-       build-only transpiler OUT of this published package's dependencies. The 0.5.3 CLI is bundled for
-       win-x64/linux-x64/linux-arm64/osx-x64/osx-arm64 (covers Windows/macOS dev + Linux CI/deploy). -->
+       build-only transpiler OUT of this published package's dependencies. The 0.6.0 CLI is bundled for
+       win-x64/linux-x64/linux-arm64/osx-x64/osx-arm64 (covers Windows/macOS dev + Linux CI/deploy). 0.6.0 also
+       fixes the multi-.pg incremental-transpile bug upstream (PR #26 — stamp Outputs + RemoveDir, so a single-.pg
+       edit re-transpiles the FULL set), so the previous local _PolyglotForceFullRetranspile workaround is gone. -->
   <ItemGroup>
-    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.5.3" PrivateAssets="all" />
+    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.6.0" PrivateAssets="all" />
   </ItemGroup>
-
-  <!-- Work around a MintPlayer.Polyglot.MSBuild incremental-build bug (present through 0.5.3): the package's
-       PolyglotTranspile target uses per-file Inputs/Outputs, so when only ONE .pg changes MSBuild's *partial
-       incremental build* invokes the CLI with just that file. But the CLI must see the whole .pg set in one
-       invocation — it links the modules and emits a single shared __polyglot_prelude.cs + `partial class
-       PolyglotProgram`. A single-file invocation instead re-emits an INLINE, non-partial prelude, which then
-       clashes with the other solvers' generated files (CS0101 duplicate Option/Some/None, CS0260 missing
-       partial). Force all-or-nothing: whenever ANY .pg is newer than the shared prelude, wipe the generated dir
-       so PolyglotTranspile regenerates the FULL set in one CLI call. Single static Output (not a per-file
-       transform) ⇒ MSBuild can't partially batch this target. Durable fix + verified .targets patch:
-       docs/prd/polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md (2026-07-12 update) — delete this target once it
-       ships upstream. -->
-  <Target Name="_PolyglotForceFullRetranspile" BeforeTargets="PolyglotTranspile"
-          Inputs="@(PolyglotFile)" Outputs="$(IntermediateOutputPath)polyglot\__polyglot_prelude.cs">
-    <RemoveDir Directories="$(IntermediateOutputPath)polyglot" />
-  </Target>
 
   <!-- The generated solver types (PgFruitCakeWorld etc.) are internal; the public FruitCakeWorld facade wraps
        them and the parity test compares the two. -->

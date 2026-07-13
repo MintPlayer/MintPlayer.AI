@@ -27,18 +27,14 @@ proxies the Angular dev server (`UseAngularCliServer` via `UseSpaImproved` in `P
 
 If `dotnet run --project src/RLDemo.Web` fails, read the error before touching anything Angular-related.
 
-**Known: stale Polyglot codegen (`CS0260` "missing partial modifier on PolyglotProgram" / `CS0101`
-duplicate `Option`/`Some`/`None` prelude).** This is the documented multi-`.pg` incremental-rebuild
-transpiler bug (see `docs/prd/polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md`) — the CLI doesn't clean its
-`--out` dir, so a stale duplicate lingers in `obj/`. It is unrelated to the frontend and to your changes.
-Fix by clearing the stale generated files, then run again:
-
-```bash
-rm -f src/MintPlayer.AI.ReinforcementLearning.Environments/obj/*/net10.0/polyglot/*.cs
-dotnet run --project src/RLDemo.Web
-```
-
-Clean/CI builds are unaffected. Never loop build retries against the stale output.
+**Fixed (2026-07-13, Polyglot 0.6.0): the multi-`.pg` incremental-rebuild codegen bug** (`CS0260` "missing
+partial modifier on PolyglotProgram" / `CS0101` duplicate `Option`/`Some`/`None` prelude). It was an MSBuild
+`.targets` bug — a single-`.pg` edit made MSBuild's partial-incremental build hand the transpiler a subset,
+which then emitted a standalone/duplicate prelude. `MintPlayer.Polyglot.MSBuild` **0.6.0** (PR #26, stamp
+`Outputs` + `RemoveDir`) re-transpiles the full `.pg` set on any edit, so this no longer occurs. If you somehow
+hit it on an **older** package, the manual recovery was
+`rm -f src/MintPlayer.AI.ReinforcementLearning.Environments/obj/*/net10.0/polyglot/*.cs` then rebuild. History +
+root cause: `docs/prd/polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md`. Never loop build retries against stale output.
 
 ## Stopping a `dotnet run` host
 
