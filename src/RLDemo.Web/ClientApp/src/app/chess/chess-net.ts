@@ -19,6 +19,44 @@ import { PgPolicyValueNet } from './chess_solver';
 const MAGIC = 0x434e4c52; // "RLNC"
 const KIND = 'selfplay-pv';
 
+/** A difficulty tier: which checkpoint to load + the search knobs. Produced by the Lab's `--ladder` run
+ *  (wwwroot/models/chess-difficulties.json); weaker tiers are earlier-trained nets (+ optionally fewer sims /
+ *  higher temperature). See CHESS_WEB_POLYGLOT_PRD §9. */
+export interface ChessDifficulty {
+  label: string;
+  ckpt: string;
+  sims: number;
+  temperature: number;
+  cpuct: number;
+  winRateVsRandom?: number;
+}
+
+// Used when the manifest is missing/unreadable — preserves the single-net M40.3 behaviour.
+const FALLBACK_DIFFICULTIES: ChessDifficulty[] = [
+  { label: 'Default', ckpt: '/models/chess.az.ckpt', sims: 96, temperature: 0, cpuct: 1.5 },
+];
+
+/** Fetch + parse the difficulty manifest the Lab writes (ordered weakest→strongest). Falls back to a single
+ *  default tier if it's absent, so the page works before any ladder has been shipped. */
+export async function loadDifficulties(url = '/models/chess-difficulties.json'): Promise<ChessDifficulty[]> {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) return FALLBACK_DIFFICULTIES;
+    const raw: unknown = await resp.json();
+    if (!Array.isArray(raw) || raw.length === 0) return FALLBACK_DIFFICULTIES;
+    return raw.map((d: any) => ({
+      label: String(d.label),
+      ckpt: String(d.ckpt),
+      sims: Number(d.sims) || 96,
+      temperature: Number(d.temperature) || 0,
+      cpuct: Number(d.cpuct) || 1.5,
+      winRateVsRandom: typeof d.winRateVsRandom === 'number' ? d.winRateVsRandom : undefined,
+    }));
+  } catch {
+    return FALLBACK_DIFFICULTIES;
+  }
+}
+
 export const CHESS_INPUT_SIZE = 18 * 64; // 1152
 export const CHESS_ACTIONS = 4672;       // 64 × 73 AlphaZero move encoding
 

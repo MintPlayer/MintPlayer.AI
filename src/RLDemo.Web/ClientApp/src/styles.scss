@@ -1,3 +1,31 @@
+// Global styles. @mintplayer/ng-bootstrap's bootstrap.scss (loaded before this file in angular.json) brings
+// Bootstrap 5.3 (reboot/type/buttons/utilities) — it is CSS-variable-driven, so we preserve the app's existing
+// dark-blue theme by re-pointing the --bs-* variables at our palette rather than accepting Bootstrap's defaults.
+
+:root {
+  // Core surface + text
+  --bs-body-bg: #14171f;
+  --bs-body-color: #e6e8ee;
+  --bs-body-font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --bs-emphasis-color: #ffffff;
+
+  // Dark-blue accent (the app's #6ea8fe)
+  --bs-primary: #6ea8fe;
+  --bs-primary-rgb: 110, 168, 254;
+  --bs-link-color: #6ea8fe;
+  --bs-link-color-rgb: 110, 168, 254;
+  --bs-link-hover-color: #9cc2ff;
+
+  // Secondary / borders / control surfaces (match the app's button + card palette)
+  --bs-secondary: #3a4154;
+  --bs-secondary-rgb: 58, 65, 84;
+  --bs-secondary-color: #aab2c5;
+  --bs-border-color: #3a4154;
+  --bs-border-color-translucent: rgba(255, 255, 255, 0.12);
+  --bs-secondary-bg: #232938;   // e.g. form-control / select surfaces
+  --bs-tertiary-bg: #1a1f2b;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -13,7 +41,9 @@ a {
   color: #6ea8fe;
 }
 
-button {
+// The app's custom button styling — scoped to :not(.btn) so ng-bootstrap's Bootstrap buttons (.btn / .btn-*,
+// used by bs-button-type / bs-button-group) keep their own themed styling instead of being overridden here.
+button:not(.btn) {
   font: inherit;
   border: 1px solid #3a4154;
   background: #232938;

@@ -1,5 +1,12 @@
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { Color } from '@mintplayer/ng-bootstrap';
+import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
+import { BsButtonGroupComponent } from '@mintplayer/ng-bootstrap/button-group';
+import { BsSelectComponent, BsSelectOption } from '@mintplayer/ng-bootstrap/select';
+import { BsRangeComponent } from '@mintplayer/ng-bootstrap/range';
 import { ChessDirector } from './chess-director';
+import { ChessDifficulty } from './chess-net';
 
 interface Cell {
   sq: number;      // engine square index (rank*8 + file)
@@ -21,24 +28,44 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
 
 /**
  * Chess — play the self-taught AI, or watch it play itself, entirely in your browser. The engine, the policy/value
- * network, and the PUCT search are single-sourced from `chess_solver.pg` (the same code the C# self-play training
- * uses) and transpiled to TypeScript; the browser downloads the trained checkpoint and thinks locally, with no
- * server move computation (M40.3). You are White in "play"; both sides are the AI in "watch".
+ * network, and the PUCT search are single-sourced from `chess_solver.pg` and transpiled to TypeScript; the browser
+ * downloads a trained checkpoint and thinks locally, with no server move computation (M40.3). The difficulty picker
+ * (M40.4) chooses which tier checkpoint + search knobs to use, from the Lab-written manifest. Controls use
+ * @mintplayer/ng-bootstrap; the app's dark-blue theme is preserved via Bootstrap CSS variables (styles.scss).
  */
 @Component({
   selector: 'app-chess',
+  imports: [
+    FormsModule,
+    BsButtonGroupComponent, BsButtonTypeDirective,
+    BsSelectComponent, BsSelectOption,
+    BsRangeComponent,
+  ],
   template: `
     <div class="wrap">
       <h1>Chess</h1>
       <p class="intro">
         A network that learned chess from scratch by playing itself (AlphaZero-style self-play), running
-        <strong>entirely in your browser</strong> — no server. It's a small, briefly-trained net, so it plays legal,
-        still-learning chess, beatable by a careful human.
+        <strong>entirely in your browser</strong> — no server. It's a small, still-learning net, so it plays legal,
+        beatable chess. Pick a difficulty, then play it or watch it play itself.
       </p>
 
-      <div class="modes">
-        <button class="tab" [class.active]="mode() === 'play'" (click)="setMode('play')">Play the AI</button>
-        <button class="tab" [class.active]="mode() === 'watch'" (click)="setMode('watch')">Watch AI vs AI</button>
+      <div class="toolbar">
+        <bs-button-group>
+          <button type="button" [color]="mode() === 'play' ? colors.primary : colors.secondary" (click)="setMode('play')">Play the AI</button>
+          <button type="button" [color]="mode() === 'watch' ? colors.primary : colors.secondary" (click)="setMode('watch')">Watch AI vs AI</button>
+        </bs-button-group>
+
+        @if (difficulties().length > 1) {
+          <label class="diff">
+            <span>Difficulty</span>
+            <bs-select [ngModel]="current()" (ngModelChange)="onDifficultyChange($event)" [disabled]="busy()" [identifier]="1">
+              @for (d of difficulties(); track d.label) {
+                <option [ngValue]="d">{{ d.label }}{{ d.winRateVsRandom != null ? ' · ' + pct(d.winRateVsRandom) + ' vs random' : '' }}</option>
+              }
+            </bs-select>
+          </label>
+        }
       </div>
 
       <div class="status" [class.busy]="busy()">{{ statusText() }}</div>
@@ -63,16 +90,15 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
 
       <div class="controls">
         @if (mode() === 'play') {
-          <button class="btn" (click)="newGame()">New game</button>
+          <button [color]="colors.primary" (click)="newGame()">New game</button>
           <span class="hint" [class.on]="over()">
             {{ over() ? 'Game over — start a new game.' : 'Click a piece, then its destination.' }}
           </span>
         } @else {
           <label class="speed">
-            Speed
-            <input type="range" min="0" max="1900" step="50"
-              [value]="1900 - betweenMs()"
-              (input)="betweenMs.set(1900 - +$any($event.target).value)" />
+            <span>Speed</span>
+            <bs-range [min]="0" [max]="1900" [step]="50"
+              [ngModel]="1900 - betweenMs()" (ngModelChange)="betweenMs.set(1900 - $event)"></bs-range>
             <span class="speed-end">{{ betweenMs() >= 1200 ? 'slow' : betweenMs() <= 250 ? 'fast' : '' }}</span>
           </label>
         }
@@ -90,19 +116,9 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
   styles: `
     .wrap { max-width: 560px; }
     .intro { color: #aab2c5; }
-    code { background: #232a3a; padding: 0 0.25rem; border-radius: 4px; }
 
-    .modes { display: flex; gap: 0.5rem; margin: 1rem 0 0.25rem; }
-    .tab {
-      background: #1a1f2b;
-      color: #aab2c5;
-      border: 1px solid #2b3245;
-      border-radius: 8px;
-      padding: 0.4rem 0.9rem;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .tab.active { border-color: #6ea8fe; color: #6ea8fe; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin: 1rem 0 0.25rem; }
+    .diff { display: flex; align-items: center; gap: 0.5rem; color: #aab2c5; font-size: 0.9rem; }
 
     .status { margin: 0.5rem 0 0.75rem; font-weight: 600; min-height: 1.5em; }
     .status.busy { color: #6ea8fe; }
@@ -119,6 +135,7 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
       user-select: none;
     }
 
+    /* Board squares are bespoke (a grid of buttons), not Bootstrap buttons — :not(.btn) keeps them off the .btn path. */
     .sq {
       position: relative;
       border: 0; padding: 0; margin: 0;
@@ -153,15 +170,9 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
     }
 
     .controls { margin-top: 1rem; display: flex; align-items: center; gap: 1rem; }
-    .btn {
-      background: #6ea8fe; color: #0b0e14; border: 0; border-radius: 8px;
-      padding: 0.5rem 1rem; font-weight: 600; cursor: pointer;
-    }
-    .btn:hover { filter: brightness(1.08); }
     .hint { color: #8891a5; font-size: 0.9rem; }
     .hint.on { color: #e0b050; }
     .speed { display: flex; align-items: center; gap: 0.6rem; color: #8891a5; font-size: 0.9rem; }
-    .speed input { accent-color: #e8912a; }
     .speed-end { min-width: 2.5em; color: #e8912a; }
 
     .tray {
@@ -181,6 +192,7 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
   `,
 })
 export class Chess {
+  protected readonly colors = Color;
   protected readonly director = new ChessDirector();
   protected readonly mode = signal<Mode>('play');
   protected readonly betweenMs = signal(BETWEEN_MS); // watch-mode pause between moves (speed slider)
@@ -189,17 +201,21 @@ export class Chess {
   private readonly selected = signal<number | null>(null);
   private readonly targets = signal<Set<number>>(new Set());
   private readonly last = signal<{ from: number; to: number } | null>(null);
-  private readonly tick = signal(0); // bumped to refresh derived status (net-load, thinking, outcome)
+  private readonly tick = signal(0); // bumped to refresh derived status (net-load, thinking, outcome, difficulties)
 
-  private loopGen = 0; // cancels a stale watch loop on mode change / destroy
+  private loopGen = 0; // cancels a stale watch loop on mode/difficulty change / destroy
 
   constructor() {
-    // Leave the "loading" state once the checkpoint fetch settles.
+    // Leave the "loading" state once the manifest + default checkpoint have settled.
     void this.director.ready.then(() => this.tick.update(v => v + 1));
     inject(DestroyRef).onDestroy(() => { this.loopGen++; });
   }
 
   protected glyph(piece: number): string { return GLYPH[Math.abs(piece)]; }
+  protected pct(x: number): string { return `${Math.round(x * 100)}%`; }
+
+  protected readonly difficulties = computed<ChessDifficulty[]>(() => { this.tick(); return this.director.difficulties; });
+  protected readonly current = computed<ChessDifficulty>(() => { this.tick(); return this.director.current; });
 
   protected readonly cells = computed<Cell[]>(() => {
     const b = this.board();
@@ -256,6 +272,16 @@ export class Chess {
     this.deselect();
     this.refresh();
     if (m === 'watch') void this.runWatch();
+  }
+
+  protected async onDifficultyChange(d: ChessDifficulty): Promise<void> {
+    this.loopGen++;                       // cancel any running watch loop while the new net loads
+    this.refresh();                       // reflect "Loading the AI…" (setDifficulty flips netReady off)
+    await this.director.setDifficulty(d);
+    this.director.reset();
+    this.deselect();
+    this.refresh();
+    if (this.mode() === 'watch') void this.runWatch();
   }
 
   protected newGame(): void {

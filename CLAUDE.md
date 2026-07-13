@@ -5,23 +5,23 @@ Project-level instructions loaded every session. Read `docs/ARCHITECTURE.md` for
 
 ## Running / verifying the web app (RLDemo.Web) — READ THIS FIRST
 
-**To build, serve, run, or visually verify the frontend, do exactly one thing:**
-
-```bash
-dotnet run --project src/RLDemo.Web        # Development profile; http://localhost:5210
-```
+**The .NET host is ALREADY RUNNING. The user runs and owns it. Do NOT start, stop, kill, restart, or
+`taskkill` it — ever. Assume it is up at http://localhost:5210 and serving the Angular frontend.**
 
 The ASP.NET Core host **builds and serves the Angular frontend itself** — in Development it spawns and
-proxies the Angular dev server (`UseAngularCliServer` via `UseSpaImproved` in `Program.cs`). There is
-**nothing else to do for the frontend.**
+proxies the Angular dev server (`UseAngularCliServer` via `UseSpaImproved` in `Program.cs`). The Angular app
+is NOT a separate process you manage; it lives inside the running .NET host.
 
-- **Never** run `ng serve` / `npm start` / `ng build` / `ng test` yourself. The host already runs one; a
-  second instance just fights for ports and can wedge the dev-server file watcher.
+- **Do NOT run `dotnet run --project src/RLDemo.Web` yourself** — it is already running. A second instance
+  fights for the port. (This command is how the *user* starts it; it is not your job.)
+- **Never** run `ng serve` / `npm start` / `ng build` / `ng test`, and never `taskkill`/kill the `dotnet` /
+  `RLDemo.Web.exe` / `node` (ng serve) processes.
 - **To see a code change:** just save the file under `ClientApp/src` — the running host live-reloads the
-  browser. No manual build, usually no manual reload.
+  browser. No manual build, no restart, usually no manual reload.
 - **To verify what's actually served** (suspected staleness): `curl -sk http://localhost:5210/main.js | grep <identifier>`
-  — do not reach for `ng build` to "check".
-- If output looks stale, suspect a wedged dev-server watcher: **restart the ASP.NET host**, never `ng build`.
+  — do not reach for `ng build`, and do not restart the host, to "check".
+- **If output looks stale** (wedged dev-server watcher) **or new npm dependencies were added** (the host must
+  re-read them): **ASK THE USER to restart their host.** Do not restart it yourself.
 
 ## Build failures are usually NOT the frontend
 

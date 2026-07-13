@@ -1,5 +1,5 @@
 import { PgChessState, PgChessMcts, PgPolicyValueNet } from './chess_solver';
-import { loadChessNet } from './chess-net';
+import { ChessDifficulty, loadChessNet, loadDifficulties } from './chess-net';
 
 // Client-side chess "play against the AI" director — the whole AI runs in the browser, single-sourced from
 // chess_solver.pg (the same engine + net + MCTS the C# training uses). You are White; the AI is Black and replies
@@ -27,25 +27,50 @@ export interface DecodedMove { index: number; from: number; to: number; promo: n
 export class ChessDirector {
   private state = ChessDirector.startState();
   private net: PgPolicyValueNet | null = null;
+  private readonly netCache = new Map<string, PgPolicyValueNet | null>(); // by ckpt url; sims-only switches don't refetch
 
-  netReady = false;   // the checkpoint fetch has resolved (success or not)
+  netReady = false;   // the current tier's checkpoint fetch has resolved (success or not)
   netMissing = false; // resolved but no usable net → AI falls back to a random legal move
   thinking = false;   // an AI search is in flight
   lastMove: { from: number; to: number } | null = null;
 
-  /** Inference sims per AI move — the latency knob (browser MCTS). Modest for ~1–2 s/move. */
-  sims = 96;
-  cpuct = 1.5;
+  // Difficulty (M40.4): the tier list comes from the Lab-written manifest; `current` selects one.
+  difficulties: ChessDifficulty[] = [];
+  current: ChessDifficulty = { label: 'Default', ckpt: '/models/chess.az.ckpt', sims: 96, temperature: 0, cpuct: 1.5 };
 
-  /** Resolves when the checkpoint fetch has settled (the UI awaits this to leave the "loading" state). */
+  // Search knobs, set from the current difficulty. sims = latency/strength; temperature > 0 samples for variety.
+  private sims = 96;
+  private cpuct = 1.5;
+  private temperature = 0;
+
+  /** Resolves when the manifest + the default tier's checkpoint have settled (the UI awaits this). */
   readonly ready: Promise<void>;
 
   constructor() {
-    this.ready = loadChessNet().then(net => {
-      this.net = net;
-      this.netMissing = net === null;
-      this.netReady = true;
-    });
+    this.ready = this.init();
+  }
+
+  private async init(): Promise<void> {
+    this.difficulties = await loadDifficulties();
+    // Default to the strongest tier (the manifest is ordered weakest→strongest); the player can pick easier.
+    await this.setDifficulty(this.difficulties[this.difficulties.length - 1]);
+  }
+
+  /** Switch tier: adopt its search knobs and load its checkpoint (cached by url, so sims-only switches are instant). */
+  async setDifficulty(d: ChessDifficulty): Promise<void> {
+    this.current = d;
+    this.sims = d.sims;
+    this.cpuct = d.cpuct;
+    this.temperature = d.temperature;
+    this.netReady = false;
+    if (this.netCache.has(d.ckpt)) {
+      this.net = this.netCache.get(d.ckpt)!;
+    } else {
+      this.net = await loadChessNet(d.ckpt);
+      this.netCache.set(d.ckpt, this.net);
+    }
+    this.netMissing = this.net === null;
+    this.netReady = true;
   }
 
   private static startState(): PgChessState {
@@ -101,7 +126,12 @@ export class ChessDirector {
     await new Promise(resolve => setTimeout(resolve, 30));
     let index: number;
     if (this.net) {
-      index = PgChessMcts.chooseMove(this.net, this.state, this.sims, this.cpuct);
+      if (this.temperature > 0) {
+        // Sample ∝ visitᵢ^(1/T) over the moves MCTS actually visited — varied but never an unexplored blunder.
+        index = ChessDirector.sampleFromPi(PgChessMcts.search(this.net, this.state, this.sims, this.cpuct), this.temperature);
+      } else {
+        index = PgChessMcts.chooseMove(this.net, this.state, this.sims, this.cpuct);
+      }
     } else {
       const moves = this.state.legalMoveIndices();
       index = moves[Math.floor(Math.random() * moves.length)];
@@ -110,6 +140,21 @@ export class ChessDirector {
     this.state = this.state.applyIndex(index);
     this.lastMove = { from: m.from, to: m.to };
     this.thinking = false;
+  }
+
+  // Temperature sampling over the visit-count distribution π (nonzero = visited). T→0 approaches argmax.
+  private static sampleFromPi(pi: number[], temperature: number): number {
+    const invT = 1 / temperature;
+    const idx: number[] = [];
+    const weights: number[] = [];
+    let sum = 0;
+    for (let a = 0; a < pi.length; a++) {
+      if (pi[a] > 0) { const w = Math.pow(pi[a], invT); idx.push(a); weights.push(w); sum += w; }
+    }
+    if (idx.length === 0) return 0;
+    let r = Math.random() * sum;
+    for (let k = 0; k < idx.length; k++) { r -= weights[k]; if (r <= 0) return idx[k]; }
+    return idx[idx.length - 1];
   }
 
   // Full starting material as [signed piece code, count]: +1..+6 White P,N,B,R,Q,K, −1..−6 Black.
