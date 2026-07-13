@@ -1475,19 +1475,25 @@ is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); th
   was unavailable, so the in-browser click-through wasn't automated — verified structurally + functionally instead.
   **Pending:** ship `wwwroot/models/chess.az.ckpt` (LFS) from a longer training run (in progress) for a worthier
   opponent — the current net plays legal-but-weak chess.
-- **M40.4 — difficulty (both modes). 🔜 planned (investigation done 2026-07-13; see `CHESS_WEB_POLYGLOT_PRD.md` §9).**
-  Compose difficulty as **search `sims` on one net (spine) + a browser-side visit-count *temperature* for variety at
-  the low end**; the net-ladder is an optional "watch it learn" novelty, not the backbone (a small briefly-trained MLP
-  has no reliably-rankable intermediate checkpoints, ~5–6 MB each). Key enabler: `PgChessMcts.search` already returns
-  the visit distribution π (`chooseMove` = its argmax), so temperature/sampling live **caller-side in
-  `chess-director.ts` with zero `.pg` changes and no RNG in the Polyglot core**. **M40.4a:** a committed
-  `wwwroot/models/chess-difficulties.json` (`{label, ckpt, sims, temperature, cpuct}`, hardcoded fallback) +
-  `director.setDifficulty` (re-fetch net only if the ckpt URL changed; cache by URL) + `aiStep` using `search`+temp
-  sampling (`T=0`→argmax) + an Easy/Medium/Full-strength selector in both modes (shared level; Watch per-side is a
-  follow-up). Ships **now on the single net** (tiers differ by sims/temp). **M40.4b (opt.):** capture a 1–2-net
-  "Rookie (early training)" novelty (manual copy at a strength milestone, or a `--ladder-*` snapshot flag in
-  `ChessLab`→`SelfPlayCampaign.Checkpoint`). Label the top tier **"Full strength," never "Grandmaster"** (honest
-  scope). Deferred: a net-vs-net Elo arena (the one new capability that would make net tiers reliably ordered).
+- **M40.4 — difficulty via an auto-captured net ladder (both modes). 🔜 planned (investigation + owner refinement
+  2026-07-13; see `CHESS_WEB_POLYGLOT_PRD.md` §9, esp. §9.6).** Training is offline-only (the Lab); the ladder is
+  produced **hands-off by the training agent** — when the live net becomes *significantly stronger than the last
+  promoted checkpoint*, the Lab auto-writes a new difficulty `.ckpt` into `src/RLDemo.Web/wwwroot/models/` + updates a
+  manifest. The net ladder is the backbone (not a novelty) because promotion is gated on a **net-vs-net arena** margin,
+  making tiers reliably ordered by construction (Level K+1 provably beats Level K).
+  - **M40.4a — the Lab mechanism (the owner's ask).** In `SelfPlayCampaign<TState>` (generic; enabled by `--ladder`):
+    a champion = last-promoted frozen net; on each eval, `ArenaVsNet(liveNet, champion, arenaGames)` (deterministic
+    MCTS argmax, short randomized openings on a **separate arena RNG** → training stays bitwise-reproducible,
+    alternating colours); if challenger score ≥ `--promote-margin` (~0.58) → save `chess.az.d{K}.ckpt` to
+    `--difficulty-dir` (default the web models dir) + rewrite `chess-difficulties.json` (`{label, ckpt, sims,
+    temperature, cpuct, winRateVsRandom}`) + champion := frozen copy. Flags in `ChessLab`. **Gate:** a short ladder
+    run auto-produces ≥2 ordered tier ckpts + a valid manifest in `wwwroot/models`; a non-`--ladder` run's weights are
+    unchanged for the same seed (reproducibility check).
+  - **M40.4b — the web selector.** `chess-director.ts` loads `chess-difficulties.json` (hardcoded fallback), a
+    `setDifficulty(d)` (re-fetch net only if the ckpt URL changed; cache by URL; `aiStep` uses `search`+optional
+    temperature, `T=0`→argmax), and a Level-picker in both modes (Play = opponent; Watch = shared level, per-side is a
+    follow-up). No `.pg` change (`PgChessMcts.search` already returns π). Honest labels ("Level K" / "Full strength",
+    never "Grandmaster").
 
 **Honest scope:** the M39 net is a small, briefly-CPU-trained MLP → legal, still-learning chess, beatable by a decent
 human. **Non-goals:** engine strength, a server chess endpoint, bit-exact transcendentals, browser training. See

@@ -19,7 +19,8 @@ internal static class LabHost
     /// <param name="onEval">The runner's per-eval IO hook (console+CSV for most games, console-only for the ones
     /// that own their own CSVs) — see <see cref="CampaignCli"/>.</param>
     public static void Run(string[] args, string dataDir, double hours, bool evalOnly, bool useGpu,
-        Func<IServiceProvider, ITrainingCampaign> build, Action<CampaignProgress> onEval)
+        Func<IServiceProvider, ITrainingCampaign> build, Action<CampaignProgress> onEval,
+        double? firstEvalMinutes = null, double? evalEveryMinutes = null)
     {
         // DI all the way: the model store, clock, (optional) GPU backend and CampaignRunner come from the container.
         var builder = AIHost.CreateBuilder(dataDir);
@@ -30,12 +31,15 @@ internal static class LabHost
 
         var campaign = build(host.Services);
         using var viz = VizLauncher.TryStart(args, campaign, host.Services.GetRequiredService<IHostEnvironment>());
-        runner.Run(campaign, store, new CampaignOptions
+        var opts = new CampaignOptions
         {
             Duration = TimeSpan.FromHours(hours),
             EvalOnly = evalOnly,
             OnEval = onEval,
-        });
+        };
+        if (firstEvalMinutes is double fe) opts = opts with { FirstEvalAfter = TimeSpan.FromMinutes(fe) };
+        if (evalEveryMinutes is double ee) opts = opts with { EvalEvery = TimeSpan.FromMinutes(ee) };
+        runner.Run(campaign, store, opts);
         WaitForViewer(viz);
     }
 
