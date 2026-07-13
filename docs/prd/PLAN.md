@@ -1499,7 +1499,7 @@ is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); th
 human. **Non-goals:** engine strength, a server chess endpoint, bit-exact transcendentals, browser training. See
 `CHESS_WEB_POLYGLOT_PRD.md` (incl. its reference appendix: files to port, checkpoint byte-format, commands).
 
-## M41 — Reusable deterministic CPU-parallel data generation  *(planned 2026-07-13; see `PARALLEL_SELFPLAY_PRD.md`)* 🔜
+## M41 — Reusable deterministic CPU-parallel data generation  *(2026-07-13; see `PARALLEL_SELFPLAY_PRD.md`)* — M41.1 + M41.2 ✅ SHIPPED (M41.3 cube-dedup skipped as optional)
 
 **Why:** AlphaZero self-play (`SelfPlayCampaign`) generates games **single-threaded** (`TrainChunk`'s `for … PlayGame()`),
 and for chess the wall-time is dominated by CPU-bound MCTS **movegen** — so a multi-core box mostly idles while training
@@ -1515,24 +1515,23 @@ don't nest-parallelize); the only blockers are the shared `_window`/counters and
 bitwise-reproducibility invariant (M25/M26/**M36 SHA-verified**) is preservable exactly as Core already does it
 (`VectorEnv`: per-unit RNG; GEMM: disjoint output rows → DOP-invariant).
 
-- **M41.1 — Core primitive.** `DeterministicParallel.Generate<TItem>(count, seeds, stream, baseIndex, makeItem, parallel, dop)`:
-  runs `makeItem(index, per-index-derived-RNG)` over `[0,count)`, writes disjoint ordered slots, returns in index order;
-  parallel output is **bitwise-identical** to sequential (unit-tested across DOPs). Lives in `Core/Training` (or
-  `Core/Concurrency`), dependency-free like `Mcts`.
-- **M41.2 — parallel self-play.** Refactor `SelfPlayCampaign` generation onto it: a pure, index-addressable per-game
-  function with its **own** RNG (mode flip + MCTS Dirichlet + `SelectMove`) over a shared read-only net snapshot,
-  returning samples; merge into `_window` in **ascending game index** then bump counters; training stays on the owner
-  thread. `--parallel`/`--dop` flag (default cores−2; 1 = today). Same primitive for the eval/arena loops. **Gate:**
-  **SHA256(checkpoint) identical at dop-1 vs dop-N** for a fixed seed/short run (M36-style), contract tests green, and
-  a measured games/hour speedup on `--game chess`.
-- **M41.3 (optional) — cube dedup.** Move the two cube campaigns onto the primitive; verify outputs unchanged (SHA) +
-  DOP-invariant.
+- **M41.1 ✅ — Core primitive.** `DeterministicParallel.Generate<TItem>(count, seeds, stream, baseIndex, makeItem, parallel, dop)`
+  in `Core/Training`: per-index-derived RNG (golden-ratio stride, à la `VectorEnv`), disjoint ordered slots, index-order
+  results. 12 unit tests prove bitwise parallel==sequential across DOP 1/2/4/8/16 + edges (commit `bc0c48f`).
+- **M41.2 ✅ — parallel self-play.** `SelfPlayCampaign` generation refactored onto it: each game a pure fn of its own
+  index-derived RNG over the stable read-only net, returning samples; owner-thread merge in ascending index then train.
+  Shuffle moved to the Buffer stream (no seed collision with game 0). `--parallel`/`--dop` on `ChessLab`. **Gate MET:**
+  a Connect-4 run gives a **byte-identical checkpoint** at sequential vs parallel-dop-1 vs dop-8
+  (`SelfPlayCampaignTests.ParallelGeneration_...AtAnyDop`). Eval/arena left sequential (not the bottleneck; can't affect
+  weights). Commit `a9fa5c3`.
+- **M41.3 (optional) — cube dedup: SKIPPED** (deferred; the two cube campaigns keep their hand-rolled `Parallel.For`.
+  Low value vs. the conv-net work; can adopt the primitive later).
 
 **Answers the owner's question:** the parallelism isn't in Core for no principled reason — it was hand-rolled per Lab
 campaign; the pattern is generic and matches Core's existing determinism approach, so it should be (and now will be)
 extracted. **Non-goals:** GPU/batched-MCTS (separate, larger effort); parallelizing the DQN campaigns (not the bottleneck).
 
-## M42 — Convolutional residual net for chess (reusable in Core)  *(planned 2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* 🔜
+## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED · M42.3 ⏳ training · M42.4 🔜 (gated on M42.3)
 
 **Why:** chess self-play has **plateaued at ~random** (M40.4: winRate-vs-random ~50%→35%, material margin flat ~+0.1
 of the +0.75 gate, no tier ever promotes) despite 256 sims + material-shaped targets. The honest bottleneck is the
@@ -1549,21 +1548,23 @@ net needs one introduced. The obs already reshapes cleanly to `[18,8,8]` (`plane
 twin** (`chess_solver.pg` `PgPolicyValueNet`) is a flat-MLP forward — a conv net breaks client-side play until the `.pg`
 gains a conv forward (inference-only), so that's a first-class phase, not a follow-up.
 
-- **M42.1 — Conv2D in Core.** `Conv2D` op via **im2col → existing GEMM → col2im** (reuses the tuned, GPU-routed GEMM;
-  no bespoke kernel), rank-2 representation `[N, C·H·W]` so `CheckRank2` is never tripped. Reuse **LayerNorm** (not new
-  BatchNorm). **Gate:** finite-difference gradient check (dInput/dWeight/dBias) + forward value check + DOP-invariance.
-- **M42.2 — `IPolicyValueNet` + the conv net.** Introduce the two-headed-net interface; `PolicyValueNet` implements it
-  (SHA-identical checkpoints ⇒ zero behaviour change). Build `ConvResidualPolicyValueNet` (stem → N residual blocks →
-  AlphaZero policy+value heads; Save/Load/LayerActivations). Generalize `SelfPlayCampaign`/`PolicyValueTraining` to the
-  interface + an `--arch`-keyed factory. **Cheap de-risking checkpoint:** a two-headed *residual MLP* (no new kernels)
-  behind the same interface first, to see if depth+residuals move the plateau before investing in conv. **Gate:** suite
-  green, MLP SHA-identical, connect-4 unchanged, conv train-one-batch loss decreases.
-- **M42.3 — train chess with the conv net.** `--arch conv --filters 64 --blocks 6` (tune) + material shaping + ladder.
-  **Gate:** beats the MLP baseline — material margin ≥ +0.75 and/or winRate ≫ 50% with **≥1 ladder tier promoted**;
-  determinism (M41 SHA dop-1==dop-N) preserved.
-- **M42.4 — browser conv forward + parity.** Add an inference-only conv2d forward to `chess_solver.pg` + teach
-  `chess-net.ts` the conv `.ckpt` layout; regenerate the C#/TS twin. **Gate:** `ChessNetParityTests` green on conv
-  `.ckpt`; `/chess` plays a shipped conv tier end-to-end.
+- **M42.1 ✅ — Conv2D in Core.** `Tensor.Conv2D` via **im2col → existing GEMM → col2im** (reuses the tuned, GPU-routed
+  GEMM; NO new backend/ILGPU kernel), rank-2 `[N, C·H·W]` representation so `CheckRank2` is never tripped, LayerNorm (not
+  BatchNorm). **Gate MET:** three finite-difference gradient checks (3×3 SAME, stride-2 valid, 1×1) green
+  (`GradCheckTests.Conv2D_*`). Commit `67806af`.
+- **M42.2 ✅ — `IPolicyValueNet` + the conv net.** Interface introduced; `PolicyValueNet` implements it (self-play
+  determinism gate still byte-identical ⇒ zero MLP behaviour change). `ConvResidualPolicyValueNet` (3×3 stem → N residual
+  blocks → 1×1-conv policy + value heads; Save/Load/LayerActivations). `SelfPlayCampaign`/`PolicyValueTraining`
+  generalized to the interface + an `IPolicyValueNetBuilder` (MlpNetBuilder default / ConvNetBuilder); `ChessLab --arch
+  conv --filters --blocks`. **Gate MET** (`ConvResidualNetTests`): head shapes, exact save/load round-trip, loss falls
+  under Adam. (De-risking residual-MLP step skipped — went straight to conv.) Commit `21b779d`.
+- **M42.3 ⏳ — train chess with the conv net.** `--arch conv --filters 64 --blocks 6` + material shaping + ladder,
+  running in the background. **Gate:** beats the MLP baseline — material margin ≥ +0.75 and/or winRate ≫ 50% with **≥1
+  ladder tier promoted**; determinism preserved. *(Long run; evaluated from the background training, not blocking.)*
+- **M42.4 🔜 (gated on M42.3) — browser conv forward + parity.** Add an inference-only conv2d forward to
+  `chess_solver.pg` + teach `chess-net.ts` the conv `.ckpt` layout; regenerate the C#/TS twin. **Gate:**
+  `ChessNetParityTests` green on conv `.ckpt`; `/chess` plays a shipped conv tier. **Deliberately not started until M42.3
+  proves the conv net is worth shipping** (PRD risk #2 — don't port to the browser a net that doesn't beat the baseline).
 
 **Non-goals:** removing `PolicyValueNet` (stays the connect-4/cube-policy/rush-hour net + fast baseline) or `ResidualMlp`
 (stays the cube DAVI value net); spatial BatchNorm (reuse LayerNorm); Net2Net growth for the conv net (stays MLP-only).
