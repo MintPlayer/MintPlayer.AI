@@ -1464,12 +1464,30 @@ is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); th
   **MintPlayer.Polyglot issue #27** with a verified two-part fix, **fixed upstream in 0.7.0 (PR #28)**; the Environments
   `.csproj` is on 0.7.0 and the regenerated `chess_solver.ts` is now **strictly typed** (`let d: [number,number][] = []`,
   `children: (PgMctsNode | null)[]`) — verified strict-`tsc`-clean. 365/365 tests on 0.7.0.
-- **M40.3 — the browser page.** `chess-director.ts` (runs the transpiled `mcts`+net over the loaded `.ckpt`, like
-  `fruit-cake-director.ts`) + an Angular chess component (board, click-to-move validated by the transpiled
-  `legalMoves`, AI reply, check/mate/draw, last-move highlight) + route/nav; ship `wwwroot/models/chess.az.ckpt`
-  (LFS) + the `.ckpt` MIME mapping in `Program.cs`. **Gate:** a full legal game vs the AI in-browser with **no
-  `/api/chess/*` move calls** (Network panel/Playwright); tune inference sims (~100–300) for ~1–2 s/move latency.
-  Train a longer run first for a worthier opponent.
+- **M40.3 — the browser page. ✅ code+UX SHIPPED 2026-07-13 (weights follow).** `chess-director.ts` (runs the
+  transpiled `PgChessMcts`+net over the loaded `.ckpt`) + a standalone Angular chess component: an 8×8 board (White at
+  the bottom, square rows), click-to-move validated by the transpiled engine (legal-target dots, orange
+  selected/last-move highlights, auto-queen), check/checkmate/stalemate/draw status, a **captured-pieces tray** (red ✕
+  per taken piece), and **two modes — "Play the AI" and "Watch AI-vs-AI"** (self-restarting loop with a speed slider).
+  Route `/chess` + a Home tile; `.ckpt` MIME mapping already in `Program.cs`. **Gate MET:** Angular builds the chess
+  chunk clean; `/chess` served; `/api/chess/*` → 404 (zero server inference); director/net/solver strict-`tsc` clean;
+  and the transpiled engine+net+MCTS played a full 80-ply legal game in Node over the real checkpoint. Playwright MCP
+  was unavailable, so the in-browser click-through wasn't automated — verified structurally + functionally instead.
+  **Pending:** ship `wwwroot/models/chess.az.ckpt` (LFS) from a longer training run (in progress) for a worthier
+  opponent — the current net plays legal-but-weak chess.
+- **M40.4 — difficulty (both modes). 🔜 planned (investigation done 2026-07-13; see `CHESS_WEB_POLYGLOT_PRD.md` §9).**
+  Compose difficulty as **search `sims` on one net (spine) + a browser-side visit-count *temperature* for variety at
+  the low end**; the net-ladder is an optional "watch it learn" novelty, not the backbone (a small briefly-trained MLP
+  has no reliably-rankable intermediate checkpoints, ~5–6 MB each). Key enabler: `PgChessMcts.search` already returns
+  the visit distribution π (`chooseMove` = its argmax), so temperature/sampling live **caller-side in
+  `chess-director.ts` with zero `.pg` changes and no RNG in the Polyglot core**. **M40.4a:** a committed
+  `wwwroot/models/chess-difficulties.json` (`{label, ckpt, sims, temperature, cpuct}`, hardcoded fallback) +
+  `director.setDifficulty` (re-fetch net only if the ckpt URL changed; cache by URL) + `aiStep` using `search`+temp
+  sampling (`T=0`→argmax) + an Easy/Medium/Full-strength selector in both modes (shared level; Watch per-side is a
+  follow-up). Ships **now on the single net** (tiers differ by sims/temp). **M40.4b (opt.):** capture a 1–2-net
+  "Rookie (early training)" novelty (manual copy at a strength milestone, or a `--ladder-*` snapshot flag in
+  `ChessLab`→`SelfPlayCampaign.Checkpoint`). Label the top tier **"Full strength," never "Grandmaster"** (honest
+  scope). Deferred: a net-vs-net Elo arena (the one new capability that would make net tiers reliably ordered).
 
 **Honest scope:** the M39 net is a small, briefly-CPU-trained MLP → legal, still-learning chess, beatable by a decent
 human. **Non-goals:** engine strength, a server chess endpoint, bit-exact transcendentals, browser training. See

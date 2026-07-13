@@ -134,3 +134,57 @@ dotnet run -c Release --project tools/…Lab -- --game chess --demo --sims 400 -
 A browser **replay** artifact of one AI game exists (published via the Artifact tool from `--game chess --demo`
 FENs). That is watch-only; M40 is the interactive *play-against-it* page. The demo net was trained ~21 min on CPU
 (reached ~50% vs random, policy loss 4.4→2.2) — legal but weak; longer training recommended before M40.3.
+
+## 9. Difficulty (M40.4) — design from the investigation team (2026-07-13)
+
+**Goal:** let the visitor pick a difficulty in **both** modes (Play the AI, Watch AI-vs-AI). Three read-only agents
+investigated the training/checkpoint machinery, the web surfaces, and the difficulty-composition design; this section
+is the synthesis.
+
+### 9.1 What difficulty is made of — decision
+
+Compose difficulty from three possible axes, in priority order:
+
+1. **Search budget (`sims`) on ONE net — the spine.** Already a live knob (`ChessDirector.sims` → `PgChessMcts.chooseMove(net,state,sims,cpuct)`). More sims = stronger, slower; it's the classic engine difficulty lever (search depth/time), monotonic and reproducible, bounded by the in-browser latency budget (~1–2 s/move). Zero download cost, zero `.pg` change.
+2. **Move-selection temperature — for human-like *variety* at the low end.** `PgChessMcts.search` already returns the full **visit-count distribution π** over 4672; `chooseMove` is just its argmax. So temperature lives **caller-side in `chess-director.ts`**: sample `∝ πᵢ^(1/T)` over the **visited** moves (every candidate is one MCTS actually explored → varied but never "unexplored garbage"). `T=0` = today's argmax. **No `.pg` change and no RNG in the Polyglot core** (`Math.random()` is browser-only; the single source stays pure/deterministic). Optional stronger variety lever: top-k-visited sampling.
+3. **Network ladder (different-strength checkpoints) — optional NOVELTY only.** The owner's idea. Verdict: *not* the difficulty spine. This is a small, briefly-trained MLP — intermediate checkpoints are noisy and **not reliably rankable** (an under-trained net has a near-uniform policy → plays *confused*, i.e. the "randomly dumb" feel we want to avoid at Easy), and each net is **~5–6 MB** LFS. Its real value is narrative: *"play the AI at an early stage of its self-taught learning."* Ship **at most two** nets (a "Rookie (early training)" novelty + the final), framed as a novelty, not a balanced tier.
+
+**Why Easy should weaken via fewer sims (+ mild temperature), NOT a weaker net or high temperature:** fewer sims still plays the net's *considered* move (decent priors) — it loses *gracefully* (doesn't calculate deep tactics) rather than hanging pieces at random. A weaker net or high-T sampling both feel "randomly dumb." Floor: keep Easy at **low-but-nonzero** sims (~24) — `sims=0` returns raw priors (the `total==0` fallback) and loses the one-ply tactical safety net. At very low sims, visits concentrate, so temperature has little to sample among → Easy needs the *combination* (low-nonzero sims + slightly higher `cpuct` + `T≈1`).
+
+**Honest scope / labels:** the strongest shippable config (best net, ~256–300 sims, `T=0`) is still club-beatable. Label the top tier **"Full strength"** (or "Hard") — **never "Grandmaster."** A longer training run lifts the whole ladder uniformly but doesn't change its composition.
+
+### 9.2 Proposed ladder
+
+| Tier | Checkpoint | sims | temperature | cpuct | Feel |
+|---|---|---|---|---|---|
+| Easy | final net | ~24 | ~1.0 | ~2.0 | fast (<0.5 s), varied, casual — misses tactics |
+| Medium | final net | ~96 (current) | ~0.5 | 1.5 | ~1 s, mostly sensible, occasional miss |
+| Full strength | final net | ~256–300 | 0 (argmax = today) | 1.25–1.5 | ~1–2 s, the net's genuine best |
+| *Rookie (opt.)* | *early checkpoint* | ~64 | ~0.6 | 1.5 | *novelty: "watch it before it learned"* |
+
+### 9.3 Delivery — a committed manifest (shippable now on ONE net)
+
+Ship `wwwroot/models/chess-difficulties.json` (static; `.json` is already served — mirrors the `rushhour-deck.json` precedent), fetched by the director at load, with a hardcoded fallback:
+
+```json
+[
+  { "label": "Easy",          "ckpt": "/models/chess.az.ckpt", "sims": 24,  "temperature": 1.0, "cpuct": 2.0 },
+  { "label": "Medium",        "ckpt": "/models/chess.az.ckpt", "sims": 96,  "temperature": 0.5, "cpuct": 1.5 },
+  { "label": "Full strength", "ckpt": "/models/chess.az.ckpt", "sims": 256, "temperature": 0.0, "cpuct": 1.5 }
+]
+```
+
+**First cut needs only the one net we already ship** — the three tiers differ by `sims`/`temperature`/`cpuct`. Adding real multi-checkpoint tiers later is a manifest edit + dropping `.ckpt` files into `wwwroot/models/` — **zero code change** (`chess-net.ts` `loadChessNet(url)` is already parameterized and reads trunk widths from the file). Missing-ckpt caveat: the SPA fallback returns `index.html` with `resp.ok===true`, but the parser throws on the magic check → `catch` → `null` → the director's random-move fallback (silent degradation — surface it in `statusText`).
+
+### 9.4 Code changes
+
+- **`chess-director.ts`:** add `difficulties[]` + `current` (loaded from the manifest, hardcoded fallback); `setDifficulty(d)` sets `sims`/`cpuct`/`temperature` and re-fetches the net **only if the ckpt URL changed** (cache nets by URL, so sims-only switches don't refetch); in `aiStep()`, use `PgChessMcts.search(...)` + temperature sampling (`T=0` → keep `chooseMove` argmax).
+- **`chess.ts`:** a difficulty selector (segmented control / dropdown) in **both** modes. Play = the opponent's strength. Watch = a **single shared level first**; per-side White/Black levels (the "strong vs weak" demo) is a clean follow-up (director holds two nets + picks by `whiteToMove`). Changing difficulty in watch mode should `loopGen++` + `reset()` (mirror `setMode`) and re-await readiness.
+- **No change** to `chess-net.ts`, `Program.cs`, `CheckpointFormat`, `PolicyValueNet`, `chess_solver.pg`, or `.gitattributes`.
+
+### 9.5 Capturing a net ladder (only if we do the Rookie/novelty or per-side tiers)
+
+Training overwrites `chess.az.ckpt` in place ~every 10 min (`CampaignRunner` eval cadence); no history is kept, and the only strength signal is **winRate-vs-random** (saturating, noisy at 10 eval games) + games-trained — **there is no net-vs-net Elo/arena**. To capture a ladder:
+- **Option B (zero code, recommended for a 1–2-net novelty):** manually copy `<data>/chess.az.ckpt` to a tier name (`chess.az.l1.ckpt`) at a chosen milestone.
+- **Option A (automated):** a `--ladder-winrates`/`--ladder-games` flag in `ChessLab` → `SelfPlayCampaign.Checkpoint` dumps named snapshots (`store.Save(env, "az-tier{n}", …)`; the store already namespaces by algo id, so no store change).
+- A **net-vs-net arena** (an earlier tier as opponent, paralleling `ArenaVsRandom`) is the one genuinely-new capability that would make tiers *reliably* ordered — deferred; not needed for sims+temperature difficulty.
