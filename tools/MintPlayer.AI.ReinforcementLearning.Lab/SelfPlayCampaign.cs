@@ -46,6 +46,14 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     private int _tierCount;
     private readonly List<TierInfo> _tiers = [];
 
+    // Material-shaped value target (fixes the draw-saturation plateau): blend the sparse game outcome with a DENSE
+    // per-position material advantage so the value head gets a gradient on every capture — not just win/loss/draw,
+    // which is ~always a draw (→0) until the net can force mate. `_material` = the game's optional IMaterialScore
+    // (null → pure outcome, unchanged); `_materialWeight` (α) = blend; MaterialScale squashes pawns → [-1,1] via tanh.
+    private readonly IMaterialScore<TState>? _material;
+    private readonly float _materialWeight;
+    private const float MaterialScale = 5f;
+
     private PolicyValueNet _net = null!;
     private Adam _adam = null!;
     private readonly List<Sample> _window;
@@ -56,9 +64,11 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, ulong seed, float learningRate,
         int hidden, Mcts.Config selfPlayCfg, int gamesPerChunk = 32, int tempMoves = 8, int evalGames = 20,
         int windowCapacity = 40_000, int maxPlies = 512, long targetGames = 0, double opponentRandomFrac = 0,
-        LadderOptions? ladder = null)
+        LadderOptions? ladder = null, float materialWeight = 0f)
     {
         _ladder = ladder;
+        _material = game as IMaterialScore<TState>; // dense material shaping when the game supports it
+        _materialWeight = materialWeight;
         // Independent stream (not from SeedSequence) so the arena can't perturb the training/eval RNG → reproducible.
         _arenaRng = new Xoshiro256StarStar(unchecked(seed * 0x9E3779B97F4A7C15UL + 0xD1B54A32D192ED03UL));
         _opponentRandomFrac = opponentRandomFrac;
@@ -187,6 +197,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         var state = _game.Root();
         var obsHistory = new List<float[]>(64);
         var piHistory = new List<float[]>(64);
+        var matHistory = new List<float>(64); // per-position material target (side-to-move relative)
 
         int ply = 0;
         while (_game.Result(state) == GameResult.Ongoing && ply < _maxPlies)
@@ -196,6 +207,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             _game.WriteObservation(state, obs);
             obsHistory.Add(obs);
             piHistory.Add(pi);
+            matHistory.Add(MaterialTarget(state));
             state = _game.Apply(state, SelectMove(pi, ply));
             ply++;
         }
@@ -204,7 +216,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         float z = -zTerminalMover;
         for (int i = obsHistory.Count - 1; i >= 0; i--)
         {
-            AddSample(new Sample(obsHistory[i], piHistory[i], z));
+            AddSample(new Sample(obsHistory[i], piHistory[i], Blend(z, matHistory[i])));
             z = -z;
         }
     }
@@ -216,6 +228,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         var state = _game.Root();
         var obsHistory = new List<float[]>(64);
         var piHistory = new List<float[]>(64);
+        var matHistory = new List<float>(64); // per learner-position material target (learner relative)
 
         bool learnerToMove = learnerFirst;
         int ply = 0;
@@ -230,6 +243,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
                 _game.WriteObservation(state, obs);
                 obsHistory.Add(obs);
                 piHistory.Add(pi);
+                matHistory.Add(MaterialTarget(state)); // state's side-to-move = learner here
                 move = SelectMove(pi, ply);
             }
             else move = RandomLegalMove(state, _searchRng);
@@ -246,8 +260,14 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             _ => 0f,                                     // draw or ply-cap
         };
         for (int i = 0; i < obsHistory.Count; i++)
-            AddSample(new Sample(obsHistory[i], piHistory[i], z));
+            AddSample(new Sample(obsHistory[i], piHistory[i], Blend(z, matHistory[i])));
     }
+
+    // Per-position material target from the side-to-move's view, squashed to [-1,1] (0 when the game has no material).
+    private float MaterialTarget(TState state) => _material is null ? 0f : MathF.Tanh(_material.MaterialAdvantage(state) / MaterialScale);
+
+    // Blend the sparse game outcome z with the dense material target (α = _materialWeight); pure z when no material.
+    private float Blend(float z, float mat) => _material is null ? z : (1f - _materialWeight) * z + _materialWeight * mat;
 
     private void AddSample(Sample sample)
     {
@@ -340,12 +360,11 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // ── Auto-difficulty ladder (M40.4a) ──────────────────────────────────────────────────────────────────────────
     // Called after each Checkpoint. Promotes a new difficulty tier when the live net is "significantly stronger" than
     // the last-promoted champion — measured by a net-vs-net arena, so tiers are reliably ordered by construction.
-    // Promote when the live net is "significantly stronger" than the last-promoted champion, judged by EITHER signal:
-    //  • winRate-vs-random improved by ≥ PromoteMargin — the discriminating signal while nets are WEAK (two weak nets
-    //    draw each other head-to-head, so a net-vs-net score stays ~50% and can't tell them apart; beating *random*
-    //    more can); and
-    //  • head-to-head arena score ≥ ArenaMargin — the signal once nets are STRONG enough that winRate-vs-random
-    //    saturates near 100% (delta ≈ 0) but they can actually convert wins against each other.
+    // Promote when the live net is "significantly stronger" than the last-promoted champion, judged by ANY signal:
+    //  • average material margin in the net-vs-net arena ≥ PromoteMaterial — the PRIMARY signal: dense and
+    //    non-saturating, it separates two nets that only ever draw (the whole point of material shaping); OR
+    //  • winRate-vs-random improved by ≥ PromoteMargin (fallback while very weak); OR
+    //  • head-to-head win/draw score ≥ ArenaMargin (fallback once winRate-vs-random saturates near 100%).
     private void MaybePromoteDifficulty()
     {
         if (_net is null || _ladder is null) return;
@@ -353,11 +372,13 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
 
         double championWinRate = _tiers.Count > 0 ? _tiers[^1].WinRate : double.NaN;
         double delta = _lastWinRate - championWinRate;
-        double arena = ArenaVsNet(_net, _champion, _ladder.ArenaGames);
+        var (arena, material) = ArenaVsNet(_net, _champion, _ladder.ArenaGames);
+        bool byMaterial = _material is not null && material >= _ladder.PromoteMaterial;
         bool byWinRate = !double.IsNaN(championWinRate) && !double.IsNaN(_lastWinRate) && delta >= _ladder.PromoteMargin;
         bool byArena = arena >= _ladder.ArenaMargin;
-        Log($"ladder: vs Level {_tierCount} — winRate-vs-random {_lastWinRate:P0} vs champion {championWinRate:P0} (Δ {delta:P0}, need +{_ladder.PromoteMargin:P0}) | head-to-head {arena:P0} over {_ladder.ArenaGames} (need {_ladder.ArenaMargin:P0})");
-        if (byWinRate || byArena) PromoteTier(byWinRate ? $"winRate-vs-random +{delta:P0}" : $"head-to-head {arena:P0}");
+        Log($"ladder: vs Level {_tierCount} — material {material:+0.00;-0.00} pawns (need +{_ladder.PromoteMaterial:0.00}) | winRate-vs-random {_lastWinRate:P0} vs {championWinRate:P0} (Δ {delta:P0}, +{_ladder.PromoteMargin:P0}) | head-to-head {arena:P0} of {_ladder.ArenaGames} ({_ladder.ArenaMargin:P0})");
+        if (byMaterial || byWinRate || byArena)
+            PromoteTier(byMaterial ? $"material {material:+0.00;-0.00} pawns" : byWinRate ? $"winRate-vs-random +{delta:P0}" : $"head-to-head {arena:P0}");
     }
 
     private void PromoteTier(string reason)
@@ -377,12 +398,13 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         Log($"ladder: PROMOTED Level {_tierCount} → {ckptName} ({reason}); winRate-vs-random {_lastWinRate:P1}, games {_totalGames:N0}");
     }
 
-    // Score for `challenger` vs `champion` over `games` full games (win 1 / draw 0.5), colours alternated. Both nets
-    // pick deterministically (eval MCTS, argmax, no root noise); games are diversified by a short randomized opening
-    // drawn from `_arenaRng` (independent of the training/eval streams).
-    private double ArenaVsNet(PolicyValueNet challenger, PolicyValueNet champion, int games)
+    // `challenger` vs `champion` over `games` full games, colours alternated, both picking deterministically (eval
+    // MCTS argmax, no root noise); games diversified by a short randomized opening drawn from `_arenaRng` (independent
+    // of the training/eval streams). Returns BOTH the win/draw Score (win 1 / draw 0.5) AND the challenger's average
+    // end-of-game material margin in pawns — the non-saturating signal that separates two nets that only ever draw.
+    private (double Score, double Material) ArenaVsNet(PolicyValueNet challenger, PolicyValueNet champion, int games)
     {
-        double score = 0;
+        double score = 0, material = 0;
         for (int g = 0; g < games; g++)
         {
             int challengerSide = g % 2 == 0 ? 1 : 2;
@@ -401,8 +423,14 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             }
             if (result == GameResult.Loss) { int lastMover = 3 - mover; if (lastMover == challengerSide) score += 1; }
             else if (result != GameResult.Win) score += 0.5; // draw / ply-cap
+            if (_material is not null)
+            {
+                // MaterialAdvantage is side-to-move relative; at the terminal state the side to move is `mover`.
+                float mat = _material.MaterialAdvantage(state);
+                material += mover == challengerSide ? mat : -mat;
+            }
         }
-        return score / games;
+        return (score / games, material / games);
     }
 
     private int ModelMoveWith(PolicyValueNet net, TState state)
@@ -496,4 +524,4 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
 /// (the signal while nets are weak/drawish), OR <paramref name="ArenaMargin"/> = the head-to-head net-vs-net score
 /// (the signal once winRate-vs-random saturates). <paramref name="OpeningPlies"/> is the max random opening length
 /// used to diversify arena games; <paramref name="Sims"/> is the default per-tier search budget written to the manifest.</summary>
-internal sealed record LadderOptions(string Dir, double PromoteMargin, double ArenaMargin, int ArenaGames, int Sims, int OpeningPlies);
+internal sealed record LadderOptions(string Dir, double PromoteMaterial, double PromoteMargin, double ArenaMargin, int ArenaGames, int Sims, int OpeningPlies);

@@ -10,12 +10,30 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.Chess;
 /// unchanged from M39.1. (Board geometry is absolute — the net learns both colours via the side-to-move plane;
 /// perspective canonicalization is a later efficiency lever, PLAN M39.3.)
 /// </summary>
-public sealed class ChessGame : IZeroSumGame<ChessState>
+public sealed class ChessGame : IZeroSumGame<ChessState>, IMaterialScore<ChessState>
 {
     private const int Planes = 18;
 
+    // Standard relative piece values, indexed by |piece| (none, P, N, B, R, Q, K). The king isn't "captured"
+    // (reaching it is checkmate — the ±1 game outcome), so it scores 0 and cancels between the two sides.
+    private static readonly int[] PieceValues = [0, 1, 3, 3, 5, 9, 0];
+
     public int PolicySize => ChessMoveEncoding.Size;      // 4672
     public int ObservationSize => Planes * 64;            // 1152
+
+    /// <summary>The side-to-move's material advantage in pawns (its pieces − the opponent's). Dense reward signal
+    /// for self-play shaping + the difficulty ladder's strength metric (<see cref="IMaterialScore{TState}"/>).</summary>
+    public float MaterialAdvantage(ChessState state)
+    {
+        int white = 0, black = 0;
+        foreach (sbyte p in state.Squares)
+        {
+            int v = PieceValues[Math.Abs(p)];
+            if (p > 0) white += v; else if (p < 0) black += v;
+        }
+        int diff = white - black;
+        return state.WhiteToMove ? diff : -diff;
+    }
 
     public ChessState Root(ulong? seed = null) => ChessState.StartPosition();
 

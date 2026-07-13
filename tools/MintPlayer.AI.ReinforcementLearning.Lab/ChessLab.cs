@@ -30,11 +30,16 @@ internal static class ChessLab
         // --ladder: hands-off difficulty ladder (M40.4). Whenever the live net beats the last-promoted checkpoint by a
         // margin in a net-vs-net arena, a new tier .ckpt + updated manifest are written straight into the web app's
         // models dir — so `--game chess --ladder --hours N` grows the site's difficulty roster with no manual steps.
+        // Dense material-shaped value target (α): blend of game outcome + per-position material advantage. 0 = pure
+        // outcome (old behaviour); default 0.5 gives a weak net a gradient on every capture (the anti-plateau fix).
+        float materialWeight = a.Flt("--material-weight", 0.5f);
+
         LadderOptions? ladder = a.Has("--ladder")
             ? new LadderOptions(
                 Dir: a.Str("--difficulty-dir", Path.Combine("src", "RLDemo.Web", "wwwroot", "models")),
-                PromoteMargin: a.Dbl("--promote-margin", 0.08),  // required rise in winRate-vs-random over the champion
-                ArenaMargin: a.Dbl("--arena-margin", 0.60),      // OR: head-to-head score once winRate-vs-random saturates
+                PromoteMaterial: a.Dbl("--promote-material", 0.75), // primary gate: avg pawns of material over the champion
+                PromoteMargin: a.Dbl("--promote-margin", 0.08),     // fallback: rise in winRate-vs-random
+                ArenaMargin: a.Dbl("--arena-margin", 0.60),         // fallback: head-to-head score once winRate saturates
                 ArenaGames: a.Int("--arena-games", 20),
                 Sims: a.Int("--difficulty-sims", 128),
                 OpeningPlies: a.Int("--opening-plies", 6))
@@ -49,7 +54,8 @@ internal static class ChessLab
         var cfg = new Mcts.Config(Simulations: sims);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             _ => new SelfPlayCampaign<ChessState>(game, "chess", seed, learningRate, hidden, cfg, gamesPerChunk,
-                tempMoves: 12, evalGames: evalGames, maxPlies: 200, opponentRandomFrac: opponentRandom, ladder: ladder),
+                tempMoves: 12, evalGames: evalGames, maxPlies: 200, opponentRandomFrac: opponentRandom, ladder: ladder,
+                materialWeight: materialWeight),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
     }
