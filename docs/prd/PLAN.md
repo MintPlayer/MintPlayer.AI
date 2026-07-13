@@ -1459,10 +1459,11 @@ is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); th
   generated `PgPolicyValueNet`; committed `chess_solver.ts` emitted. **Gate MET:** `ChessNetParityTests` — C#
   `PolicyValueNet.Forward` vs the generated net agree within f32 tol on the start position (round-tripped through the
   real `.ckpt` bytes), plus observation parity + an MCTS runtime smoke (valid legal-move distribution, `chooseMove`
-  legal); 358/358 fast tests. Also did the `std.math` cleanup (`Math.abs`/`Math.max`, kept `isign`). **Known:** the
-  generated TS is loosely typed in spots (emitter drops local `List` annotations → `let d = []`; renders `List<T?>` as
-  `T | null[]`) — compiles under the app's non-strict `tsconfig` and is runtime-correct; filed with a verified two-part
-  fix as **MintPlayer.Polyglot issue #27**.
+  legal); 358/358 fast tests. Also did the `std.math` cleanup (`Math.abs`/`Math.max`, kept `isign`). The two TS-emitter
+  gaps chess first hit (local `List` decls losing their annotation; `List<T?>` → `T | null[]`) were filed as
+  **MintPlayer.Polyglot issue #27** with a verified two-part fix, **fixed upstream in 0.7.0 (PR #28)**; the Environments
+  `.csproj` is on 0.7.0 and the regenerated `chess_solver.ts` is now **strictly typed** (`let d: [number,number][] = []`,
+  `children: (PgMctsNode | null)[]`) — verified strict-`tsc`-clean. 365/365 tests on 0.7.0.
 - **M40.3 — the browser page.** `chess-director.ts` (runs the transpiled `mcts`+net over the loaded `.ckpt`, like
   `fruit-cake-director.ts`) + an Angular chess component (board, click-to-move validated by the transpiled
   `legalMoves`, AI reply, check/mate/draw, last-move highlight) + route/nav; ship `wwwroot/models/chess.az.ckpt`

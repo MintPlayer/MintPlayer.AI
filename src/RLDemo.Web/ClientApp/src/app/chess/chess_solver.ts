@@ -79,7 +79,7 @@ export class PgChessState {
         return (mask - (mask & bits) | 0);
     }
     static knightDeltas(): [number, number][] {
-        let d = [];
+        let d: [number, number][] = [];
         d.push([1, 2]);
         d.push([2, 1]);
         d.push([2, (-1 | 0)]);
@@ -91,7 +91,7 @@ export class PgChessState {
         return d;
     }
     static kingDeltas(): [number, number][] {
-        let d = [];
+        let d: [number, number][] = [];
         d.push([1, 0]);
         d.push([1, 1]);
         d.push([0, 1]);
@@ -103,7 +103,7 @@ export class PgChessState {
         return d;
     }
     static bishopDirs(): [number, number][] {
-        let d = [];
+        let d: [number, number][] = [];
         d.push([1, 1]);
         d.push([(-1 | 0), 1]);
         d.push([1, (-1 | 0)]);
@@ -111,7 +111,7 @@ export class PgChessState {
         return d;
     }
     static rookDirs(): [number, number][] {
-        let d = [];
+        let d: [number, number][] = [];
         d.push([1, 0]);
         d.push([(-1 | 0), 0]);
         d.push([0, 1]);
@@ -119,7 +119,7 @@ export class PgChessState {
         return d;
     }
     static encDirs(): [number, number][] {
-        let d = [];
+        let d: [number, number][] = [];
         d.push([0, 1]);
         d.push([1, 1]);
         d.push([1, 0]);
@@ -131,7 +131,7 @@ export class PgChessState {
         return d;
     }
     static encKnights(): [number, number][] {
-        let d = [];
+        let d: [number, number][] = [];
         d.push([1, 2]);
         d.push([2, 1]);
         d.push([2, (-1 | 0)]);
@@ -143,7 +143,7 @@ export class PgChessState {
         return d;
     }
     clone(): PgChessState {
-        let sq = [];
+        let sq: number[] = [];
         for (const v of this.squares) {
             sq.push(v);
         }
@@ -232,7 +232,7 @@ export class PgChessState {
         return this.isSquareAttacked(this.kingSquare(white), !white);
     }
     legalMoves(): PgChessMove[] {
-        let legal = [];
+        let legal: PgChessMove[] = [];
         const pseudo = this.pseudoLegal();
         for (const m of pseudo) {
             const next = this.makeMove(m);
@@ -243,7 +243,7 @@ export class PgChessState {
         return legal;
     }
     pseudoLegal(): PgChessMove[] {
-        let moves = [];
+        let moves: PgChessMove[] = [];
         const white = this.whiteToMove;
         for (let sq = 0; sq < 64; sq++) {
             const piece = this.squares[sq];
@@ -387,7 +387,7 @@ export class PgChessState {
         }
     }
     makeMove(move: PgChessMove): PgChessState {
-        let b = [];
+        let b: number[] = [];
         for (const v of this.squares) {
             b.push(v);
         }
@@ -496,7 +496,7 @@ export class PgChessState {
         return nodes;
     }
     legalMoveIndices(): number[] {
-        let out = [];
+        let out: number[] = [];
         const moves = this.legalMoves();
         for (const m of moves) {
             out.push(PgChessState.encode(m));
@@ -504,7 +504,7 @@ export class PgChessState {
         return out;
     }
     writeObservation(): number[] {
-        let obs = [];
+        let obs: number[] = [];
         for (let i = 0; i < 1152; i++) {
             obs.push(0.0);
         }
@@ -677,7 +677,7 @@ export class PgPolicyValueNet {
         return new PgNetOut(logits, value[0]);
     }
     static linear(x: number[], w: number[], wOff: number, b: number[], bOff: number, inDim: number, outDim: number): number[] {
-        let out = [];
+        let out: number[] = [];
         for (let o = 0; o < outDim; o++) {
             let s = b[(bOff + o | 0)];
             for (let i = 0; i < inDim; i++) {
@@ -688,7 +688,7 @@ export class PgPolicyValueNet {
         return out;
     }
     static relu(x: number[]): number[] {
-        let out = [];
+        let out: number[] = [];
         for (const v of x) {
             out.push(((a, b) => (a >= b ? a : b))(0.0, v));
         }
@@ -700,7 +700,7 @@ export class PgMctsNode {
     p: number[];
     n: number[];
     w: number[];
-    children: PgMctsNode | null[];
+    children: (PgMctsNode | null)[];
     expanded: boolean;
     terminal: boolean;
     terminalValue: number;
@@ -724,7 +724,7 @@ export class PgChessMcts {
                 PgChessMcts.simulate(rootNode, net, root, cpuct);
             }
         }
-        let pi = [];
+        let pi: number[] = [];
         for (let i = 0; i < 4672; i++) {
             pi.push(0.0);
         }
@@ -824,7 +824,7 @@ export class PgChessMcts {
                 mx = out.logits[m];
             }
         }
-        let pr = [];
+        let pr: number[] = [];
         let sum = 0.0;
         for (const m of moves) {
             const e = Math.exp(out.logits[m] - mx);
