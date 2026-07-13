@@ -64,24 +64,27 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
     {
         // One round: parallel Kociemba data-gen (the oracle, not the NN math, bounds throughput on CPU) → shuffle
         // → supervised batches. Window-mean loss accumulates across rounds until the runner calls Evaluate.
-        var samples = new List<CubeOracle.LabeledState>(SamplesPerRound + 64);
-        var perWorker = new List<CubeOracle.LabeledState>[_generators];
+        // DeterministicParallel derives each generator's RNG from (roundBase, worker+1) — byte-identical to the old
+        // hand-rolled `roundBase + φ·(worker+1)` seeding, and each returns its own list (no shared window/counter).
         ulong roundBase = unchecked(seed + (ulong)(++_round) * 1_000_003UL);
-        long solvesThisRound = 0;
-        Parallel.For(0, _generators, worker =>
+        int per = SamplesPerRound / _generators;
+        var perWorker = DeterministicParallel.Generate(_generators, roundBase, baseIndex: 1, (worker, rng) =>
         {
-            var workerRng = new Xoshiro256StarStar(unchecked(roundBase + 0x9E3779B97F4A7C15UL * (ulong)(worker + 1)));
-            var local = new List<CubeOracle.LabeledState>(SamplesPerRound / _generators + 40);
-            while (local.Count < SamplesPerRound / _generators)
+            var local = new List<CubeOracle.LabeledState>(per + 40);
+            int solves = 0;
+            while (local.Count < per)
             {
-                var path = CubeOracle.LabelScramblePath(workerRng);
+                var path = CubeOracle.LabelScramblePath(rng);
                 if (path is null) continue;
                 local.AddRange(path);
-                Interlocked.Increment(ref solvesThisRound);
+                solves++;
             }
-            perWorker[worker] = local;
-        });
-        foreach (var local in perWorker) samples.AddRange(local);
+            return (Samples: local, Solves: solves);
+        }, parallel: true);
+
+        var samples = new List<CubeOracle.LabeledState>(SamplesPerRound + 64);
+        long solvesThisRound = 0;
+        foreach (var w in perWorker) { samples.AddRange(w.Samples); solvesThisRound += w.Solves; }
         _totalSolves += solvesThisRound;
         CubePolicyTraining.Shuffle(samples, _rng);
 

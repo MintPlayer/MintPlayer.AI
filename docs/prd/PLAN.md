@@ -1499,7 +1499,7 @@ is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); th
 human. **Non-goals:** engine strength, a server chess endpoint, bit-exact transcendentals, browser training. See
 `CHESS_WEB_POLYGLOT_PRD.md` (incl. its reference appendix: files to port, checkpoint byte-format, commands).
 
-## M41 — Reusable deterministic CPU-parallel data generation  *(2026-07-13; see `PARALLEL_SELFPLAY_PRD.md`)* — M41.1 + M41.2 ✅ SHIPPED (M41.3 cube-dedup skipped as optional)
+## M41 — Reusable deterministic CPU-parallel data generation  *(2026-07-13; see `PARALLEL_SELFPLAY_PRD.md`)* — M41.1 + M41.2 + M41.3 ✅ SHIPPED
 
 **Why:** AlphaZero self-play (`SelfPlayCampaign`) generates games **single-threaded** (`TrainChunk`'s `for … PlayGame()`),
 and for chess the wall-time is dominated by CPU-bound MCTS **movegen** — so a multi-core box mostly idles while training
@@ -1524,8 +1524,12 @@ bitwise-reproducibility invariant (M25/M26/**M36 SHA-verified**) is preservable 
   a Connect-4 run gives a **byte-identical checkpoint** at sequential vs parallel-dop-1 vs dop-8
   (`SelfPlayCampaignTests.ParallelGeneration_...AtAnyDop`). Eval/arena left sequential (not the bottleneck; can't affect
   weights). Commit `a9fa5c3`.
-- **M41.3 (optional) — cube dedup: SKIPPED** (deferred; the two cube campaigns keep their hand-rolled `Parallel.For`.
-  Low value vs. the conv-net work; can adopt the primitive later).
+- **M41.3 ✅ — cube dedup.** `CubeImitationCampaign` + `CubeEfficientCampaign` migrated off their hand-rolled
+  `Parallel.For` onto `DeterministicParallel.Generate` (new raw-`ulong baseSeed` overload; the `SeedSequence` overload
+  now delegates to it). Passing `(baseSeed: roundBase, baseIndex: 1)` reproduces the old `roundBase + φ·(worker+1)`
+  per-worker seeding **byte-for-byte** — verified by `DeterministicParallelTests.RawSeedOverload_ReproducesTheCube…`,
+  so cube training output is unchanged. The shared `Interlocked` solve-counter is gone (each generator returns its own
+  count, summed on the owner thread).
 
 **Answers the owner's question:** the parallelism isn't in Core for no principled reason — it was hand-rolled per Lab
 campaign; the pattern is generic and matches Core's existing determinism approach, so it should be (and now will be)

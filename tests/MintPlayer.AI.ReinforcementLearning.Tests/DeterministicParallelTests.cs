@@ -81,6 +81,26 @@ public class DeterministicParallelTests
     }
 
     [Fact]
+    public void RawSeedOverload_ReproducesTheCubeHandRolledWorkerSeeding()
+    {
+        // The cube campaigns seeded generator w as Xoshiro(roundBase + φ·(w+1)). Migrating them onto the primitive
+        // with (baseSeed: roundBase, baseIndex: 1) must derive byte-identical per-worker RNG streams — otherwise the
+        // refactor would silently change cube training output. This locks that equivalence.
+        const ulong roundBase = 123456789UL;
+        const ulong golden = 0x9E3779B97F4A7C15UL;
+        const int workers = 6;
+
+        var viaPrimitive = DeterministicParallel.Generate(workers, roundBase, baseIndex: 1,
+            (_, rng) => new[] { rng.NextUInt64(), rng.NextUInt64(), rng.NextUInt64() }, parallel: false);
+
+        for (int w = 0; w < workers; w++)
+        {
+            var expected = new Xoshiro256StarStar(unchecked(roundBase + golden * (ulong)(w + 1)));
+            for (int i = 0; i < 3; i++) Assert.Equal(expected.NextUInt64(), viaPrimitive[w][i]);
+        }
+    }
+
+    [Fact]
     public void ZeroCount_ReturnsEmpty()
         => Assert.Empty(Run(parallel: true, maxDop: null, count: 0));
 

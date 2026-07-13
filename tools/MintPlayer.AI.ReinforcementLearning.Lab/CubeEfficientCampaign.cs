@@ -86,18 +86,19 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     public long TrainChunk()
     {
         // Self-supervised data gen on all cores: scrambling is independent and (unlike Kociemba imitation) no
-        // solver bounds throughput — generation is nearly free.
-        var samples = new List<CubeOracle.LabeledState>(SamplesPerRound + 256);
-        var perWorker = new List<CubeOracle.LabeledState>[_generators];
+        // solver bounds throughput — generation is nearly free. DeterministicParallel derives each generator's RNG
+        // from (roundBase, worker+1) — byte-identical to the old hand-rolled `roundBase + φ·(worker+1)` seeding.
         ulong roundBase = unchecked(seed + (ulong)(++_round) * 1_000_003UL);
-        Parallel.For(0, _generators, worker =>
+        int per = SamplesPerRound / _generators;
+        var perWorker = DeterministicParallel.Generate(_generators, roundBase, baseIndex: 1, (worker, rng) =>
         {
-            var workerRng = new Xoshiro256StarStar(unchecked(roundBase + 0x9E3779B97F4A7C15UL * (ulong)(worker + 1)));
-            var local = new List<CubeOracle.LabeledState>(SamplesPerRound / _generators + 64);
-            while (local.Count < SamplesPerRound / _generators)
-                local.AddRange(CubeSelfSupervised.LabelScramblePath(workerRng, maxScramble));
-            perWorker[worker] = local;
-        });
+            var local = new List<CubeOracle.LabeledState>(per + 64);
+            while (local.Count < per)
+                local.AddRange(CubeSelfSupervised.LabelScramblePath(rng, maxScramble));
+            return local;
+        }, parallel: true);
+
+        var samples = new List<CubeOracle.LabeledState>(SamplesPerRound + 256);
         foreach (var local in perWorker) samples.AddRange(local);
         CubePolicyTraining.Shuffle(samples, _rng);
 

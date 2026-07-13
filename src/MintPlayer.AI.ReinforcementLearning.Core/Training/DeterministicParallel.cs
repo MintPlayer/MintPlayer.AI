@@ -41,13 +41,25 @@ public static class DeterministicParallel
         int count, SeedSequence seeds, int stream, long baseIndex,
         Func<int, Xoshiro256StarStar, TItem> makeItem, bool parallel, int? maxDop = null)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(count);
         ArgumentNullException.ThrowIfNull(seeds);
+        return Generate(count, seeds.Derive(stream), baseIndex, makeItem, parallel, maxDop);
+    }
+
+    /// <summary>
+    /// As above, but for callers that manage their own base seed rather than fanning out a <see cref="SeedSequence"/>
+    /// — e.g. a data-gen loop keyed on a per-round seed. Item <c>i</c>'s RNG is
+    /// <c>Xoshiro(<paramref name="baseSeed"/> + (<paramref name="baseIndex"/> + i)·φ)</c>, so passing
+    /// <c>(baseSeed: roundSeed, baseIndex: 1)</c> reproduces the common <c>roundSeed + φ·(worker+1)</c> per-worker
+    /// seeding exactly.
+    /// </summary>
+    public static TItem[] Generate<TItem>(
+        int count, ulong baseSeed, long baseIndex,
+        Func<int, Xoshiro256StarStar, TItem> makeItem, bool parallel, int? maxDop = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
         ArgumentNullException.ThrowIfNull(makeItem);
 
         var results = new TItem[count];
-        ulong baseSeed = seeds.Derive(stream);
-
         if (parallel && count > 1)
         {
             var options = new ParallelOptions();
