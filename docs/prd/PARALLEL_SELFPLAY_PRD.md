@@ -1,8 +1,23 @@
 # Reusable deterministic CPU-parallel data generation (self-play + cube) — PRD
 
-**Status:** Planned · 2026-07-13 · branch TBD (off `master`/the chess branch)
+**Status:** ✅ SHIPPED 2026-07-13 (branch `m39-chess-selfplay-plan`, PR #32) — all of M41.1/M41.2/M41.3.
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M41 · **Motivated by:** chess self-play is CPU-bound (movegen) and single-threaded, so a multi-core box sits ~idle while training crawls (see the M40.4 material-shaping run: 256 sims/move, one core).
+
+## Implementation status (what actually shipped vs. this design)
+- **M41.1** `Core/Training/DeterministicParallel.cs` (commit `bc0c48f`). Two overloads: the `SeedSequence`+stream form in
+  §4a (with `int stream`, not `uint`), plus a **raw-`ulong baseSeed` overload** added in M41.3 (the SeedSequence form
+  delegates to it). 12+1 unit tests: bitwise parallel==sequential across DOP 1/2/4/8/16, ordering, distinct streams,
+  edges, and the cube-seed-equivalence lock.
+- **M41.2** parallel self-play (commit `a9fa5c3`). Per §4b, minus: **eval/arena were left sequential** (not the
+  bottleneck, and they can't affect trained weights), and no separate arena RNG work was needed. Gate MET — Connect-4
+  **byte-identical checkpoint** at sequential vs dop-1 vs dop-8.
+- **M41.3** cube dedup (commit `bed7577`) — **done, not skipped.** Better than this doc's "outputs may change, re-verify"
+  assumption: the raw-seed overload reproduces the old `roundBase + φ·(worker+1)` seeding **byte-for-byte**, so cube
+  output is unchanged (locked by a test). The shared `Interlocked` solve-counter was removed (per-generator counts summed
+  on the owner thread).
+- **Not done:** a formal games/hour speedup measurement on chess (the DOP-invariance gate + architecture make the speedup
+  structural; left to observe in a real training run).
 
 ## 1. Problem
 

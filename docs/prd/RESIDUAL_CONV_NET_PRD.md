@@ -1,8 +1,21 @@
 # Convolutional residual policy/value net (Core) + chess adoption — PRD
 
-**Status:** Planned · 2026-07-13 · branch TBD (off `master`/the chess branch, stacked after M41)
+**Status:** M42.1 + M42.2 ✅ SHIPPED 2026-07-13 (branch `m39-chess-selfplay-plan`, PR #32) · M42.3 ⏳ training · M42.4 🔜 gated on M42.3.
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M42 · **Depends on:** M41 (parallel self-play — makes the training iterations this needs affordable) · **Supersedes** the "flat MLP is the ceiling" note in [CHESS_WEB_POLYGLOT_PRD.md](CHESS_WEB_POLYGLOT_PRD.md) and [CHESS_SELFPLAY_PRD.md](CHESS_SELFPLAY_PRD.md).
+
+## Implementation status (what actually shipped vs. this design)
+- **M42.1** `Tensor.Conv2D` (commit `67806af`) — im2col → existing GEMM → col2im, in `Core/Numerics/TensorConv.cs`.
+  Confirmed **no `IComputeBackend`/ILGPU change was needed** (the design's preferred route). Rank-2 `[N, C·H·W]`, LayerNorm
+  reused. Gate MET: 3 finite-difference gradient checks (3×3 SAME, stride-2 valid, 1×1).
+- **M42.2** `IPolicyValueNet` + `ConvResidualPolicyValueNet` + arch-agnostic campaign (commit `21b779d`). Per §4b/§4c,
+  with an `IPolicyValueNetBuilder` (Mlp/Conv) as the arch factory. **The de-risking two-headed-residual-MLP checkpoint
+  (§M42.2) was SKIPPED** — went straight to the conv net. Gate MET: head shapes, exact save/load round-trip, loss falls;
+  MLP self-play determinism gate still byte-identical (zero behaviour change).
+- **M42.3** ⏳ conv training (`--arch conv --filters 64 --blocks 6`) — runs offline via the Lab; owner-driven (paused
+  during PR merge, to be restarted). Gate unchanged: beat the MLP baseline / ≥1 ladder tier promotes.
+- **M42.4** 🔜 browser conv forward + parity — **not started, deliberately gated on M42.3** proving the conv net beats
+  the baseline (PRD risk #2). The current shipped browser demo uses the flat-MLP net (committed at `chess.az.d1.ckpt`).
 
 ## 1. Problem
 

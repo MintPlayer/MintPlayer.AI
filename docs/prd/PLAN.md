@@ -1416,7 +1416,7 @@ chess is the headline consumer. **Left out of v1:** DQN/PPO for self-play (wrong
 window instead), bitboards (unless a bench forces it), superhuman strength. **Whole-milestone gate:** builds 0/0; fast suite green;
 perft passes; both games' self-play win-rate rises vs a fixed baseline; resume roundtrips. See `CHESS_SELFPLAY_PRD.md`.
 
-## M40 — Play the chess AI in the browser (single-source via MintPlayer.Polyglot)  *(planned 2026-07-12; see `CHESS_WEB_POLYGLOT_PRD.md`)* 🔜
+## M40 — Play the chess AI in the browser (single-source via MintPlayer.Polyglot)  *(2026-07-12; see `CHESS_WEB_POLYGLOT_PRD.md`)* — M40.1–M40.4 ✅ SHIPPED (net committed; conv-net strength upgrade tracked in M42)
 
 **Goal.** Play the self-taught chess AI (M39) **in the browser**, client-side, with **zero server inference** — the
 FruitCake pattern (ARCHITECTURE §10): write the inference path once in a `.pg`, transpile to C# (training/serving) +
@@ -1464,7 +1464,7 @@ is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); th
   **MintPlayer.Polyglot issue #27** with a verified two-part fix, **fixed upstream in 0.7.0 (PR #28)**; the Environments
   `.csproj` is on 0.7.0 and the regenerated `chess_solver.ts` is now **strictly typed** (`let d: [number,number][] = []`,
   `children: (PgMctsNode | null)[]`) — verified strict-`tsc`-clean. 365/365 tests on 0.7.0.
-- **M40.3 — the browser page. ✅ code+UX SHIPPED 2026-07-13 (weights follow).** `chess-director.ts` (runs the
+- **M40.3 — the browser page. ✅ SHIPPED 2026-07-13 (net committed).** `chess-director.ts` (runs the
   transpiled `PgChessMcts`+net over the loaded `.ckpt`) + a standalone Angular chess component: an 8×8 board (White at
   the bottom, square rows), click-to-move validated by the transpiled engine (legal-target dots, orange
   selected/last-move highlights, auto-queen), check/checkmate/stalemate/draw status, a **captured-pieces tray** (red ✕
@@ -1473,9 +1473,10 @@ is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); th
   chunk clean; `/chess` served; `/api/chess/*` → 404 (zero server inference); director/net/solver strict-`tsc` clean;
   and the transpiled engine+net+MCTS played a full 80-ply legal game in Node over the real checkpoint. Playwright MCP
   was unavailable, so the in-browser click-through wasn't automated — verified structurally + functionally instead.
-  **Pending:** ship `wwwroot/models/chess.az.ckpt` (LFS) from a longer training run (in progress) for a worthier
-  opponent — the current net plays legal-but-weak chess.
-- **M40.4 — difficulty via an auto-captured net ladder (both modes). 🔜 planned (investigation + owner refinement
+  **Net SHIPPED (commit `1dd734d`):** `wwwroot/models/chess.az.d1.ckpt` (LFS) + `chess-difficulties.json` committed, so a
+  fresh deploy has a net to load; verified headless (loads + plays a full legal game). Honest caveat: this is the flat-MLP
+  net → legal-but-weak chess; the conv-net upgrade is tracked in **M42** (replaces it with no page changes).
+- **M40.4 — difficulty via an auto-captured net ladder (both modes). ✅ SHIPPED (investigation + owner refinement
   2026-07-13; see `CHESS_WEB_POLYGLOT_PRD.md` §9, esp. §9.6).** Training is offline-only (the Lab); the ladder is
   produced **hands-off by the training agent** — when the live net becomes *significantly stronger than the last
   promoted checkpoint*, the Lab auto-writes a new difficulty `.ckpt` into `src/RLDemo.Web/wwwroot/models/` + updates a
