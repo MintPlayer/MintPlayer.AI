@@ -17,6 +17,7 @@
 // construct here is one proven by fruitcake_solver.pg.
 
 import { List } from "std.collections"
+import { Math } from "std.math"
 
 // A move: from/to squares (0..63 = rank*8 + file) plus the promotion piece code
 // (0 = none) for a pawn reaching the last rank. Castling / en passant / double-push
@@ -51,12 +52,10 @@ class PgChessState {
     this.halfmoveClock = halfmoveClock
   }
 
-  // ── small helpers (i32 arithmetic std.math doesn't cover) ─────────────────────────────────
+  // ── small helpers (std.math covers abs/max/min type-preserving on i32; only sign is missing) ─
   static fn fileOf(sq: i32): i32 => sq % 8
   static fn rankOf(sq: i32): i32 => sq / 8
-  static fn iabs(x: i32): i32 => if x < 0 { -x } else { x }
   static fn isign(x: i32): i32 => if x > 0 { 1 } else { if x < 0 { -1 } else { 0 } }
-  static fn imax(a: i32, b: i32): i32 => if a > b { a } else { b }
   static fn onBoard(f: i32, r: i32): bool => f >= 0 && f < 8 && r >= 0 && r < 8
   static fn isWhite(piece: i32): bool => piece > 0
   static fn pieceType(piece: i32): i32 => if piece < 0 { -piece } else { piece }
@@ -326,12 +325,12 @@ class PgChessState {
     }
 
     // Double push sets the en-passant target square.
-    if t == 1 && iabs(rankOf(move.to) - rankOf(move.from)) == 2 {
+    if t == 1 && Math.abs(rankOf(move.to) - rankOf(move.from)) == 2 {
       newEp = (move.from + move.to) / 2
     }
 
     // Castling: move the rook too.
-    if t == 6 && iabs(fileOf(move.to) - fileOf(move.from)) == 2 {
+    if t == 6 && Math.abs(fileOf(move.to) - fileOf(move.from)) == 2 {
       let rank = rankOf(move.from)
       if fileOf(move.to) == 6 { b[rank * 8 + 5] = b[rank * 8 + 7]; b[rank * 8 + 7] = 0 }   // king-side
       else { b[rank * 8 + 3] = b[rank * 8 + 0]; b[rank * 8 + 0] = 0 }                        // queen-side
@@ -403,6 +402,34 @@ class PgChessState {
     return out
   }
 
+  // The 18-plane × 64 = 1152 observation the net consumes (single-sourced; the C# facade casts f64→float
+  // for the float32 net, the browser feeds it directly). Planes: [0–5] White P,N,B,R,Q,K, [6–11] Black,
+  // [12] side-to-move (all-ones iff white to move), [13–16] castling WK/WQ/BK/BQ (each all-ones iff the
+  // right is held), [17] en-passant target square (one-hot). Must match ChessGame.WriteObservation exactly.
+  fn writeObservation(): List<f64> {
+    var obs: List<f64> = List<f64>()
+    for i in 0..1152 { obs.add(0.0) }
+
+    for sq in 0..64 {
+      let piece = this.squares[sq]
+      if piece == 0 { continue }
+      let t = pieceType(piece) - 1                    // 0..5
+      let plane = if piece > 0 { t } else { 6 + t }   // white vs black block
+      obs[plane * 64 + sq] = 1.0
+    }
+    if this.whiteToMove { this.fillPlane(obs, 12) }
+    if (this.castling & CastleWK) != 0 { this.fillPlane(obs, 13) }
+    if (this.castling & CastleWQ) != 0 { this.fillPlane(obs, 14) }
+    if (this.castling & CastleBK) != 0 { this.fillPlane(obs, 15) }
+    if (this.castling & CastleBQ) != 0 { this.fillPlane(obs, 16) }
+    if this.enPassant >= 0 { obs[17 * 64 + this.enPassant] = 1.0 }
+    return obs
+  }
+
+  fn fillPlane(obs: List<f64>, plane: i32) {
+    for sq in 0..64 { obs[plane * 64 + sq] = 1.0 }
+  }
+
   // Apply an encoded action index (a queen-promotion rides the queen planes and decodes with
   // promotion 0 → promote a pawn reaching the last rank to a Queen by default).
   fn applyIndex(index: i32): PgChessState {
@@ -429,7 +456,7 @@ class PgChessState {
       plane = 56 + knightIndex(df, dr)
     } else {
       let dir = dirIndex(isign(df), isign(dr))
-      let dist = imax(iabs(df), iabs(dr))
+      let dist = Math.max(Math.abs(df), Math.abs(dr))
       plane = dir * 7 + (dist - 1)
     }
     return move.from * PlanesPerSquare + plane
@@ -474,8 +501,8 @@ class PgChessState {
   }
 
   static fn isKnightMove(df: i32, dr: i32): bool {
-    let a = iabs(df)
-    let b = iabs(dr)
+    let a = Math.abs(df)
+    let b = Math.abs(dr)
     return (a == 1 && b == 2) || (a == 2 && b == 1)
   }
 
@@ -497,5 +524,217 @@ class PgChessState {
       i += 1
     }
     return found
+  }
+}
+
+// ── Two-headed policy/value net inference (single-source forward pass) ────────────────────────
+// Mirrors Core/Nn/PolicyValueNet: a ReLU trunk → policy logits (one per action, linear) + a scalar
+// value (linear). INFERENCE ONLY — training stays on the SDK autograd/GEMM. Weights are float32 in
+// the .ckpt; the per-platform parser (chess-net.ts / the C# parity loader) loads them into these f64
+// flat arrays. Trunk weights/biases are concatenated in layer order (each row-major [in, out]) with
+// per-layer offsets from `hidden` — a single List<f64> avoids nested-generic (List<List<f64>>) params,
+// which the transpiler mishandles (same shape as fruitcake's PgDuelingNet).
+
+// forward() output: raw policy logits (length actions) + the raw scalar value (linear — the leaf
+// evaluator applies tanh, matching PolicyValueNet's linear value head + SelfPlayCampaign.Evaluate).
+record PgNetOut(logits: List<f64>, value: f64)
+
+class PgPolicyValueNet {
+  var inputSize: i32
+  var actions: i32
+  var hidden: List<i32>          // trunk hidden widths (from the checkpoint)
+  var trunkWFlat: List<f64>      // trunk weight matrices concatenated in layer order (each row-major [in, out])
+  var trunkBFlat: List<f64>      // trunk biases concatenated in layer order
+  var policyW: List<f64>         // [lastHidden * actions]
+  var policyB: List<f64>         // [actions]
+  var valueW: List<f64>          // [lastHidden * 1]
+  var valueB: List<f64>          // [1]
+
+  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, policyW: List<f64>, policyB: List<f64>, valueW: List<f64>, valueB: List<f64>) {
+    this.inputSize = inputSize
+    this.actions = actions
+    this.hidden = hidden
+    this.trunkWFlat = trunkWFlat
+    this.trunkBFlat = trunkBFlat
+    this.policyW = policyW
+    this.policyB = policyB
+    this.valueW = valueW
+    this.valueB = valueB
+  }
+
+  // obs (length inputSize) → logits (length actions) + scalar value. Matches PolicyValueNet.Forward on one row.
+  fn forward(obs: List<f64>): PgNetOut {
+    var x = obs
+    var prev = this.inputSize
+    var wOff = 0
+    var bOff = 0
+    for l in 0..this.hidden.count {
+      let h = this.hidden[l]
+      x = relu(linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h))
+      wOff += prev * h
+      bOff += h
+      prev = h
+    }
+    let logits = linear(x, this.policyW, 0, this.policyB, 0, prev, this.actions)
+    let value = linear(x, this.valueW, 0, this.valueB, 0, prev, 1)
+    return PgNetOut(logits, value[0])
+  }
+
+  // Dense layer: out[o] = b[bOff+o] + Σ_i x[i]·w[wOff + i*outDim + o]  (w row-major [inDim, outDim]).
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+}
+
+// ── Inference MCTS (AlphaZero PUCT) ───────────────────────────────────────────────────────────
+// Single-source port of Core/Planning/Mcts, minus the self-play-only Dirichlet root noise (this is
+// the browser/serving path). Each simulation walks the tree maximizing Q + U, expands one leaf, and
+// backs the net value up the path NEGATING it every ply (zero-sum). `search` returns the root
+// visit-count distribution over the 4672 action space; `chooseMove` is its argmax.
+
+// A leaf evaluation: priors aligned to the node's legal-move list (masked-softmax over legal) + the
+// tanh value from the side-to-move's perspective.
+record PgLeafEval(priors: List<f64>, value: f64)
+
+class PgMctsNode {
+  var moves: List<i32>              // legal action indices (empty if terminal)
+  var p: List<f64>                  // prior per move (aligned to moves)
+  var n: List<i32>                  // visit count per move
+  var w: List<f64>                  // summed value per move (this node's mover perspective)
+  var children: List<PgMctsNode?>
+  var expanded: bool
+  var terminal: bool
+  var terminalValue: f64            // set when terminal: -1 loss (side-to-move mated) / 0 draw, mover-relative
+
+  init(moves: List<i32>, terminal: bool, terminalValue: f64) {
+    this.moves = moves
+    this.terminal = terminal
+    this.terminalValue = terminalValue
+    this.p = List<f64>()
+    this.n = List<i32>()
+    this.w = List<f64>()
+    this.children = List<PgMctsNode?>()
+    this.expanded = false
+  }
+}
+
+class PgChessMcts {
+  // Run `sims` PUCT simulations from `root` and return the root visit-count distribution over the
+  // 4672 action space (0 for illegal/unvisited). Falls back to raw priors if nothing was visited.
+  static fn search(net: PgPolicyValueNet, root: PgChessState, sims: i32, cpuct: f64): List<f64> {
+    let rootNode = newNode(root)
+    if !rootNode.terminal {
+      expandLeaf(rootNode, net, root)
+      for s in 0..sims { simulate(rootNode, net, root, cpuct) }
+    }
+
+    var pi: List<f64> = List<f64>()
+    for i in 0..4672 { pi.add(0.0) }
+    var total = 0
+    for i in 0..rootNode.moves.count { total += rootNode.n[i] }
+    if total == 0 {
+      for i in 0..rootNode.moves.count { pi[rootNode.moves[i]] = rootNode.p[i] }
+      return pi
+    }
+    for i in 0..rootNode.moves.count { pi[rootNode.moves[i]] = rootNode.n[i] * 1.0 / total }
+    return pi
+  }
+
+  // Best action index (argmax visit count via the returned distribution).
+  static fn chooseMove(net: PgPolicyValueNet, root: PgChessState, sims: i32, cpuct: f64): i32 {
+    let pi = search(net, root, sims, cpuct)
+    var best = -1
+    var bestV = -1.0
+    for i in 0..pi.count { if pi[i] > bestV { bestV = pi[i]; best = i } }
+    return best
+  }
+
+  // Returns the value of `state` from the perspective of its side to move.
+  static fn simulate(node: PgMctsNode, net: PgPolicyValueNet, state: PgChessState, cpuct: f64): f64 {
+    if node.terminal { return node.terminalValue }
+    if !node.expanded { return expandLeaf(node, net, state) }
+
+    let edge = selectChild(node, cpuct)
+    let childState = state.applyIndex(node.moves[edge])
+    if node.children[edge] == null { node.children[edge] = newNode(childState) }
+    let child = node.children[edge]!
+    let value = -simulate(child, net, childState, cpuct)   // flip: child mover's value
+    node.n[edge] = node.n[edge] + 1
+    node.w[edge] = node.w[edge] + value
+    return value
+  }
+
+  static fn selectChild(node: PgMctsNode, cpuct: f64): i32 {
+    var sumN = 0
+    for i in 0..node.n.count { sumN += node.n[i] }
+    let sqrtSum = Math.sqrt(sumN * 1.0)
+    var best = 0
+    var bestScore = -1.0e30
+    for i in 0..node.moves.count {
+      let q = if node.n[i] > 0 { node.w[i] / node.n[i] } else { 0.0 }
+      let u = cpuct * node.p[i] * sqrtSum / (1.0 + node.n[i])
+      let score = q + u
+      if score > bestScore { bestScore = score; best = i }
+    }
+    return best
+  }
+
+  static fn newNode(state: PgChessState): PgMctsNode {
+    let r = state.result()   // 0 ongoing, 1 loss (side-to-move mated), 2 draw
+    if r != 0 {
+      let tv = if r == 1 { -1.0 } else { 0.0 }
+      return PgMctsNode(List<i32>(), true, tv)
+    }
+    return PgMctsNode(state.legalMoveIndices(), false, 0.0)
+  }
+
+  // Evaluate the leaf, seed per-move priors (masked-softmax over legal), return the net's value estimate.
+  static fn expandLeaf(node: PgMctsNode, net: PgPolicyValueNet, state: PgChessState): f64 {
+    let ev = evaluate(net, state, node.moves)
+    let k = node.moves.count
+    node.p = List<f64>()
+    node.n = List<i32>()
+    node.w = List<f64>()
+    node.children = List<PgMctsNode?>()
+    for i in 0..k {
+      node.p.add(ev.priors[i])
+      node.n.add(0)
+      node.w.add(0.0)
+      node.children.add(null)
+    }
+    node.expanded = true
+    return ev.value
+  }
+
+  // Masked-softmax priors over `moves` (aligned) + tanh value. Mirrors SelfPlayCampaign.Evaluate.
+  static fn evaluate(net: PgPolicyValueNet, state: PgChessState, moves: List<i32>): PgLeafEval {
+    let out = net.forward(state.writeObservation())
+    var mx = -1.0e30
+    for m in moves { if out.logits[m] > mx { mx = out.logits[m] } }
+    var pr: List<f64> = List<f64>()
+    var sum = 0.0
+    for m in moves {
+      let e = Math.exp(out.logits[m] - mx)
+      pr.add(e)
+      sum += e
+    }
+    if sum > 0.0 {
+      for i in 0..pr.count { pr[i] = pr[i] / sum }
+    } else {
+      for i in 0..pr.count { pr[i] = 1.0 / pr.count }
+    }
+    return PgLeafEval(pr, Math.tanh(out.value))
   }
 }
