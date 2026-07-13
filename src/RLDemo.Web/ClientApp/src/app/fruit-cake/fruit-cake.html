@@ -6,8 +6,8 @@
 </p>
 
 <div class="modes">
-  <button type="button" [class.active]="mode() === 'human'" (click)="setMode('human')">Play yourself</button>
-  <button type="button" [class.active]="mode() === 'watch'" (click)="setMode('watch')">Watch AI</button>
+  <button type="button" [color]="mode() === 'human' ? colors.primary : colors.secondary" (click)="setMode('human')">Play yourself</button>
+  <button type="button" [color]="mode() === 'watch' ? colors.primary : colors.secondary" (click)="setMode('watch')">Watch AI</button>
 </div>
 
 <div #stage class="fc-stage">
@@ -17,6 +17,7 @@
   <button
     type="button"
     class="fc-fullscreen"
+    [color]="colors.secondary"
     (click)="toggleFullscreen()"
     (pointerdown)="$event.stopPropagation()"
     [attr.aria-label]="isFullscreen() ? 'Exit fullscreen' : 'Enter fullscreen'"

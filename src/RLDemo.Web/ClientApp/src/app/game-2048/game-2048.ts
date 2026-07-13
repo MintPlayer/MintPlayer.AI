@@ -1,6 +1,8 @@
 import { DecimalPipe } from '@angular/common';
 import { Component, DestroyRef, ElementRef, computed, inject, signal, viewChild } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
+import { Color } from '@mintplayer/ng-bootstrap';
+import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 import { Game2048Api, SolveResponse2048, Status2048 } from './game-2048-api';
 import { ClassicEngine, RenderTile } from './game-2048-classic';
 import { Board, exponentOf } from './game-2048-logic';
@@ -13,7 +15,7 @@ const PLAYBACK_INTERVAL = 120;
 
 @Component({
   selector: 'app-game-2048',
-  imports: [DecimalPipe],
+  imports: [DecimalPipe, BsButtonTypeDirective],
   templateUrl: './game-2048.html',
   styleUrl: './game-2048.scss',
   host: { '(window:keydown)': 'onKey($event)' },
@@ -24,6 +26,7 @@ export class Game2048 {
   private readonly boardRef = viewChild<ElementRef<HTMLElement>>('board');
 
   protected readonly gridCells = Array.from({ length: 16 });
+  protected readonly colors = Color;
 
   // Drawn board (exponents). Default: two starter tiles, like a fresh game.
   protected readonly drawn = signal<Board>(startingBoard());

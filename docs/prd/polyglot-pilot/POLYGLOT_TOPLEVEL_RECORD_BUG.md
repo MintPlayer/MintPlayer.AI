@@ -1,10 +1,20 @@
 # Polyglot bug handoff — incremental re-transpile emits a duplicate prelude / non-`partial` PolyglotProgram
 
+> **✅ RESOLVED 2026-07-13 in `MintPlayer.Polyglot.MSBuild` 0.6.0 (PR #26).** The verified stamp-`Outputs` +
+> `RemoveDir` fix (see the 2026-07-12 update below) shipped upstream. This repo is on 0.6.0; the local
+> `_PolyglotForceFullRetranspile` workaround and the `MintPlayer.Polyglot.MSBuild.targets.FIXED` drop-in were
+> removed. Kept for history / root-cause reference.
+
 **Found:** 2026-07-10, during Snake M34 (adding look-ahead search to `snake_solver.pg`).
-**Polyglot:** `MintPlayer.Polyglot.MSBuild` **0.3.1** (transpiler `tools/win-x64/polyglot.exe` 0.3.1).
-**Polyglot source:** `C:\Repos\MintPlayer.Polyglot`
+**Polyglot:** `MintPlayer.Polyglot.MSBuild` **0.3.1** — **still present in 0.5.3** (verified 2026-07-12; see the update at
+the bottom). This is an **MSBuild `.targets` bug, not a CLI/version bug**, so bumping the package does not fix it.
+**Polyglot source:** `C:\Repos\MintPlayer.Polyglot` (fix lives in `build/MintPlayer.Polyglot.MSBuild.targets`).
 **Severity:** breaks *incremental* dev builds after editing a `.pg` in a **multi-`.pg` project**; a **clean build always
 succeeds**, so CI / fresh clones are unaffected — but it's confusing and easy to misdiagnose.
+
+> **⚠️ 2026-07-12 update at the bottom of this file** sharpens the root cause (MSBuild *partial-incremental build*
+> passes a **subset** of `.pg` to the CLI) and gives a **verified** `.targets` fix. Note the original "clean the `--out`
+> dir" idea in *Fix ideas* below is **insufficient and can be harmful** on its own — read the update first.
 
 ## Symptom
 
@@ -61,3 +71,101 @@ Note: the M34 search *does* use a top-level `record PgSnakeBeamNode` (a typed fr
 separate TS `any`-inference failure; see `SNAKE_SEARCH_PRD.md` §9). Records build fine on a clean build (FruitCake uses
 them too); this incremental-staleness bug is unrelated to records. If you hit the errors above during iterative `.pg`
 editing: `rm src/MintPlayer.AI.ReinforcementLearning.Environments/obj/*/net10.0/polyglot/*.cs` then rebuild.
+
+---
+
+## UPDATE 2026-07-12 — precise root cause + a verified fix (bug persists through 0.5.3)
+
+Re-encountered during **Chess M40.1** (adding a 4th solver, `chess_solver.pg`). Bumping the package **0.3.1 → 0.5.3**
+did **not** fix it — an incremental touch of one `.pg` still produces `CS0101`/`CS0260`/`CS8863`. That rules out the
+CLI: **the bug is in the MSBuild `.targets`, and it is version-independent.**
+
+### The actual trigger (sharper than "stale files in the out dir")
+
+`PolyglotTranspile` declares a **per-file** output map:
+
+```xml
+Inputs="@(PolyglotFile);$(PolyglotTool)"
+Outputs="@(PolyglotFile->'$(PolyglotOutDir)%(Filename).cs')"
+```
+
+Because both `Inputs` and `Outputs` are item transforms of the same `@(PolyglotFile)`, MSBuild does a **partial
+incremental build**: when only *one* `.pg` is newer than its `.cs`, MSBuild runs the target with `@(PolyglotFile)`
+**filtered to just that one file**. The `Exec` then invokes the CLI with a **single** source:
+
+```
+polyglot build "…/chess_solver.pg" --target csharp --out "…/polyglot/."
+```
+
+From the CLI's point of view that is a **single-module** build, so it (correctly, for a lone module) emits
+`chess_solver.cs` in **standalone** mode — inline `Option`/`Some`/`None` + a **non-`partial`** `PolyglotProgram`. That
+standalone unit then collides with the **other** solvers' `.cs` + the shared `__polyglot_prelude.cs` still sitting in
+`obj/` from the prior full build → `CS0260`/`CS0101`/`CS8863`. The stale prelude is a *symptom*, not the cause; the
+cause is **MSBuild handing the CLI a subset**. (`rm *.cs` "fixes" it only because it makes *all* outputs missing, which
+forces MSBuild to re-run with the **full** set.)
+
+### Why the earlier "clean the `--out` dir" idea is not enough — and is harmful alone
+
+If the CLI cleaned `--out` at the start of every build but MSBuild still invoked it with a **subset**, then a
+single-file incremental build would **delete the other solvers' generated `.cs`** and emit only the changed one →
+"type `PgFruitCakeWorld` not found" etc. The out-dir cleaning must be paired with **always invoking the CLI with the
+full set**. The real fix is therefore MSBuild-side.
+
+### Verified fix (MSBuild `.targets`) — force all-or-nothing with a single stamp output
+
+Replace `PolyglotTranspile`'s per-file `Outputs` with a **single stamp file** (a static path, *not* an item transform),
+and clean the out dir so a removed/renamed `.pg` leaves no orphan `.cs`. A single static `Outputs` makes the target
+**un-batchable**, so any staleness re-runs it with the **complete** `@(PolyglotFile)`:
+
+```xml
+<Target Name="PolyglotTranspile"
+        BeforeTargets="CoreCompile"
+        DependsOnTargets="_PolyglotVerifyTool"
+        Condition="'@(PolyglotFile)' != ''"
+        Inputs="@(PolyglotFile);$(PolyglotTool)"
+        Outputs="$(PolyglotOutDir)__polyglot.stamp">   <!-- was: @(PolyglotFile->'…%(Filename).cs') -->
+  <PropertyGroup> … (unchanged _PolyglotLibArg / _PolyglotAccessArg) … </PropertyGroup>
+  <RemoveDir Directories="$(PolyglotOutDir)" />          <!-- no orphan .cs from a deleted .pg -->
+  <MakeDir Directories="$(PolyglotOutDir)" />
+  <Exec Command="… build @(PolyglotFile->'&quot;%(FullPath)&quot;', ' ') --target csharp --out &quot;$(PolyglotOutDir).&quot; …" />
+  <Touch Files="$(PolyglotOutDir)__polyglot.stamp" AlwaysCreate="true" />
+</Target>
+```
+
+`_PolyglotAddGenerated` already globs `$(PolyglotOutDir)*.cs`, so the `.stamp` is not compiled; add it to `FileWrites`
+too so `dotnet clean` removes it. A no-op rebuild stays up-to-date (stamp newer than every `.pg` and the tool); any
+`.pg`/tool change re-runs the full set. A defensive `--clean-out`/idempotent-prelude on the CLI is a fine
+belt-and-braces addition but is not sufficient on its own (see above).
+
+**This exact patch is VERIFIED (2026-07-12), not just proposed.** A drop-in copy of the fixed target file is staged
+alongside this doc: **`docs/prd/polyglot-pilot/MintPlayer.Polyglot.MSBuild.targets.FIXED`** — its only diff vs the
+current upstream `build/MintPlayer.Polyglot.MSBuild.targets` is the four lines above (stamp `Outputs`, `RemoveDir`,
+`Touch`, `FileWrites` stamp) plus the rationale comment. Session B in `C:\Repos\MintPlayer.Polyglot` can copy it over
+`src/MintPlayer.Polyglot.MSBuild/build/MintPlayer.Polyglot.MSBuild.targets`, then branch + PR.
+
+**How it was verified — a 2-`.pg` repro harness importing the source `.targets` directly** (no NuGet cache mutation):
+
+```bash
+D=/tmp/pgfix; mkdir -p "$D"; cd "$D"
+printf 'fn aHello(): i32 => 1\n' > a.pg
+printf 'fn bHello(): i32 => 2\n' > b.pg
+# Test.csproj: net10.0 project that <Import>s the .props then the .targets under test, and sets
+#   <PolyglotTool> to ~/.nuget/packages/mintplayer.polyglot.msbuild/0.5.3/tools/win-x64/polyglot.exe
+dotnet build -c Release            # clean build: succeeds
+touch a.pg && dotnet build -c Release   # UNPATCHED .targets → a.cs emitted standalone → CS0101/CS0260/CS8863
+```
+
+Against the **unpatched** source `.targets` the `touch a.pg` rebuild fails exactly as reported (`a.cs:7` non-`partial`
+PolyglotProgram + duplicate prelude). Against the **patched** `.targets` (the `.FIXED` file): the same `touch`
+rebuild **succeeds**, a no-op rebuild logs *"Skipping target PolyglotTranspile because all output files are
+up-to-date"* (incrementality preserved), a touch logs *"Touching …/__polyglot.stamp"* (full re-transpile), and a fully
+clean build succeeds. All four states green.
+
+### Consumer-side mitigation already shipped (so this repo no longer needs the `rm`)
+
+Until the `.targets` ships the fix, `MintPlayer.AI.ReinforcementLearning.Environments.csproj` carries a
+`_PolyglotForceFullRetranspile` target that reproduces the effect without editing the package: it wipes
+`$(IntermediateOutputPath)polyglot\` whenever any `.pg` is newer than the shared `__polyglot_prelude.cs`, forcing
+`PolyglotTranspile` to regenerate the whole set in one CLI call. Verified: the incremental touch that reliably broke now
+rebuilds clean in Release **and** Debug; no-op rebuilds stay up-to-date; full test suite 362/362, chess perft 25/25.
+When the upstream `.targets` fix lands, that local target can be deleted.

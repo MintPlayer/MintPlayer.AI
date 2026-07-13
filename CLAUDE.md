@@ -5,40 +5,36 @@ Project-level instructions loaded every session. Read `docs/ARCHITECTURE.md` for
 
 ## Running / verifying the web app (RLDemo.Web) — READ THIS FIRST
 
-**To build, serve, run, or visually verify the frontend, do exactly one thing:**
-
-```bash
-dotnet run --project src/RLDemo.Web        # Development profile; http://localhost:5210
-```
+**The .NET host is ALREADY RUNNING. The user runs and owns it. Do NOT start, stop, kill, restart, or
+`taskkill` it — ever. Assume it is up at http://localhost:5210 and serving the Angular frontend.**
 
 The ASP.NET Core host **builds and serves the Angular frontend itself** — in Development it spawns and
-proxies the Angular dev server (`UseAngularCliServer` via `UseSpaImproved` in `Program.cs`). There is
-**nothing else to do for the frontend.**
+proxies the Angular dev server (`UseAngularCliServer` via `UseSpaImproved` in `Program.cs`). The Angular app
+is NOT a separate process you manage; it lives inside the running .NET host.
 
-- **Never** run `ng serve` / `npm start` / `ng build` / `ng test` yourself. The host already runs one; a
-  second instance just fights for ports and can wedge the dev-server file watcher.
+- **Do NOT run `dotnet run --project src/RLDemo.Web` yourself** — it is already running. A second instance
+  fights for the port. (This command is how the *user* starts it; it is not your job.)
+- **Never** run `ng serve` / `npm start` / `ng build` / `ng test`, and never `taskkill`/kill the `dotnet` /
+  `RLDemo.Web.exe` / `node` (ng serve) processes.
 - **To see a code change:** just save the file under `ClientApp/src` — the running host live-reloads the
-  browser. No manual build, usually no manual reload.
+  browser. No manual build, no restart, usually no manual reload.
 - **To verify what's actually served** (suspected staleness): `curl -sk http://localhost:5210/main.js | grep <identifier>`
-  — do not reach for `ng build` to "check".
-- If output looks stale, suspect a wedged dev-server watcher: **restart the ASP.NET host**, never `ng build`.
+  — do not reach for `ng build`, and do not restart the host, to "check".
+- **If output looks stale** (wedged dev-server watcher) **or new npm dependencies were added** (the host must
+  re-read them): **ASK THE USER to restart their host.** Do not restart it yourself.
 
 ## Build failures are usually NOT the frontend
 
 If `dotnet run --project src/RLDemo.Web` fails, read the error before touching anything Angular-related.
 
-**Known: stale Polyglot codegen (`CS0260` "missing partial modifier on PolyglotProgram" / `CS0101`
-duplicate `Option`/`Some`/`None` prelude).** This is the documented multi-`.pg` incremental-rebuild
-transpiler bug (see `docs/prd/polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md`) — the CLI doesn't clean its
-`--out` dir, so a stale duplicate lingers in `obj/`. It is unrelated to the frontend and to your changes.
-Fix by clearing the stale generated files, then run again:
-
-```bash
-rm -f src/MintPlayer.AI.ReinforcementLearning.Environments/obj/*/net10.0/polyglot/*.cs
-dotnet run --project src/RLDemo.Web
-```
-
-Clean/CI builds are unaffected. Never loop build retries against the stale output.
+**Fixed (2026-07-13, Polyglot 0.6.0): the multi-`.pg` incremental-rebuild codegen bug** (`CS0260` "missing
+partial modifier on PolyglotProgram" / `CS0101` duplicate `Option`/`Some`/`None` prelude). It was an MSBuild
+`.targets` bug — a single-`.pg` edit made MSBuild's partial-incremental build hand the transpiler a subset,
+which then emitted a standalone/duplicate prelude. `MintPlayer.Polyglot.MSBuild` **0.6.0** (PR #26, stamp
+`Outputs` + `RemoveDir`) re-transpiles the full `.pg` set on any edit, so this no longer occurs. If you somehow
+hit it on an **older** package, the manual recovery was
+`rm -f src/MintPlayer.AI.ReinforcementLearning.Environments/obj/*/net10.0/polyglot/*.cs` then rebuild. History +
+root cause: `docs/prd/polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md`. Never loop build retries against stale output.
 
 ## Stopping a `dotnet run` host
 

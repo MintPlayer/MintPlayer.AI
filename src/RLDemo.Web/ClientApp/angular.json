@@ -52,8 +52,14 @@
               }
             ],
             "styles": [
+              "@mintplayer/ng-bootstrap/bootstrap.scss",
               "src/styles.scss"
-            ]
+            ],
+            "stylePreprocessorOptions": {
+              "sass": {
+                "silenceDeprecations": ["import", "global-builtin", "color-functions"]
+              }
+            }
           },
           "configurations": {
             "production": {

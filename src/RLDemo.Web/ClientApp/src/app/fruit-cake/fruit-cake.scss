@@ -16,27 +16,6 @@
   display: flex;
   gap: 0.5rem;
   margin: 0.5rem 0;
-
-  button {
-    background: #1a1f2b;
-    color: #aab2c5;
-    border: 1px solid #2b3245;
-    border-radius: 8px;
-    padding: 0.45rem 0.9rem;
-    font: inherit;
-    cursor: pointer;
-
-    &:hover {
-      border-color: #3a4256;
-      color: #e6e8ee;
-    }
-
-    &.active {
-      background: #2d6cdf;
-      border-color: #2d6cdf;
-      color: #fff;
-    }
-  }
 }
 
 // The game stage — the element that goes fullscreen. A 620:850 box, centered, that the canvas fills.

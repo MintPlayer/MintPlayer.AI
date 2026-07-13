@@ -12,7 +12,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Core.Nn;
 /// kind. The trunk is a <see cref="Linear"/><c>[]</c> (not a fixed pair) so the net can grow deeper as well as
 /// wider mid-training via the function-preserving <see cref="Net2Net"/> transforms.
 /// </summary>
-public sealed class PolicyValueNet
+public sealed class PolicyValueNet : IPolicyValueNet
 {
     private readonly Linear[] _trunk;
     private readonly Linear _policyHead, _valueHead;
@@ -39,6 +39,8 @@ public sealed class PolicyValueNet
 
     /// <summary>The shared-trunk hidden widths (drives growth schedules).</summary>
     public int[] Trunk => [.. _trunk.Select(l => l.Weight.Cols)];
+
+    public string Describe() => $"trunk [{string.Join(",", Trunk)}]";
 
     /// <summary>Batched forward pass (autograd-recorded): raw policy logits [B, actions] + value [B, 1].</summary>
     public (Tensor Logits, Tensor Value) Forward(Tensor observations)

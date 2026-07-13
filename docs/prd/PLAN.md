@@ -1359,6 +1359,221 @@ shallow/leaky, PR #27's correct call), the 3 imitation/policy campaigns *as whol
 policy campaign SHA256-bitwise-identical vs baseline; `--viz` live for every game; net **negative** line diff with
 every shared module carrying an interface comment. See `BOILERPLATE_REDUCTION_PRD.md`.
 
+## M39 — Self-play training (Connect-4 → chess)  *(2026-07-12; branch `m39-chess-selfplay-plan`, PR #32; see `CHESS_SELFPLAY_PRD.md`)* — M39.1 + M39.2 SHIPPED
+
+**Status (2026-07-12):** **M39.1 (rails on Connect-4) and M39.2 (chess) SHIPPED**, each its own commit on
+`m39-chess-selfplay-plan`. The reusable stack — `IZeroSumGame<TState>` + `Core/Planning/Mcts.cs` (PUCT) +
+`PolicyValueTraining` + `SelfPlayCampaign<TState>` — is in Core/Lab; Connect-4 and chess are both consumers, the
+latter reusing the rails **unchanged**. Chess movegen is **perft-verified** (25/25 published counts, incl. startpos
+depth 5 and Kiwipete depth 4); the 4672 move encoding round-trips (encode→decode→apply) with no collisions; a
+`--game chess` run from random init plays legal chess and beats a random-legal opponent. A **robustness slice of
+M39.3** also shipped: `--opponent-random` mixes in learner-vs-random games so the net trains on the off-distribution
+positions an unexpected move reaches (the direct code answer to "a novel move disorients the AI"). 361 fast tests
+green (perft, MCTS-vs-negamax, encoding round-trip, both self-play contracts). The rest of M39.3 (batched-leaf MCTS,
+GPU/conv, league play, web page) remains optional future work. Honest scope holds: legal, steadily-improving play,
+not engine strength.
+
+**Problem.** The SDK trains via reward (DQN/PPO), a forward model (DAVI), or an exact oracle (cube/Rush Hour imitation). Chess
+has no cheap oracle and a reactive net plateaus — the repo's own history says **search is the lever**. The missing paradigm is
+**self-play**: the improving net plays itself and the games *are* the training signal (AlphaZero-style). Add it as a **reusable**
+capability — chess is the headline, but the machinery is shared so the next two-player game plugs in by writing only its rules.
+
+**Key decision (design-it-twice, 3-agent investigation 2026-07-12).** AlphaZero-style (MCTS-guided self-play + the two-headed
+`PolicyValueNet`), **not** plain reactive self-play (tactically blind — the documented plateau). The chess rules engine is the
+same irreducible cost either way, so the marginal cost of "real improvement" is just MCTS + visit-count targets. One new **deep**
+seam — `IZeroSumGame<TState>` in `Core/Planning` (a *sibling* to `IDeterministicModel`: side-to-move + win/loss/draw + per-state
+legal moves, which `IDeterministicModel` can't honestly express) — consumed by both MCTS and the self-play campaign. **Reuse-first:**
+~70% of the outer loop already exists (`PolicyValueNet` unchanged, the soft-CE+value train step from the imitation campaigns,
+`ITrainingCampaign`/`CampaignRunner`, model store + checkpoint format, the M38 `AdamState`/`TrainWindow`/`PolicyGrowth` plumbing,
+action masking, RNG streams, `--viz`, the A/B harness → Elo gate). New code is confined to the seam, MCTS, the `(obs,π,z)`
+self-play loop, and each game's rules.
+
+**Phased plan (each step ends on a green build + its gate; ordered to de-risk the *novel* machinery before the huge rules surface).**
+
+- **M39.1 — the rails, proven on Connect-4.** `IZeroSumGame<TState>` + `Core/Planning/Mcts.cs` (PUCT, sign-flipping value backup,
+  Dirichlet root noise, temperature → root visit-count π) + `PolicyValueTraining.TrainStep` (generalized from
+  `CubePolicyTraining.TrainStep`: soft-CE + value regression) + `SelfPlayCampaign : ITrainingCampaign` (reusing
+  `AdamState`/`TrainWindow`/`PolicyGrowth`/telemetry) + `Connect4Game : IZeroSumGame` + a **negamax** oracle for tests. **Gate:**
+  MCTS unit-tested vs negamax on forced-win/draw positions; from random init, self-play win-rate vs negamax/random **climbs**;
+  `CampaignContractTests` resume roundtrip; fast suite green. This validates the self-play machinery cheaply, away from chess rules.
+- **M39.2 — chess as consumer #2.** `ChessBoard` + full legal movegen + draw/mate detection; the 8×8×73 = 4672 move encoding;
+  `ChessGame`/`ChessEnv` (`IEnvironment` + `IActionMaskProvider` + `IStatefulEnvironment`); flattened-plane observation (static,
+  train==serve); a thin `ChessPolicyNet` wrapper over `PolicyValueNet` (policy head 4672, value `tanh` → WDL); `ChessSelfPlayCampaign`
+  + `--game chess` Lab dispatch; an Elo eval (`ChessAb`, mirroring `FruitCakeAb`). **Gate (the hard one): perft** node-counts matched
+  to published values (startpos, Kiwipete, …) to depth 5–6 *before any training*; move encode/decode round-trips; terminated-vs-truncated
+  split correct; win-rate vs random-legal climbs; contract-test resume; ship `models/chess.az.ckpt` (LFS).
+- **M39.3 — scale + robustness (optional).** Batched-leaf MCTS; GPU-resident forward *if* the net grows enough to clear the
+  routing threshold (honest: a small chess MLP won't); conv-backend support for positional strength (a separate backend workstream);
+  a web showcase page. **Anti-exploitation levers** (so a novel/weak human move can't disorient the net into losing — real even at
+  superhuman level, cf. the KataGo cyclic-group exploit): opponent-**pool/league** play + an occasional random/weak mover, diverse
+  randomized opening positions, and adversarial fine-tune on any discovered exploit. (Dirichlet root noise + temperature already ship
+  in the M39.1 MCTS/campaign; search-from-the-actual-position is the primary defence. NoisyNets is *not* the right tool — it perturbs
+  the policy globally rather than broadening position coverage.)
+
+**Honest scope.** MLP-only net (no conv) over a flattened board → *legal, steadily-improving* play, not engine strength; self-play is
+CPU-bound (the small MLP won't hit the GPU lever that helps the cube). Connect-4 is where the self-improvement curve is unmistakable;
+chess is the headline consumer. **Left out of v1:** DQN/PPO for self-play (wrong fit), the DQN `ReplayBuffer` (uses an `(obs,π,z)`
+window instead), bitboards (unless a bench forces it), superhuman strength. **Whole-milestone gate:** builds 0/0; fast suite green;
+perft passes; both games' self-play win-rate rises vs a fixed baseline; resume roundtrips. See `CHESS_SELFPLAY_PRD.md`.
+
+## M40 — Play the chess AI in the browser (single-source via MintPlayer.Polyglot)  *(2026-07-12; see `CHESS_WEB_POLYGLOT_PRD.md`)* — M40.1–M40.4 ✅ SHIPPED (net committed; conv-net strength upgrade tracked in M42)
+
+**Goal.** Play the self-taught chess AI (M39) **in the browser**, client-side, with **zero server inference** — the
+FruitCake pattern (ARCHITECTURE §10): write the inference path once in a `.pg`, transpile to C# (training/serving) +
+TypeScript (browser); the browser downloads and parses the `.ckpt` and runs the net + MCTS locally. The wrong path
+is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); the right path is single-source.
+
+**Feasibility — VERIFIED (2026-07-12)** by transpiling a probe with the bundled `polyglot.exe`:
+- `Math.exp`, `Math.tanh`, `Math.log`, `Math.sqrt` all transpile (need `import { Math } from "std.math"`), so MCTS's
+  masked-softmax priors + `tanh` value + PUCT `sqrt` are expressible. Transcendentals are **not** bit-exact across
+  C#/JS (only `+ - * / sqrt` are — the reason FruitCake avoided them) but chess **inference doesn't need bit-exactness**
+  (the browser AI must play well, not match C# to the ULP), so `exp`/`tanh` are fine.
+- Bitwise ops `& | << >>` transpile (castling flags; booleans also fine).
+- **Polyglot itself is extendable:** the toolchain lives at `C:\Repos\MintPlayer.Polyglot` — a missing feature
+  (`switch`/enum/Math fn) can be **added there and PR'd** (owner-authorized). Known limits to design around
+  (from the FruitCake solver): **no nested-generic params** (use flat `List<f64>` + offsets like `PgDuelingNet`),
+  prefer `i32` consts + `if/else` over enums/`switch`.
+
+**Phases (each ends on a green build + its gate).**
+- **M40.1 — single-source the engine. ✅ SHIPPED 2026-07-12.** Ported `ChessBoard`/`ChessRules` + `ChessMoveEncoding`
+  into `Environments/Chess/polyglot/chess_solver.pg` (internal `Pg`-prefixed core: `PgChessState` + `PgChessMove` —
+  board `List<i32>[64]`, promotion/castling as `i32`, bounded `for`+`continue` rays, `List<(i32,i32)>` delta tables;
+  every construct proven by `fruitcake_solver.pg`). `MintPlayer.Polyglot.MSBuild` transpiles every `**/*.pg` to `obj/`
+  before CoreCompile (bumped 0.3.1 → **0.6.0**, which bundles win-x64 + linux-x64 + linux-arm64 + osx-x64 + osx-arm64,
+  so CI/ubuntu is unaffected and macOS dev no longer needs `$(PolyglotTool)`). `ChessState`/`ChessRules`/
+  `ChessMoveEncoding` are now **thin C# facades** over the core (public API + both test files unchanged); `ChessGame`'s
+  seam (`LegalMoves`/`Apply`/`Result`) delegates to the core's `legalMoveIndices`/`applyIndex`/`result` so training and
+  the browser share one implementation; `perft` recurses entirely in-core. **Gate MET: perft 25/25 on the generated
+  engine** (incl. startpos d5 = 4,865,609, Kiwipete d4 = 4,085,603, ~10 s), encoding round-trip + terminal-detection
+  green, `SelfPlayCampaign` chess contract green, full suite 362/362 (no FruitCake/Snake/MountainCar regression from
+  the shared re-transpile). **Polyglot MSBuild multi-`.pg` incremental bug — FIXED upstream in 0.6.0 (PR #26):** a
+  single-`.pg` edit used to make MSBuild's partial-incremental build hand the CLI a subset → inline duplicate prelude
+  clash (CS0101/CS0260). Diagnosed here, verified a stamp-`Outputs` + `RemoveDir` fix against the source `.targets`,
+  and it shipped in 0.6.0; the temporary local `_PolyglotForceFullRetranspile` workaround has been removed
+  (`docs/prd/polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md`).
+- **M40.2 — single-source the inference math + a TS `.ckpt` parser. ✅ SHIPPED 2026-07-13.** Added to the `.pg`:
+  `writeObservation()` (18-plane × 64 = 1152, parity-tested vs `ChessGame.WriteObservation`), `PgPolicyValueNet.forward`
+  (flat-array ReLU trunk → policy logits + linear value), and `PgChessMcts` (inference PUCT — masked-softmax priors,
+  `sqrt`, value negated per ply, **no Dirichlet**). `ClientApp/src/app/chess/chess-net.ts` parses the `selfplay-pv`
+  `.ckpt` (magic RLNC, trunk widths, per-layer W/b in `Parameters()` order; inputSize/actions supplied) into the
+  generated `PgPolicyValueNet`; committed `chess_solver.ts` emitted. **Gate MET:** `ChessNetParityTests` — C#
+  `PolicyValueNet.Forward` vs the generated net agree within f32 tol on the start position (round-tripped through the
+  real `.ckpt` bytes), plus observation parity + an MCTS runtime smoke (valid legal-move distribution, `chooseMove`
+  legal); 358/358 fast tests. Also did the `std.math` cleanup (`Math.abs`/`Math.max`, kept `isign`). The two TS-emitter
+  gaps chess first hit (local `List` decls losing their annotation; `List<T?>` → `T | null[]`) were filed as
+  **MintPlayer.Polyglot issue #27** with a verified two-part fix, **fixed upstream in 0.7.0 (PR #28)**; the Environments
+  `.csproj` is on 0.7.0 and the regenerated `chess_solver.ts` is now **strictly typed** (`let d: [number,number][] = []`,
+  `children: (PgMctsNode | null)[]`) — verified strict-`tsc`-clean. 365/365 tests on 0.7.0.
+- **M40.3 — the browser page. ✅ SHIPPED 2026-07-13 (net committed).** `chess-director.ts` (runs the
+  transpiled `PgChessMcts`+net over the loaded `.ckpt`) + a standalone Angular chess component: an 8×8 board (White at
+  the bottom, square rows), click-to-move validated by the transpiled engine (legal-target dots, orange
+  selected/last-move highlights, auto-queen), check/checkmate/stalemate/draw status, a **captured-pieces tray** (red ✕
+  per taken piece), and **two modes — "Play the AI" and "Watch AI-vs-AI"** (self-restarting loop with a speed slider).
+  Route `/chess` + a Home tile; `.ckpt` MIME mapping already in `Program.cs`. **Gate MET:** Angular builds the chess
+  chunk clean; `/chess` served; `/api/chess/*` → 404 (zero server inference); director/net/solver strict-`tsc` clean;
+  and the transpiled engine+net+MCTS played a full 80-ply legal game in Node over the real checkpoint. Playwright MCP
+  was unavailable, so the in-browser click-through wasn't automated — verified structurally + functionally instead.
+  **Net SHIPPED (commit `1dd734d`):** `wwwroot/models/chess.az.d1.ckpt` (LFS) + `chess-difficulties.json` committed, so a
+  fresh deploy has a net to load; verified headless (loads + plays a full legal game). Honest caveat: this is the flat-MLP
+  net → legal-but-weak chess; the conv-net upgrade is tracked in **M42** (replaces it with no page changes).
+- **M40.4 — difficulty via an auto-captured net ladder (both modes). ✅ SHIPPED (investigation + owner refinement
+  2026-07-13; see `CHESS_WEB_POLYGLOT_PRD.md` §9, esp. §9.6).** Training is offline-only (the Lab); the ladder is
+  produced **hands-off by the training agent** — when the live net becomes *significantly stronger than the last
+  promoted checkpoint*, the Lab auto-writes a new difficulty `.ckpt` into `src/RLDemo.Web/wwwroot/models/` + updates a
+  manifest. The net ladder is the backbone (not a novelty) because promotion is gated on a **net-vs-net arena** margin,
+  making tiers reliably ordered by construction (Level K+1 provably beats Level K).
+  - **M40.4a — the Lab mechanism (the owner's ask).** In `SelfPlayCampaign<TState>` (generic; enabled by `--ladder`):
+    a champion = last-promoted frozen net; on each eval, `ArenaVsNet(liveNet, champion, arenaGames)` (deterministic
+    MCTS argmax, short randomized openings on a **separate arena RNG** → training stays bitwise-reproducible,
+    alternating colours); if challenger score ≥ `--promote-margin` (~0.58) → save `chess.az.d{K}.ckpt` to
+    `--difficulty-dir` (default the web models dir) + rewrite `chess-difficulties.json` (`{label, ckpt, sims,
+    temperature, cpuct, winRateVsRandom}`) + champion := frozen copy. Flags in `ChessLab`. **Gate:** a short ladder
+    run auto-produces ≥2 ordered tier ckpts + a valid manifest in `wwwroot/models`; a non-`--ladder` run's weights are
+    unchanged for the same seed (reproducibility check).
+  - **M40.4b — the web selector.** `chess-director.ts` loads `chess-difficulties.json` (hardcoded fallback), a
+    `setDifficulty(d)` (re-fetch net only if the ckpt URL changed; cache by URL; `aiStep` uses `search`+optional
+    temperature, `T=0`→argmax), and a Level-picker in both modes (Play = opponent; Watch = shared level, per-side is a
+    follow-up). No `.pg` change (`PgChessMcts.search` already returns π). Honest labels ("Level K" / "Full strength",
+    never "Grandmaster").
+
+**Honest scope:** the M39 net is a small, briefly-CPU-trained MLP → legal, still-learning chess, beatable by a decent
+human. **Non-goals:** engine strength, a server chess endpoint, bit-exact transcendentals, browser training. See
+`CHESS_WEB_POLYGLOT_PRD.md` (incl. its reference appendix: files to port, checkpoint byte-format, commands).
+
+## M41 — Reusable deterministic CPU-parallel data generation  *(2026-07-13; see `PARALLEL_SELFPLAY_PRD.md`)* — M41.1 + M41.2 + M41.3 ✅ SHIPPED
+
+**Why:** AlphaZero self-play (`SelfPlayCampaign`) generates games **single-threaded** (`TrainChunk`'s `for … PlayGame()`),
+and for chess the wall-time is dominated by CPU-bound MCTS **movegen** — so a multi-core box mostly idles while training
+crawls (the M40.4 256-sim run bottleneck). The GPU is a poor fit here (tiny net, batch-1 inference); **CPU-core
+parallelism is the real lever.**
+
+**Finding (2-agent investigation):** the repo already parallelizes *cube* data-gen, but it's **hand-rolled + duplicated
+in two Lab files** (`CubeImitationCampaign.cs:71`, `CubeEfficientCampaign.cs:93` — `Parallel.For` + per-worker lists +
+per-worker seeded RNG); **nothing reusable exists in Core** (Core only has generic GEMM / `VectorEnv` / DAVI-featurize
+parallelism). Self-play + DQN campaigns have no explicit parallelism. Self-play **is** safe to parallelize: shared
+read-only net inference is concurrent-safe (fresh buffers, no static cache, `[ThreadStatic]` `NoGrad`, batch-1 forwards
+don't nest-parallelize); the only blockers are the shared `_window`/counters and the shared mutable RNGs. The
+bitwise-reproducibility invariant (M25/M26/**M36 SHA-verified**) is preservable exactly as Core already does it
+(`VectorEnv`: per-unit RNG; GEMM: disjoint output rows → DOP-invariant).
+
+- **M41.1 ✅ — Core primitive.** `DeterministicParallel.Generate<TItem>(count, seeds, stream, baseIndex, makeItem, parallel, dop)`
+  in `Core/Training`: per-index-derived RNG (golden-ratio stride, à la `VectorEnv`), disjoint ordered slots, index-order
+  results. 12 unit tests prove bitwise parallel==sequential across DOP 1/2/4/8/16 + edges (commit `bc0c48f`).
+- **M41.2 ✅ — parallel self-play.** `SelfPlayCampaign` generation refactored onto it: each game a pure fn of its own
+  index-derived RNG over the stable read-only net, returning samples; owner-thread merge in ascending index then train.
+  Shuffle moved to the Buffer stream (no seed collision with game 0). `--parallel`/`--dop` on `ChessLab`. **Gate MET:**
+  a Connect-4 run gives a **byte-identical checkpoint** at sequential vs parallel-dop-1 vs dop-8
+  (`SelfPlayCampaignTests.ParallelGeneration_...AtAnyDop`). Eval/arena left sequential (not the bottleneck; can't affect
+  weights). Commit `a9fa5c3`.
+- **M41.3 ✅ — cube dedup.** `CubeImitationCampaign` + `CubeEfficientCampaign` migrated off their hand-rolled
+  `Parallel.For` onto `DeterministicParallel.Generate` (new raw-`ulong baseSeed` overload; the `SeedSequence` overload
+  now delegates to it). Passing `(baseSeed: roundBase, baseIndex: 1)` reproduces the old `roundBase + φ·(worker+1)`
+  per-worker seeding **byte-for-byte** — verified by `DeterministicParallelTests.RawSeedOverload_ReproducesTheCube…`,
+  so cube training output is unchanged. The shared `Interlocked` solve-counter is gone (each generator returns its own
+  count, summed on the owner thread).
+
+**Answers the owner's question:** the parallelism isn't in Core for no principled reason — it was hand-rolled per Lab
+campaign; the pattern is generic and matches Core's existing determinism approach, so it should be (and now will be)
+extracted. **Non-goals:** GPU/batched-MCTS (separate, larger effort); parallelizing the DQN campaigns (not the bottleneck).
+
+## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED · M42.3 ⏳ training · M42.4 🔜 (gated on M42.3)
+
+**Why:** chess self-play has **plateaued at ~random** (M40.4: winRate-vs-random ~50%→35%, material margin flat ~+0.1
+of the +0.75 gate, no tier ever promotes) despite 256 sims + material-shaped targets. The honest bottleneck is the
+**model**: a flat `[256,256]` MLP over a 1152-float vector throws away the 8×8 board structure. Owner's decision
+(2026-07-13): a true **AlphaZero-style convolutional residual tower** over `[18,8,8]`. Stacked after M41 (which makes
+the heavier training iterations affordable).
+
+**Finding (2-agent investigation):** a residual net *class* (`ResidualMlp`) is **already in Core** but is the wrong
+shape (single scalar head, residual **MLP** not conv, used only by cube DAVI) — so "move it to the library" is a no-op;
+it's already there. The reusable two-headed net (`PolicyValueNet`) is a flat MLP. **No convolution exists anywhere**
+(no Conv2D/im2col/pool/BatchNorm; LayerNorm does exist and is the repo's deliberate choice). `SelfPlayCampaign`/
+`PolicyValueTraining` hardcode the concrete `PolicyValueNet` type — there's **no two-headed-net interface** — so a conv
+net needs one introduced. The obs already reshapes cleanly to `[18,8,8]` (`plane*64+sq`). And the **browser-inference
+twin** (`chess_solver.pg` `PgPolicyValueNet`) is a flat-MLP forward — a conv net breaks client-side play until the `.pg`
+gains a conv forward (inference-only), so that's a first-class phase, not a follow-up.
+
+- **M42.1 ✅ — Conv2D in Core.** `Tensor.Conv2D` via **im2col → existing GEMM → col2im** (reuses the tuned, GPU-routed
+  GEMM; NO new backend/ILGPU kernel), rank-2 `[N, C·H·W]` representation so `CheckRank2` is never tripped, LayerNorm (not
+  BatchNorm). **Gate MET:** three finite-difference gradient checks (3×3 SAME, stride-2 valid, 1×1) green
+  (`GradCheckTests.Conv2D_*`). Commit `67806af`.
+- **M42.2 ✅ — `IPolicyValueNet` + the conv net.** Interface introduced; `PolicyValueNet` implements it (self-play
+  determinism gate still byte-identical ⇒ zero MLP behaviour change). `ConvResidualPolicyValueNet` (3×3 stem → N residual
+  blocks → 1×1-conv policy + value heads; Save/Load/LayerActivations). `SelfPlayCampaign`/`PolicyValueTraining`
+  generalized to the interface + an `IPolicyValueNetBuilder` (MlpNetBuilder default / ConvNetBuilder); `ChessLab --arch
+  conv --filters --blocks`. **Gate MET** (`ConvResidualNetTests`): head shapes, exact save/load round-trip, loss falls
+  under Adam. (De-risking residual-MLP step skipped — went straight to conv.) Commit `21b779d`.
+- **M42.3 ⏳ — train chess with the conv net.** `--arch conv --filters 64 --blocks 6` + material shaping + ladder,
+  running in the background. **Gate:** beats the MLP baseline — material margin ≥ +0.75 and/or winRate ≫ 50% with **≥1
+  ladder tier promoted**; determinism preserved. *(Long run; evaluated from the background training, not blocking.)*
+- **M42.4 🔜 (gated on M42.3) — browser conv forward + parity.** Add an inference-only conv2d forward to
+  `chess_solver.pg` + teach `chess-net.ts` the conv `.ckpt` layout; regenerate the C#/TS twin. **Gate:**
+  `ChessNetParityTests` green on conv `.ckpt`; `/chess` plays a shipped conv tier. **Deliberately not started until M42.3
+  proves the conv net is worth shipping** (PRD risk #2 — don't port to the browser a net that doesn't beat the baseline).
+
+**Non-goals:** removing `PolicyValueNet` (stays the connect-4/cube-policy/rush-hour net + fast baseline) or `ResidualMlp`
+(stays the cube DAVI value net); spatial BatchNorm (reuse LayerNorm); Net2Net growth for the conv net (stays MLP-only).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.

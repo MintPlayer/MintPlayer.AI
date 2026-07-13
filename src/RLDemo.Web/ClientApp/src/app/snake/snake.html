@@ -12,9 +12,9 @@
   <div class="side">
     <h3>Food eaten: {{ foodEaten() }}</h3>
     <div class="actions">
-      <button class="primary" (click)="watchAi()" [disabled]="mode() === 'watch'">Watch AI</button>
-      <button class="primary" (click)="playHuman()">Play yourself</button>
-      <button (click)="stop()" [disabled]="mode() === 'idle'">Stop</button>
+      <button [color]="colors.primary" (click)="watchAi()" [disabled]="mode() === 'watch'">Watch AI</button>
+      <button [color]="colors.primary" (click)="playHuman()">Play yourself</button>
+      <button [color]="colors.secondary" (click)="stop()" [disabled]="mode() === 'idle'">Stop</button>
     </div>
     <p class="status">{{ status() }}</p>
     @if (mode() === 'human') {

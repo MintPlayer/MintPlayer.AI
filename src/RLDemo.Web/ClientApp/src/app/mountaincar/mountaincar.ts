@@ -2,6 +2,8 @@ import { Component, DestroyRef, ElementRef, afterNextRender, inject, signal, vie
 import { GOAL, MAX_POS, MIN_POS, MountainCarGame } from './mountaincar-logic';
 import { MountainCarDirector } from './mountaincar-director';
 import { ScreenWakeLock } from '../screen-wake-lock';
+import { Color } from '@mintplayer/ng-bootstrap';
+import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 
 /**
  * MountainCar page. Both modes now run **entirely in the browser** (M33): **Watch AI** = the single-source
@@ -12,6 +14,7 @@ import { ScreenWakeLock } from '../screen-wake-lock';
   selector: 'app-mountaincar',
   templateUrl: './mountaincar.html',
   styleUrl: './mountaincar.scss',
+  imports: [BsButtonTypeDirective],
   host: {
     '(window:keydown)': 'onKeyDown($event)',
     '(window:keyup)': 'onKeyUp($event)',
@@ -21,6 +24,7 @@ export class MountainCar {
   private readonly wakeLock = inject(ScreenWakeLock);
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('mcCanvas');
 
+  protected readonly colors = Color;
   protected readonly mode = signal<'idle' | 'watch' | 'human'>('idle');
   protected readonly status = signal('Watch the PPO agent swing its way up, or drive it yourself.');
 

@@ -1,0 +1,740 @@
+// chess_solver.pg — single-source port of the perft-verified chess engine
+// (ChessBoard.cs: ChessState + ChessRules, and ChessMoveEncoding.cs). ONE source,
+// transpiled to C# (obj/, build-time, wrapped by the ChessState/ChessRules facades)
+// and — from M40.2 — to a committed TypeScript twin the browser runs client-side.
+//
+// Types are `Pg`-prefixed and stay internal; the hand-written C# facades
+// (ChessBoard.cs, ChessMoveEncoding.cs) adapt this i32/List core to the public
+// PieceType/ChessMove/sbyte[] API the rest of the SDK and the perft tests consume.
+// Perft (the movegen correctness gate) recurses entirely in this core.
+//
+// Subset choices (mirror the FruitCake precedent): the mailbox board is a List<i32>
+// of 64 cells (0 empty, +1..+6 White P,N,B,R,Q,K, −1..−6 Black); promotion is an i32
+// piece code (0 = none, 2..5 = N,B,R,Q); castling is an i32 bitmask (WK=1,WQ=2,BK=4,
+// BQ=8). No i64 — perft returns i32 (fits every position/depth the tests probe;
+// the C# facade widens to long). Ray/slide loops are bounded `for`+`continue` (no
+// `while`); delta tables are List<(i32,i32)> iterated with tuple destructuring — every
+// construct here is one proven by fruitcake_solver.pg.
+
+import { List } from "std.collections"
+import { Math } from "std.math"
+
+// A move: from/to squares (0..63 = rank*8 + file) plus the promotion piece code
+// (0 = none) for a pawn reaching the last rank. Castling / en passant / double-push
+// are inferred from the board when the move is made, so they need no extra flag.
+record PgChessMove(from: i32, to: i32, promotion: i32)
+
+class PgChessState {
+  const PromoKnight: i32 = 2
+  const PromoBishop: i32 = 3
+  const PromoRook: i32 = 4
+  const PromoQueen: i32 = 5
+
+  const CastleWK: i32 = 1
+  const CastleWQ: i32 = 2
+  const CastleBK: i32 = 4
+  const CastleBQ: i32 = 8
+
+  const Size: i32 = 4672          // 64 × 73 AlphaZero action space
+  const PlanesPerSquare: i32 = 73
+
+  var squares: List<i32>          // length 64
+  var whiteToMove: bool
+  var castling: i32
+  var enPassant: i32              // target square a pawn could capture onto, or -1
+  var halfmoveClock: i32
+
+  init(squares: List<i32>, whiteToMove: bool, castling: i32, enPassant: i32, halfmoveClock: i32) {
+    this.squares = squares
+    this.whiteToMove = whiteToMove
+    this.castling = castling
+    this.enPassant = enPassant
+    this.halfmoveClock = halfmoveClock
+  }
+
+  // ── small helpers (std.math covers abs/max/min type-preserving on i32; only sign is missing) ─
+  static fn fileOf(sq: i32): i32 => sq % 8
+  static fn rankOf(sq: i32): i32 => sq / 8
+  static fn isign(x: i32): i32 => if x > 0 { 1 } else { if x < 0 { -1 } else { 0 } }
+  static fn onBoard(f: i32, r: i32): bool => f >= 0 && f < 8 && r >= 0 && r < 8
+  static fn isWhite(piece: i32): bool => piece > 0
+  static fn pieceType(piece: i32): i32 => if piece < 0 { -piece } else { piece }
+  // Clear the given bit(s) of a mask without a bitwise-not: drop the parts that ARE in `bits`.
+  static fn clearBits(mask: i32, bits: i32): i32 => mask - (mask & bits)
+
+  // ── delta tables (built fresh; iterated with tuple destructuring) ─────────────────────────
+  static fn knightDeltas(): List<(i32, i32)> {
+    var d: List<(i32, i32)> = List<(i32, i32)>()
+    d.add((1, 2)); d.add((2, 1)); d.add((2, -1)); d.add((1, -2))
+    d.add((-1, -2)); d.add((-2, -1)); d.add((-2, 1)); d.add((-1, 2))
+    return d
+  }
+  static fn kingDeltas(): List<(i32, i32)> {
+    var d: List<(i32, i32)> = List<(i32, i32)>()
+    d.add((1, 0)); d.add((1, 1)); d.add((0, 1)); d.add((-1, 1))
+    d.add((-1, 0)); d.add((-1, -1)); d.add((0, -1)); d.add((1, -1))
+    return d
+  }
+  static fn bishopDirs(): List<(i32, i32)> {
+    var d: List<(i32, i32)> = List<(i32, i32)>()
+    d.add((1, 1)); d.add((-1, 1)); d.add((1, -1)); d.add((-1, -1))
+    return d
+  }
+  static fn rookDirs(): List<(i32, i32)> {
+    var d: List<(i32, i32)> = List<(i32, i32)>()
+    d.add((1, 0)); d.add((-1, 0)); d.add((0, 1)); d.add((0, -1))
+    return d
+  }
+  // Encoding tables (AlphaZero plane order — shared by encode and decode).
+  static fn encDirs(): List<(i32, i32)> {
+    var d: List<(i32, i32)> = List<(i32, i32)>()
+    d.add((0, 1)); d.add((1, 1)); d.add((1, 0)); d.add((1, -1))
+    d.add((0, -1)); d.add((-1, -1)); d.add((-1, 0)); d.add((-1, 1))
+    return d
+  }
+  static fn encKnights(): List<(i32, i32)> {
+    var d: List<(i32, i32)> = List<(i32, i32)>()
+    d.add((1, 2)); d.add((2, 1)); d.add((2, -1)); d.add((1, -2))
+    d.add((-1, -2)); d.add((-2, -1)); d.add((-2, 1)); d.add((-1, 2))
+    return d
+  }
+
+  fn clone(): PgChessState {
+    var sq: List<i32> = List<i32>()
+    for v in this.squares { sq.add(v) }
+    return PgChessState(sq, this.whiteToMove, this.castling, this.enPassant, this.halfmoveClock)
+  }
+
+  // ── attack detection ──────────────────────────────────────────────────────────────────────
+  fn isSquareAttacked(square: i32, byWhite: bool): bool {
+    let tf = fileOf(square)
+    let tr = rankOf(square)
+
+    // Pawns: an attacking pawn sits one rank behind the target in its forward direction.
+    let pawnDir = if byWhite { 1 } else { -1 }
+    let pawn = if byWhite { 1 } else { -1 }
+    for k in 0..2 {
+      let df = k * 2 - 1                 // -1, +1
+      let f = tf + df
+      let r = tr - pawnDir
+      if onBoard(f, r) && this.squares[r * 8 + f] == pawn { return true }
+    }
+
+    let knight = if byWhite { 2 } else { -2 }
+    let kn = knightDeltas()
+    for (df, dr) in kn {
+      let f = tf + df
+      let r = tr + dr
+      if onBoard(f, r) && this.squares[r * 8 + f] == knight { return true }
+    }
+
+    let king = if byWhite { 6 } else { -6 }
+    let kg = kingDeltas()
+    for (df, dr) in kg {
+      let f = tf + df
+      let r = tr + dr
+      if onBoard(f, r) && this.squares[r * 8 + f] == king { return true }
+    }
+
+    if this.rayHits(tf, tr, bishopDirs(), byWhite, 3) { return true }   // bishops/queens
+    if this.rayHits(tf, tr, rookDirs(), byWhite, 4) { return true }     // rooks/queens
+    return false
+  }
+
+  // A sliding piece of type `slider` (or a queen, code 5) of colour `byWhite` attacks (tf,tr)
+  // along one of `dirs`. Bounded to 7 steps; `blocked` stops the walk at the first obstruction.
+  fn rayHits(tf: i32, tr: i32, dirs: List<(i32, i32)>, byWhite: bool, slider: i32): bool {
+    for (df, dr) in dirs {
+      var found = false
+      var blocked = false
+      for step in 1..8 {
+        if blocked { continue }
+        let f = tf + df * step
+        let r = tr + dr * step
+        if !onBoard(f, r) { blocked = true; continue }
+        let piece = this.squares[r * 8 + f]
+        if piece != 0 {
+          if isWhite(piece) == byWhite {
+            let t = pieceType(piece)
+            if t == slider || t == 5 { found = true }
+          }
+          blocked = true
+        }
+      }
+      if found { return true }
+    }
+    return false
+  }
+
+  fn kingSquare(white: bool): i32 {
+    let king = if white { 6 } else { -6 }
+    for sq in 0..64 { if this.squares[sq] == king { return sq } }
+    return -1
+  }
+
+  fn inCheck(white: bool): bool => this.isSquareAttacked(this.kingSquare(white), !white)
+
+  // ── move generation ─────────────────────────────────────────────────────────────────────
+  fn legalMoves(): List<PgChessMove> {
+    var legal: List<PgChessMove> = List<PgChessMove>()
+    let pseudo = this.pseudoLegal()
+    for m in pseudo {
+      let next = this.makeMove(m)
+      if !next.inCheck(this.whiteToMove) { legal.add(m) }   // the side that just moved must be safe
+    }
+    return legal
+  }
+
+  fn pseudoLegal(): List<PgChessMove> {
+    var moves: List<PgChessMove> = List<PgChessMove>()
+    let white = this.whiteToMove
+    for sq in 0..64 {
+      let piece = this.squares[sq]
+      if piece == 0 || isWhite(piece) != white { continue }
+      let f = fileOf(sq)
+      let r = rankOf(sq)
+      let t = pieceType(piece)
+      if t == 1 { this.pawnMoves(sq, f, r, white, moves) }
+      else if t == 2 { this.stepMoves(sq, f, r, white, knightDeltas(), moves) }
+      else if t == 6 { this.stepMoves(sq, f, r, white, kingDeltas(), moves); this.castleMoves(white, moves) }
+      else if t == 3 { this.slideMoves(sq, f, r, white, bishopDirs(), moves) }
+      else if t == 4 { this.slideMoves(sq, f, r, white, rookDirs(), moves) }
+      else if t == 5 {
+        this.slideMoves(sq, f, r, white, bishopDirs(), moves)
+        this.slideMoves(sq, f, r, white, rookDirs(), moves)
+      }
+    }
+    return moves
+  }
+
+  fn stepMoves(sq: i32, f: i32, r: i32, white: bool, deltas: List<(i32, i32)>, moves: List<PgChessMove>) {
+    for (df, dr) in deltas {
+      let nf = f + df
+      let nr = r + dr
+      if !onBoard(nf, nr) { continue }
+      let to = nr * 8 + nf
+      let target = this.squares[to]
+      if target == 0 || isWhite(target) != white { moves.add(PgChessMove(sq, to, 0)) }
+    }
+  }
+
+  fn slideMoves(sq: i32, f: i32, r: i32, white: bool, dirs: List<(i32, i32)>, moves: List<PgChessMove>) {
+    for (df, dr) in dirs {
+      var blocked = false
+      for step in 1..8 {
+        if blocked { continue }
+        let nf = f + df * step
+        let nr = r + dr * step
+        if !onBoard(nf, nr) { blocked = true; continue }
+        let to = nr * 8 + nf
+        let target = this.squares[to]
+        if target == 0 { moves.add(PgChessMove(sq, to, 0)) }
+        else {
+          if isWhite(target) != white { moves.add(PgChessMove(sq, to, 0)) }
+          blocked = true
+        }
+      }
+    }
+  }
+
+  fn pawnMoves(sq: i32, f: i32, r: i32, white: bool, moves: List<PgChessMove>) {
+    let dir = if white { 1 } else { -1 }
+    let startRank = if white { 1 } else { 6 }
+    let lastRank = if white { 7 } else { 0 }
+
+    let one = (r + dir) * 8 + f
+    if this.squares[one] == 0 {
+      this.addPawn(sq, one, r + dir == lastRank, moves)
+      if r == startRank {
+        let two = (r + 2 * dir) * 8 + f
+        if this.squares[two] == 0 { moves.add(PgChessMove(sq, two, 0)) }
+      }
+    }
+
+    for k in 0..2 {
+      let df = k * 2 - 1                 // -1, +1
+      let nf = f + df
+      let nr = r + dir
+      if !onBoard(nf, nr) { continue }
+      let to = nr * 8 + nf
+      let target = this.squares[to]
+      if target != 0 && isWhite(target) != white { this.addPawn(sq, to, nr == lastRank, moves) }
+      else if to == this.enPassant { moves.add(PgChessMove(sq, to, 0)) }   // en passant onto the empty ep square
+    }
+  }
+
+  fn addPawn(from: i32, to: i32, promotion: bool, moves: List<PgChessMove>) {
+    if promotion {
+      moves.add(PgChessMove(from, to, PromoQueen))
+      moves.add(PgChessMove(from, to, PromoRook))
+      moves.add(PgChessMove(from, to, PromoBishop))
+      moves.add(PgChessMove(from, to, PromoKnight))
+    } else {
+      moves.add(PgChessMove(from, to, 0))
+    }
+  }
+
+  fn castleMoves(white: bool, moves: List<PgChessMove>) {
+    let rank = if white { 0 } else { 7 }
+    let kingSq = rank * 8 + 4
+    let ownKing = if white { 6 } else { -6 }
+    if this.squares[kingSq] != ownKing { return }
+    if this.isSquareAttacked(kingSq, !white) { return }   // can't castle out of check
+
+    let kSide = if white { CastleWK } else { CastleBK }
+    let qSide = if white { CastleWQ } else { CastleBQ }
+
+    // King-side: f,g empty; king doesn't pass through/into attack.
+    let kEmpty = this.squares[rank * 8 + 5] == 0 && this.squares[rank * 8 + 6] == 0
+    let kSafe = !this.isSquareAttacked(rank * 8 + 5, !white) && !this.isSquareAttacked(rank * 8 + 6, !white)
+    if (this.castling & kSide) != 0 && kEmpty && kSafe { moves.add(PgChessMove(kingSq, rank * 8 + 6, 0)) }
+
+    // Queen-side: b,c,d empty; king passes over d,c (b need not be safe, only empty).
+    let qEmpty = this.squares[rank * 8 + 1] == 0 && this.squares[rank * 8 + 2] == 0 && this.squares[rank * 8 + 3] == 0
+    let qSafe = !this.isSquareAttacked(rank * 8 + 3, !white) && !this.isSquareAttacked(rank * 8 + 2, !white)
+    if (this.castling & qSide) != 0 && qEmpty && qSafe { moves.add(PgChessMove(kingSq, rank * 8 + 2, 0)) }
+  }
+
+  // ── make move ───────────────────────────────────────────────────────────────────────────
+  // The position after `move` (a fresh state; this one is unchanged). Castling / en passant /
+  // promotion / double-push are inferred from the board.
+  fn makeMove(move: PgChessMove): PgChessState {
+    var b: List<i32> = List<i32>()
+    for v in this.squares { b.add(v) }
+    let white = this.whiteToMove
+    let piece = b[move.from]
+    let t = pieceType(piece)
+    var capture = b[move.to] != 0
+    var newEp = -1
+    var castling = this.castling
+
+    b[move.from] = 0
+
+    // En passant capture: the taken pawn sits beside the destination, not on it.
+    if t == 1 && move.to == this.enPassant && this.enPassant >= 0 {
+      let capturedSq = move.to + (if white { -8 } else { 8 })
+      b[capturedSq] = 0
+      capture = true
+    }
+
+    // Place the piece (promotion swaps in the chosen piece).
+    if move.promotion != 0 {
+      b[move.to] = (if white { 1 } else { -1 }) * move.promotion
+    } else {
+      b[move.to] = piece
+    }
+
+    // Double push sets the en-passant target square.
+    if t == 1 && Math.abs(rankOf(move.to) - rankOf(move.from)) == 2 {
+      newEp = (move.from + move.to) / 2
+    }
+
+    // Castling: move the rook too.
+    if t == 6 && Math.abs(fileOf(move.to) - fileOf(move.from)) == 2 {
+      let rank = rankOf(move.from)
+      if fileOf(move.to) == 6 { b[rank * 8 + 5] = b[rank * 8 + 7]; b[rank * 8 + 7] = 0 }   // king-side
+      else { b[rank * 8 + 3] = b[rank * 8 + 0]; b[rank * 8 + 0] = 0 }                        // queen-side
+    }
+
+    // Update castling rights: a king move clears both of its sides; a rook move/capture on a
+    // home corner clears that right.
+    if t == 6 {
+      if white { castling = clearBits(castling, CastleWK + CastleWQ) }
+      else { castling = clearBits(castling, CastleBK + CastleBQ) }
+    }
+    castling = clearBits(castling, cornerRight(move.from))
+    castling = clearBits(castling, cornerRight(move.to))   // a rook captured on its home square loses that right too
+
+    let halfmove = if t == 1 || capture { 0 } else { this.halfmoveClock + 1 }
+    return PgChessState(b, !white, castling, newEp, halfmove)
+  }
+
+  // The castling-right bit anchored at a rook/king home corner (0 = none).
+  static fn cornerRight(sq: i32): i32 {
+    if sq == 0 { return CastleWQ }    // a1 rook
+    if sq == 7 { return CastleWK }    // h1 rook
+    if sq == 56 { return CastleBQ }   // a8 rook
+    if sq == 63 { return CastleBK }   // h8 rook
+    return 0
+  }
+
+  // ── terminal detection ──────────────────────────────────────────────────────────────────
+  fn isFiftyMove(): bool => this.halfmoveClock >= 100
+
+  fn isInsufficientMaterial(): bool {
+    var knights = 0
+    var bishops = 0
+    for p in this.squares {
+      let t = pieceType(p)
+      if t == 0 || t == 6 { continue }
+      else if t == 2 { knights += 1 }
+      else if t == 3 { bishops += 1 }
+      else { return false }             // a pawn/rook/queen = enough material
+    }
+    return knights + bishops <= 1       // K vs K, K+N vs K, K+B vs K (the common draws)
+  }
+
+  // Terminal result FROM THE SIDE TO MOVE's view: 0 = ongoing, 1 = loss (checkmated), 2 = draw.
+  fn result(): i32 {
+    if this.legalMoves().count == 0 {
+      return if this.inCheck(this.whiteToMove) { 1 } else { 2 }   // mate vs stalemate
+    }
+    if this.isFiftyMove() || this.isInsufficientMaterial() { return 2 }
+    return 0
+  }
+
+  // Perft: the number of leaf nodes at `depth` — the movegen correctness oracle. i32 suffices
+  // for every position/depth the tests probe (max ~4.9M); the C# facade widens to long.
+  fn perft(depth: i32): i32 {
+    if depth == 0 { return 1 }
+    let moves = this.legalMoves()
+    if depth == 1 { return moves.count }
+    var nodes = 0
+    for m in moves { nodes += this.makeMove(m).perft(depth - 1) }
+    return nodes
+  }
+
+  // ── seam helpers (index-level API the C# facade / browser consume) ────────────────────────
+  fn legalMoveIndices(): List<i32> {
+    var out: List<i32> = List<i32>()
+    let moves = this.legalMoves()
+    for m in moves { out.add(encode(m)) }
+    return out
+  }
+
+  // The 18-plane × 64 = 1152 observation the net consumes (single-sourced; the C# facade casts f64→float
+  // for the float32 net, the browser feeds it directly). Planes: [0–5] White P,N,B,R,Q,K, [6–11] Black,
+  // [12] side-to-move (all-ones iff white to move), [13–16] castling WK/WQ/BK/BQ (each all-ones iff the
+  // right is held), [17] en-passant target square (one-hot). Must match ChessGame.WriteObservation exactly.
+  fn writeObservation(): List<f64> {
+    var obs: List<f64> = List<f64>()
+    for i in 0..1152 { obs.add(0.0) }
+
+    for sq in 0..64 {
+      let piece = this.squares[sq]
+      if piece == 0 { continue }
+      let t = pieceType(piece) - 1                    // 0..5
+      let plane = if piece > 0 { t } else { 6 + t }   // white vs black block
+      obs[plane * 64 + sq] = 1.0
+    }
+    if this.whiteToMove { this.fillPlane(obs, 12) }
+    if (this.castling & CastleWK) != 0 { this.fillPlane(obs, 13) }
+    if (this.castling & CastleWQ) != 0 { this.fillPlane(obs, 14) }
+    if (this.castling & CastleBK) != 0 { this.fillPlane(obs, 15) }
+    if (this.castling & CastleBQ) != 0 { this.fillPlane(obs, 16) }
+    if this.enPassant >= 0 { obs[17 * 64 + this.enPassant] = 1.0 }
+    return obs
+  }
+
+  fn fillPlane(obs: List<f64>, plane: i32) {
+    for sq in 0..64 { obs[plane * 64 + sq] = 1.0 }
+  }
+
+  // Apply an encoded action index (a queen-promotion rides the queen planes and decodes with
+  // promotion 0 → promote a pawn reaching the last rank to a Queen by default).
+  fn applyIndex(index: i32): PgChessState {
+    let m = decode(index)
+    var chosen = m
+    if m.promotion == 0 && pieceType(this.squares[m.from]) == 1 {
+      let toRank = rankOf(m.to)
+      if toRank == 0 || toRank == 7 { chosen = PgChessMove(m.from, m.to, PromoQueen) }
+    }
+    return this.makeMove(chosen)
+  }
+
+  // ── AlphaZero 4672 move encoding (64 × 73 = from-square × plane) ──────────────────────────
+  // 56 queen planes (8 dir × 7 dist — also carry queen-promotions and king/pawn moves) + 8
+  // knight planes + 9 underpromotion planes (N/B/R × {capture-left, straight, capture-right}).
+  static fn encode(move: PgChessMove): i32 {
+    let df = fileOf(move.to) - fileOf(move.from)
+    let dr = rankOf(move.to) - rankOf(move.from)
+    var plane = 0
+    if move.promotion == PromoKnight || move.promotion == PromoBishop || move.promotion == PromoRook {
+      let pieceIdx = if move.promotion == PromoKnight { 0 } else { if move.promotion == PromoBishop { 1 } else { 2 } }
+      plane = 64 + pieceIdx * 3 + (df + 1)    // df ∈ {-1,0,1} → {capture-left, straight, capture-right}
+    } else if isKnightMove(df, dr) {
+      plane = 56 + knightIndex(df, dr)
+    } else {
+      let dir = dirIndex(isign(df), isign(dr))
+      let dist = Math.max(Math.abs(df), Math.abs(dr))
+      plane = dir * 7 + (dist - 1)
+    }
+    return move.from * PlanesPerSquare + plane
+  }
+
+  // Decode an action index to a move. A queen-promotion decodes with promotion 0 — the caller
+  // promotes a pawn reaching the last rank to a Queen by default (see applyIndex).
+  static fn decode(index: i32): PgChessMove {
+    let from = index / PlanesPerSquare
+    let plane = index % PlanesPerSquare
+    let f = fileOf(from)
+    let r = rankOf(from)
+
+    if plane >= 64 {
+      let p = plane - 64
+      let promo = if p / 3 == 0 { PromoKnight } else { if p / 3 == 1 { PromoBishop } else { PromoRook } }
+      let df = (p % 3) - 1
+      let dr = if r == 6 { 1 } else { -1 }    // a pawn on the 7th rank promotes upward, on the 2nd downward
+      return PgChessMove(from, (r + dr) * 8 + (f + df), promo)
+    }
+    if plane >= 56 {
+      let target = plane - 56
+      var i = 0
+      var rdf = 0
+      var rdr = 0
+      for (df, dr) in encKnights() {
+        if i == target { rdf = df; rdr = dr }
+        i += 1
+      }
+      return PgChessMove(from, (r + rdr) * 8 + (f + rdf), 0)
+    }
+    let dirTarget = plane / 7
+    let dist = plane % 7 + 1
+    var j = 0
+    var ddf = 0
+    var ddr = 0
+    for (df, dr) in encDirs() {
+      if j == dirTarget { ddf = df; ddr = dr }
+      j += 1
+    }
+    return PgChessMove(from, (r + ddr * dist) * 8 + (f + ddf * dist), 0)
+  }
+
+  static fn isKnightMove(df: i32, dr: i32): bool {
+    let a = Math.abs(df)
+    let b = Math.abs(dr)
+    return (a == 1 && b == 2) || (a == 2 && b == 1)
+  }
+
+  static fn knightIndex(df: i32, dr: i32): i32 {
+    var i = 0
+    var found = -1
+    for (kdf, kdr) in encKnights() {
+      if kdf == df && kdr == dr { found = i }
+      i += 1
+    }
+    return found
+  }
+
+  static fn dirIndex(sdf: i32, sdr: i32): i32 {
+    var i = 0
+    var found = -1
+    for (ddf, ddr) in encDirs() {
+      if ddf == sdf && ddr == sdr { found = i }
+      i += 1
+    }
+    return found
+  }
+}
+
+// ── Two-headed policy/value net inference (single-source forward pass) ────────────────────────
+// Mirrors Core/Nn/PolicyValueNet: a ReLU trunk → policy logits (one per action, linear) + a scalar
+// value (linear). INFERENCE ONLY — training stays on the SDK autograd/GEMM. Weights are float32 in
+// the .ckpt; the per-platform parser (chess-net.ts / the C# parity loader) loads them into these f64
+// flat arrays. Trunk weights/biases are concatenated in layer order (each row-major [in, out]) with
+// per-layer offsets from `hidden` — a single List<f64> avoids nested-generic (List<List<f64>>) params,
+// which the transpiler mishandles (same shape as fruitcake's PgDuelingNet).
+
+// forward() output: raw policy logits (length actions) + the raw scalar value (linear — the leaf
+// evaluator applies tanh, matching PolicyValueNet's linear value head + SelfPlayCampaign.Evaluate).
+record PgNetOut(logits: List<f64>, value: f64)
+
+class PgPolicyValueNet {
+  var inputSize: i32
+  var actions: i32
+  var hidden: List<i32>          // trunk hidden widths (from the checkpoint)
+  var trunkWFlat: List<f64>      // trunk weight matrices concatenated in layer order (each row-major [in, out])
+  var trunkBFlat: List<f64>      // trunk biases concatenated in layer order
+  var policyW: List<f64>         // [lastHidden * actions]
+  var policyB: List<f64>         // [actions]
+  var valueW: List<f64>          // [lastHidden * 1]
+  var valueB: List<f64>          // [1]
+
+  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, policyW: List<f64>, policyB: List<f64>, valueW: List<f64>, valueB: List<f64>) {
+    this.inputSize = inputSize
+    this.actions = actions
+    this.hidden = hidden
+    this.trunkWFlat = trunkWFlat
+    this.trunkBFlat = trunkBFlat
+    this.policyW = policyW
+    this.policyB = policyB
+    this.valueW = valueW
+    this.valueB = valueB
+  }
+
+  // obs (length inputSize) → logits (length actions) + scalar value. Matches PolicyValueNet.Forward on one row.
+  fn forward(obs: List<f64>): PgNetOut {
+    var x = obs
+    var prev = this.inputSize
+    var wOff = 0
+    var bOff = 0
+    for l in 0..this.hidden.count {
+      let h = this.hidden[l]
+      x = relu(linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h))
+      wOff += prev * h
+      bOff += h
+      prev = h
+    }
+    let logits = linear(x, this.policyW, 0, this.policyB, 0, prev, this.actions)
+    let value = linear(x, this.valueW, 0, this.valueB, 0, prev, 1)
+    return PgNetOut(logits, value[0])
+  }
+
+  // Dense layer: out[o] = b[bOff+o] + Σ_i x[i]·w[wOff + i*outDim + o]  (w row-major [inDim, outDim]).
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+}
+
+// ── Inference MCTS (AlphaZero PUCT) ───────────────────────────────────────────────────────────
+// Single-source port of Core/Planning/Mcts, minus the self-play-only Dirichlet root noise (this is
+// the browser/serving path). Each simulation walks the tree maximizing Q + U, expands one leaf, and
+// backs the net value up the path NEGATING it every ply (zero-sum). `search` returns the root
+// visit-count distribution over the 4672 action space; `chooseMove` is its argmax.
+
+// A leaf evaluation: priors aligned to the node's legal-move list (masked-softmax over legal) + the
+// tanh value from the side-to-move's perspective.
+record PgLeafEval(priors: List<f64>, value: f64)
+
+class PgMctsNode {
+  var moves: List<i32>              // legal action indices (empty if terminal)
+  var p: List<f64>                  // prior per move (aligned to moves)
+  var n: List<i32>                  // visit count per move
+  var w: List<f64>                  // summed value per move (this node's mover perspective)
+  var children: List<PgMctsNode?>
+  var expanded: bool
+  var terminal: bool
+  var terminalValue: f64            // set when terminal: -1 loss (side-to-move mated) / 0 draw, mover-relative
+
+  init(moves: List<i32>, terminal: bool, terminalValue: f64) {
+    this.moves = moves
+    this.terminal = terminal
+    this.terminalValue = terminalValue
+    this.p = List<f64>()
+    this.n = List<i32>()
+    this.w = List<f64>()
+    this.children = List<PgMctsNode?>()
+    this.expanded = false
+  }
+}
+
+class PgChessMcts {
+  // Run `sims` PUCT simulations from `root` and return the root visit-count distribution over the
+  // 4672 action space (0 for illegal/unvisited). Falls back to raw priors if nothing was visited.
+  static fn search(net: PgPolicyValueNet, root: PgChessState, sims: i32, cpuct: f64): List<f64> {
+    let rootNode = newNode(root)
+    if !rootNode.terminal {
+      expandLeaf(rootNode, net, root)
+      for s in 0..sims { simulate(rootNode, net, root, cpuct) }
+    }
+
+    var pi: List<f64> = List<f64>()
+    for i in 0..4672 { pi.add(0.0) }
+    var total = 0
+    for i in 0..rootNode.moves.count { total += rootNode.n[i] }
+    if total == 0 {
+      for i in 0..rootNode.moves.count { pi[rootNode.moves[i]] = rootNode.p[i] }
+      return pi
+    }
+    for i in 0..rootNode.moves.count { pi[rootNode.moves[i]] = rootNode.n[i] * 1.0 / total }
+    return pi
+  }
+
+  // Best action index (argmax visit count via the returned distribution).
+  static fn chooseMove(net: PgPolicyValueNet, root: PgChessState, sims: i32, cpuct: f64): i32 {
+    let pi = search(net, root, sims, cpuct)
+    var best = -1
+    var bestV = -1.0
+    for i in 0..pi.count { if pi[i] > bestV { bestV = pi[i]; best = i } }
+    return best
+  }
+
+  // Returns the value of `state` from the perspective of its side to move.
+  static fn simulate(node: PgMctsNode, net: PgPolicyValueNet, state: PgChessState, cpuct: f64): f64 {
+    if node.terminal { return node.terminalValue }
+    if !node.expanded { return expandLeaf(node, net, state) }
+
+    let edge = selectChild(node, cpuct)
+    let childState = state.applyIndex(node.moves[edge])
+    if node.children[edge] == null { node.children[edge] = newNode(childState) }
+    let child = node.children[edge]!
+    let value = -simulate(child, net, childState, cpuct)   // flip: child mover's value
+    node.n[edge] = node.n[edge] + 1
+    node.w[edge] = node.w[edge] + value
+    return value
+  }
+
+  static fn selectChild(node: PgMctsNode, cpuct: f64): i32 {
+    var sumN = 0
+    for i in 0..node.n.count { sumN += node.n[i] }
+    let sqrtSum = Math.sqrt(sumN * 1.0)
+    var best = 0
+    var bestScore = -1.0e30
+    for i in 0..node.moves.count {
+      let q = if node.n[i] > 0 { node.w[i] / node.n[i] } else { 0.0 }
+      let u = cpuct * node.p[i] * sqrtSum / (1.0 + node.n[i])
+      let score = q + u
+      if score > bestScore { bestScore = score; best = i }
+    }
+    return best
+  }
+
+  static fn newNode(state: PgChessState): PgMctsNode {
+    let r = state.result()   // 0 ongoing, 1 loss (side-to-move mated), 2 draw
+    if r != 0 {
+      let tv = if r == 1 { -1.0 } else { 0.0 }
+      return PgMctsNode(List<i32>(), true, tv)
+    }
+    return PgMctsNode(state.legalMoveIndices(), false, 0.0)
+  }
+
+  // Evaluate the leaf, seed per-move priors (masked-softmax over legal), return the net's value estimate.
+  static fn expandLeaf(node: PgMctsNode, net: PgPolicyValueNet, state: PgChessState): f64 {
+    let ev = evaluate(net, state, node.moves)
+    let k = node.moves.count
+    node.p = List<f64>()
+    node.n = List<i32>()
+    node.w = List<f64>()
+    node.children = List<PgMctsNode?>()
+    for i in 0..k {
+      node.p.add(ev.priors[i])
+      node.n.add(0)
+      node.w.add(0.0)
+      node.children.add(null)
+    }
+    node.expanded = true
+    return ev.value
+  }
+
+  // Masked-softmax priors over `moves` (aligned) + tanh value. Mirrors SelfPlayCampaign.Evaluate.
+  static fn evaluate(net: PgPolicyValueNet, state: PgChessState, moves: List<i32>): PgLeafEval {
+    let out = net.forward(state.writeObservation())
+    var mx = -1.0e30
+    for m in moves { if out.logits[m] > mx { mx = out.logits[m] } }
+    var pr: List<f64> = List<f64>()
+    var sum = 0.0
+    for m in moves {
+      let e = Math.exp(out.logits[m] - mx)
+      pr.add(e)
+      sum += e
+    }
+    if sum > 0.0 {
+      for i in 0..pr.count { pr[i] = pr[i] / sum }
+    } else {
+      for i in 0..pr.count { pr[i] = 1.0 / pr.count }
+    }
+    return PgLeafEval(pr, Math.tanh(out.value))
+  }
+}
