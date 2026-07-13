@@ -1,4 +1,6 @@
 import { AfterViewInit, Component, DestroyRef, ElementRef, NgZone, inject, signal, viewChild } from '@angular/core';
+import { Color } from '@mintplayer/ng-bootstrap';
+import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 import { FruitCakeAudio } from './fruit-cake-audio';
 import { FruitCakeDirector } from './fruit-cake-director';
 import { FruitCakeGame, GamePhase } from './fruit-cake-game';
@@ -19,6 +21,7 @@ import { ScreenWakeLock } from '../screen-wake-lock';
   selector: 'app-fruit-cake',
   templateUrl: './fruit-cake.html',
   styleUrl: './fruit-cake.scss',
+  imports: [BsButtonTypeDirective],
   host: {
     '(document:fullscreenchange)': 'onFullscreenChange()',
     '(document:webkitfullscreenchange)': 'onFullscreenChange()',
@@ -33,6 +36,7 @@ export class FruitCake implements AfterViewInit {
   private readonly audio = new FruitCakeAudio();
   private readonly game = new FruitCakeGame(this.audio);
 
+  protected readonly colors = Color;
   protected readonly isFullscreen = signal(false);
   /** 'human' = play locally; 'watch' = the AI plays — physics + net + search all run in the browser (M32). */
   protected readonly mode = signal<'human' | 'watch'>('human');

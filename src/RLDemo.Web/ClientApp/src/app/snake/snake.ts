@@ -3,6 +3,8 @@ import { Dir, SIZE, SnakeGame } from './snake-logic';
 import { SnakeDirector } from './snake-director';
 import { SnakeTubeRenderer } from './snake-renderer';
 import { ScreenWakeLock } from '../screen-wake-lock';
+import { Color } from '@mintplayer/ng-bootstrap';
+import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 
 const BOARD_PX = 480;
 const WATCH_TICK_MS = 120;
@@ -18,11 +20,13 @@ const HUMAN_TICK_MS = 150;
   selector: 'app-snake',
   templateUrl: './snake.html',
   styleUrl: './snake.scss',
+  imports: [BsButtonTypeDirective],
   host: { '(window:keydown)': 'onKey($event)' },
 })
 export class Snake {
   private readonly wakeLock = inject(ScreenWakeLock);
 
+  protected readonly colors = Color;
   protected readonly mode = signal<'idle' | 'watch' | 'human'>('idle');
   protected readonly foodEaten = signal(0);
   protected readonly status = signal('Watch the self-taught AI play, or play it yourself.');

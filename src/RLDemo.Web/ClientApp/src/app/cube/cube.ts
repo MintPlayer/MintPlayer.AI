@@ -1,5 +1,7 @@
 import { Component, DestroyRef, ElementRef, afterNextRender, computed, inject, signal, viewChild } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
+import { Color } from '@mintplayer/ng-bootstrap';
+import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CubeApi, CubeSolveResponse, CubeStatusResponse } from './cube-api';
@@ -27,6 +29,7 @@ interface ArmedSolution {
   selector: 'app-cube',
   templateUrl: './cube.html',
   styleUrl: './cube.scss',
+  imports: [BsButtonTypeDirective],
   host: {
     '(window:keydown)': 'onKey($event)',
     '(window:resize)': 'onResize()',
@@ -37,6 +40,7 @@ export class Cube {
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('cubeCanvas');
 
   protected readonly moveButtons = MOVE_BUTTONS;
+  protected readonly colors = Color;
 
   protected readonly status = signal('Ready');
   protected readonly animating = signal(false);

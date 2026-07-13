@@ -57,7 +57,7 @@
             ],
             "stylePreprocessorOptions": {
               "sass": {
-                "silenceDeprecations": ["import", "global-builtin", "color-functions", "mixed-decls"]
+                "silenceDeprecations": ["import", "global-builtin", "color-functions"]
               }
             }
           },
