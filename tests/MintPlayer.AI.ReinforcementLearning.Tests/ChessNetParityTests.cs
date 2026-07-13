@@ -49,6 +49,37 @@ public class ChessNetParityTests
     }
 
     [Fact]
+    public void Generated_conv_net_matches_ConvResidualPolicyValueNet_forward_within_f32_tolerance()
+    {
+        // M42.4 gate: the single-source conv forward (PgConvNet in chess_solver.pg) must match the training conv net
+        // (ConvResidualPolicyValueNet) on a real position, within f32 tolerance. Small filters/blocks keeps it fast;
+        // the math (nested-loop conv, whole-row LayerNorm, residual tower, both heads) is identical regardless of size.
+        var net = new ConvResidualPolicyValueNet(planes: 18, boardH: 8, boardW: 8, actions: Actions,
+            filters: 8, blocks: 2, new Xoshiro256StarStar(999));
+
+        using var ms = new MemoryStream();
+        net.Save(ms, "selfplay-pv-conv");
+        ms.Position = 0;
+        var pg = LoadPgConv(ms, Actions);
+
+        var obs = new float[InputSize];
+        new ChessGame().WriteObservation(ChessState.StartPosition(), obs);
+
+        var (logits, value) = net.Forward(new Tensor(obs, 1, InputSize));
+        var pgOut = pg.forward([.. obs.Select(f => (double)f)]);
+
+        Assert.Equal(Actions, pgOut.logits.Count);
+        double maxLogitDiff = 0;
+        for (int m = 0; m < Actions; m++)
+            maxLogitDiff = Math.Max(maxLogitDiff, Math.Abs(logits.Data[m] - pgOut.logits[m]));
+
+        // A 2-block tower accumulates more f32↔f64 drift than the flat MLP; 2e-3 stays well below any meaningful
+        // policy/value difference (logits feed a softmax, value a tanh).
+        Assert.True(maxLogitDiff < 2e-3, $"max logit diff {maxLogitDiff} exceeds tolerance");
+        Assert.True(Math.Abs(value.Data[0] - pgOut.value) < 2e-3, $"value diff {Math.Abs(value.Data[0] - pgOut.value)}");
+    }
+
+    [Fact]
     public void Generated_mcts_returns_a_valid_legal_move_distribution()
     {
         // The inference MCTS (PgChessMcts) is new single-source code the forward-parity test doesn't exercise.
@@ -126,5 +157,51 @@ public class ChessNetParityTests
         var valueW = ReadFloats(); var valueB = ReadFloats();
 
         return new PgPolicyValueNet(inputSize, actions, hidden, trunkW, trunkB, policyW, policyB, valueW, valueB);
+    }
+
+    // Mirror of ConvResidualPolicyValueNet.Save (kind "selfplay-pv-conv", version 1): magic → kind → version →
+    // WriteInts [planes,H,W,filters,blocks] (leading int32 count=5) → params in Parameters() order (each wCount+floats).
+    // Per-block layers (conv1/norm1/conv2/norm2 × blocks) are CONCATENATED into the PgConvNet's flat per-role arrays.
+    // This doubles as the reference for the conv branch chess-net.ts must add. actions comes from the environment.
+    private static PgPolicyValueNet LoadPgConv(Stream stream, int actions)
+    {
+        using var r = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
+        Assert.Equal(0x434E4C52u, r.ReadUInt32());       // "RLNC"
+        Assert.Equal("selfplay-pv-conv", r.ReadString());
+        Assert.Equal(1, r.ReadInt32());                  // version
+        Assert.Equal(5, r.ReadInt32());                  // dim count
+        int planes = r.ReadInt32(), h = r.ReadInt32(), w = r.ReadInt32(), filters = r.ReadInt32(), blocks = r.ReadInt32();
+
+        List<double> ReadFloats()
+        {
+            int n = r.ReadInt32();
+            var list = new List<double>(n);
+            for (int i = 0; i < n; i++) list.Add(r.ReadSingle());
+            return list;
+        }
+
+        var conv = new PgConvNet(planes, h, w, filters, blocks, actions)
+        {
+            stemW = ReadFloats(),
+            stemB = ReadFloats(),
+            stemNG = ReadFloats(),
+            stemNB = ReadFloats(),
+            b1W = [], b1B = [], n1G = [], n1B = [], b2W = [], b2B = [], n2G = [], n2B = [],
+        };
+        for (int i = 0; i < blocks; i++)
+        {
+            conv.b1W.AddRange(ReadFloats()); conv.b1B.AddRange(ReadFloats());
+            conv.n1G.AddRange(ReadFloats()); conv.n1B.AddRange(ReadFloats());
+            conv.b2W.AddRange(ReadFloats()); conv.b2B.AddRange(ReadFloats());
+            conv.n2G.AddRange(ReadFloats()); conv.n2B.AddRange(ReadFloats());
+        }
+        conv.pConvW = ReadFloats(); conv.pConvB = ReadFloats();
+        conv.pNG = ReadFloats(); conv.pNB = ReadFloats();
+        conv.pHeadW = ReadFloats(); conv.pHeadB = ReadFloats();
+        conv.vConvW = ReadFloats(); conv.vConvB = ReadFloats();
+        conv.vNG = ReadFloats(); conv.vNB = ReadFloats();
+        conv.vHidW = ReadFloats(); conv.vHidB = ReadFloats();
+        conv.vHeadW = ReadFloats(); conv.vHeadB = ReadFloats();
+        return PgPolicyValueNet.withConv(conv);
     }
 }
