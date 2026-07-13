@@ -1,5 +1,6 @@
 extern alias Lab; // SelfPlayCampaign is internal to the Lab exe (InternalsVisibleTo), aliased like the other campaigns
 
+using System.Security.Cryptography;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 using MintPlayer.AI.ReinforcementLearning.Environments.Connect4;
@@ -75,6 +76,54 @@ public class SelfPlayCampaignTests
             Assert.Equal(6, c.TrainChunk());
             Assert.Contains(c.Evaluate().Metrics, m => m.Name == "winRate");
             c.Dispose();
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>The M41.2 reproducibility gate: parallel self-play generation must not change the trained result. A
+    /// short Connect-4 run checkpointed with sequential generation, with parallel-at-dop-1, and with parallel-at-dop-8
+    /// must produce a <b>byte-identical</b> net + optimizer checkpoint — the same guarantee the DeterministicParallel
+    /// primitive is unit-tested for, verified end-to-end through the campaign (per-game RNG + ordered merge + a stable
+    /// read-only net + owner-thread training). If concurrency ever leaks into the trained weights, this fails.</summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public void ParallelGeneration_ProducesBitwiseIdenticalCheckpoint_AtAnyDop()
+    {
+        byte[] sequential = RunAndHashCheckpoint(parallel: false, maxDop: null);
+        byte[] parallelDop1 = RunAndHashCheckpoint(parallel: true, maxDop: 1);
+        byte[] parallelDop8 = RunAndHashCheckpoint(parallel: true, maxDop: 8);
+
+        Assert.Equal(sequential, parallelDop1);
+        Assert.Equal(sequential, parallelDop8);
+    }
+
+    // Runs a few fixed-seed chunks and returns SHA256 over the saved net + optimizer bytes.
+    private static byte[] RunAndHashCheckpoint(bool parallel, int? maxDop)
+    {
+        var dir = Directory.CreateTempSubdirectory("connect4-selfplay-determinism");
+        try
+        {
+            var store = new FileModelStore(dir.FullName);
+            var c = new Lab::SelfPlayCampaign<Connect4State>(new Connect4Game(), "connect4", seed: 42,
+                learningRate: 1e-3f, hidden: 32, selfPlayCfg: new Mcts.Config(Simulations: 8),
+                gamesPerChunk: 16, tempMoves: 2, evalGames: 2, windowCapacity: 4000, maxPlies: 64,
+                parallel: parallel, maxDop: maxDop);
+            c.Resume(store);
+            for (int i = 0; i < 3; i++) c.TrainChunk();
+            c.Checkpoint(store);
+            c.Dispose();
+
+            using var buffer = new MemoryStream();
+            foreach (var id in new[] { "az", "az-adam" })
+            {
+                using var s = store.TryOpenRead("connect4", id);
+                Assert.NotNull(s);
+                s!.CopyTo(buffer);
+            }
+            return SHA256.HashData(buffer.ToArray());
         }
         finally
         {

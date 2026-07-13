@@ -33,7 +33,16 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     private readonly Mcts.Config _selfPlayCfg, _evalCfg;
 
     private readonly SeedSequence _seeds;
-    private readonly Xoshiro256StarStar _searchRng, _evalRng;
+    private readonly Xoshiro256StarStar _shuffleRng, _evalRng;
+
+    // Parallel self-play generation (M41.2): games are independent, so a chunk fans out across cores via
+    // DeterministicParallel — each game derives its OWN RNG from its global index (never execution order) and returns
+    // its samples, which are merged into the window in ascending index. The trained checkpoint is therefore
+    // bitwise-identical at any degree of parallelism (gated by a SHA dop-1==dop-N test). Generation reads a stable
+    // read-only net (training runs on the owner thread AFTER the join), and net inference is concurrent-safe
+    // ([ThreadStatic] NoGrad + fresh buffers), so no per-thread net copy is needed.
+    private readonly bool _parallel;
+    private readonly int? _maxDop;
 
     // Auto-difficulty-ladder (M40.4a): produce a reliably-ordered ladder of increasingly-strong nets, written straight
     // into the web app's models dir. A new tier is promoted only when the live net beats the last-promoted CHAMPION by
@@ -64,8 +73,10 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, ulong seed, float learningRate,
         int hidden, Mcts.Config selfPlayCfg, int gamesPerChunk = 32, int tempMoves = 8, int evalGames = 20,
         int windowCapacity = 40_000, int maxPlies = 512, long targetGames = 0, double opponentRandomFrac = 0,
-        LadderOptions? ladder = null, float materialWeight = 0f)
+        LadderOptions? ladder = null, float materialWeight = 0f, bool parallel = false, int? maxDop = null)
     {
+        _parallel = parallel;
+        _maxDop = maxDop;
         _ladder = ladder;
         _material = game as IMaterialScore<TState>; // dense material shaping when the game supports it
         _materialWeight = materialWeight;
@@ -85,7 +96,9 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         _maxPlies = maxPlies;
         _targetGames = targetGames;
         _seeds = new SeedSequence(seed);
-        _searchRng = _seeds.CreateRng(RngStreams.Policy);
+        // The training-window shuffle runs on the owner thread; it gets the Buffer stream so it never collides with
+        // the Policy stream that per-game generation derives its RNGs from (game 0 would otherwise share a seed).
+        _shuffleRng = _seeds.CreateRng(RngStreams.Buffer);
         _evalRng = _seeds.CreateRng(RngStreams.Evaluation);
         _window = new List<Sample>(windowCapacity);
     }
@@ -116,12 +129,20 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
 
     public long TrainChunk()
     {
-        for (int g = 0; g < _gamesPerChunk; g++) PlayGame();
+        // Generate the chunk's games (each on its own index-derived RNG, over the stable read-only net), then merge
+        // their samples into the rolling window in ascending game index — identical to the old sequential add order,
+        // and independent of how many cores ran it.
+        var perGame = DeterministicParallel.Generate(
+            _gamesPerChunk, _seeds, RngStreams.Policy, _totalGames,
+            (i, rng) => GenerateGame(_totalGames + i, rng), _parallel, _maxDop);
+        foreach (var samples in perGame)
+            foreach (var sample in samples) AddSample(sample);
+        _totalGames += _gamesPerChunk;
 
         // Train one shuffled pass over the current window (skip until a full batch has accumulated).
         if (_window.Count >= BatchSize)
         {
-            CubePolicyTraining.Shuffle(_window, _searchRng);
+            CubePolicyTraining.Shuffle(_window, _shuffleRng);
             int obsSize = _game.ObservationSize, actions = _game.PolicySize;
             for (int offset = 0; offset + BatchSize <= _window.Count; offset += BatchSize)
             {
@@ -178,21 +199,22 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     public void Dispose() { }
 
     // ── Self-play ────────────────────────────────────────────────────────────────────────────────────────────────
-    private void PlayGame()
+    // One self-play game, pure w.r.t. its own RNG + the shared read-only net → safe to run concurrently. Returns its
+    // samples (the caller merges them into the window on the owner thread) instead of touching shared state.
+    private List<Sample> GenerateGame(long globalIndex, Xoshiro256StarStar rng)
     {
         // A fraction of games pit the learner (MCTS) against a RANDOM opponent, so the net trains on the
         // off-distribution positions a weak/unexpected move reaches — the direct fix for "a novel move disorients
         // the AI" (PLAN M39.3). The rest are pure self-play. Opening variety otherwise comes from temperature.
-        if (_opponentRandomFrac > 0 && _searchRng.NextDouble() < _opponentRandomFrac)
-            PlayVsRandom(learnerFirst: (_totalGames & 1) == 0);
-        else
-            PlaySelfPlay();
-        _totalGames++;
+        // The learner's colour keys off the global game index (not a shared counter) so it's parallelism-independent.
+        return _opponentRandomFrac > 0 && rng.NextDouble() < _opponentRandomFrac
+            ? PlayVsRandom(learnerFirst: (globalIndex & 1) == 0, rng)
+            : PlaySelfPlay(rng);
     }
 
     // Both sides are the current net + MCTS; every position is a training sample. The outcome z alternates sign each
     // ply (zero-sum): the terminal result is for the side to move there, so the LAST position played gets its negation.
-    private void PlaySelfPlay()
+    private List<Sample> PlaySelfPlay(Xoshiro256StarStar rng)
     {
         var state = _game.Root();
         var obsHistory = new List<float[]>(64);
@@ -202,28 +224,30 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         int ply = 0;
         while (_game.Result(state) == GameResult.Ongoing && ply < _maxPlies)
         {
-            float[] pi = Mcts.Search(_game, state, Evaluate, _selfPlayCfg, _searchRng);
+            float[] pi = Mcts.Search(_game, state, Evaluate, _selfPlayCfg, rng);
             var obs = new float[_game.ObservationSize];
             _game.WriteObservation(state, obs);
             obsHistory.Add(obs);
             piHistory.Add(pi);
             matHistory.Add(MaterialTarget(state));
-            state = _game.Apply(state, SelectMove(pi, ply));
+            state = _game.Apply(state, SelectMove(pi, ply, rng));
             ply++;
         }
 
+        var samples = new List<Sample>(obsHistory.Count);
         float zTerminalMover = _game.Result(state) switch { GameResult.Loss => -1f, GameResult.Win => 1f, _ => 0f };
         float z = -zTerminalMover;
         for (int i = obsHistory.Count - 1; i >= 0; i--)
         {
-            AddSample(new Sample(obsHistory[i], piHistory[i], Blend(z, matHistory[i])));
+            samples.Add(new Sample(obsHistory[i], piHistory[i], Blend(z, matHistory[i])));
             z = -z;
         }
+        return samples;
     }
 
     // The learner (net + MCTS) plays one colour and records its positions; the opponent plays random-legal moves. The
     // learner's colour is constant, so every recorded position takes the same outcome z (from the learner's view).
-    private void PlayVsRandom(bool learnerFirst)
+    private List<Sample> PlayVsRandom(bool learnerFirst, Xoshiro256StarStar rng)
     {
         var state = _game.Root();
         var obsHistory = new List<float[]>(64);
@@ -238,15 +262,15 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             int move;
             if (learnerToMove)
             {
-                float[] pi = Mcts.Search(_game, state, Evaluate, _selfPlayCfg, _searchRng);
+                float[] pi = Mcts.Search(_game, state, Evaluate, _selfPlayCfg, rng);
                 var obs = new float[_game.ObservationSize];
                 _game.WriteObservation(state, obs);
                 obsHistory.Add(obs);
                 piHistory.Add(pi);
                 matHistory.Add(MaterialTarget(state)); // state's side-to-move = learner here
-                move = SelectMove(pi, ply);
+                move = SelectMove(pi, ply, rng);
             }
-            else move = RandomLegalMove(state, _searchRng);
+            else move = RandomLegalMove(state, rng);
             state = _game.Apply(state, move);
             learnerToMove = !learnerToMove;
             ply++;
@@ -259,8 +283,10 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             GameResult.Win => learnerToMove ? 1f : -1f,
             _ => 0f,                                     // draw or ply-cap
         };
+        var samples = new List<Sample>(obsHistory.Count);
         for (int i = 0; i < obsHistory.Count; i++)
-            AddSample(new Sample(obsHistory[i], piHistory[i], Blend(z, matHistory[i])));
+            samples.Add(new Sample(obsHistory[i], piHistory[i], Blend(z, matHistory[i])));
+        return samples;
     }
 
     // Per-position material target from the side-to-move's view, squashed to [-1,1] (0 when the game has no material).
@@ -302,7 +328,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         return priors;
     }
 
-    private int SelectMove(float[] pi, int ply)
+    private int SelectMove(float[] pi, int ply, Xoshiro256StarStar rng)
     {
         if (ply >= _tempMoves) // late game: play the most-visited move
         {
@@ -311,7 +337,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             return best;
         }
         // early game: sample proportional to visit counts, for opening variety
-        double r = _searchRng.NextDouble(), acc = 0;
+        double r = rng.NextDouble(), acc = 0;
         for (int a = 0; a < pi.Length; a++) { acc += pi[a]; if (r <= acc && pi[a] > 0) return a; }
         // numerical fallback: the last legal (highest-visited) move
         int fallback = 0;

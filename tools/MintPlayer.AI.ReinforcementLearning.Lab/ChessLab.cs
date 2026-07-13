@@ -34,6 +34,11 @@ internal static class ChessLab
         // outcome (old behaviour); default 0.5 gives a weak net a gradient on every capture (the anti-plateau fix).
         float materialWeight = a.Flt("--material-weight", 0.5f);
 
+        // Parallel self-play generation (M41.2): --parallel fans the chunk's games across cores (default cores-2),
+        // --dop caps the degree of parallelism. Trained weights are identical at any DOP for a given seed.
+        bool parallel = a.Has("--parallel");
+        int? dop = a.Has("--dop") ? a.Int("--dop", System.Math.Max(1, System.Environment.ProcessorCount - 2)) : null;
+
         LadderOptions? ladder = a.Has("--ladder")
             ? new LadderOptions(
                 Dir: a.Str("--difficulty-dir", Path.Combine("src", "RLDemo.Web", "wwwroot", "models")),
@@ -55,7 +60,7 @@ internal static class ChessLab
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             _ => new SelfPlayCampaign<ChessState>(game, "chess", seed, learningRate, hidden, cfg, gamesPerChunk,
                 tempMoves: 12, evalGames: evalGames, maxPlies: 200, opponentRandomFrac: opponentRandom, ladder: ladder,
-                materialWeight: materialWeight),
+                materialWeight: materialWeight, parallel: parallel, maxDop: dop),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
     }
