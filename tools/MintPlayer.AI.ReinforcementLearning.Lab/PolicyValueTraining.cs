@@ -15,7 +15,7 @@ internal static class PolicyValueTraining
     /// <param name="valueTargets">Outcome z per row in [-1,1], length <paramref name="batch"/>.</param>
     /// <returns>The batch's policy (CE) and value (MSE) losses.</returns>
     public static (double PolicyLoss, double ValueLoss) TrainStep(
-        PolicyValueNet net, Adam adam, float[] obs, float[] policyTargets, float[] valueTargets,
+        IPolicyValueNet net, Adam adam, float[] obs, float[] policyTargets, float[] valueTargets,
         int batch, int obsSize, int actions)
     {
         var (logits, value) = net.Forward(new Tensor(obs, batch, obsSize));

@@ -18,7 +18,6 @@ using MintPlayer.AI.ReinforcementLearning.Core.Training;
 /// <typeparam name="TState">The game state type of <see cref="IZeroSumGame{TState}"/>.</typeparam>
 internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTelemetrySource
 {
-    private const string CheckpointKind = "selfplay-pv";
     private const string NetId = "az";
     private const string AdamId = "az-adam";
     private const int BatchSize = 128;
@@ -51,7 +50,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // for a given seed. Disabled when `_ladder` is null.
     private readonly LadderOptions? _ladder;
     private readonly Xoshiro256StarStar _arenaRng;
-    private PolicyValueNet? _champion;             // frozen snapshot of the last-promoted net (null until tier 1)
+    private IPolicyValueNet? _champion;            // frozen snapshot of the last-promoted net (null until tier 1)
     private int _tierCount;
     private readonly List<TierInfo> _tiers = [];
 
@@ -63,7 +62,10 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     private readonly float _materialWeight;
     private const float MaterialScale = 5f;
 
-    private PolicyValueNet _net = null!;
+    // How the net is built + reloaded (arch-agnostic seam: MLP by default, conv when a ConvNetBuilder is passed).
+    private readonly IPolicyValueNetBuilder _builder;
+    private readonly string _checkpointKind;
+    private IPolicyValueNet _net = null!;
     private Adam _adam = null!;
     private readonly List<Sample> _window;
     private TrainWindow _lossWindow;
@@ -73,7 +75,8 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, ulong seed, float learningRate,
         int hidden, Mcts.Config selfPlayCfg, int gamesPerChunk = 32, int tempMoves = 8, int evalGames = 20,
         int windowCapacity = 40_000, int maxPlies = 512, long targetGames = 0, double opponentRandomFrac = 0,
-        LadderOptions? ladder = null, float materialWeight = 0f, bool parallel = false, int? maxDop = null)
+        LadderOptions? ladder = null, float materialWeight = 0f, bool parallel = false, int? maxDop = null,
+        IPolicyValueNetBuilder? netBuilder = null)
     {
         _parallel = parallel;
         _maxDop = maxDop;
@@ -87,6 +90,8 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         _environmentId = environmentId;
         _learningRate = learningRate;
         _hidden = [hidden, hidden];
+        _builder = netBuilder ?? new MlpNetBuilder(_hidden); // default = the flat MLP (back-compat)
+        _checkpointKind = _builder.CheckpointKind;
         _selfPlayCfg = selfPlayCfg;
         _evalCfg = selfPlayCfg with { RootNoiseFrac = 0f }; // eval plays deterministically (no exploration noise)
         _gamesPerChunk = gamesPerChunk;
@@ -112,15 +117,15 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         {
             if (s is not null)
             {
-                _net = PolicyValueNet.Load(s, CheckpointKind, _game.ObservationSize, _game.PolicySize);
-                Log($"resumed {_environmentId} self-play net (trunk [{string.Join(",", _net.Trunk)}])");
+                _net = _builder.Load(s, _game.ObservationSize, _game.PolicySize);
+                Log($"resumed {_environmentId} self-play net ({_net.Describe()})");
                 resumed = true;
             }
         }
         if (!resumed)
         {
-            _net = new PolicyValueNet(_game.ObservationSize, _hidden, _game.PolicySize, _seeds.CreateRng(RngStreams.Init));
-            Log($"starting fresh {_environmentId} self-play (trunk [{string.Join(",", _hidden)}], {_selfPlayCfg.Simulations} sims/move)");
+            _net = _builder.CreateFresh(_game.ObservationSize, _game.PolicySize, _seeds.CreateRng(RngStreams.Init));
+            Log($"starting fresh {_environmentId} self-play ({_net.Describe()}, {_selfPlayCfg.Simulations} sims/move)");
         }
         _adam = AdamState.LoadOrInit(store, _environmentId, AdamId, _net.Parameters(), _learningRate, Log);
         if (_ladder is not null) LoadLadderState();
@@ -191,7 +196,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     public void Checkpoint(IModelStore store)
     {
         if (_net is null) return;
-        store.Save(_environmentId, NetId, s => _net.Save(s, CheckpointKind));
+        store.Save(_environmentId, NetId, s => _net.Save(s, _checkpointKind));
         AdamState.Save(store, _environmentId, AdamId, _adam);
         if (_ladder is not null) MaybePromoteDifficulty();
     }
@@ -305,7 +310,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // MCTS leaf evaluator: masked-softmax policy priors + tanh value, read-only (no autograd).
     private (float[] Priors, float Value) Evaluate(TState state) => EvaluateWith(_net, state);
 
-    private (float[] Priors, float Value) EvaluateWith(PolicyValueNet net, TState state)
+    private (float[] Priors, float Value) EvaluateWith(IPolicyValueNet net, TState state)
     {
         var obs = new float[_game.ObservationSize];
         _game.WriteObservation(state, obs);
@@ -414,7 +419,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         string ckptName = $"{_environmentId}.az.d{_tierCount}.ckpt";
         string ckptPath = Path.Combine(_ladder.Dir, ckptName);
         string tmp = ckptPath + ".tmp";
-        using (var fs = File.Create(tmp)) _net.Save(fs, CheckpointKind);
+        using (var fs = File.Create(tmp)) _net.Save(fs, _checkpointKind);
         if (File.Exists(ckptPath)) File.Delete(ckptPath);
         File.Move(tmp, ckptPath);
 
@@ -428,7 +433,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // MCTS argmax, no root noise); games diversified by a short randomized opening drawn from `_arenaRng` (independent
     // of the training/eval streams). Returns BOTH the win/draw Score (win 1 / draw 0.5) AND the challenger's average
     // end-of-game material margin in pawns — the non-saturating signal that separates two nets that only ever draw.
-    private (double Score, double Material) ArenaVsNet(PolicyValueNet challenger, PolicyValueNet champion, int games)
+    private (double Score, double Material) ArenaVsNet(IPolicyValueNet challenger, IPolicyValueNet champion, int games)
     {
         double score = 0, material = 0;
         for (int g = 0; g < games; g++)
@@ -459,7 +464,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         return (score / games, material / games);
     }
 
-    private int ModelMoveWith(PolicyValueNet net, TState state)
+    private int ModelMoveWith(IPolicyValueNet net, TState state)
     {
         float[] pi = Mcts.Search(_game, state, s => EvaluateWith(net, s), _evalCfg, _arenaRng);
         int best = 0;
@@ -468,12 +473,12 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     }
 
     // A frozen deep copy (save→reload) so the champion is stable while _net keeps training.
-    private PolicyValueNet Freeze(PolicyValueNet net)
+    private IPolicyValueNet Freeze(IPolicyValueNet net)
     {
         using var ms = new MemoryStream();
-        net.Save(ms, CheckpointKind);
+        net.Save(ms, _checkpointKind);
         ms.Position = 0;
-        return PolicyValueNet.Load(ms, CheckpointKind, _game.ObservationSize, _game.PolicySize);
+        return _builder.Load(ms, _game.ObservationSize, _game.PolicySize);
     }
 
     private void WriteManifest()
@@ -509,7 +514,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         _tierCount = highest;
         string championPath = Path.Combine(dir, $"{_environmentId}.az.d{highest}.ckpt");
         using var s = File.OpenRead(championPath);
-        _champion = PolicyValueNet.Load(s, CheckpointKind, _game.ObservationSize, _game.PolicySize);
+        _champion = _builder.Load(s, _game.ObservationSize, _game.PolicySize);
         Log($"ladder: resumed at Level {_tierCount} (champion {Path.GetFileName(championPath)})");
     }
 

@@ -39,6 +39,13 @@ internal static class ChessLab
         bool parallel = a.Has("--parallel");
         int? dop = a.Has("--dop") ? a.Int("--dop", System.Math.Max(1, System.Environment.ProcessorCount - 2)) : null;
 
+        // Net architecture (M42): --arch conv builds an AlphaZero-style convolutional residual tower over the 18×8×8
+        // board (the plateau fix); default "mlp" keeps the flat PolicyValueNet. --filters/--blocks size the tower.
+        // The chess observation is 18 planes × 64 squares (ChessGame), laid out plane-major so it reshapes to 18×8×8.
+        IPolicyValueNetBuilder? netBuilder = a.Str("--arch", "mlp").ToLowerInvariant() == "conv"
+            ? new ConvNetBuilder(planes: 18, boardH: 8, boardW: 8, filters: a.Int("--filters", 64), blocks: a.Int("--blocks", 6))
+            : null; // null → SelfPlayCampaign's default flat MLP with trunk [hidden, hidden]
+
         LadderOptions? ladder = a.Has("--ladder")
             ? new LadderOptions(
                 Dir: a.Str("--difficulty-dir", Path.Combine("src", "RLDemo.Web", "wwwroot", "models")),
@@ -60,7 +67,7 @@ internal static class ChessLab
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             _ => new SelfPlayCampaign<ChessState>(game, "chess", seed, learningRate, hidden, cfg, gamesPerChunk,
                 tempMoves: 12, evalGames: evalGames, maxPlies: 200, opponentRandomFrac: opponentRandom, ladder: ladder,
-                materialWeight: materialWeight, parallel: parallel, maxDop: dop),
+                materialWeight: materialWeight, parallel: parallel, maxDop: dop, netBuilder: netBuilder),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
     }
