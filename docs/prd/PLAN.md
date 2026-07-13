@@ -1451,11 +1451,18 @@ is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); th
   clash (CS0101/CS0260). Diagnosed here, verified a stamp-`Outputs` + `RemoveDir` fix against the source `.targets`,
   and it shipped in 0.6.0; the temporary local `_PolyglotForceFullRetranspile` workaround has been removed
   (`docs/prd/polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md`).
-- **M40.2 — single-source the inference math + a TS `.ckpt` parser.** Add `PgPolicyValueNet.forward` (flat-array
-  trunk + policy/value heads, `tanh` value), `writeObservation`, and a chess `mcts` (PUCT, masked-softmax, `sqrt`,
-  **no Dirichlet** — inference only) to the `.pg`. Add `ClientApp/src/app/chess/chess-net.ts` (mirrors the C#
-  `PolicyValueNet` reader — see the PRD appendix for the exact bytes). **Gate:** C#-vs-generated parity within f32
-  tol on a fixed position; committed `chess_solver.ts` emitted.
+- **M40.2 — single-source the inference math + a TS `.ckpt` parser. ✅ SHIPPED 2026-07-13.** Added to the `.pg`:
+  `writeObservation()` (18-plane × 64 = 1152, parity-tested vs `ChessGame.WriteObservation`), `PgPolicyValueNet.forward`
+  (flat-array ReLU trunk → policy logits + linear value), and `PgChessMcts` (inference PUCT — masked-softmax priors,
+  `sqrt`, value negated per ply, **no Dirichlet**). `ClientApp/src/app/chess/chess-net.ts` parses the `selfplay-pv`
+  `.ckpt` (magic RLNC, trunk widths, per-layer W/b in `Parameters()` order; inputSize/actions supplied) into the
+  generated `PgPolicyValueNet`; committed `chess_solver.ts` emitted. **Gate MET:** `ChessNetParityTests` — C#
+  `PolicyValueNet.Forward` vs the generated net agree within f32 tol on the start position (round-tripped through the
+  real `.ckpt` bytes), plus observation parity + an MCTS runtime smoke (valid legal-move distribution, `chooseMove`
+  legal); 358/358 fast tests. Also did the `std.math` cleanup (`Math.abs`/`Math.max`, kept `isign`). **Known:** the
+  generated TS is loosely typed in spots (emitter drops local `List` annotations → `let d = []`; renders `List<T?>` as
+  `T | null[]`) — compiles under the app's non-strict `tsconfig` and is runtime-correct; filed with a verified two-part
+  fix as **MintPlayer.Polyglot issue #27**.
 - **M40.3 — the browser page.** `chess-director.ts` (runs the transpiled `mcts`+net over the loaded `.ckpt`, like
   `fruit-cake-director.ts`) + an Angular chess component (board, click-to-move validated by the transpiled
   `legalMoves`, AI reply, check/mate/draw, last-move highlight) + route/nav; ship `wwwroot/models/chess.az.ckpt`
