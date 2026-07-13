@@ -68,7 +68,13 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
             {{ over() ? 'Game over — start a new game.' : 'Click a piece, then its destination.' }}
           </span>
         } @else {
-          <span class="hint">The AI plays both sides; a finished game restarts automatically.</span>
+          <label class="speed">
+            Speed
+            <input type="range" min="0" max="1900" step="50"
+              [value]="1900 - betweenMs()"
+              (input)="betweenMs.set(1900 - +$any($event.target).value)" />
+            <span class="speed-end">{{ betweenMs() >= 1200 ? 'slow' : betweenMs() <= 250 ? 'fast' : '' }}</span>
+          </label>
         }
       </div>
     </div>
@@ -96,6 +102,7 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
     .board {
       display: grid;
       grid-template-columns: repeat(8, 1fr);
+      grid-template-rows: repeat(8, 1fr);   /* equal rows so empty squares don't collapse */
       width: min(90vw, 512px);
       aspect-ratio: 1;
       border: 3px solid #2b3245;
@@ -117,11 +124,11 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
     .sq:disabled { cursor: default; }
     .sq.last::after {
       content: ''; position: absolute; inset: 0;
-      background: rgba(110, 168, 254, 0.28); pointer-events: none;
+      background: rgba(232, 145, 42, 0.38); pointer-events: none;
     }
     .sq.sel::after {
       content: ''; position: absolute; inset: 0;
-      background: rgba(110, 168, 254, 0.45); pointer-events: none;
+      background: rgba(232, 145, 42, 0.6); pointer-events: none;
     }
 
     .pc { position: relative; z-index: 1; line-height: 1; }
@@ -130,11 +137,11 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
 
     .dot {
       position: absolute; width: 28%; height: 28%;
-      border-radius: 50%; background: rgba(30, 40, 60, 0.45); z-index: 1;
+      border-radius: 50%; background: rgba(232, 145, 42, 0.7); z-index: 1;
     }
     .dot.capture {
       width: 82%; height: 82%; background: transparent;
-      border: 4px solid rgba(30, 40, 60, 0.45);
+      border: 4px solid rgba(232, 145, 42, 0.7);
     }
 
     .controls { margin-top: 1rem; display: flex; align-items: center; gap: 1rem; }
@@ -145,11 +152,15 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
     .btn:hover { filter: brightness(1.08); }
     .hint { color: #8891a5; font-size: 0.9rem; }
     .hint.on { color: #e0b050; }
+    .speed { display: flex; align-items: center; gap: 0.6rem; color: #8891a5; font-size: 0.9rem; }
+    .speed input { accent-color: #e8912a; }
+    .speed-end { min-width: 2.5em; color: #e8912a; }
   `,
 })
 export class Chess {
   protected readonly director = new ChessDirector();
   protected readonly mode = signal<Mode>('play');
+  protected readonly betweenMs = signal(BETWEEN_MS); // watch-mode pause between moves (speed slider)
 
   private readonly board = signal<number[]>(this.director.board());
   private readonly selected = signal<number | null>(null);
@@ -280,7 +291,7 @@ export class Chess {
       await step;
       if (gen !== this.loopGen) return;
       this.refresh();
-      await this.delay(BETWEEN_MS);
+      await this.delay(this.betweenMs());
     }
   }
 
