@@ -10,8 +10,8 @@
 
   <div class="side">
     <div class="actions">
-      <button [color]="mode() === 'watch' ? colors.primary : colors.secondary" (click)="watchAi()" [disabled]="mode() === 'watch'">Watch AI</button>
-      <button [color]="mode() === 'human' ? colors.primary : colors.secondary" (click)="playHuman()">Drive yourself</button>
+      <button [color]="colors.primary" (click)="watchAi()" [disabled]="mode() === 'watch'">Watch AI</button>
+      <button [color]="colors.primary" (click)="playHuman()">Drive yourself</button>
       <button [color]="colors.secondary" (click)="stop()" [disabled]="mode() === 'idle'">Stop</button>
     </div>
     <p class="status">{{ status() }}</p>

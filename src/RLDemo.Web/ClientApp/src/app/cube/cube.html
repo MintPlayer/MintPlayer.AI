@@ -32,7 +32,7 @@
 
     <h3>Actions</h3>
     <div class="actions">
-      <button [color]="colors.primary" (click)="scramble()" [disabled]="locked()">Scramble (full)</button>
+      <button [color]="colors.secondary" (click)="scramble()" [disabled]="locked()">Scramble (full)</button>
       <button [color]="colors.secondary" (click)="easyScramble()" [disabled]="locked()">Easy scramble</button>
       <button [color]="colors.primary" (click)="solve()" [disabled]="locked()">
         {{ busy() ? 'Solving…' : 'Solve (algorithm)' }}
@@ -41,7 +41,7 @@
               title="Teacher-free EfficientCube policy net + beam search">
         {{ busy() ? 'Solving…' : 'Solve (self-taught AI)' }}
       </button>
-      <button [color]="colors.primary" (click)="reset()" [disabled]="locked()">Reset</button>
+      <button [color]="colors.secondary" (click)="reset()" [disabled]="locked()">Reset</button>
     </div>
 
     <h3>Speed</h3>
