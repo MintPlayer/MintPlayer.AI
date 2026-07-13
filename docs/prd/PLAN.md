@@ -1499,6 +1499,39 @@ is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); th
 human. **Non-goals:** engine strength, a server chess endpoint, bit-exact transcendentals, browser training. See
 `CHESS_WEB_POLYGLOT_PRD.md` (incl. its reference appendix: files to port, checkpoint byte-format, commands).
 
+## M41 — Reusable deterministic CPU-parallel data generation  *(planned 2026-07-13; see `PARALLEL_SELFPLAY_PRD.md`)* 🔜
+
+**Why:** AlphaZero self-play (`SelfPlayCampaign`) generates games **single-threaded** (`TrainChunk`'s `for … PlayGame()`),
+and for chess the wall-time is dominated by CPU-bound MCTS **movegen** — so a multi-core box mostly idles while training
+crawls (the M40.4 256-sim run bottleneck). The GPU is a poor fit here (tiny net, batch-1 inference); **CPU-core
+parallelism is the real lever.**
+
+**Finding (2-agent investigation):** the repo already parallelizes *cube* data-gen, but it's **hand-rolled + duplicated
+in two Lab files** (`CubeImitationCampaign.cs:71`, `CubeEfficientCampaign.cs:93` — `Parallel.For` + per-worker lists +
+per-worker seeded RNG); **nothing reusable exists in Core** (Core only has generic GEMM / `VectorEnv` / DAVI-featurize
+parallelism). Self-play + DQN campaigns have no explicit parallelism. Self-play **is** safe to parallelize: shared
+read-only net inference is concurrent-safe (fresh buffers, no static cache, `[ThreadStatic]` `NoGrad`, batch-1 forwards
+don't nest-parallelize); the only blockers are the shared `_window`/counters and the shared mutable RNGs. The
+bitwise-reproducibility invariant (M25/M26/**M36 SHA-verified**) is preservable exactly as Core already does it
+(`VectorEnv`: per-unit RNG; GEMM: disjoint output rows → DOP-invariant).
+
+- **M41.1 — Core primitive.** `DeterministicParallel.Generate<TItem>(count, seeds, stream, baseIndex, makeItem, parallel, dop)`:
+  runs `makeItem(index, per-index-derived-RNG)` over `[0,count)`, writes disjoint ordered slots, returns in index order;
+  parallel output is **bitwise-identical** to sequential (unit-tested across DOPs). Lives in `Core/Training` (or
+  `Core/Concurrency`), dependency-free like `Mcts`.
+- **M41.2 — parallel self-play.** Refactor `SelfPlayCampaign` generation onto it: a pure, index-addressable per-game
+  function with its **own** RNG (mode flip + MCTS Dirichlet + `SelectMove`) over a shared read-only net snapshot,
+  returning samples; merge into `_window` in **ascending game index** then bump counters; training stays on the owner
+  thread. `--parallel`/`--dop` flag (default cores−2; 1 = today). Same primitive for the eval/arena loops. **Gate:**
+  **SHA256(checkpoint) identical at dop-1 vs dop-N** for a fixed seed/short run (M36-style), contract tests green, and
+  a measured games/hour speedup on `--game chess`.
+- **M41.3 (optional) — cube dedup.** Move the two cube campaigns onto the primitive; verify outputs unchanged (SHA) +
+  DOP-invariant.
+
+**Answers the owner's question:** the parallelism isn't in Core for no principled reason — it was hand-rolled per Lab
+campaign; the pattern is generic and matches Core's existing determinism approach, so it should be (and now will be)
+extracted. **Non-goals:** GPU/batched-MCTS (separate, larger effort); parallelizing the DQN campaigns (not the bottleneck).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
