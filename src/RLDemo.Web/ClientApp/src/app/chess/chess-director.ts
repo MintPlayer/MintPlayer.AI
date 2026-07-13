@@ -112,6 +112,25 @@ export class ChessDirector {
     this.thinking = false;
   }
 
+  // Full starting material as [signed piece code, count]: +1..+6 White P,N,B,R,Q,K, −1..−6 Black.
+  private static readonly START_COUNTS: ReadonlyArray<readonly [number, number]> = [
+    [-1, 8], [-2, 2], [-3, 2], [-4, 2], [-5, 1],   // Black (the AI's pieces you've captured)
+    [1, 8], [2, 2], [3, 2], [4, 2], [5, 1],        // White (your pieces the AI has captured)
+  ];
+
+  /** Pieces no longer on the board (signed codes), i.e. the captured material — for a captured-pieces tray. Derived
+   *  from the board vs the starting set (a promotion can make this off by the promoted pawn, which is rare here). */
+  capturedPieces(): number[] {
+    const current = new Map<number, number>();
+    for (const p of this.state.squares) if (p !== 0) current.set(p, (current.get(p) ?? 0) + 1);
+    const out: number[] = [];
+    for (const [code, count] of ChessDirector.START_COUNTS) {
+      const lost = count - (current.get(code) ?? 0);
+      for (let i = 0; i < lost; i++) out.push(code);
+    }
+    return out;
+  }
+
   /** Terminal result from the side-to-move's view: 0 ongoing, 1 loss (checkmated), 2 draw. */
   result(): number { return this.state.result(); }
   inCheck(): boolean { return this.state.inCheck(this.state.whiteToMove); }

@@ -76,6 +76,14 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
             <span class="speed-end">{{ betweenMs() >= 1200 ? 'slow' : betweenMs() <= 250 ? 'fast' : '' }}</span>
           </label>
         }
+
+        @if (captured().length) {
+          <div class="tray" title="Captured pieces">
+            @for (p of captured(); track $index) {
+              <span class="cap" [class.white]="p > 0" [class.black]="p < 0">{{ glyph(p) }}</span>
+            }
+          </div>
+        }
       </div>
     </div>
   `,
@@ -155,6 +163,21 @@ const GAMEOVER_MS = 2200; // pause on a finished AI-vs-AI board before auto-rest
     .speed { display: flex; align-items: center; gap: 0.6rem; color: #8891a5; font-size: 0.9rem; }
     .speed input { accent-color: #e8912a; }
     .speed-end { min-width: 2.5em; color: #e8912a; }
+
+    .tray {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 0.1rem;
+      font-size: 1.5rem; line-height: 1;
+    }
+    .cap { position: relative; }
+    .cap.white { color: #f7f9fc; text-shadow: 0 0 2px #000, 0 1px 1px #000; }
+    .cap.black { color: #1a1f2b; text-shadow: 0 0 1px #000; }
+    .cap::after {
+      content: '✕';
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #e0403f; font-size: 1.1em; font-weight: 700;
+      pointer-events: none;
+    }
   `,
 })
 export class Chess {
@@ -203,6 +226,7 @@ export class Chess {
 
   protected readonly busy = computed(() => { this.tick(); return this.director.thinking; });
   protected readonly over = computed(() => { this.tick(); return this.director.outcome() !== 'ongoing'; });
+  protected readonly captured = computed(() => { this.tick(); return this.director.capturedPieces(); });
 
   // Not clickable while the net loads, the AI thinks, the game is over, or we're watching AI-vs-AI.
   protected readonly locked = computed(() =>
