@@ -5,8 +5,8 @@ using MintPlayer.AI.ReinforcementLearning.Environments.Chess;
 /// `--game chess` entry point (PLAN M39.2): AlphaZero-style self-play on chess — the second consumer of the reusable
 /// self-play stack (<see cref="Mcts"/> + <see cref="SelfPlayCampaign{TState}"/>), which is reused UNCHANGED; only the
 /// perft-verified <see cref="ChessGame"/> is new. CPU-only and honestly bounded (a small MLP over a flattened board →
-/// legal, steadily-improving play, not engine strength). Flags: --sims, --games, --eval-games, --hidden, plus the
-/// common --hours/--data/--seed/--lr.
+/// legal, steadily-improving play, not engine strength). Flags: --sims, --games, --eval-games, --hidden, --max-plies,
+/// plus the common --hours/--data/--seed/--lr.
 /// </summary>
 internal static class ChessLab
 {
@@ -21,6 +21,10 @@ internal static class ChessLab
         int sims = a.Int("--sims", 64);           // modest — chess movegen per node is heavy on CPU
         int gamesPerChunk = a.Int("--games", 8);
         int evalGames = a.Int("--eval-games", 10);
+        // Hard ply cap per self-play game. A weak net rarely mates, so games otherwise run to this cap; since a chunk's
+        // wall time is bounded by its SLOWEST game (the straggler that finishes last, single-threaded), the cap — not
+        // the average game — sets self-play throughput. Lower it for a heavy net (conv) to keep evals frequent.
+        int maxPlies = a.Int("--max-plies", 200);
         double opponentRandom = a.Dbl("--opponent-random", 0); // fraction of games vs a random opponent (robustness)
         bool evalOnly = a.Has("--eval-only");
 
@@ -66,7 +70,7 @@ internal static class ChessLab
         var cfg = new Mcts.Config(Simulations: sims);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             _ => new SelfPlayCampaign<ChessState>(game, "chess", seed, learningRate, hidden, cfg, gamesPerChunk,
-                tempMoves: 12, evalGames: evalGames, maxPlies: 200, opponentRandomFrac: opponentRandom, ladder: ladder,
+                tempMoves: 12, evalGames: evalGames, maxPlies: maxPlies, opponentRandomFrac: opponentRandom, ladder: ladder,
                 materialWeight: materialWeight, parallel: parallel, maxDop: dop, netBuilder: netBuilder),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);

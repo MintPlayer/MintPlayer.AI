@@ -351,32 +351,43 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     }
 
     // ── Eval: the model (net + MCTS, no root noise, argmax) vs a random-legal opponent, colors alternated ──
+    // These games are independent and inference-only, so they run across cores via the same DeterministicParallel
+    // primitive self-play uses — with a heavy net (conv) this sequential loop otherwise dominates wall time and, since
+    // it runs on the owner thread between training chunks, stalls training itself. One base seed is drawn per call so
+    // each game's RNG is a pure function of (cycle, game index): reproducible and identical at any degree of
+    // parallelism. Inference-only ⇒ it never touches trained weights, so checkpoints stay bitwise-identical per seed.
     private double ArenaVsRandom()
     {
-        double score = 0; // win = 1, draw = 0.5
-        for (int game = 0; game < _evalGames; game++)
-        {
-            int modelSide = game % 2 == 0 ? 1 : 2; // model is player 1 on even games, player 2 on odd
-            var state = _game.Root();
-            int mover = 1, ply = 0;
-            GameResult result;
-            while ((result = _game.Result(state)) == GameResult.Ongoing && ply < _maxPlies)
-            {
-                int move = mover == modelSide ? ModelMove(state) : RandomLegalMove(state, _evalRng);
-                state = _game.Apply(state, move);
-                mover = 3 - mover;
-                ply++;
-            }
-            // result is for the side to move in the terminal state (who did NOT just move). Loss ⇒ the last mover won.
-            if (result == GameResult.Loss) { int lastMover = 3 - mover; if (lastMover == modelSide) score += 1; }
-            else if (result != GameResult.Win) score += 0.5; // draw (ply cap or full board)
-        }
+        ulong baseSeed = _evalRng.NextUInt64();
+        var scores = DeterministicParallel.Generate(_evalGames, baseSeed, baseIndex: 0,
+            (game, rng) => PlayEvalGame(game, rng), _parallel, _maxDop);
+        double score = 0;
+        foreach (double s in scores) score += s;
         return score / _evalGames;
     }
 
-    private int ModelMove(TState state)
+    // One eval game: model (net + MCTS) vs a random-legal opponent. Returns win = 1, draw = 0.5, loss = 0.
+    private double PlayEvalGame(int game, Xoshiro256StarStar rng)
     {
-        float[] pi = Mcts.Search(_game, state, Evaluate, _evalCfg, _evalRng);
+        int modelSide = game % 2 == 0 ? 1 : 2; // model is player 1 on even games, player 2 on odd
+        var state = _game.Root();
+        int mover = 1, ply = 0;
+        GameResult result;
+        while ((result = _game.Result(state)) == GameResult.Ongoing && ply < _maxPlies)
+        {
+            int move = mover == modelSide ? ModelMove(state, rng) : RandomLegalMove(state, rng);
+            state = _game.Apply(state, move);
+            mover = 3 - mover;
+            ply++;
+        }
+        // result is for the side to move in the terminal state (who did NOT just move). Loss ⇒ the last mover won.
+        if (result == GameResult.Loss) { int lastMover = 3 - mover; return lastMover == modelSide ? 1 : 0; }
+        return result != GameResult.Win ? 0.5 : 0; // draw (ply cap or full board), else a win for the mover (not model)
+    }
+
+    private int ModelMove(TState state, Xoshiro256StarStar rng)
+    {
+        float[] pi = Mcts.Search(_game, state, Evaluate, _evalCfg, rng);
         int best = 0;
         for (int a = 1; a < pi.Length; a++) if (pi[a] > pi[best]) best = a;
         return best;
@@ -433,40 +444,52 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // MCTS argmax, no root noise); games diversified by a short randomized opening drawn from `_arenaRng` (independent
     // of the training/eval streams). Returns BOTH the win/draw Score (win 1 / draw 0.5) AND the challenger's average
     // end-of-game material margin in pawns — the non-saturating signal that separates two nets that only ever draw.
+    // Parallelized like ArenaVsRandom (independent, inference-only games); one base seed per call keeps the arena
+    // reproducible and DOP-invariant, and it never mutates trained weights.
     private (double Score, double Material) ArenaVsNet(IPolicyValueNet challenger, IPolicyValueNet champion, int games)
     {
+        ulong baseSeed = _arenaRng.NextUInt64();
+        var results = DeterministicParallel.Generate(games, baseSeed, baseIndex: 0,
+            (g, rng) => PlayArenaGame(g, rng, challenger, champion), _parallel, _maxDop);
         double score = 0, material = 0;
-        for (int g = 0; g < games; g++)
-        {
-            int challengerSide = g % 2 == 0 ? 1 : 2;
-            int openingPlies = _ladder!.OpeningPlies == 0 ? 0 : _arenaRng.NextInt(_ladder.OpeningPlies + 1);
-            var state = _game.Root();
-            int mover = 1, ply = 0;
-            GameResult result;
-            while ((result = _game.Result(state)) == GameResult.Ongoing && ply < _maxPlies)
-            {
-                int move = ply < openingPlies
-                    ? RandomLegalMove(state, _arenaRng)                                   // neutral randomized opening
-                    : ModelMoveWith(mover == challengerSide ? challenger : champion, state);
-                state = _game.Apply(state, move);
-                mover = 3 - mover;
-                ply++;
-            }
-            if (result == GameResult.Loss) { int lastMover = 3 - mover; if (lastMover == challengerSide) score += 1; }
-            else if (result != GameResult.Win) score += 0.5; // draw / ply-cap
-            if (_material is not null)
-            {
-                // MaterialAdvantage is side-to-move relative; at the terminal state the side to move is `mover`.
-                float mat = _material.MaterialAdvantage(state);
-                material += mover == challengerSide ? mat : -mat;
-            }
-        }
+        foreach (var (s, m) in results) { score += s; material += m; }
         return (score / games, material / games);
     }
 
-    private int ModelMoveWith(IPolicyValueNet net, TState state)
+    // One arena game: challenger vs champion, colours by index, a short randomized opening from the per-game RNG.
+    // Returns the win/draw Score (win 1 / draw 0.5 / loss 0) and the challenger's end-of-game material margin in pawns.
+    private (double Score, double Material) PlayArenaGame(int g, Xoshiro256StarStar rng, IPolicyValueNet challenger, IPolicyValueNet champion)
     {
-        float[] pi = Mcts.Search(_game, state, s => EvaluateWith(net, s), _evalCfg, _arenaRng);
+        int challengerSide = g % 2 == 0 ? 1 : 2;
+        int openingPlies = _ladder!.OpeningPlies == 0 ? 0 : rng.NextInt(_ladder.OpeningPlies + 1);
+        var state = _game.Root();
+        int mover = 1, ply = 0;
+        GameResult result;
+        while ((result = _game.Result(state)) == GameResult.Ongoing && ply < _maxPlies)
+        {
+            int move = ply < openingPlies
+                ? RandomLegalMove(state, rng)                                        // neutral randomized opening
+                : ModelMoveWith(mover == challengerSide ? challenger : champion, state, rng);
+            state = _game.Apply(state, move);
+            mover = 3 - mover;
+            ply++;
+        }
+        double score = 0;
+        if (result == GameResult.Loss) { int lastMover = 3 - mover; if (lastMover == challengerSide) score = 1; }
+        else if (result != GameResult.Win) score = 0.5; // draw / ply-cap
+        double material = 0;
+        if (_material is not null)
+        {
+            // MaterialAdvantage is side-to-move relative; at the terminal state the side to move is `mover`.
+            float mat = _material.MaterialAdvantage(state);
+            material = mover == challengerSide ? mat : -mat;
+        }
+        return (score, material);
+    }
+
+    private int ModelMoveWith(IPolicyValueNet net, TState state, Xoshiro256StarStar rng)
+    {
+        float[] pi = Mcts.Search(_game, state, s => EvaluateWith(net, s), _evalCfg, rng);
         int best = 0;
         for (int a = 1; a < pi.Length; a++) if (pi[a] > pi[best]) best = a;
         return best;
