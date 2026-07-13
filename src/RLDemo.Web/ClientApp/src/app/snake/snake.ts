@@ -3,6 +3,8 @@ import { Dir, SIZE, SnakeGame } from './snake-logic';
 import { SnakeDirector } from './snake-director';
 import { SnakeTubeRenderer } from './snake-renderer';
 import { ScreenWakeLock } from '../screen-wake-lock';
+import { Color } from '@mintplayer/ng-bootstrap';
+import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 
 const BOARD_PX = 480;
 const WATCH_TICK_MS = 120;
@@ -18,11 +20,13 @@ const HUMAN_TICK_MS = 150;
   selector: 'app-snake',
   templateUrl: './snake.html',
   styleUrl: './snake.scss',
-  host: { '(window:keydown)': 'onKey($event)', '(document:visibilitychange)': 'onVisibilityChange()' },
+  imports: [BsButtonTypeDirective],
+  host: { '(window:keydown)': 'onKey($event)' },
 })
 export class Snake {
   private readonly wakeLock = inject(ScreenWakeLock);
 
+  protected readonly colors = Color;
   protected readonly mode = signal<'idle' | 'watch' | 'human'>('idle');
   protected readonly foodEaten = signal(0);
   protected readonly status = signal('Watch the self-taught AI play, or play it yourself.');
@@ -93,12 +97,6 @@ export class Snake {
     this.director = null;
     void this.wakeLock.release();
     if (this.mode() !== 'idle') this.mode.set('idle');
-  }
-
-  // A backgrounded tab is throttled by the OS and drops the wake-lock; on returning to the foreground still in
-  // watch mode, re-acquire it (the director just keeps ticking — no socket to reopen).
-  protected onVisibilityChange(): void {
-    if (document.visibilityState === 'visible' && this.mode() === 'watch') void this.wakeLock.acquire();
   }
 
   private render(body: number[], food: number, eaten: number): void {

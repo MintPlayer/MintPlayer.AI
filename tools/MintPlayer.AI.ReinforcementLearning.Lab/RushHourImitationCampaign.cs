@@ -28,8 +28,7 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate, 
     private Adam _adam = null!;
     private long _totalSamples;
     private int _totalConfigs;
-    private double _windowCe, _windowHuber, _windowAcc;
-    private long _windowCount;
+    private TrainWindow _window;
     private long _windowOnPolicy, _windowDrawn;
     private double _liveLoss = double.NaN, _liveAcc = double.NaN; // most-recent batch, for the live viewer
 
@@ -84,17 +83,7 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate, 
         }
         // Restore Adam's moment estimates when continuing a campaign — without them, resumed
         // training spends its first minutes re-estimating gradient statistics from zero.
-        using (var adamState = store.TryOpenRead("rushhour", "policy-adam"))
-        {
-            if (adamState is not null)
-            {
-                using var reader = new BinaryReader(adamState, Encoding.UTF8, leaveOpen: true);
-                _adam = AdamCheckpoint.Read(_net.Parameters(), reader);
-                _adam.LearningRate = learningRate; // CLI overrides the stored schedule position
-                Log($"resumed Adam state (lr set to {learningRate:E1})");
-            }
-            else _adam = new Adam(_net.Parameters(), learningRate);
-        }
+        _adam = AdamState.LoadOrInit(store, "rushhour", "policy-adam", _net.Parameters(), learningRate, Log);
         return resumed;
     }
 
@@ -118,10 +107,7 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate, 
         for (int offset = 0; offset + BatchSize <= samples.Count; offset += BatchSize)
         {
             var (ce, huber, acc) = TrainStep(samples, offset, BatchSize);
-            _windowCe += ce;
-            _windowHuber += huber;
-            _windowAcc += acc;
-            _windowCount++;
+            _window.Add(ce, huber, acc);
             _totalSamples += BatchSize;
             _liveLoss = ce + huber;
             _liveAcc = acc;
@@ -133,11 +119,7 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate, 
 
     public CampaignEval Evaluate()
     {
-        double ce = _windowCount > 0 ? _windowCe / _windowCount : 0;
-        double huber = _windowCount > 0 ? _windowHuber / _windowCount : 0;
-        double acc = _windowCount > 0 ? _windowAcc / _windowCount : 0;
-        _windowCe = _windowHuber = _windowAcc = 0;
-        _windowCount = 0;
+        var (ce, huber, acc) = _window.MeanAndReset();
         if (_windowDrawn > 0)
             Log($"[mix] on-policy share this window: {_windowOnPolicy / (double)_windowDrawn:P1}");
         _windowOnPolicy = _windowDrawn = 0;
@@ -183,11 +165,7 @@ internal sealed class RushHourImitationCampaign(ulong seed, float learningRate, 
     public void Checkpoint(IModelStore store)
     {
         store.Save("rushhour", "policy", s => _net.Save(s));
-        store.Save("rushhour", "policy-adam", s =>
-        {
-            using var writer = new BinaryWriter(s, Encoding.UTF8, leaveOpen: true);
-            AdamCheckpoint.Write(_adam, writer);
-        });
+        AdamState.Save(store, "rushhour", "policy-adam", _adam);
     }
 
     public void Dispose() { }

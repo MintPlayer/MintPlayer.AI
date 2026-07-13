@@ -2,6 +2,9 @@ import { Component, DestroyRef, ElementRef, computed, effect, inject, isDevMode,
 import { ActivatedRoute } from '@angular/router';
 import { AnalyzeResponse, DeckLevel, RushHourApi, SolveResponse, StatusResponse, VehicleDto } from './rush-hour-api';
 import { EXIT_ROW, SIZE, canMove, canPlace, initialPositions, isSolved, occupancy } from './rush-hour-logic';
+import { pollModelStatus } from '../model-status';
+import { Color } from '@mintplayer/ng-bootstrap';
+import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 
 type Mode = 'edit' | 'play' | 'playback';
 type Tool = 'red' | 'red-truck' | 'car-h' | 'car-v' | 'truck-h' | 'truck-v' | 'erase';
@@ -20,9 +23,11 @@ const VEHICLE_COLORS = [
   selector: 'app-rush-hour',
   templateUrl: './rush-hour.html',
   styleUrl: './rush-hour.scss',
+  imports: [BsButtonTypeDirective],
   host: { '(window:keydown)': 'onKey($event)' },
 })
 export class RushHour {
+  protected readonly colors = Color;
   private readonly api = inject(RushHourApi);
   private readonly canvasRef = viewChild<ElementRef<HTMLCanvasElement>>('board');
 
@@ -361,13 +366,7 @@ export class RushHour {
   // ------------------------------------------------------------------ model status
 
   private pollStatus(): void {
-    void (async () => {
-      const status = await this.api.status();
-      this.modelStatus.set(status);
-      if (status.status === 'loading') {
-        setTimeout(() => this.pollStatus(), 2000);
-      }
-    })();
+    pollModelStatus(() => this.api.status(), (s) => this.modelStatus.set(s));
   }
 
   // ------------------------------------------------------------------ canvas

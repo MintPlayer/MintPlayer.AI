@@ -28,8 +28,7 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
     private CubePolicyNet _net = null!;
     private Adam _adam = null!;
     private long _round, _totalSamples, _totalSolves;
-    private double _windowCe, _windowHuber, _windowAcc;
-    private long _windowCount;
+    private TrainWindow _window;
     private double _liveLoss = double.NaN, _liveAcc = double.NaN; // most-recent batch, for the live viewer
 
     public string Environment => CubeIds.Environment;
@@ -55,17 +54,7 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
                 resumed = false;
             }
         }
-        using (var adamState = store.TryOpenRead(CubeIds.Environment, _ids.PolicyAdam))
-        {
-            if (adamState is not null)
-            {
-                using var reader = new BinaryReader(adamState, Encoding.UTF8, leaveOpen: true);
-                _adam = AdamCheckpoint.Read(_net.Parameters(), reader);
-                _adam.LearningRate = learningRate;
-                Log($"resumed Adam state (lr set to {learningRate:E1})");
-            }
-            else _adam = new Adam(_net.Parameters(), learningRate);
-        }
+        _adam = AdamState.LoadOrInit(store, CubeIds.Environment, _ids.PolicyAdam, _net.Parameters(), learningRate, Log);
         Log("warming the Kociemba tables…");
         CubeSolver.WarmUp();
         return resumed;
@@ -75,34 +64,34 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
     {
         // One round: parallel Kociemba data-gen (the oracle, not the NN math, bounds throughput on CPU) → shuffle
         // → supervised batches. Window-mean loss accumulates across rounds until the runner calls Evaluate.
-        var samples = new List<CubeOracle.LabeledState>(SamplesPerRound + 64);
-        var perWorker = new List<CubeOracle.LabeledState>[_generators];
+        // DeterministicParallel derives each generator's RNG from (roundBase, worker+1) — byte-identical to the old
+        // hand-rolled `roundBase + φ·(worker+1)` seeding, and each returns its own list (no shared window/counter).
         ulong roundBase = unchecked(seed + (ulong)(++_round) * 1_000_003UL);
-        long solvesThisRound = 0;
-        Parallel.For(0, _generators, worker =>
+        int per = SamplesPerRound / _generators;
+        var perWorker = DeterministicParallel.Generate(_generators, roundBase, baseIndex: 1, (worker, rng) =>
         {
-            var workerRng = new Xoshiro256StarStar(unchecked(roundBase + 0x9E3779B97F4A7C15UL * (ulong)(worker + 1)));
-            var local = new List<CubeOracle.LabeledState>(SamplesPerRound / _generators + 40);
-            while (local.Count < SamplesPerRound / _generators)
+            var local = new List<CubeOracle.LabeledState>(per + 40);
+            int solves = 0;
+            while (local.Count < per)
             {
-                var path = CubeOracle.LabelScramblePath(workerRng);
+                var path = CubeOracle.LabelScramblePath(rng);
                 if (path is null) continue;
                 local.AddRange(path);
-                Interlocked.Increment(ref solvesThisRound);
+                solves++;
             }
-            perWorker[worker] = local;
-        });
-        foreach (var local in perWorker) samples.AddRange(local);
+            return (Samples: local, Solves: solves);
+        }, parallel: true);
+
+        var samples = new List<CubeOracle.LabeledState>(SamplesPerRound + 64);
+        long solvesThisRound = 0;
+        foreach (var w in perWorker) { samples.AddRange(w.Samples); solvesThisRound += w.Solves; }
         _totalSolves += solvesThisRound;
         CubePolicyTraining.Shuffle(samples, _rng);
 
         for (int offset = 0; offset + BatchSize <= samples.Count; offset += BatchSize)
         {
             var (ce, huber, acc) = CubePolicyTraining.TrainStep(_net, _adam, samples, offset, BatchSize);
-            _windowCe += ce;
-            _windowHuber += huber;
-            _windowAcc += acc;
-            _windowCount++;
+            _window.Add(ce, huber, acc);
             _totalSamples += BatchSize;
             _liveLoss = ce + huber;
             _liveAcc = acc;
@@ -114,11 +103,7 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
 
     public CampaignEval Evaluate()
     {
-        double ce = _windowCount > 0 ? _windowCe / _windowCount : 0;
-        double acc = _windowCount > 0 ? _windowAcc / _windowCount : 0;
-        double huber = _windowCount > 0 ? _windowHuber / _windowCount : 0;
-        _windowCe = _windowHuber = _windowAcc = 0;
-        _windowCount = 0;
+        var (ce, huber, acc) = _window.MeanAndReset();
 
         var metrics = new List<CampaignMetric>
         {
@@ -145,11 +130,7 @@ internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int 
     public void Checkpoint(IModelStore store)
     {
         store.Save(CubeIds.Environment, _ids.Policy, s => _net.Save(s));
-        store.Save(CubeIds.Environment, _ids.PolicyAdam, s =>
-        {
-            using var writer = new BinaryWriter(s, Encoding.UTF8, leaveOpen: true);
-            AdamCheckpoint.Write(_adam, writer);
-        });
+        AdamState.Save(store, CubeIds.Environment, _ids.PolicyAdam, _adam);
     }
 
     /// <summary>`--eval-only`: per-depth eval report + the pre-registered M16 gate. No training, no checkpoint.</summary>

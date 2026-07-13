@@ -36,8 +36,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     private CubePolicyNet _net = null!;
     private Adam _adam = null!;
     private long _round, _totalSamples;
-    private double _windowCe, _windowHuber, _windowAcc;
-    private long _windowCount;
+    private TrainWindow _window;
     private double _liveLoss = double.NaN, _liveAcc = double.NaN; // most-recent batch, for the live viewer
 
     public string Environment => CubeIds.Environment;
@@ -67,17 +66,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
                 resumed = false;
             }
         }
-        using (var adamState = store.TryOpenRead(CubeIds.Environment, PolicyAdamId))
-        {
-            if (adamState is not null)
-            {
-                using var reader = new BinaryReader(adamState, Encoding.UTF8, leaveOpen: true);
-                _adam = AdamCheckpoint.Read(_net.Parameters(), reader);
-                _adam.LearningRate = learningRate;
-                Log($"resumed Adam state (lr set to {learningRate:E1})");
-            }
-            else _adam = new Adam(_net.Parameters(), learningRate);
-        }
+        _adam = AdamState.LoadOrInit(store, CubeIds.Environment, PolicyAdamId, _net.Parameters(), learningRate, Log);
         // Persisted progress: cumulative samples (displayed count) + the round counter (so the scramble RNG
         // continues its stream on resume rather than regenerating the same scrambles).
         using (var progress = store.TryOpenRead(CubeIds.Environment, PolicyProgressId))
@@ -97,28 +86,26 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     public long TrainChunk()
     {
         // Self-supervised data gen on all cores: scrambling is independent and (unlike Kociemba imitation) no
-        // solver bounds throughput — generation is nearly free.
-        var samples = new List<CubeOracle.LabeledState>(SamplesPerRound + 256);
-        var perWorker = new List<CubeOracle.LabeledState>[_generators];
+        // solver bounds throughput — generation is nearly free. DeterministicParallel derives each generator's RNG
+        // from (roundBase, worker+1) — byte-identical to the old hand-rolled `roundBase + φ·(worker+1)` seeding.
         ulong roundBase = unchecked(seed + (ulong)(++_round) * 1_000_003UL);
-        Parallel.For(0, _generators, worker =>
+        int per = SamplesPerRound / _generators;
+        var perWorker = DeterministicParallel.Generate(_generators, roundBase, baseIndex: 1, (worker, rng) =>
         {
-            var workerRng = new Xoshiro256StarStar(unchecked(roundBase + 0x9E3779B97F4A7C15UL * (ulong)(worker + 1)));
-            var local = new List<CubeOracle.LabeledState>(SamplesPerRound / _generators + 64);
-            while (local.Count < SamplesPerRound / _generators)
-                local.AddRange(CubeSelfSupervised.LabelScramblePath(workerRng, maxScramble));
-            perWorker[worker] = local;
-        });
+            var local = new List<CubeOracle.LabeledState>(per + 64);
+            while (local.Count < per)
+                local.AddRange(CubeSelfSupervised.LabelScramblePath(rng, maxScramble));
+            return local;
+        }, parallel: true);
+
+        var samples = new List<CubeOracle.LabeledState>(SamplesPerRound + 256);
         foreach (var local in perWorker) samples.AddRange(local);
         CubePolicyTraining.Shuffle(samples, _rng);
 
         for (int offset = 0; offset + BatchSize <= samples.Count; offset += BatchSize)
         {
             var (ce, huber, acc) = CubePolicyTraining.TrainStep(_net, _adam, samples, offset, BatchSize);
-            _windowCe += ce;
-            _windowHuber += huber;
-            _windowAcc += acc;
-            _windowCount++;
+            _window.Add(ce, huber, acc);
             _totalSamples += BatchSize;
             _liveLoss = ce + huber;
             _liveAcc = acc;
@@ -130,11 +117,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
 
     public CampaignEval Evaluate()
     {
-        double ce = _windowCount > 0 ? _windowCe / _windowCount : 0;
-        double acc = _windowCount > 0 ? _windowAcc / _windowCount : 0;
-        double huber = _windowCount > 0 ? _windowHuber / _windowCount : 0;
-        _windowCe = _windowHuber = _windowAcc = 0;
-        _windowCount = 0;
+        var (ce, huber, acc) = _window.MeanAndReset();
 
         var metrics = new List<CampaignMetric>
         {
@@ -188,11 +171,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
     public void Checkpoint(IModelStore store)
     {
         store.Save(CubeIds.Environment, PolicyId, s => _net.Save(s));
-        store.Save(CubeIds.Environment, PolicyAdamId, s =>
-        {
-            using var writer = new BinaryWriter(s, Encoding.UTF8, leaveOpen: true);
-            AdamCheckpoint.Write(_adam, writer);
-        });
+        AdamState.Save(store, CubeIds.Environment, PolicyAdamId, _adam);
         store.Save(CubeIds.Environment, PolicyProgressId, s =>
         {
             using var writer = new BinaryWriter(s, Encoding.UTF8, leaveOpen: true);

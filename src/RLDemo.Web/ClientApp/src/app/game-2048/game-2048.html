@@ -79,9 +79,9 @@
           <p class="message">{{ m }}</p>
         }
         <div class="actions">
-          <button (click)="clearBoard()">Reset board</button>
-          <button (click)="enterPlay()">2 · Play it yourself</button>
-          <button class="primary" (click)="solve()"
+          <button [color]="colors.secondary" (click)="clearBoard()">Reset board</button>
+          <button [color]="colors.secondary" (click)="enterPlay()">2 · Play it yourself</button>
+          <button [color]="colors.primary" (click)="solve()"
                   [disabled]="busy() || modelStatus()?.status !== 'ready'">
             {{ busy() ? 'Playing…' : '3 · Let the AI play' }}
           </button>
@@ -91,9 +91,9 @@
         <h3>Play it yourself</h3>
         <p class="hint">Arrow keys slide the tiles. A new tile spawns after every move.</p>
         <div class="actions">
-          <button (click)="resetPlay()">↺ Reset to my board</button>
-          <button (click)="backToEdit()">✎ Back to editing</button>
-          <button class="primary" (click)="solve()" [disabled]="busy() || modelStatus()?.status !== 'ready'">
+          <button [color]="colors.secondary" (click)="resetPlay()">↺ Reset to my board</button>
+          <button [color]="colors.secondary" (click)="backToEdit()">✎ Back to editing</button>
+          <button [color]="colors.primary" (click)="solve()" [disabled]="busy() || modelStatus()?.status !== 'ready'">
             {{ busy() ? 'Playing…' : 'Let the AI play' }}
           </button>
         </div>
@@ -103,18 +103,18 @@
         @if (solution(); as s) {
           <p class="hint">{{ s.steps.length | number }} moves, deterministic for this board.</p>
           <div class="actions playback-controls">
-            <button (click)="stopPlayback(); seek(0)" [disabled]="playbackIndex() === 0" title="To start">⏮</button>
-            <button (click)="step(-1)" [disabled]="playbackIndex() === 0" title="Back">◀</button>
-            <button class="primary" (click)="togglePlay()">{{ playing() ? '⏸' : '▶' }}</button>
-            <button (click)="step(1)" [disabled]="playbackIndex() >= stepCount()" title="Forward">▶|</button>
-            <button (click)="stopPlayback(); seek(stepCount())" [disabled]="playbackIndex() >= stepCount()" title="To end">⏭</button>
+            <button [color]="colors.secondary" (click)="stopPlayback(); seek(0)" [disabled]="playbackIndex() === 0" title="To start">⏮</button>
+            <button [color]="colors.secondary" (click)="step(-1)" [disabled]="playbackIndex() === 0" title="Back">◀</button>
+            <button [color]="colors.primary" (click)="togglePlay()">{{ playing() ? '⏸' : '▶' }}</button>
+            <button [color]="colors.secondary" (click)="step(1)" [disabled]="playbackIndex() >= stepCount()" title="Forward">▶|</button>
+            <button [color]="colors.secondary" (click)="stopPlayback(); seek(stepCount())" [disabled]="playbackIndex() >= stepCount()" title="To end">⏭</button>
           </div>
           <input class="scrubber" type="range" min="0" [max]="stepCount()"
                  [value]="playbackIndex()" (input)="stopPlayback(); seek(+$any($event.target).value)" />
         }
         <div class="actions">
-          <button (click)="enterPlay()">↺ Play this board myself</button>
-          <button (click)="backToEdit()">✎ Back to editing</button>
+          <button [color]="colors.secondary" (click)="enterPlay()">↺ Play this board myself</button>
+          <button [color]="colors.secondary" (click)="backToEdit()">✎ Back to editing</button>
         </div>
       }
     }

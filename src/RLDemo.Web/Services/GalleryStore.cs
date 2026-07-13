@@ -33,11 +33,7 @@ public sealed class GalleryStore(string rootDirectory)
             Request: JsonSerializer.SerializeToElement(request, Options),
             Response: JsonSerializer.SerializeToElement(response, Options));
 
-        Directory.CreateDirectory(RootDirectory);
-        string path = PathOf(entry.Id);
-        string temp = path + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(entry, Options));
-        File.Move(temp, path, overwrite: true);
+        AtomicFile.Write(PathOf(entry.Id), JsonSerializer.Serialize(entry, Options));
         return entry;
     }
 

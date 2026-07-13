@@ -67,6 +67,15 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
+      <a class="card" routerLink="/chess">
+        <h2>Chess</h2>
+        <p>
+          A network that taught itself chess from scratch via AlphaZero-style self-play. Play it or watch it play
+          itself — the engine, network, and search all run in your browser (no server).
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
       <a class="card" routerLink="/gallery">
         <h2>Gallery</h2>
         <p>

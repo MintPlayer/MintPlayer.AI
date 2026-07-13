@@ -1,0 +1,11 @@
+[
+  {
+    "label": "Level 1",
+    "ckpt": "/models/chess.az.d1.ckpt",
+    "sims": 128,
+    "temperature": 0,
+    "cpuct": 1.5,
+    "winRateVsRandom": 0.45,
+    "games": 90
+  }
+]

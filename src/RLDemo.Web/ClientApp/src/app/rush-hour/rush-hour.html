@@ -75,9 +75,9 @@
           <p class="message">{{ message }}</p>
         }
         <div class="actions">
-          <button (click)="clearBoard()">Clear board</button>
-          <button (click)="enterPlay()" [disabled]="!analysis()?.valid">2 · Play it yourself</button>
-          <button class="primary" (click)="solve()"
+          <button [color]="colors.secondary" (click)="clearBoard()">Clear board</button>
+          <button [color]="colors.secondary" (click)="enterPlay()" [disabled]="!analysis()?.valid">2 · Play it yourself</button>
+          <button [color]="colors.primary" (click)="solve()"
                   [disabled]="busy() || !analysis()?.valid || !analysis()?.solvable || analysis()?.optimalMoves === 0 || modelStatus()?.status !== 'ready'">
             {{ busy() ? 'Solving…' : '3 · Solve with AI' }}
           </button>
@@ -104,7 +104,7 @@
             <div class="save-row">
               <input type="text" placeholder="Level name" [value]="levelName()"
                      (input)="levelName.set($any($event.target).value)" />
-              <button (click)="saveToDeck()"
+              <button [color]="colors.primary" (click)="saveToDeck()"
                       [disabled]="!levelName() || !analysis()?.valid || !analysis()?.solvable || analysis()?.optimalMoves === 0">
                 {{ currentLevelId() ? 'Update level' : 'Save to deck' }}
               </button>
@@ -120,10 +120,10 @@
         <p class="hint">Click a vehicle to select it, then move it with the arrow keys or these buttons.</p>
         @if (selected() !== null) {
           <div class="actions move-buttons">
-            <button (click)="tryMove(0)" [disabled]="!selectedCanMove().back">
+            <button [color]="colors.secondary" (click)="tryMove(0)" [disabled]="!selectedCanMove().back">
               {{ vehicles()[selected()!].horizontal ? '← Left' : '↑ Up' }}
             </button>
-            <button (click)="tryMove(1)" [disabled]="!selectedCanMove().forward">
+            <button [color]="colors.secondary" (click)="tryMove(1)" [disabled]="!selectedCanMove().forward">
               {{ vehicles()[selected()!].horizontal ? 'Right →' : 'Down ↓' }}
             </button>
           </div>
@@ -131,9 +131,9 @@
           <p class="hint">No vehicle selected yet.</p>
         }
         <div class="actions">
-          <button (click)="resetPlay()">↺ Reset to my drawing</button>
-          <button (click)="backToEdit()">✎ Back to editing</button>
-          <button class="primary" (click)="solve()"
+          <button [color]="colors.secondary" (click)="resetPlay()">↺ Reset to my drawing</button>
+          <button [color]="colors.secondary" (click)="backToEdit()">✎ Back to editing</button>
+          <button [color]="colors.primary" (click)="solve()"
                   [disabled]="busy() || modelStatus()?.status !== 'ready' || analysis()?.optimalMoves === 0">
             {{ busy() ? 'Solving…' : 'Solve with AI' }}
           </button>
@@ -143,27 +143,27 @@
         <h3>AI solution</h3>
         @if (solution(); as s) {
           <div class="trajectory-toggle">
-            <button [class.active]="!showOptimal()" (click)="switchTrajectory(false)">
+            <button [color]="colors.secondary" [class.active]="!showOptimal()" (click)="switchTrajectory(false)">
               {{ s.aiMode === 'search' ? 'AI + lookahead' : 'AI' }} ({{ s.aiMoves }} moves)
             </button>
-            <button [class.active]="showOptimal()" (click)="switchTrajectory(true)">
+            <button [color]="colors.secondary" [class.active]="showOptimal()" (click)="switchTrajectory(true)">
               Optimal ({{ s.optimalMoves }} moves)
             </button>
           </div>
           <div class="actions playback-controls">
-            <button (click)="seek(0)" [disabled]="playbackIndex() === 0" title="To start">⏮</button>
-            <button (click)="step(-1)" [disabled]="playbackIndex() === 0" title="Back">◀</button>
-            <button class="primary" (click)="togglePlay()">{{ playing() ? '⏸ Pause' : '▶ Play' }}</button>
-            <button (click)="step(1)" [disabled]="playbackIndex() >= activeTrajectory().length" title="Forward">▶|</button>
-            <button (click)="seek(activeTrajectory().length)"
+            <button [color]="colors.secondary" (click)="seek(0)" [disabled]="playbackIndex() === 0" title="To start">⏮</button>
+            <button [color]="colors.secondary" (click)="step(-1)" [disabled]="playbackIndex() === 0" title="Back">◀</button>
+            <button [color]="colors.primary" (click)="togglePlay()">{{ playing() ? '⏸ Pause' : '▶ Play' }}</button>
+            <button [color]="colors.secondary" (click)="step(1)" [disabled]="playbackIndex() >= activeTrajectory().length" title="Forward">▶|</button>
+            <button [color]="colors.secondary" (click)="seek(activeTrajectory().length)"
                     [disabled]="playbackIndex() >= activeTrajectory().length" title="To end">⏭</button>
           </div>
           <input class="scrubber" type="range" min="0" [max]="activeTrajectory().length"
                  [value]="playbackIndex()" (input)="seek(+$any($event.target).value)" />
         }
         <div class="actions">
-          <button (click)="enterPlay()">↺ Back to my drawing (play)</button>
-          <button (click)="backToEdit()">✎ Back to editing</button>
+          <button [color]="colors.secondary" (click)="enterPlay()">↺ Back to my drawing (play)</button>
+          <button [color]="colors.secondary" (click)="backToEdit()">✎ Back to editing</button>
         </div>
       }
     }

@@ -26,22 +26,22 @@
     <p class="hint">Keys U/D/L/R/F/B turn a face clockwise; hold Shift for counter-clockwise.</p>
     <div class="move-grid">
       @for (move of moveButtons; track move) {
-        <button (click)="executeMove(move)" [disabled]="locked()">{{ move }}</button>
+        <button [color]="colors.secondary" (click)="executeMove(move)" [disabled]="locked()">{{ move }}</button>
       }
     </div>
 
     <h3>Actions</h3>
     <div class="actions">
-      <button (click)="scramble()" [disabled]="locked()">Scramble (full)</button>
-      <button (click)="easyScramble()" [disabled]="locked()">Easy scramble</button>
-      <button class="primary" (click)="solve()" [disabled]="locked()">
+      <button [color]="colors.secondary" (click)="scramble()" [disabled]="locked()">Scramble (full)</button>
+      <button [color]="colors.secondary" (click)="easyScramble()" [disabled]="locked()">Easy scramble</button>
+      <button [color]="colors.primary" (click)="solve()" [disabled]="locked()">
         {{ busy() ? 'Solving…' : 'Solve (algorithm)' }}
       </button>
-      <button class="primary" (click)="solveEfficient()" [disabled]="locked()"
+      <button [color]="colors.primary" (click)="solveEfficient()" [disabled]="locked()"
               title="Teacher-free EfficientCube policy net + beam search">
         {{ busy() ? 'Solving…' : 'Solve (self-taught AI)' }}
       </button>
-      <button (click)="reset()" [disabled]="locked()">Reset</button>
+      <button [color]="colors.secondary" (click)="reset()" [disabled]="locked()">Reset</button>
     </div>
 
     <h3>Speed</h3>
@@ -60,11 +60,11 @@
         }
       </div>
       <div class="actions playback-controls">
-        <button (click)="stepPrev()" [disabled]="locked() || playing() || solutionIndex() < 0" title="Previous step">◀</button>
-        <button class="primary" (click)="togglePlay()" [disabled]="busy() || (!playing() && atSolutionEnd())">
+        <button [color]="colors.secondary" (click)="stepPrev()" [disabled]="locked() || playing() || solutionIndex() < 0" title="Previous step">◀</button>
+        <button [color]="colors.primary" (click)="togglePlay()" [disabled]="busy() || (!playing() && atSolutionEnd())">
           {{ playing() ? '⏸' : '▶' }}
         </button>
-        <button (click)="stepNext()" [disabled]="locked() || playing() || atSolutionEnd()" title="Next step">▶|</button>
+        <button [color]="colors.secondary" (click)="stepNext()" [disabled]="locked() || playing() || atSolutionEnd()" title="Next step">▶|</button>
       </div>
     }
 

@@ -47,7 +47,7 @@ public sealed class RushHourDeckStore(string filePath)
     public (DeckLevel? Level, string? Error) Upsert(string? id, string? name, VehicleDto[] vehicles)
     {
         if (string.IsNullOrWhiteSpace(name)) return (null, "Give the level a name.");
-        if (!TryBuildPuzzle(vehicles, out var puzzle, out string? error)) return (null, error);
+        if (!RushHourBoardDto.TryBuildPuzzle(vehicles, out var puzzle, out string? error)) return (null, error);
 
         int optimal = RushHourSolver.Solve(puzzle);
         if (optimal < 0) return (null, "Unsolvable — the red car can never reach the exit.");
@@ -76,37 +76,5 @@ public sealed class RushHourDeckStore(string filePath)
     }
 
     private void Write(List<DeckLevel> levels)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        string temp = FilePath + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(new RushHourDeck(1, levels), Json));
-        File.Move(temp, FilePath, overwrite: true);
-    }
-
-    // Mirrors RushHourController.TryBuildPuzzle (the drawn-board → puzzle contract): index 0 is the red car.
-    private static bool TryBuildPuzzle(VehicleDto[] vehicles, out RushHourPuzzle puzzle, out string? error)
-    {
-        puzzle = null!;
-        error = null;
-        if (vehicles is not { Length: > 0 })
-        {
-            error = "Draw at least the red car.";
-            return false;
-        }
-        try
-        {
-            puzzle = new RushHourPuzzle([.. vehicles.Select(v => new Vehicle(v.Row, v.Col, v.Length, v.Horizontal))]);
-            if (puzzle.Vehicles.Any(v => v.Length is < 2 or > 3))
-            {
-                error = "Vehicles must have length 2 (car) or 3 (truck).";
-                return false;
-            }
-            return true;
-        }
-        catch (ArgumentException ex)
-        {
-            error = ex.Message;
-            return false;
-        }
-    }
+        => AtomicFile.Write(FilePath, JsonSerializer.Serialize(new RushHourDeck(1, levels), Json));
 }

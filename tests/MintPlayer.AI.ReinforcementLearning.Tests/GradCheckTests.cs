@@ -44,6 +44,17 @@ public class GradCheckTests
 
     private static Tensor Param(float[] data, params int[] shape) => new(data, shape) { RequiresGrad = true };
 
+    // A tensor filled with deterministic values in [-0.8, 0.8] — enough spread to exercise a conv, away from
+    // ReLU/clamp kinks (conv itself is kink-free, but this keeps composite checks stable).
+    private static Tensor Rand(Xoshiro256StarStar rng, params int[] shape)
+    {
+        int len = 1;
+        foreach (int d in shape) len *= d;
+        var data = new float[len];
+        for (int i = 0; i < len; i++) data[i] = (float)(rng.NextDouble() * 1.6 - 0.8);
+        return new Tensor(data, shape) { RequiresGrad = true };
+    }
+
     [Fact]
     public void MatMul_Gradients()
         => CheckGradients(
@@ -122,6 +133,39 @@ public class GradCheckTests
         => CheckGradients(
             t => t[0].MseLoss(new Tensor([0.2f, -0.7f, 1.3f], 3)),
             Param([0.5f, -1.2f, 0.3f], 3));
+
+    [Fact]
+    public void Conv2D_Gradients_SamePadding()
+    {
+        // 3×3 "SAME" conv (pad 1, stride 1): the residual-tower workhorse. Checks dInput, dWeight, dBias.
+        var rng = new Xoshiro256StarStar(11);
+        const int inC = 2, inH = 4, inW = 4, outC = 3, k = 3;
+        CheckGradients(
+            t => t[0].Conv2D(t[1], t[2], inC, inH, inW, outC, k, k, stride: 1, pad: 1).Square().Sum(),
+            Rand(rng, 2, inC * inH * inW), Rand(rng, inC * k * k, outC), Rand(rng, outC));
+    }
+
+    [Fact]
+    public void Conv2D_Gradients_StridedValid()
+    {
+        // stride 2, no padding — exercises the striding + boundary (dropped) columns of im2col/col2im.
+        var rng = new Xoshiro256StarStar(23);
+        const int inC = 2, inH = 5, inW = 5, outC = 2, k = 3;
+        CheckGradients(
+            t => t[0].Conv2D(t[1], t[2], inC, inH, inW, outC, k, k, stride: 2, pad: 0).Square().Sum(),
+            Rand(rng, 1, inC * inH * inW), Rand(rng, inC * k * k, outC), Rand(rng, outC));
+    }
+
+    [Fact]
+    public void Conv2D_Gradients_OneByOne()
+    {
+        // 1×1 conv — the shape the AlphaZero policy/value heads use to reduce channels.
+        var rng = new Xoshiro256StarStar(31);
+        const int inC = 3, inH = 3, inW = 3, outC = 2, k = 1;
+        CheckGradients(
+            t => t[0].Conv2D(t[1], t[2], inC, inH, inW, outC, k, k, stride: 1, pad: 0).Square().Sum(),
+            Rand(rng, 2, inC * inH * inW), Rand(rng, inC * k * k, outC), Rand(rng, outC));
+    }
 
     [Fact]
     public void FullMlp_CompositeLoss_Gradients()

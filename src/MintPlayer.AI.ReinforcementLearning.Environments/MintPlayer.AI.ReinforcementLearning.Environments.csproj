@@ -4,12 +4,14 @@
     <ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
   </ItemGroup>
 
-  <!-- Single-source FruitCake solver: FruitCake/polyglot/fruitcake_solver.pg is transpiled to C# at build
-       time (into obj/, before CoreCompile) by MintPlayer.Polyglot.MSBuild. PrivateAssets=all keeps the
-       build-only transpiler OUT of this published package's dependencies. The 0.1.3+ CLI is bundled for
-       win-x64/linux-x64/linux-arm64 (covers Windows dev + Linux CI/deploy); macOS dev must set $(PolyglotTool). -->
+  <!-- Single-source solvers: every FruitCake/Snake/MountainCar/Chess `polyglot/*.pg` is transpiled to C# at
+       build time (into obj/, before CoreCompile) by MintPlayer.Polyglot.MSBuild. PrivateAssets=all keeps the
+       build-only transpiler OUT of this published package's dependencies. The 0.7.0 CLI is bundled for
+       win-x64/linux-x64/linux-arm64/osx-x64/osx-arm64 (covers Windows/macOS dev + Linux CI/deploy). 0.6.0 fixed the
+       multi-.pg incremental-transpile bug (PR #26); 0.7.0 fixes the TypeScript emitter (PR #28 / issue #27 — typed
+       local List declarations + parenthesized List<T?>), so the regenerated chess_solver.ts is strictly typed. -->
   <ItemGroup>
-    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.3.1" PrivateAssets="all" />
+    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.7.0" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- The generated solver types (PgFruitCakeWorld etc.) are internal; the public FruitCakeWorld facade wraps

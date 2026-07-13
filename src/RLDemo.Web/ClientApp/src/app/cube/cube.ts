@@ -1,9 +1,12 @@
 import { Component, DestroyRef, ElementRef, afterNextRender, computed, inject, signal, viewChild } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
+import { Color } from '@mintplayer/ng-bootstrap';
+import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CubeApi, CubeSolveResponse, CubeStatusResponse } from './cube-api';
 import { RubiksCube } from './cube-renderer';
+import { pollModelStatus } from '../model-status';
 
 const FACES = ['U', 'D', 'L', 'R', 'F', 'B'] as const;
 const OPPOSITE: Record<string, string> = { U: 'D', D: 'U', R: 'L', L: 'R', F: 'B', B: 'F' };
@@ -26,6 +29,7 @@ interface ArmedSolution {
   selector: 'app-cube',
   templateUrl: './cube.html',
   styleUrl: './cube.scss',
+  imports: [BsButtonTypeDirective],
   host: {
     '(window:keydown)': 'onKey($event)',
     '(window:resize)': 'onResize()',
@@ -36,6 +40,7 @@ export class Cube {
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('cubeCanvas');
 
   protected readonly moveButtons = MOVE_BUTTONS;
+  protected readonly colors = Color;
 
   protected readonly status = signal('Ready');
   protected readonly animating = signal(false);
@@ -282,17 +287,7 @@ export class Cube {
   // ------------------------------------------------------------------ model status
 
   private pollStatus(): void {
-    void (async () => {
-      try {
-        const status = await this.api.status();
-        this.modelStatus.set(status);
-        if (status.status === 'loading') {
-          setTimeout(() => this.pollStatus(), 2000);
-        }
-      } catch {
-        // Backend unreachable: leave the status unknown; the buttons stay usable.
-      }
-    })();
+    pollModelStatus(() => this.api.status(), (s) => this.modelStatus.set(s));
   }
 
   // ------------------------------------------------------------------ solution playback
