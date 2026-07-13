@@ -1532,6 +1532,42 @@ bitwise-reproducibility invariant (M25/M26/**M36 SHA-verified**) is preservable 
 campaign; the pattern is generic and matches Core's existing determinism approach, so it should be (and now will be)
 extracted. **Non-goals:** GPU/batched-MCTS (separate, larger effort); parallelizing the DQN campaigns (not the bottleneck).
 
+## M42 — Convolutional residual net for chess (reusable in Core)  *(planned 2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* 🔜
+
+**Why:** chess self-play has **plateaued at ~random** (M40.4: winRate-vs-random ~50%→35%, material margin flat ~+0.1
+of the +0.75 gate, no tier ever promotes) despite 256 sims + material-shaped targets. The honest bottleneck is the
+**model**: a flat `[256,256]` MLP over a 1152-float vector throws away the 8×8 board structure. Owner's decision
+(2026-07-13): a true **AlphaZero-style convolutional residual tower** over `[18,8,8]`. Stacked after M41 (which makes
+the heavier training iterations affordable).
+
+**Finding (2-agent investigation):** a residual net *class* (`ResidualMlp`) is **already in Core** but is the wrong
+shape (single scalar head, residual **MLP** not conv, used only by cube DAVI) — so "move it to the library" is a no-op;
+it's already there. The reusable two-headed net (`PolicyValueNet`) is a flat MLP. **No convolution exists anywhere**
+(no Conv2D/im2col/pool/BatchNorm; LayerNorm does exist and is the repo's deliberate choice). `SelfPlayCampaign`/
+`PolicyValueTraining` hardcode the concrete `PolicyValueNet` type — there's **no two-headed-net interface** — so a conv
+net needs one introduced. The obs already reshapes cleanly to `[18,8,8]` (`plane*64+sq`). And the **browser-inference
+twin** (`chess_solver.pg` `PgPolicyValueNet`) is a flat-MLP forward — a conv net breaks client-side play until the `.pg`
+gains a conv forward (inference-only), so that's a first-class phase, not a follow-up.
+
+- **M42.1 — Conv2D in Core.** `Conv2D` op via **im2col → existing GEMM → col2im** (reuses the tuned, GPU-routed GEMM;
+  no bespoke kernel), rank-2 representation `[N, C·H·W]` so `CheckRank2` is never tripped. Reuse **LayerNorm** (not new
+  BatchNorm). **Gate:** finite-difference gradient check (dInput/dWeight/dBias) + forward value check + DOP-invariance.
+- **M42.2 — `IPolicyValueNet` + the conv net.** Introduce the two-headed-net interface; `PolicyValueNet` implements it
+  (SHA-identical checkpoints ⇒ zero behaviour change). Build `ConvResidualPolicyValueNet` (stem → N residual blocks →
+  AlphaZero policy+value heads; Save/Load/LayerActivations). Generalize `SelfPlayCampaign`/`PolicyValueTraining` to the
+  interface + an `--arch`-keyed factory. **Cheap de-risking checkpoint:** a two-headed *residual MLP* (no new kernels)
+  behind the same interface first, to see if depth+residuals move the plateau before investing in conv. **Gate:** suite
+  green, MLP SHA-identical, connect-4 unchanged, conv train-one-batch loss decreases.
+- **M42.3 — train chess with the conv net.** `--arch conv --filters 64 --blocks 6` (tune) + material shaping + ladder.
+  **Gate:** beats the MLP baseline — material margin ≥ +0.75 and/or winRate ≫ 50% with **≥1 ladder tier promoted**;
+  determinism (M41 SHA dop-1==dop-N) preserved.
+- **M42.4 — browser conv forward + parity.** Add an inference-only conv2d forward to `chess_solver.pg` + teach
+  `chess-net.ts` the conv `.ckpt` layout; regenerate the C#/TS twin. **Gate:** `ChessNetParityTests` green on conv
+  `.ckpt`; `/chess` plays a shipped conv tier end-to-end.
+
+**Non-goals:** removing `PolicyValueNet` (stays the connect-4/cube-policy/rush-hour net + fast baseline) or `ResidualMlp`
+(stays the cube DAVI value net); spatial BatchNorm (reuse LayerNorm); Net2Net growth for the conv net (stays MLP-only).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
