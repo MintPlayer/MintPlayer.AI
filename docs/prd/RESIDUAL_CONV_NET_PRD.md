@@ -1,6 +1,6 @@
 # Convolutional residual policy/value net (Core) + chess adoption — PRD
 
-**Status:** M42.1 + M42.2 ✅ SHIPPED 2026-07-13 (branch `m39-chess-selfplay-plan`, PR #32) · M42.3 ⏳ training · M42.4 🔜 gated on M42.3.
+**Status:** M42.1 + M42.2 ✅ SHIPPED 2026-07-13 (merged to master via PR #31) · M42.3 ⏳ training (early trend positive — conv IS learning, see below) · M42.4 🔜 gated on M42.3.
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M42 · **Depends on:** M41 (parallel self-play — makes the training iterations this needs affordable) · **Supersedes** the "flat MLP is the ceiling" note in [CHESS_WEB_POLYGLOT_PRD.md](CHESS_WEB_POLYGLOT_PRD.md) and [CHESS_SELFPLAY_PRD.md](CHESS_SELFPLAY_PRD.md).
 
@@ -12,8 +12,30 @@
   with an `IPolicyValueNetBuilder` (Mlp/Conv) as the arch factory. **The de-risking two-headed-residual-MLP checkpoint
   (§M42.2) was SKIPPED** — went straight to the conv net. Gate MET: head shapes, exact save/load round-trip, loss falls;
   MLP self-play determinism gate still byte-identical (zero behaviour change).
-- **M42.3** ⏳ conv training (`--arch conv --filters 64 --blocks 6`) — runs offline via the Lab; owner-driven (paused
-  during PR merge, to be restarted). Gate unchanged: beat the MLP baseline / ≥1 ladder tier promotes.
+- **M42.3** ⏳ conv training (`--arch conv --filters 64 --blocks 6`) — runs offline via the Lab (branch
+  `m42-chess-conv-net`, off master). Gate unchanged: beat the MLP baseline / ≥1 ladder tier promotes.
+  - **Perf fix that unblocked it (commit `71fe44c`): parallelize eval + ladder arena.** The conv net is ~10–50× heavier
+    per MCTS node than the MLP, and that surfaced a bottleneck the PRD's cost analysis (risk #3) missed: **it wasn't
+    self-play generation — it was the *measurement* phase.** After each chunk, on the owner thread, `ArenaVsRandom`
+    (`--eval-games` games) + `ArenaVsNet` (`--arena-games` games) ran **sequentially**, single-threaded, at full conv
+    cost — and because they run between chunks, **they stalled training itself** (no gradient steps while the arena
+    grinds; observed ~24 min at ~0.8 cores per cycle, one eval every ~30 min). The PRD left them sequential assuming a
+    cheap MLP; false for conv. Fix: `ArenaVsRandom`/`ArenaVsNet` now run their independent, inference-only games on the
+    **same `DeterministicParallel` primitive** self-play uses (one base seed per call → per-game RNG a pure function of
+    `(cycle, game index)`). Inference-only ⇒ trained weights are untouched: the DOP-invariance checkpoint test still
+    passes **bitwise**, and eval/arena metrics are reproducible + DOP-invariant by construction.
+  - **New knob (same commit): `--max-plies`** (default 200). A chunk's wall time is bounded by its **slowest** game, so
+    the ply cap — not the average game — sets self-play throughput; a weak net rarely mates, so games otherwise run to
+    the cap. Lower it for a heavy net to keep evals frequent.
+  - **Tuned config for the conv net's per-node cost:** `--sims 64 --games 16 --max-plies 100 --eval-games 8
+    --arena-games 12 --parallel --ladder --material-weight 0.5`. (256 sims / 200 plies / 10+20 sequential eval games —
+    the MLP-era defaults — made a single chunk+eval cycle take 20–30 min; this cut it to ~4–5 min/chunk with regular
+    evals, all cores busy in *both* phases.)
+  - **Early trend (positive — conv is learning, not plateauing like the MLP):** by ~48 self-play games, policy loss
+    **8.09 → 6.78** (falling off the ~8.45 uniform), value loss **0.235 → 0.096**, and material margin vs the Level-1
+    baseline **+0.50 pawns** (climbing toward the +0.75 promote gate). Contrast the MLP plateau (§1): policy barely moved
+    2.35→2.22 over 500 games, margin stuck ~+0.1, no tier ever promoted. The concrete gate is a **merit tier promotion**
+    (Level 2+ on material/head-to-head, not the automatic Level-1 baseline).
 - **M42.4** 🔜 browser conv forward + parity — **not started, deliberately gated on M42.3** proving the conv net beats
   the baseline (PRD risk #2). The current shipped browser demo uses the flat-MLP net (committed at `chess.az.d1.ckpt`).
 
@@ -96,7 +118,7 @@ The whole M40 browser story is single-source Polyglot inference: `PgPolicyValueN
 ## 6. Risks
 1. **Conv correctness** — mitigated by the finite-difference gradient gate (M42.1) before any net is built on it.
 2. **Conv net still doesn't beat the plateau** — possible if the block is targets/search, not capacity; the M42.2 residual-MLP de-risking checkpoint surfaces this cheaply. Fallback levers if so: more sims, longer training (M41 makes this affordable), or revisiting the value target.
-3. **Training cost** — a conv tower is far heavier than the MLP; **this is exactly why M41 (parallel self-play) lands first.** The im2col+GEMM route keeps the heavy math on the GPU-routed GEMM.
+3. **Training cost** — a conv tower is far heavier than the MLP; **this is exactly why M41 (parallel self-play) lands first.** The im2col+GEMM route keeps the heavy math on the GPU-routed GEMM. **Realized nuance (M42.3):** M41 parallelized self-play *generation*, but the conv net's per-node cost exposed a *second* sequential hot path this analysis missed — the eval + ladder **arena**, which run on the owner thread between chunks and so stall training. Both must be parallel for a heavy net; the M42.3 perf fix (commit `71fe44c`) does that. Lesson: with an expensive net, audit **every** per-chunk phase for hidden single-threaded work, not just generation.
 4. **Browser perf** — a conv forward per MCTS node in JS may be slow; if so, cap browser sims per difficulty tier (the tier system already sets per-tier sims) or ship a smaller `filters/blocks` for the web than for the strongest offline tier. Flag during M42.4.
 5. **Checkpoint/interface churn** — the `IPolicyValueNet` refactor touches the shared self-play path; the SHA-identical-MLP gate (M42.2) guards against a silent regression to connect-4/chess.
 

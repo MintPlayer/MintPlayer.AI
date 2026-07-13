@@ -27,3 +27,37 @@ dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release --
 
 The DQN fallbacks retrain from the console:
 `dotnet run --project src/RLDemo.Console -c Release -- rushhour|cube --save --data models`.
+
+## Chess — AlphaZero self-play, conv residual net (M42.3, experimental — not yet a shipped seed)
+
+The shipped browser chess net (`src/RLDemo.Web/wwwroot/models/chess.az.d1.ckpt`) is still the flat-MLP
+baseline. M42 replaces it with an AlphaZero-style **convolutional residual tower** over the `[18,8,8]`
+board (`--arch conv`); see `docs/prd/RESIDUAL_CONV_NET_PRD.md`. The conv net is being trained offline and
+is **not yet promoted to the browser** — that's gated on M42.4 (a conv forward in the `.pg` twin), which is
+itself gated on this training beating the MLP baseline.
+
+Run the conv training (writes to a scratch `--data` dir and a scratch ladder `--difficulty-dir`, **not**
+`wwwroot/models`, so it can't clobber the shipped MLP tiers the `/chess` page serves):
+
+```
+dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- \
+  --game chess --arch conv --filters 64 --blocks 6 \
+  --sims 64 --games 16 --max-plies 100 --eval-games 8 --arena-games 12 \
+  --parallel --ladder --material-weight 0.5 \
+  --data data/chess-conv --difficulty-dir data/chess-conv-ladder --hours N
+```
+
+**Why these values (learned the hard way — the conv net is far heavier per MCTS node than the MLP):**
+- **Everything must be parallel.** `--parallel` fans self-play across cores; and as of commit `71fe44c` the
+  **eval + ladder arena** are parallel too. They run on the owner thread *between* training chunks, so at
+  conv cost a sequential arena doesn't just report slowly — it **stalls training** (we saw ~0.8 cores for
+  ~24 min per cycle before the fix). All of self-play/eval/arena are inference-only and DOP-invariant, so
+  trained checkpoints stay bitwise-identical at any core count.
+- **`--max-plies` and `--sims` set throughput.** A chunk's wall time is bounded by its *slowest* game, and a
+  weak net rarely mates so games otherwise run to the ply cap. 200 plies × 256 sims (the MLP-era defaults)
+  made one chunk+eval cycle take 20–30 min; `--max-plies 100 --sims 64` cuts that to ~4–5 min/chunk.
+- **`--eval-games` / `--arena-games`** trade eval signal quality for speed; 8 / 12 is a reasonable balance now
+  that both loops are parallel.
+- **The gate is a *merit* ladder promotion** (Level 2+ on material margin ≥ +0.75 pawns or head-to-head ≥ 60%).
+  Level 1 is always an automatic baseline — not evidence of anything. Early signal is healthy: policy loss
+  falls off uniform and material margin climbs, unlike the MLP which plateaued at ~random for 500 games.

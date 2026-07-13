@@ -1536,7 +1536,7 @@ bitwise-reproducibility invariant (M25/M26/**M36 SHA-verified**) is preservable 
 campaign; the pattern is generic and matches Core's existing determinism approach, so it should be (and now will be)
 extracted. **Non-goals:** GPU/batched-MCTS (separate, larger effort); parallelizing the DQN campaigns (not the bottleneck).
 
-## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED · M42.3 ⏳ training · M42.4 🔜 (gated on M42.3)
+## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED (merged to master, PR #31) · M42.3 ⏳ training (early trend positive) · M42.4 🔜 (gated on M42.3)
 
 **Why:** chess self-play has **plateaued at ~random** (M40.4: winRate-vs-random ~50%→35%, material margin flat ~+0.1
 of the +0.75 gate, no tier ever promotes) despite 256 sims + material-shaped targets. The honest bottleneck is the
@@ -1564,8 +1564,19 @@ gains a conv forward (inference-only), so that's a first-class phase, not a foll
   conv --filters --blocks`. **Gate MET** (`ConvResidualNetTests`): head shapes, exact save/load round-trip, loss falls
   under Adam. (De-risking residual-MLP step skipped — went straight to conv.) Commit `21b779d`.
 - **M42.3 ⏳ — train chess with the conv net.** `--arch conv --filters 64 --blocks 6` + material shaping + ladder,
-  running in the background. **Gate:** beats the MLP baseline — material margin ≥ +0.75 and/or winRate ≫ 50% with **≥1
-  ladder tier promoted**; determinism preserved. *(Long run; evaluated from the background training, not blocking.)*
+  running in the background (branch `m42-chess-conv-net`). **Gate:** beats the MLP baseline — material margin ≥ +0.75
+  and/or winRate ≫ 50% with **≥1 ladder tier promoted** (on merit, not the automatic Level-1 baseline); determinism
+  preserved. *(Long run; evaluated from the background training, not blocking.)*
+  - **Perf fix (commit `71fe44c`) that unblocked useful throughput — parallelize eval + ladder arena.** The conv net's
+    per-node cost exposed a bottleneck M41's analysis missed: not self-play generation but the **measurement** phase.
+    `ArenaVsRandom` + `ArenaVsNet` ran **sequentially on the owner thread between chunks**, so at conv cost they *stalled
+    training* (observed ~0.8 cores for ~24 min/cycle, one eval every ~30 min). Refactored both onto the same
+    `DeterministicParallel` primitive (per-game RNG, inference-only). Trained weights untouched — DOP-invariance
+    checkpoint test still **bitwise-identical**; all `SelfPlayCampaign` tests green. Also added **`--max-plies`** (a
+    chunk's wall time is bounded by its slowest game, so the ply cap sets throughput). Tuned run:
+    `--sims 64 --games 16 --max-plies 100 --eval-games 8 --arena-games 12` → ~4–5 min/chunk (was 20–30).
+  - **Early trend (positive):** by ~48 games, policy loss 8.09→6.78, value 0.235→0.096, material vs baseline +0.50 pawns
+    (climbing to the +0.75 gate) — i.e. **learning, unlike the MLP plateau** (2.35→2.22 over 500 games, no promotion).
 - **M42.4 🔜 (gated on M42.3) — browser conv forward + parity.** Add an inference-only conv2d forward to
   `chess_solver.pg` + teach `chess-net.ts` the conv `.ckpt` layout; regenerate the C#/TS twin. **Gate:**
   `ChessNetParityTests` green on conv `.ckpt`; `/chess` plays a shipped conv tier. **Deliberately not started until M42.3
