@@ -160,8 +160,15 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         return resumed;
     }
 
+    // M44.1 gate: when CHESS_CHUNK_TIMING is set, log the generation-vs-training wall-time split per chunk. This is the
+    // measurement that decides whether a GPU-resident TRAINER (M44.3) is worth building: if generation dominates (the
+    // ply-cap straggler), the resident forward + --leaf-batch already shipped is the real lever and a resident trainer
+    // buys little. Off by default (no per-chunk log noise in real runs); a couple of chunks under it answer the gate.
+    private static readonly bool _chunkTiming = System.Environment.GetEnvironmentVariable("CHESS_CHUNK_TIMING") is not null;
+
     public long TrainChunk()
     {
+        var swGen = _chunkTiming ? System.Diagnostics.Stopwatch.StartNew() : null;
         // Generate the chunk's games (each on its own index-derived RNG, over the stable read-only net), then merge
         // their samples into the rolling window in ascending game index — identical to the old sequential add order,
         // and independent of how many cores ran it.
@@ -171,7 +178,10 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         foreach (var samples in perGame)
             foreach (var sample in samples) AddSample(sample);
         _totalGames += _gamesPerChunk;
+        swGen?.Stop();
 
+        var swTrain = _chunkTiming ? System.Diagnostics.Stopwatch.StartNew() : null;
+        int trainBatches = 0;
         // Train EpochsPerChunk shuffled passes over the current window (skip until a full batch has accumulated).
         if (_window.Count >= _batchSize)
         {
@@ -195,8 +205,15 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
                     _lossWindow.Add(pl, vl, 0);
                     _liveLoss = pl + vl;
                     _totalSamples += _batchSize;
+                    trainBatches++;
                 }
             }
+        }
+        swTrain?.Stop();
+        if (_chunkTiming)
+        {
+            double gen = swGen!.Elapsed.TotalMilliseconds, train = swTrain!.Elapsed.TotalMilliseconds, total = gen + train;
+            Log($"chunk-timing: gen {gen:F0} ms ({gen / total:P1}) | train {train:F0} ms ({train / total:P1}, {trainBatches} batches) | window {_window.Count}");
         }
         // Re-sync the inference forward to the just-trained weights, so next chunk's generation uses them. For the
         // autograd default this re-points the same net (a no-op); for a GPU-resident forward it re-uploads the weights.

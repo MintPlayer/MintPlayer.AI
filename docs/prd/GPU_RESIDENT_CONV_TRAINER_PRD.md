@@ -1,6 +1,6 @@
 # GPU-resident training step for the conv policy/value net — PRD
 
-**Status:** 🔜 **designed** (3-agent analysis 2026-07-14), **not built**. **Owner:** Pieterjan.
+**Status:** 🟢 **M44.1 MEASURED — GO for M44.3** (2026-07-14, RTX 3060); seam + kernels **not built yet**. **Owner:** Pieterjan.
 **Milestone:** [PLAN.md](PLAN.md) M44 · **Depends on:** M43 GPU-resident conv *forward* (`DeviceConvPolicyValueNet`,
 `IPolicyValueForward`; commits `852cf31`/`b49a4c2`/`f39cf2f`) — this is its training-side sibling. **Promotes** the
 "resident conv *trainer*" deferred item in [GPU_RESIDENT_CONV_PRD.md](GPU_RESIDENT_CONV_PRD.md) §Deferred.
@@ -87,10 +87,27 @@ gpu.CreateResidentTrainer(...) : null`) — all Ilgpu knowledge stays there.
 
 ## 5. Phases
 
-- **M44.1 — MEASURE (gate).** Add a training-step-vs-generation timing to a `--gpu --arch conv --leaf-batch N` chunk
-  (extend `ConvForwardBench`, or instrument `TrainChunk`). **Decision:** build M44.3 only if the CPU train step is a
-  material share of chunk wall-time. If generation dominates (likely — ply-cap straggler), STOP after M44.2 and record
-  that the resident forward + `--leaf-batch` is the lever.
+- **M44.1 ✅ MEASURED (gate) — GO.** Instrumented `TrainChunk` with a gen-vs-train split behind env `CHESS_CHUNK_TIMING`
+  (SelfPlayCampaign, off by default → no log noise). Ran `--gpu --arch conv --parallel --leaf-batch 128 --games 6
+  --sims 48 --max-plies 60 --filters 64 --blocks 6` on an **RTX 3060 Laptop GPU**:
+
+  | chunk | window | train batches | gen | train | train share |
+  |---|---|---|---|---|---|
+  | 1 | 360 | 2 | 13.6 s | 7.8 s (JIT-inflated) | 36.5 % |
+  | 2 | 720 | 5 | 15.8 s | 14.5 s | 47.8 % |
+  | 3 | 1080 | 8 | 15.0 s | 26.0 s | 63.5 % |
+
+  **Reading:** generation is ~**constant** (~15 s: fixed by games×sims×plies, and the M43 resident forward + `--leaf-batch`
+  already handle it). The **CPU/host-span training step grows linearly with the replay window** — batches/chunk =
+  `epochs·⌊window/batch⌋`, and each 128-sample batch costs **~3.0 s** through `Backend.Current` host-span (weights
+  re-upload per GEMM + CPU im2col/col2im — the exact transfer-bound pattern M43 fixed for *inference*). It already crosses
+  50 % by window 1080; at the **default 40 000 window** (312 batches/chunk) it asymptotes to **~98 %** of chunk wall-time.
+  **Decision: BUILD M44.3.** The train step is the dominant cost of any run with a non-trivial window (i.e. every serious
+  / cluster run), and it's the same inefficiency M43 already proved fixable. **Caveat (honesty):** the split is
+  config-dependent — it's governed by the batches-per-chunk : generation-work ratio, i.e. `(epochs·window/batch)` vs
+  `(games·sims·plies)`. A tiny-window / huge-chunk run would be generation-bound and see little from a resident trainer;
+  but the ~3 s/batch host-span cost is paid by *every* config with real training and is what M44.3 removes. (Measurement
+  instrumentation is committed and reusable: set `CHESS_CHUNK_TIMING` to re-measure under any config.)
 - **M44.2 — Core seam + wiring (behaviour-preserving).** `IPolicyValueTrainStep` + `AutogradPolicyValueTrainStep`;
   factory through `SelfPlayCampaign`/`ChessLab`; `TrainChunk` routes through it; `SyncToHost` before eval. **Gate:**
   DOP-invariance SHA test still bitwise-identical (proves the refactor changed nothing); all tests green. Shippable alone.
@@ -100,7 +117,8 @@ gpu.CreateResidentTrainer(...) : null`) — all Ilgpu knowledge stays there.
   GradientsMatchAutograd`) within f32 tol + a `SyncToHost` round-trip test; then on-GPU throughput vs the CPU train step.
 
 ## 6. Risks
-1. **Generation dominates → low ROI.** Mitigated by the M44.1 measurement gate (don't build M44.3 speculatively).
+1. **Generation dominates → low ROI.** ✅ **Retired by M44.1**: at the default 40 k window the train step is ~98 % of
+   chunk wall-time (not generation). Low ROI only in a tiny-window/huge-chunk regime, which no serious run uses.
 2. **Conv backward kernel correctness** (col2im scatter-sum, the gather transpose, the two loss grads) — mitigated by
    the M44.3 gradient-parity test on the CPU accelerator (CI-safe, no GPU) + the exact index-math specs in §2.
 3. **Determinism** — GPU training isn't bitwise-reproducible; kept opt-in, CPU autograd stays the reference (DOP test
@@ -110,7 +128,8 @@ gpu.CreateResidentTrainer(...) : null`) — all Ilgpu knowledge stays there.
    trainers as the shared P.2 fix.
 
 ## 7. Verification
-- M44.1: reported training vs generation share of a `--gpu` conv chunk; go/no-go on M44.3.
+- M44.1 ✅: measured train-vs-gen share of a `--gpu` conv chunk on an RTX 3060 (36.5 → 47.8 → 63.5 % train as the window
+  filled; ~3 s/128-batch host-span; asymptotes ~98 % at the 40 k default) → GO for M44.3. Re-run with `CHESS_CHUNK_TIMING`.
 - M44.2: DOP-invariance SHA test bitwise-identical (behaviour-preserving); all self-play tests green.
 - M44.3: gradient-parity (device vs autograd) on the ILGPU CPU accelerator within f32 tol; `SyncToHost` round-trip;
   on-GPU train-step throughput vs CPU reported.

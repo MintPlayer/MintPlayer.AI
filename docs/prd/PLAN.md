@@ -1640,7 +1640,7 @@ beyond what `--gpu` already accepts; testable on ILGPU's CPU accelerator (no dis
 **Non-goals:** WDL/categorical value head; distributed actor→learner; browser conv perf (still deferred,
 RESIDUAL_CONV_NET_PRD §8). The resident conv *trainer* is now designed as **M44** (below).
 
-## M44 — GPU-resident training step for the conv net  *(2026-07-14; see `GPU_RESIDENT_CONV_TRAINER_PRD.md`)* — 🔜 designed (3-agent analysis), not built
+## M44 — GPU-resident training step for the conv net  *(2026-07-14; see `GPU_RESIDENT_CONV_TRAINER_PRD.md`)* — 🟢 M44.1 measured → GO; M44.2/3 not built
 
 **Why:** with `--gpu`, M43 made self-play *inference* resident (~15×), but the **training step** still runs host-span
 (weights re-upload per GEMM, CPU im2col/col2im). The cube already has the training-side answer (`DeviceResidualTrainer`
@@ -1655,8 +1655,13 @@ kernels**: `Col2Im` + `GatherNCHWToMOutC` (the transpose of M43's forward im2col
 forward-caching change (`LaunchLayerNormTrain` + x̂/1σ caches — no new kernel). Generic → library; only CLI/factory in the lab.
 Determinism: a resident *trainer* mutates weights (non-bitwise) → **opt-in**; the CPU autograd path stays the reference.
 
-- **M44.1 — MEASURE (gate).** Time train-step vs generation share of a `--gpu` conv chunk. Build M44.3 only if training
-  is a material share; else stop after M44.2 (the resident *forward* is the lever).
+- **M44.1 ✅ MEASURED → GO.** Instrumented `TrainChunk` (gen-vs-train split behind env `CHESS_CHUNK_TIMING`, off by
+  default). On an **RTX 3060** (`--gpu --arch conv --parallel --leaf-batch 128 --games 6 --sims 48 --max-plies 60`),
+  train share rose **36.5 → 47.8 → 63.5 %** as the window filled (360 → 720 → 1080), gen ~**constant** at ~15 s. Each
+  128-batch costs **~3 s** host-span; batches/chunk = `epochs·⌊window/batch⌋`, so at the **default 40 k window** the
+  train step is **~98 %** of chunk wall-time. Generation was never the bottleneck (M43's resident forward already owns
+  it). **BUILD M44.3.** (Caveat: the split is config-dependent — a tiny-window/huge-chunk run is gen-bound — but every
+  serious/cluster run has a large window and pays the ~3 s/batch host-span cost M44.3 removes.)
 - **M44.2 — Core seam + wiring (behaviour-preserving).** `IPolicyValueTrainStep` + `AutogradPolicyValueTrainStep`;
   Core-typed factory through `SelfPlayCampaign`/`ChessLab`; `SyncToHost` before eval. **Gate:** DOP-invariance SHA test
   still bitwise-identical. Shippable alone.
