@@ -1,3 +1,4 @@
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -225,5 +226,43 @@ public class IlgpuBackendTests
 
         for (int i = 0; i < once.Length; i++)
             Assert.Equal(2f * once[i], twice[i], 3);
+    }
+
+    /// <summary>
+    /// M43.2: the GPU-resident conv forward (<see cref="DeviceConvPolicyValueNet"/>) must match the autograd conv net's
+    /// forward. Runs on the ILGPU CPU accelerator (no discrete GPU needed); cross-backend agreement is approximate
+    /// (the resident tower's fused/sequential GEMMs + LayerNorm round differently than the CPU autograd path), so a
+    /// relative+absolute tolerance, looser than the single-GEMM test to absorb accumulation over the ~14-conv tower.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(6)]
+    public void DeviceConvForward_matches_autograd_conv_net(int rows)
+    {
+        const int planes = 18, board = 8, actions = 4672;
+        int obsSize = planes * board * board;
+        var net = new ConvResidualPolicyValueNet(planes, board, board, actions, filters: 8, blocks: 2,
+            new Xoshiro256StarStar(1));
+        var obs = Random(rows * obsSize, 7);
+
+        var (logitsT, valueT) = net.Forward(new Core.Numerics.Tensor(obs, rows, obsSize)); // CPU autograd reference
+
+        using var backend = new IlgpuBackend(preferCpu: true);
+        using var device = backend.CreateResidentForward(net);
+        var (logits, value) = device.Forward(obs, rows);
+
+        AssertCloseTol(logitsT.Data, logits, 3e-3f);
+        AssertCloseTol(valueT.Data, value, 3e-3f);
+    }
+
+    private static void AssertCloseTol(float[] expected, float[] actual, float rel)
+    {
+        Assert.Equal(expected.Length, actual.Length);
+        for (int i = 0; i < expected.Length; i++)
+        {
+            float tol = rel * (1f + MathF.Abs(expected[i]));
+            Assert.True(MathF.Abs(expected[i] - actual[i]) <= tol,
+                $"index {i}: expected {expected[i]}, got {actual[i]} (tol {tol})");
+        }
     }
 }

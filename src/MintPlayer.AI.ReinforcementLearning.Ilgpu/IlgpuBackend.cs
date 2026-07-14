@@ -119,6 +119,9 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, float> _layerNormTrain;
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>> _relu;
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>> _copy;
+    // Conv residency (M43): the two data-movement kernels that bracket each conv's GEMM.
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int, int, int> _im2col;
+    private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int> _scatterBias;
     // The original one-thread-per-output kernel, retained ONLY for the M19 naive-vs-tiled bench
     // comparison (see BenchGemmGflops); never on the production routing path.
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims> _gemmNaive;
@@ -163,6 +166,8 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
         _layerNormTrain = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, float>(LayerNormTrain_Kernel);
         _relu = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>>(Relu_Kernel);
         _copy = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>>(Copy_Kernel);
+        _im2col = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int, int, int, int>(Im2Col_Kernel);
+        _scatterBias = _accelerator.LoadAutoGroupedStreamKernel<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, int, int>(ScatterBias_Kernel);
     }
 
     /// <summary>
@@ -288,6 +293,16 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     /// <summary>Elementwise <c>a += b</c> over two equal-length resident buffers (the residual skip).</summary>
     internal void LaunchAddInto(ArrayView1D<float, Stride1D.Dense> a, ArrayView1D<float, Stride1D.Dense> b)
         => _addInto(new Index1D((int)a.Length), a, b);
+
+    /// <summary>Device im2col: gather NCHW input <c>[B, inC·h·w]</c> into <c>cols[M, inC·k²]</c> (M=B·h·w),
+    /// zero-filling padding. One thread per cols element. Caller holds the lock.</summary>
+    internal void LaunchIm2Col(ArrayView1D<float, Stride1D.Dense> x, ArrayView1D<float, Stride1D.Dense> cols, int inC, int k, int pad, int h, int w)
+        => _im2col(new Index1D((int)cols.Length), x, cols, inC, k, pad, h, w);
+
+    /// <summary>Scatter a conv GEMM result <c>mat[M, outC]</c> to NCHW <c>out[B, outC·hw]</c>, adding the
+    /// per-channel bias (broadcast over the hw spatial positions). One thread per output element. Caller holds the lock.</summary>
+    internal void LaunchScatterBias(ArrayView1D<float, Stride1D.Dense> mat, ArrayView1D<float, Stride1D.Dense> bias, ArrayView1D<float, Stride1D.Dense> outp, int outC, int hw)
+        => _scatterBias(new Index1D((int)outp.Length), mat, bias, outp, outC, hw);
 
     // ── resident training launch helpers (caller holds the lock) ──
 
@@ -489,6 +504,38 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     private static void AddInto_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> a, ArrayView1D<float, Stride1D.Dense> b)
         => a[index] += b[index];
 
+    /// <summary>
+    /// Device im2col (M43): gather each output position's receptive field into <c>cols[M, inC·k²]</c>, zero-filling
+    /// padding. One thread per cols element. Input <c>x</c> is NCHW <c>[B, inC·h·w]</c>; cols row m = b·hw + oh·w + ow,
+    /// cols col = ((c·k+kh)·k+kw) — the exact weight index order Conv2D's im2col uses, so the reused GEMM stays correct.
+    /// </summary>
+    private static void Im2Col_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> x, ArrayView1D<float, Stride1D.Dense> cols, int inC, int k, int pad, int h, int w)
+    {
+        int gid = index;
+        int hw = h * w;
+        int inCk2 = inC * k * k;
+        int m = gid / inCk2, kcol = gid % inCk2;
+        int b = m / hw, sp = m % hw;
+        int oh = sp / w, ow = sp % w;
+        int kw = kcol % k, t = kcol / k;
+        int kh = t % k, c = t / k;
+        int ih = oh - pad + kh, iw = ow - pad + kw;
+        cols[gid] = (ih >= 0 && ih < h && iw >= 0 && iw < w) ? x[b * inC * hw + c * hw + ih * w + iw] : 0f;
+    }
+
+    /// <summary>
+    /// Device scatter + per-channel bias (M43): a conv GEMM result <c>mat[M, outC]</c> → NCHW <c>out[B, outC·hw]</c>,
+    /// adding <c>bias[oc]</c> (broadcast over the hw spatial positions — distinct from BiasActivation's per-column
+    /// bias). One thread per output element; m = b·hw + sp.
+    /// </summary>
+    private static void ScatterBias_Kernel(Index1D index, ArrayView1D<float, Stride1D.Dense> mat, ArrayView1D<float, Stride1D.Dense> bias, ArrayView1D<float, Stride1D.Dense> outp, int outC, int hw)
+    {
+        int gid = index;
+        int sp = gid % hw, rem = gid / hw;
+        int oc = rem % outC, b = rem / outC;
+        outp[gid] = mat[(b * hw + sp) * outC + oc] + bias[oc];
+    }
+
     // ── resident training kernels (M20 Stage 3) ──
 
     /// <summary>Bias gradient: one thread per column, <c>dBias[c] = Σ_r dy[r·dim+c]</c>.</summary>
@@ -672,6 +719,15 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     /// transfer that makes a residual net's host-span successor evaluation transfer-bound.
     /// </summary>
     public DeviceResidualMlp CreateResidentForward(ResidualMlp net) => new(this, net);
+
+    /// <summary>
+    /// Creates a <see cref="DeviceConvPolicyValueNet"/> bound to this backend: a two-headed AlphaZero conv-residual
+    /// net whose weights live resident on-device, with the whole tower + both heads chained on-device via im2col +
+    /// the tiled GEMM + scatter/bias + LayerNorm/ReLU/add (M43). This is the conv analogue of
+    /// <see cref="CreateResidentForward(ResidualMlp)"/> — it removes the per-conv host↔device round-trip that makes a
+    /// conv net's self-play inference transfer-bound, so `--gpu --leaf-batch N` actually keeps the device busy.
+    /// </summary>
+    public DeviceConvPolicyValueNet CreateResidentForward(ConvResidualPolicyValueNet net) => new(this, net);
 
     /// <summary>
     /// Creates a <see cref="DeviceResidualTrainer"/> bound to this backend: a fully device-resident DAVI
