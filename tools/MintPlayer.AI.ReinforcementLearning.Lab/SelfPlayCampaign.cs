@@ -63,6 +63,12 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // Weight on the value (MSE) loss relative to the policy (CE) loss (1 = equal). Down-weighting is the standard fix
     // for value-head overfitting → strength regression at small scale (Leela Zero cut it 1.0→0.25).
     private readonly float _valueWeight;
+    // Leaf-inference batch size for self-play MCTS. 1 = sequential (bitwise back-compat). >1 uses Mcts.SearchBatched
+    // (virtual loss) so each net.Forward sees a batch of leaves — the only way self-play keeps a GPU busy.
+    private readonly int _leafBatch;
+    // Optional compute backend (e.g. the GPU AdaptiveBackend). When set, installed as Backend.Current in Resume — a
+    // plain (non-thread-static) global, so the parallel self-play worker threads route their GEMMs through it too.
+    private readonly IComputeBackend? _backend;
     private const float MaterialScale = 5f;
 
     // How the net is built + reloaded (arch-agnostic seam: MLP by default, conv when a ConvNetBuilder is passed).
@@ -79,14 +85,17 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         int hidden, Mcts.Config selfPlayCfg, int gamesPerChunk = 32, int tempMoves = 8, int evalGames = 20,
         int windowCapacity = 40_000, int maxPlies = 512, long targetGames = 0, double opponentRandomFrac = 0,
         LadderOptions? ladder = null, float materialWeight = 0f, bool parallel = false, int? maxDop = null,
-        IPolicyValueNetBuilder? netBuilder = null, float valueLossWeight = 1f)
+        IPolicyValueNetBuilder? netBuilder = null, float valueLossWeight = 1f, int leafBatch = 1,
+        IComputeBackend? backend = null)
     {
+        _backend = backend;
         _parallel = parallel;
         _maxDop = maxDop;
         _ladder = ladder;
         _material = game as IMaterialScore<TState>; // dense material shaping when the game supports it
         _materialWeight = materialWeight;
         _valueWeight = valueLossWeight;
+        _leafBatch = leafBatch < 1 ? 1 : leafBatch;
         // Independent stream (not from SeedSequence) so the arena can't perturb the training/eval RNG → reproducible.
         _arenaRng = new Xoshiro256StarStar(unchecked(seed * 0x9E3779B97F4A7C15UL + 0xD1B54A32D192ED03UL));
         _opponentRandomFrac = opponentRandomFrac;
@@ -116,6 +125,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
 
     public bool Resume(IModelStore store)
     {
+        if (_backend is not null) Backend.Current = _backend; // route all Tensor ops (incl. worker threads) to it
         bool resumed = false;
         using (var s = store.TryOpenRead(_environmentId, NetId))
         {
@@ -233,7 +243,9 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         int ply = 0;
         while (_game.Result(state) == GameResult.Ongoing && ply < _maxPlies)
         {
-            float[] pi = Mcts.Search(_game, state, Evaluate, _selfPlayCfg, rng);
+            float[] pi = _leafBatch > 1
+                ? Mcts.SearchBatched(_game, state, EvaluateBatch, _selfPlayCfg, rng, _leafBatch)
+                : Mcts.Search(_game, state, Evaluate, _selfPlayCfg, rng);
             var obs = new float[_game.ObservationSize];
             _game.WriteObservation(state, obs);
             obsHistory.Add(obs);
@@ -343,6 +355,27 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             var (logits, value) = net.Forward(new Tensor(obs, 1, obs.Length));
             var priors = MaskedSoftmax(logits.Data, _game.LegalMoves(state));
             return (priors, MathF.Tanh(value.Data[0]));
+        }
+    }
+
+    // Batched leaf evaluator for Mcts.SearchBatched: stack all leaf observations into one [B, obsSize] tensor, run a
+    // SINGLE net.Forward, and split the result per leaf (masked-softmax priors + tanh value). This is what turns
+    // self-play's batch-1 inference into batch-B — read-only over the shared net, so it's safe on the game threads.
+    private IReadOnlyList<(float[] Priors, float Value)> EvaluateBatch(IReadOnlyList<TState> states)
+    {
+        int b = states.Count, obsSize = _game.ObservationSize, policy = _game.PolicySize;
+        var obs = new float[b * obsSize];
+        for (int i = 0; i < b; i++) _game.WriteObservation(states[i], obs.AsSpan(i * obsSize, obsSize));
+        using (GradMode.NoGrad())
+        {
+            var (logits, value) = _net.Forward(new Tensor(obs, b, obsSize));
+            var results = new (float[], float)[b];
+            for (int i = 0; i < b; i++)
+            {
+                var row = logits.Data.AsSpan(i * policy, policy).ToArray();
+                results[i] = (MaskedSoftmax(row, _game.LegalMoves(states[i])), MathF.Tanh(value.Data[i]));
+            }
+            return results;
         }
     }
 

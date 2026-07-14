@@ -1,5 +1,7 @@
+using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 using MintPlayer.AI.ReinforcementLearning.Environments.Chess;
+using MintPlayer.AI.ReinforcementLearning.Ilgpu;
 
 /// <summary>
 /// `--game chess` entry point (PLAN M39.2): AlphaZero-style self-play on chess — the second consumer of the reusable
@@ -53,10 +55,16 @@ internal static class ChessLab
         // Value-loss weight (relative to policy loss). Default 1 = equal. Lower (e.g. 0.3) counters value-head
         // overfitting → strength regression at small scale — the observed "loss drops but play regresses" failure.
         float valueWeight = a.Flt("--value-weight", 1f);
+        // Leaf-inference batch size for self-play MCTS (M42.5). 1 = sequential batch-1 (default, back-compat). >1 uses
+        // virtual-loss batched MCTS so each net.Forward evaluates N leaves at once — required for any GPU utilization.
+        int leafBatch = a.Int("--leaf-batch", 1);
 
         // Parallel self-play generation (M41.2): --parallel fans the chunk's games across cores (default cores-2),
         // --dop caps the degree of parallelism. Trained weights are identical at any DOP for a given seed.
         bool parallel = a.Has("--parallel");
+        // --gpu: route Tensor ops through the ILGPU AdaptiveBackend (large GEMMs → GPU). Pays off with --leaf-batch
+        // (batched inference); batch-1 self-play barely uses a GPU. The training step (batched) benefits regardless.
+        bool useGpu = a.Has("--gpu");
         int? dop = a.Has("--dop") ? a.Int("--dop", System.Math.Max(1, System.Environment.ProcessorCount - 2)) : null;
 
         // Net architecture (M42): --arch conv builds an AlphaZero-style convolutional residual tower over the 18×8×8
@@ -84,11 +92,12 @@ internal static class ChessLab
 
         var game = new ChessGame();
         var cfg = new Mcts.Config(Simulations: sims);
-        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            _ => new SelfPlayCampaign<ChessState>(game, "chess", seed, learningRate, hidden, cfg, gamesPerChunk,
+        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: useGpu,
+            sp => new SelfPlayCampaign<ChessState>(game, "chess", seed, learningRate, hidden, cfg, gamesPerChunk,
                 tempMoves: 12, evalGames: evalGames, maxPlies: maxPlies, opponentRandomFrac: opponentRandom, ladder: ladder,
                 materialWeight: materialWeight, parallel: parallel, maxDop: dop, netBuilder: netBuilder,
-                valueLossWeight: valueWeight),
+                valueLossWeight: valueWeight, leafBatch: leafBatch,
+                backend: useGpu ? sp.GetRequiredService<AdaptiveBackend>() : null),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
     }
