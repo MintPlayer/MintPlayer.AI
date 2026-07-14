@@ -1536,7 +1536,7 @@ bitwise-reproducibility invariant (M25/M26/**M36 SHA-verified**) is preservable 
 campaign; the pattern is generic and matches Core's existing determinism approach, so it should be (and now will be)
 extracted. **Non-goals:** GPU/batched-MCTS (separate, larger effort); parallelizing the DQN campaigns (not the bottleneck).
 
-## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED (merged to master, PR #31) · M42.3 ⏳ training (early trend positive) · M42.4 🔜 (gated on M42.3)
+## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED (merged to master, PR #31) · M42.3 ✅ core goal met (conv beats MLP baseline; draw-collapse fixed, commit `282c665`; limit = net capacity) · M42.4 🟡 steps 1+3 done (`c1c7d8e`), browser wiring (2+4) remains
 
 **Why:** chess self-play has **plateaued at ~random** (M40.4: winRate-vs-random ~50%→35%, material margin flat ~+0.1
 of the +0.75 gate, no tier ever promotes) despite 256 sims + material-shaped targets. The honest bottleneck is the
@@ -1575,12 +1575,24 @@ gains a conv forward (inference-only), so that's a first-class phase, not a foll
     checkpoint test still **bitwise-identical**; all `SelfPlayCampaign` tests green. Also added **`--max-plies`** (a
     chunk's wall time is bounded by its slowest game, so the ply cap sets throughput). Tuned run:
     `--sims 64 --games 16 --max-plies 100 --eval-games 8 --arena-games 12` → ~4–5 min/chunk (was 20–30).
-  - **Early trend (positive):** by ~48 games, policy loss 8.09→6.78, value 0.235→0.096, material vs baseline +0.50 pawns
-    (climbing to the +0.75 gate) — i.e. **learning, unlike the MLP plateau** (2.35→2.22 over 500 games, no promotion).
-- **M42.4 🔜 (gated on M42.3) — browser conv forward + parity.** Add an inference-only conv2d forward to
-  `chess_solver.pg` + teach `chess-net.ts` the conv `.ckpt` layout; regenerate the C#/TS twin. **Gate:**
-  `ChessNetParityTests` green on conv `.ckpt`; `/chess` plays a shipped conv tier. **Deliberately not started until M42.3
-  proves the conv net is worth shipping** (PRD risk #2 — don't port to the browser a net that doesn't beat the baseline).
+  - **Root-cause fix — DRAW-COLLAPSE (commit `282c665`), core goal MET.** With the arena noise removed (`--arena-games
+    40`) the trustworthy signal showed the net *regressing* (material vs baseline −2→−9 pawns, value loss →0.03, winRate
+    pinned 50%). Cause: a non-mating net + short ply cap ⇒ nearly all self-play games are ply-capped **draws (z=0)** ⇒
+    the outcome signal vanishes ⇒ net collapses to passive, material-bleeding play. (My throughput tuning — low sims +
+    short plies — *caused* it.) Fix: **material-adjudicate ply-capped games** (`GameResult.Ongoing` at cap + ≥1.5-pawn
+    edge → win/loss z, else true draw; no-op for materialless games → Connect-4 determinism stays bitwise-green).
+    **Result: collapse broken** — same config went −9 → **+3.78 pawns and a merit Level-2 promotion**. Multiple merit
+    tiers then promote (conv **beats the MLP baseline** — M42.3 gate met).
+  - **Remaining limit (honest):** post-fix the 64f/64-sim self-play **oscillates** (winRate-vs-random ~45–56%) rather
+    than climbing monotonically; the ladder captures peaks. Lower LR (`3e-4`) helped stability; **doubling sims (128)
+    did NOT lift the ceiling** → bottleneck is **net capacity (filters/blocks)**, the clear next lever (for a
+    user-supervised longer run). Overnight run-by-run detail: `data/chess-conv-autorun-log.md`.
+- **M42.4 🟡 steps 1+3 DONE (commit `c1c7d8e`); steps 2+4 (browser wiring) remain.** The conv forward is single-sourced
+  in `chess_solver.pg` (`PgConvNet`) with a C# parity test (`ChessNetParityTests`) green on real conv `.ckpt` bytes
+  (<2e-3); dispatch via a nullable `PgPolicyValueNet.conv` field (no `.pg` interface feature — filed
+  MintPlayer.Polyglot#29). **Remaining:** TS conv parser in `chess-net.ts` + regen `chess_solver.ts` (CLI at
+  `C:\Repos\MintPlayer.Polyglot`) + wire `loadChessNet`/`chess-director.ts` + copy the chosen conv tier into
+  `wwwroot/models`. Best done **interactively** (regenerating the committed `.ts` blind risks the live MLP `/chess`).
 
 **Non-goals:** removing `PolicyValueNet` (stays the connect-4/cube-policy/rush-hour net + fast baseline) or `ResidualMlp`
 (stays the cube DAVI value net); spatial BatchNorm (reuse LayerNorm); Net2Net growth for the conv net (stays MLP-only).

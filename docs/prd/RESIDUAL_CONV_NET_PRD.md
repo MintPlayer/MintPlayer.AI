@@ -1,6 +1,6 @@
 # Convolutional residual policy/value net (Core) + chess adoption — PRD
 
-**Status:** M42.1 + M42.2 ✅ SHIPPED 2026-07-13 (merged to master via PR #31) · M42.3 ⏳ training (early trend positive — conv IS learning, see below) · M42.4 🔜 gated on M42.3.
+**Status:** M42.1 + M42.2 ✅ SHIPPED 2026-07-13 (merged to master via PR #31) · M42.3 ✅ **core goal met** — conv beats the MLP baseline (draw-collapse diagnosed + fixed, commit `282c665`; multiple merit tiers promote); remaining limit is oscillation → sims/capacity, see below · M42.4 🟡 steps 1+3 done (`c1c7d8e`), steps 2+4 (browser wiring) remain.
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M42 · **Depends on:** M41 (parallel self-play — makes the training iterations this needs affordable) · **Supersedes** the "flat MLP is the ceiling" note in [CHESS_WEB_POLYGLOT_PRD.md](CHESS_WEB_POLYGLOT_PRD.md) and [CHESS_SELFPLAY_PRD.md](CHESS_SELFPLAY_PRD.md).
 
@@ -36,8 +36,32 @@
     baseline **+0.50 pawns** (climbing toward the +0.75 promote gate). Contrast the MLP plateau (§1): policy barely moved
     2.35→2.22 over 500 games, margin stuck ~+0.1, no tier ever promoted. The concrete gate is a **merit tier promotion**
     (Level 2+ on material/head-to-head, not the automatic Level-1 baseline).
-- **M42.4** 🔜 browser conv forward + parity — **not started, deliberately gated on M42.3** proving the conv net beats
-  the baseline (PRD risk #2). The current shipped browser demo uses the flat-MLP net (committed at `chess.az.d1.ckpt`).
+  - **Root-cause fix — DRAW-COLLAPSE (commit `282c665`).** Once the arena noise was removed (`--arena-games 40`), the
+    trustworthy signal showed the conv net *regressing*: material vs its own baseline slid −2→−9 pawns while value loss
+    fell to ~0.03 and winRate-vs-random stayed pinned at 50%. Diagnosis: a weak net that can't force mate + a short ply
+    cap ⇒ **nearly all self-play games hit the cap as draws (z=0)** ⇒ the outcome signal vanished ⇒ the net trivially
+    learned "value=0 always" and collapsed onto passive, shuffle-to-the-cap play, bleeding material to any real
+    opponent. **My earlier throughput tuning (low sims + short plies) *caused* it** by starving the outcome signal —
+    and the earlier "noisy-arena +1.00 @g160 promotion" was arena-12 noise, not real strength. Fix: **material-adjudicate
+    ply-capped games** — a `GameResult.Ongoing`-at-cap position with a decisive material edge (≥1.5 pawns) trains as a
+    win/loss instead of z=0, so non-mating games carry a real signal (no-op for materialless games like Connect-4, so
+    the DOP-determinism test stays bitwise-green). **Result: collapse broken** — same fast config went from −9 pawns to
+    **+3.78 and a merit Level-2 promotion** at the same game count.
+  - **Remaining limit (honest): oscillation, not mastery.** With adjudication, the ladder reliably promotes merit tiers
+    (verified across runs), but 64-filter/64-sim self-play **oscillates** (winRate-vs-random bounces ~45–56%) rather
+    than climbing monotonically; lowering LR (`3e-4`) stabilised it somewhat (promoted L1/L2/L3 with rising external
+    winRate) but didn't remove the oscillation. The ladder's job is to capture the peaks, which it does. The clear next
+    lever — being tested overnight — is **search depth (`--sims`)**: deeper MCTS → less-noisy policy targets → higher
+    ceiling. Bigger `--filters/--blocks` is the capacity lever after that. *(Full run-by-run detail lived in
+    `data/chess-conv-autorun-log.md` during the autonomous session.)*
+- **M42.4** 🟡 **steps 1+3 DONE (commit `c1c7d8e`)**: the conv forward is single-sourced in `chess_solver.pg`
+  (`PgConvNet`, direct nested-loop conv + whole-row LayerNorm + residual tower + both heads) and a C# parity test
+  (`ChessNetParityTests`) proves it matches `ConvResidualPolicyValueNet.Forward` on real conv `.ckpt` bytes (<2e-3).
+  Dispatch is via a nullable `PgPolicyValueNet.conv` field (no interface feature in the `.pg`; filed
+  [MintPlayer.Polyglot#29](https://github.com/MintPlayer/MintPlayer.Polyglot/issues/29)), so the MLP browser path is
+  unchanged. **Steps 2+4 remain** (TS conv parser in `chess-net.ts` + regen `chess_solver.ts` via the CLI at
+  `C:\Repos\MintPlayer.Polyglot` + wire `loadChessNet`/`chess-director.ts` + copy the chosen conv tier into
+  `wwwroot/models`) — best done interactively (regenerating the committed `.ts` blind risks the live MLP `/chess` page).
 
 ## 1. Problem
 
