@@ -169,6 +169,10 @@ deliberately deferred (they only pay off on a GPU cluster / long run, and should
   `net.Forward`) + `--leaf-batch`, so self-play isn't stuck at batch-1. Opt-in; `leafBatch=1` is bitwise-identical to
   the sequential path (proven by test). Commit `4801c98`.
 - ✅ **`--gpu`** wiring — installs the ILGPU `AdaptiveBackend` as `Backend.Current` (was hardcoded CPU-only for chess).
+- ✅ **De-ceiling knobs via a `SelfPlayOptions` record** (commit `8c382ae`) — folded the campaign's ~20-param
+  telescoping constructor into one options record and exposed the previously-hardcoded knobs a large run needs:
+  `--window` (replay capacity), `--batch`, `--epochs`, `--clip`, `--temp-moves`, and the MCTS
+  `--cpuct`/`--dirichlet-alpha`/`--root-noise`. Defaults reproduce prior behaviour bitwise (determinism test green).
 
 **Deferred (postponed):**
 1. **GPU-*resident* batched forward for the conv net (a conv analogue of `Ilgpu/DeviceMlp`).** Today the conv net
@@ -182,8 +186,5 @@ deliberately deferred (they only pay off on a GPU cluster / long run, and should
 3. **Quality features a strong run needs** — WDL/categorical value head, auxiliary targets (moves-left, material),
    input history planes, larger default `--filters/--blocks`. Research-backed (Leela/KataGo); **postponed** behind the
    scale decision.
-4. **De-ceiling knobs** — expose the remaining hardcoded hyperparameters (replay-window, batch, Dirichlet α/ε, cpuct,
-   epochs-per-chunk, grad-clip) via a `SelfPlayOptions` record (one config bag, not more ctor params — avoids the
-   telescoping-constructor boilerplate). Small; do it when a real run needs the knobs.
 
 See [PLAN.md](PLAN.md) M42 and [OPTIMIZATIONS.md](../OPTIMIZATIONS.md).
