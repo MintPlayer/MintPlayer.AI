@@ -1,7 +1,9 @@
 # GPU-resident batched forward for the conv policy/value net — PRD
 
-**Status:** ✅ **BUILT** 2026-07-14 (M43.1 `852cf31` Core seam, M43.2 `b49a4c2` Ilgpu impl + kernels, M43.3 `f39cf2f`
-Lab wiring) — correctness verified on the ILGPU **CPU accelerator**; the on-GPU throughput number is pending a CUDA box. **Owner:** Pieterjan.
+**Status:** ✅ **BUILT + measured on GPU** 2026-07-14 (M43.1 `852cf31` Core seam, M43.2 `b49a4c2` Ilgpu impl + kernels,
+M43.3 `f39cf2f` Lab wiring). Verified on the ILGPU CPU accelerator AND on a real **RTX 3060 Laptop GPU**: the resident
+forward is **~15× faster** than the non-resident autograd path (109.9 ms vs 1634.7 ms/forward at 64f×6b, leaf-batch 256
+→ 2,329 vs 157 leaves/s), on-GPU parity to ~1e-6. **Owner:** Pieterjan.
 **Milestone:** [PLAN.md](PLAN.md) M43 · **Depends on:** M42.5 batched leaf inference (`Mcts.SearchBatched` / `BatchEvaluate`,
 commit `4801c98`) — the seam this plugs into. **Promotes** the deferred item in
 [RESIDUAL_CONV_NET_PRD.md](RESIDUAL_CONV_NET_PRD.md) §8.1 and [OPTIMIZATIONS.md](../OPTIMIZATIONS.md) F.3.
@@ -94,8 +96,9 @@ public interface IPolicyValueForward
   accelerator** within f32 tol (runs in CI; the CUDA path runs the same kernels).
 - **M43.3 ✅ (`f39cf2f`) — Lab wiring.** `SelfPlayCampaign` takes a Core-typed `forwardFactory` (keeps it Ilgpu-free);
   `ChessLab` supplies the GPU-aware factory (`--gpu` + conv → resident; else autograd) and per-chunk `OnWeightsSynced`.
-  **Gate:** wiring green, `--gpu` safe on GPU-less machines (falls back). ⏳ **Throughput measurement pending a CUDA box**
-  (no discrete GPU here; correctness verified via M43.2).
+  **Gate MET:** wiring green, `--gpu` safe on GPU-less machines (falls back). **On-GPU measured** (RTX 3060, `ChessLab
+  --bench-forward`): resident **14.9× faster** than autograd (109.9 vs 1634.7 ms/forward at 64f×6b, leaf-batch 256),
+  on-GPU parity ~1e-6.
 
 ## 6. Risks
 

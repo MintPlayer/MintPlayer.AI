@@ -34,6 +34,13 @@ internal static class ChessLab
         // --demo: play one self-play game with the (trained) net and print FENs to watch — no training.
         if (a.Has("--demo")) { ChessDemo.Run(dataDir, sims, seed, a.Int("--demo-plies", 100)); return; }
 
+        // --bench-forward: M43 micro-benchmark — resident conv forward vs autograd, on the selected device (+ on-GPU parity).
+        if (a.Has("--bench-forward"))
+        {
+            ConvForwardBench.Run(a.Int("--filters", 64), a.Int("--blocks", 6), a.Int("--leaf-batch", 256), a.Int("--bench-iters", 30));
+            return;
+        }
+
         // --vs-minimax: NON-SATURATING strength eval — the (trained) net vs a fixed material alpha-beta of --minimax-depth.
         // Unlike winRate-vs-random (saturates) or self-play material (self-referential), this measures whether training
         // actually improved play: a genuinely stronger net beats a deeper opponent. Raise --minimax-depth as the net grows.
