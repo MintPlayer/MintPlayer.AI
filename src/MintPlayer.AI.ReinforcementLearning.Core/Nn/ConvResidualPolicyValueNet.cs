@@ -71,6 +71,13 @@ public sealed class ConvResidualPolicyValueNet : IPolicyValueNet
 
     public int InputSize => _planes * _h * _w;
     public int Actions => _actions;
+    // Shape, exposed so a device-resident implementation (Ilgpu) can size its buffers without re-deriving it — the same
+    // way ResidualMlp exposes Width/Blocks for DeviceResidualMlp.
+    public int Planes => _planes;
+    public int BoardH => _h;
+    public int BoardW => _w;
+    public int Filters => _filters;
+    public int Blocks => _blocks;
     public string Describe() => $"conv {_filters}f×{_blocks}b ({_planes}×{_h}×{_w})";
 
     public (Tensor Logits, Tensor Value) Forward(Tensor observations)

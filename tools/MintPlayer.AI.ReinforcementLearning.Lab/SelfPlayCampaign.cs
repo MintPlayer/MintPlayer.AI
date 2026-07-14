@@ -77,6 +77,9 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     private readonly IPolicyValueNetBuilder _builder;
     private readonly string _checkpointKind;
     private IPolicyValueNet _net = null!;
+    // Inference forward for batched self-play (the GPU-resident seam, M43). Default = the autograd forward over _net;
+    // a device-resident impl can be installed here. Built in Resume once _net exists.
+    private IPolicyValueForward _forward = null!;
     private Adam _adam = null!;
     private readonly List<Sample> _window;
     private TrainWindow _lossWindow;
@@ -147,6 +150,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             Log($"starting fresh {_environmentId} self-play ({_net.Describe()}, {_selfPlayCfg.Simulations} sims/move)");
         }
         _adam = AdamState.LoadOrInit(store, _environmentId, AdamId, _net.Parameters(), _learningRate, Log);
+        _forward = new AutogradPolicyValueForward(_net, _game.ObservationSize); // M43.3 may swap in a GPU-resident impl
         if (_ladder is not null) LoadLadderState();
         return resumed;
     }
@@ -374,17 +378,16 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         int b = states.Count, obsSize = _game.ObservationSize, policy = _game.PolicySize;
         var obs = new float[b * obsSize];
         for (int i = 0; i < b; i++) _game.WriteObservation(states[i], obs.AsSpan(i * obsSize, obsSize));
-        using (GradMode.NoGrad())
+        // One batched forward through the inference seam (autograd default, or a GPU-resident impl). Returns raw
+        // logits [b*policy] + linear value [b]; masked-softmax + tanh stay here (they need each state's legal moves).
+        var (logits, value) = _forward.Forward(obs, b);
+        var results = new (float[], float)[b];
+        for (int i = 0; i < b; i++)
         {
-            var (logits, value) = _net.Forward(new Tensor(obs, b, obsSize));
-            var results = new (float[], float)[b];
-            for (int i = 0; i < b; i++)
-            {
-                var row = logits.Data.AsSpan(i * policy, policy).ToArray();
-                results[i] = (MaskedSoftmax(row, _game.LegalMoves(states[i])), MathF.Tanh(value.Data[i]));
-            }
-            return results;
+            var row = logits.AsSpan(i * policy, policy).ToArray();
+            results[i] = (MaskedSoftmax(row, _game.LegalMoves(states[i])), MathF.Tanh(value[i]));
         }
+        return results;
     }
 
     private float[] MaskedSoftmax(float[] logits, IReadOnlyList<int> legal)
