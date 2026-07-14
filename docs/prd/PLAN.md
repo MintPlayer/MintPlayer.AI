@@ -1678,6 +1678,35 @@ Determinism: a resident *trainer* mutates weights (non-bitwise) → **opt-in**; 
 
 **Non-goals:** resident Adam-state checkpointing (P.2 — shared cube/chess fix, later); WDL head; distribution; browser.
 
+## M45 — Single-box multi-GPU self-play  *(2026-07-14; see `MULTI_GPU_SELFPLAY_PRD.md`)* — 🔜 designed (3-agent analysis), not built
+
+**Why:** `--gpu` uses one GPU — `IlgpuBackend.SelectDevice` enumerates all devices but takes `.FirstOrDefault()` of the
+CUDA ones (`IlgpuBackend.cs:191`). A multi-GPU box idles all but one. Since a chunk is generation-bound (M44.1), the win
+is to run self-play **generation on every CUDA GPU** at once. Owner's flow: enumerate all CUDA GPUs → shard the dataflow
+across them → CPU fallback (the CUDA↔CPU fallback already exists; it just never enumerates past the first device).
+
+**Finding (3-agent analysis):** the single-GPU assumption is a handful of localized seams (`SelectDevice` `FirstOrDefault`;
+one `Context`/`Accelerator`/`DeviceLock` per `IlgpuBackend`; `AdaptiveBackend` builds one; `AddSingleton<AdaptiveBackend>`;
+the `Backend.Current` global; one `_forward`/`_trainStep`). But the enablers exist: `DeterministicParallel.Generate`
+already shards games by **global index** bitwise-invariantly (the clean per-GPU axis); **N backends = N independent locks**
+(parallel across GPUs); the M43/M44 device seams; and the per-chunk `SyncToHost → _net → OnWeightsSynced` weight lifecycle
+(→ a fan-out). One box, one process, one campaign, one local store are all **kept** — this is why single-box ≪ cluster.
+
+- **M45.1 — Library: enumerate + device-addressable backend.** `SelectDevices` (all CUDA, or CPU), `IlgpuBackend(Context,
+  Device)` ctor, `AdaptiveBackend.Gpus` (all; `.Gpu` stays the primary = `Backend.Current` + training device, so M43/M44
+  and `--gpu` are unchanged). **Gate:** `Gpus` has one entry per CUDA device (empty on CPU-only); existing tests green.
+- **M45.2 — Lab: `--gpus` flag + sharded generation + weight fan-out.** One resident forward per GPU; route each game's
+  leaf batch to `_forwards[i % nGpus]` (index-deterministic); training stays on the primary GPU; `OnWeightsSynced` fans
+  out to all forwards per chunk. **Gate:** `--gpus 1` ≡ `--gpu`; CPU DOP-invariance SHA test green; `--gpus all` runs at N=1.
+- **M45.3 — Measure (needs ≥2 GPUs).** Generation throughput vs 1 GPU; near-linear expected until the owner-thread merge
+  saturates. **Cannot be measured on the single RTX 3060** — M45.1/2 ship the capability + N=1 correctness; real scaling
+  is validated on multi-GPU hardware. Stated honestly.
+
+**Out of scope:** data-parallel *training* across GPUs (gradient all-reduce; ILGPU has no collectives, and training isn't
+the bottleneck after M44); cross-machine distributed / actor-learner (network transport, cross-process replay buffer,
+coordinator, fault tolerance — the model store is local-FS only; a separate systems project). The seams M45 builds
+(per-device resident forwards, index-sharded generation, weight fan-out) are the ones such a harness would reuse.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
