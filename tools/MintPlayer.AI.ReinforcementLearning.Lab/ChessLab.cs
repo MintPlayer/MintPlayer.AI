@@ -50,6 +50,9 @@ internal static class ChessLab
         // Dense material-shaped value target (α): blend of game outcome + per-position material advantage. 0 = pure
         // outcome (old behaviour); default 0.5 gives a weak net a gradient on every capture (the anti-plateau fix).
         float materialWeight = a.Flt("--material-weight", 0.5f);
+        // Value-loss weight (relative to policy loss). Default 1 = equal. Lower (e.g. 0.3) counters value-head
+        // overfitting → strength regression at small scale — the observed "loss drops but play regresses" failure.
+        float valueWeight = a.Flt("--value-weight", 1f);
 
         // Parallel self-play generation (M41.2): --parallel fans the chunk's games across cores (default cores-2),
         // --dop caps the degree of parallelism. Trained weights are identical at any DOP for a given seed.
@@ -84,7 +87,8 @@ internal static class ChessLab
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             _ => new SelfPlayCampaign<ChessState>(game, "chess", seed, learningRate, hidden, cfg, gamesPerChunk,
                 tempMoves: 12, evalGames: evalGames, maxPlies: maxPlies, opponentRandomFrac: opponentRandom, ladder: ladder,
-                materialWeight: materialWeight, parallel: parallel, maxDop: dop, netBuilder: netBuilder),
+                materialWeight: materialWeight, parallel: parallel, maxDop: dop, netBuilder: netBuilder,
+                valueLossWeight: valueWeight),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
     }

@@ -14,16 +14,19 @@ internal static class PolicyValueTraining
     /// <param name="policyTargets">Row-major target distributions π, length <paramref name="batch"/>×<paramref name="actions"/> (each row sums to 1).</param>
     /// <param name="valueTargets">Outcome z per row in [-1,1], length <paramref name="batch"/>.</param>
     /// <returns>The batch's policy (CE) and value (MSE) losses.</returns>
+    /// <param name="valueWeight">Weight on the value (MSE) term relative to the policy (CE) term. 1 = the original
+    /// equal sum. Down-weighting (e.g. 0.25) is the standard fix for value-head overfitting → strength regression at
+    /// small scale (Leela Zero cut it 1.0→0.25). Weight 1 keeps the exact original graph (bitwise back-compat).</param>
     public static (double PolicyLoss, double ValueLoss) TrainStep(
         IPolicyValueNet net, Adam adam, float[] obs, float[] policyTargets, float[] valueTargets,
-        int batch, int obsSize, int actions)
+        int batch, int obsSize, int actions, float valueWeight = 1f)
     {
         var (logits, value) = net.Forward(new Tensor(obs, batch, obsSize));
         var logProbs = logits.LogSoftmax();
         var ce = logProbs.Mul(new Tensor(policyTargets, batch, actions)).Sum().MulScalar(-1f / batch);
         var predicted = value.Reshape(batch).Tanh();           // bound the value head to [-1,1] for a WDL outcome
         var valueLoss = predicted.MseLoss(new Tensor(valueTargets, batch));
-        var loss = ce.Add(valueLoss);
+        var loss = valueWeight == 1f ? ce.Add(valueLoss) : ce.Add(valueLoss.MulScalar(valueWeight));
 
         adam.ZeroGrad();
         loss.Backward();

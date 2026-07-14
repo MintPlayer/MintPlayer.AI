@@ -60,6 +60,9 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // (null → pure outcome, unchanged); `_materialWeight` (α) = blend; MaterialScale squashes pawns → [-1,1] via tanh.
     private readonly IMaterialScore<TState>? _material;
     private readonly float _materialWeight;
+    // Weight on the value (MSE) loss relative to the policy (CE) loss (1 = equal). Down-weighting is the standard fix
+    // for value-head overfitting → strength regression at small scale (Leela Zero cut it 1.0→0.25).
+    private readonly float _valueWeight;
     private const float MaterialScale = 5f;
 
     // How the net is built + reloaded (arch-agnostic seam: MLP by default, conv when a ConvNetBuilder is passed).
@@ -76,13 +79,14 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         int hidden, Mcts.Config selfPlayCfg, int gamesPerChunk = 32, int tempMoves = 8, int evalGames = 20,
         int windowCapacity = 40_000, int maxPlies = 512, long targetGames = 0, double opponentRandomFrac = 0,
         LadderOptions? ladder = null, float materialWeight = 0f, bool parallel = false, int? maxDop = null,
-        IPolicyValueNetBuilder? netBuilder = null)
+        IPolicyValueNetBuilder? netBuilder = null, float valueLossWeight = 1f)
     {
         _parallel = parallel;
         _maxDop = maxDop;
         _ladder = ladder;
         _material = game as IMaterialScore<TState>; // dense material shaping when the game supports it
         _materialWeight = materialWeight;
+        _valueWeight = valueLossWeight;
         // Independent stream (not from SeedSequence) so the arena can't perturb the training/eval RNG → reproducible.
         _arenaRng = new Xoshiro256StarStar(unchecked(seed * 0x9E3779B97F4A7C15UL + 0xD1B54A32D192ED03UL));
         _opponentRandomFrac = opponentRandomFrac;
@@ -161,7 +165,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
                     sample.Pi.CopyTo(pi.AsSpan(i * actions));
                     z[i] = sample.Z;
                 }
-                var (pl, vl) = PolicyValueTraining.TrainStep(_net, _adam, obs, pi, z, BatchSize, obsSize, actions);
+                var (pl, vl) = PolicyValueTraining.TrainStep(_net, _adam, obs, pi, z, BatchSize, obsSize, actions, _valueWeight);
                 _lossWindow.Add(pl, vl, 0);
                 _liveLoss = pl + vl;
                 _totalSamples += BatchSize;
