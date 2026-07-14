@@ -20,7 +20,9 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
 {
     private const string NetId = "az";
     private const string AdamId = "az-adam";
-    private const int BatchSize = 128;
+    private readonly int _batchSize;
+    private readonly int _epochsPerChunk;
+    private readonly float _gradClipNorm;
 
     private readonly IZeroSumGame<TState> _game;
     private readonly string _environmentId;
@@ -81,44 +83,47 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     private long _totalSamples, _totalGames;
     private double _liveLoss = double.NaN, _lastWinRate = double.NaN;
 
-    public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, ulong seed, float learningRate,
-        int hidden, Mcts.Config selfPlayCfg, int gamesPerChunk = 32, int tempMoves = 8, int evalGames = 20,
-        int windowCapacity = 40_000, int maxPlies = 512, long targetGames = 0, double opponentRandomFrac = 0,
-        LadderOptions? ladder = null, float materialWeight = 0f, bool parallel = false, int? maxDop = null,
-        IPolicyValueNetBuilder? netBuilder = null, float valueLossWeight = 1f, int leafBatch = 1,
-        IComputeBackend? backend = null)
+    /// <param name="options">All tunable config (see <see cref="SelfPlayOptions"/>). Defaults reproduce the previous
+    /// constructor defaults exactly.</param>
+    /// <param name="netBuilder">Net architecture factory (default = the flat MLP, sized from <c>options.Hidden</c>).</param>
+    /// <param name="backend">Optional compute backend (e.g. the GPU AdaptiveBackend) installed as Backend.Current.</param>
+    public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, SelfPlayOptions options,
+        IPolicyValueNetBuilder? netBuilder = null, IComputeBackend? backend = null)
     {
         _backend = backend;
-        _parallel = parallel;
-        _maxDop = maxDop;
-        _ladder = ladder;
+        _parallel = options.Parallel;
+        _maxDop = options.MaxDop;
+        _ladder = options.Ladder;
         _material = game as IMaterialScore<TState>; // dense material shaping when the game supports it
-        _materialWeight = materialWeight;
-        _valueWeight = valueLossWeight;
-        _leafBatch = leafBatch < 1 ? 1 : leafBatch;
+        _materialWeight = options.MaterialWeight;
+        _valueWeight = options.ValueWeight;
+        _leafBatch = options.LeafBatch < 1 ? 1 : options.LeafBatch;
+        _batchSize = options.BatchSize;
+        _epochsPerChunk = options.EpochsPerChunk;
+        _gradClipNorm = options.GradClipNorm;
         // Independent stream (not from SeedSequence) so the arena can't perturb the training/eval RNG → reproducible.
-        _arenaRng = new Xoshiro256StarStar(unchecked(seed * 0x9E3779B97F4A7C15UL + 0xD1B54A32D192ED03UL));
-        _opponentRandomFrac = opponentRandomFrac;
+        _arenaRng = new Xoshiro256StarStar(unchecked(options.Seed * 0x9E3779B97F4A7C15UL + 0xD1B54A32D192ED03UL));
+        _opponentRandomFrac = options.OpponentRandomFrac;
         _game = game;
         _environmentId = environmentId;
-        _learningRate = learningRate;
-        _hidden = [hidden, hidden];
+        _learningRate = options.LearningRate;
+        _hidden = [options.Hidden, options.Hidden];
         _builder = netBuilder ?? new MlpNetBuilder(_hidden); // default = the flat MLP (back-compat)
         _checkpointKind = _builder.CheckpointKind;
-        _selfPlayCfg = selfPlayCfg;
-        _evalCfg = selfPlayCfg with { RootNoiseFrac = 0f }; // eval plays deterministically (no exploration noise)
-        _gamesPerChunk = gamesPerChunk;
-        _tempMoves = tempMoves;
-        _evalGames = evalGames;
-        _windowCapacity = windowCapacity;
-        _maxPlies = maxPlies;
-        _targetGames = targetGames;
-        _seeds = new SeedSequence(seed);
+        _selfPlayCfg = options.Search;
+        _evalCfg = options.Search with { RootNoiseFrac = 0f }; // eval plays deterministically (no exploration noise)
+        _gamesPerChunk = options.GamesPerChunk;
+        _tempMoves = options.TempMoves;
+        _evalGames = options.EvalGames;
+        _windowCapacity = options.WindowCapacity;
+        _maxPlies = options.MaxPlies;
+        _targetGames = options.TargetGames;
+        _seeds = new SeedSequence(options.Seed);
         // The training-window shuffle runs on the owner thread; it gets the Buffer stream so it never collides with
         // the Policy stream that per-game generation derives its RNGs from (game 0 would otherwise share a seed).
         _shuffleRng = _seeds.CreateRng(RngStreams.Buffer);
         _evalRng = _seeds.CreateRng(RngStreams.Evaluation);
-        _window = new List<Sample>(windowCapacity);
+        _window = new List<Sample>(options.WindowCapacity);
     }
 
     public string Environment => _environmentId;
@@ -158,27 +163,30 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             foreach (var sample in samples) AddSample(sample);
         _totalGames += _gamesPerChunk;
 
-        // Train one shuffled pass over the current window (skip until a full batch has accumulated).
-        if (_window.Count >= BatchSize)
+        // Train EpochsPerChunk shuffled passes over the current window (skip until a full batch has accumulated).
+        if (_window.Count >= _batchSize)
         {
-            CubePolicyTraining.Shuffle(_window, _shuffleRng);
             int obsSize = _game.ObservationSize, actions = _game.PolicySize;
-            for (int offset = 0; offset + BatchSize <= _window.Count; offset += BatchSize)
+            for (int epoch = 0; epoch < _epochsPerChunk; epoch++)
             {
-                var obs = new float[BatchSize * obsSize];
-                var pi = new float[BatchSize * actions];
-                var z = new float[BatchSize];
-                for (int i = 0; i < BatchSize; i++)
+                CubePolicyTraining.Shuffle(_window, _shuffleRng);
+                for (int offset = 0; offset + _batchSize <= _window.Count; offset += _batchSize)
                 {
-                    var sample = _window[offset + i];
-                    sample.Obs.CopyTo(obs.AsSpan(i * obsSize));
-                    sample.Pi.CopyTo(pi.AsSpan(i * actions));
-                    z[i] = sample.Z;
+                    var obs = new float[_batchSize * obsSize];
+                    var pi = new float[_batchSize * actions];
+                    var z = new float[_batchSize];
+                    for (int i = 0; i < _batchSize; i++)
+                    {
+                        var sample = _window[offset + i];
+                        sample.Obs.CopyTo(obs.AsSpan(i * obsSize));
+                        sample.Pi.CopyTo(pi.AsSpan(i * actions));
+                        z[i] = sample.Z;
+                    }
+                    var (pl, vl) = PolicyValueTraining.TrainStep(_net, _adam, obs, pi, z, _batchSize, obsSize, actions, _valueWeight, _gradClipNorm);
+                    _lossWindow.Add(pl, vl, 0);
+                    _liveLoss = pl + vl;
+                    _totalSamples += _batchSize;
                 }
-                var (pl, vl) = PolicyValueTraining.TrainStep(_net, _adam, obs, pi, z, BatchSize, obsSize, actions, _valueWeight);
-                _lossWindow.Add(pl, vl, 0);
-                _liveLoss = pl + vl;
-                _totalSamples += BatchSize;
             }
         }
         return _totalGames;

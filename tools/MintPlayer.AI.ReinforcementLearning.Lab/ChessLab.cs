@@ -58,6 +58,13 @@ internal static class ChessLab
         // Leaf-inference batch size for self-play MCTS (M42.5). 1 = sequential batch-1 (default, back-compat). >1 uses
         // virtual-loss batched MCTS so each net.Forward evaluates N leaves at once — required for any GPU utilization.
         int leafBatch = a.Int("--leaf-batch", 1);
+        // De-ceiling knobs (defaults preserve current behaviour; a large run raises them). The MCTS knobs
+        // (--cpuct/--dirichlet-alpha/--root-noise) go into the Mcts.Config below; --temp-moves was hardcoded at 12.
+        int tempMoves = a.Int("--temp-moves", 12);
+        int window = a.Int("--window", 40_000);   // replay-window capacity (AlphaZero-scale runs want ~500k+)
+        int batch = a.Int("--batch", 128);
+        int epochs = a.Int("--epochs", 1);         // shuffled passes over the window per chunk
+        float clip = a.Flt("--clip", 5f);          // gradient-norm clip
 
         // Parallel self-play generation (M41.2): --parallel fans the chunk's games across cores (default cores-2),
         // --dop caps the degree of parallelism. Trained weights are identical at any DOP for a given seed.
@@ -91,13 +98,17 @@ internal static class ChessLab
         double? evalEvery = a.Has("--eval-every") ? a.Dbl("--eval-every", 10) : null;
 
         var game = new ChessGame();
-        var cfg = new Mcts.Config(Simulations: sims);
+        var cfg = new Mcts.Config(Simulations: sims, Cpuct: a.Flt("--cpuct", 1.25f),
+            DirichletAlpha: a.Flt("--dirichlet-alpha", 0.3f), RootNoiseFrac: a.Flt("--root-noise", 0.25f));
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: useGpu,
-            sp => new SelfPlayCampaign<ChessState>(game, "chess", seed, learningRate, hidden, cfg, gamesPerChunk,
-                tempMoves: 12, evalGames: evalGames, maxPlies: maxPlies, opponentRandomFrac: opponentRandom, ladder: ladder,
-                materialWeight: materialWeight, parallel: parallel, maxDop: dop, netBuilder: netBuilder,
-                valueLossWeight: valueWeight, leafBatch: leafBatch,
-                backend: useGpu ? sp.GetRequiredService<AdaptiveBackend>() : null),
+            sp => new SelfPlayCampaign<ChessState>(game, "chess", new SelfPlayOptions
+            {
+                Seed = seed, LearningRate = learningRate, Hidden = hidden, Search = cfg,
+                GamesPerChunk = gamesPerChunk, TempMoves = tempMoves, EvalGames = evalGames,
+                WindowCapacity = window, BatchSize = batch, EpochsPerChunk = epochs, MaxPlies = maxPlies,
+                OpponentRandomFrac = opponentRandom, Ladder = ladder, MaterialWeight = materialWeight,
+                ValueWeight = valueWeight, GradClipNorm = clip, Parallel = parallel, MaxDop = dop, LeafBatch = leafBatch,
+            }, netBuilder: netBuilder, backend: useGpu ? sp.GetRequiredService<AdaptiveBackend>() : null),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
     }

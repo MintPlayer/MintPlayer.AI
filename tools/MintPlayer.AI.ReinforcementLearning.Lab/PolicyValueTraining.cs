@@ -17,9 +17,10 @@ internal static class PolicyValueTraining
     /// <param name="valueWeight">Weight on the value (MSE) term relative to the policy (CE) term. 1 = the original
     /// equal sum. Down-weighting (e.g. 0.25) is the standard fix for value-head overfitting → strength regression at
     /// small scale (Leela Zero cut it 1.0→0.25). Weight 1 keeps the exact original graph (bitwise back-compat).</param>
+    /// <param name="gradClipNorm">Global gradient-norm clip applied before the Adam step.</param>
     public static (double PolicyLoss, double ValueLoss) TrainStep(
         IPolicyValueNet net, Adam adam, float[] obs, float[] policyTargets, float[] valueTargets,
-        int batch, int obsSize, int actions, float valueWeight = 1f)
+        int batch, int obsSize, int actions, float valueWeight = 1f, float gradClipNorm = 5f)
     {
         var (logits, value) = net.Forward(new Tensor(obs, batch, obsSize));
         var logProbs = logits.LogSoftmax();
@@ -30,7 +31,7 @@ internal static class PolicyValueTraining
 
         adam.ZeroGrad();
         loss.Backward();
-        adam.ClipGradNorm(5f);
+        adam.ClipGradNorm(gradClipNorm);
         adam.Step();
         return (ce.Data[0], valueLoss.Data[0]);
     }

@@ -26,8 +26,11 @@ internal static class Connect4Lab
         var game = new Connect4Game();
         var cfg = new Mcts.Config(Simulations: sims);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            _ => new SelfPlayCampaign<Connect4State>(game, "connect4", seed, learningRate, hidden, cfg, gamesPerChunk,
-                evalGames: evalGames, opponentRandomFrac: opponentRandom),
+            _ => new SelfPlayCampaign<Connect4State>(game, "connect4", new SelfPlayOptions
+            {
+                Seed = seed, LearningRate = learningRate, Hidden = hidden, Search = cfg,
+                GamesPerChunk = gamesPerChunk, EvalGames = evalGames, OpponentRandomFrac = opponentRandom,
+            }),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "connect4-selfplay.csv")));
     }
 }
