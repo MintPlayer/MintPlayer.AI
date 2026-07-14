@@ -1,7 +1,4 @@
-extern alias Lab; // the Lab exe's campaigns; aliased so its generated `Program` doesn't clash with RLDemo.Web's
-using SnakeDqnCampaign = Lab::SnakeDqnCampaign;
-using FruitCakeDqnCampaign = Lab::FruitCakeDqnCampaign;
-using RushHourImitationCampaign = Lab::RushHourImitationCampaign;
+using MintPlayer.AI.ReinforcementLearning.Campaigns;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 

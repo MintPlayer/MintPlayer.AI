@@ -3,6 +3,8 @@ using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// Shared supervised training step for the two-headed <see cref="CubePolicyNet"/>, used identically by the
 /// Kociemba-imitation (<see cref="CubeImitationCampaign"/>) and teacher-free EfficientCube
@@ -10,7 +12,7 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 /// distance-to-go, so the loss (CE on the move + Huber on distance) and the train loop are the same. The only
 /// difference is how the labeled states are produced — which stays in each campaign.
 /// </summary>
-internal static class CubePolicyTraining
+public static class CubePolicyTraining
 {
     /// <summary>
     /// One supervised batch: forward, CE(next move) + Huber(distance) loss, gradient-clipped Adam step. Returns

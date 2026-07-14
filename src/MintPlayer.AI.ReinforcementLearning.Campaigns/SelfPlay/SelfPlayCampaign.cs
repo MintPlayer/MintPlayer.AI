@@ -7,6 +7,8 @@ using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// AlphaZero-style self-play campaign (PLAN M39) as an <see cref="ITrainingCampaign"/> over any
 /// <see cref="IZeroSumGame{TState}"/>. Each chunk plays a batch of games where BOTH sides are the current net guided
@@ -16,7 +18,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Training;
 /// <see cref="AdamState"/>/<see cref="TrainWindow"/> plumbing, and the live-network telemetry seam.
 /// </summary>
 /// <typeparam name="TState">The game state type of <see cref="IZeroSumGame{TState}"/>.</typeparam>
-internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTelemetrySource
+public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTelemetrySource
 {
     private const string NetId = "az";
     private const string AdamId = "az-adam";
@@ -690,4 +692,4 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
 /// (the signal while nets are weak/drawish), OR <paramref name="ArenaMargin"/> = the head-to-head net-vs-net score
 /// (the signal once winRate-vs-random saturates). <paramref name="OpeningPlies"/> is the max random opening length
 /// used to diversify arena games; <paramref name="Sims"/> is the default per-tier search budget written to the manifest.</summary>
-internal sealed record LadderOptions(string Dir, double PromoteMaterial, double PromoteMargin, double ArenaMargin, int ArenaGames, int Sims, int OpeningPlies);
+public sealed record LadderOptions(string Dir, double PromoteMaterial, double PromoteMargin, double ArenaMargin, int ArenaGames, int Sims, int OpeningPlies);

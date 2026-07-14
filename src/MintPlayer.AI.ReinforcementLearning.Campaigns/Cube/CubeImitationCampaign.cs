@@ -7,6 +7,8 @@ using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// Cube imitation campaign (PLAN M16, `--game cube`) as an <see cref="ITrainingCampaign"/> driven by
 /// <see cref="CampaignRunner"/> (PLAN M25): streams random scrambles through the Kociemba oracle (one solve = a
@@ -14,7 +16,7 @@ using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 /// quarter-turn + Huber on distance-to-go), and reports per-depth greedy/search solve rates. Resumes the net +
 /// Adam from `cube.policy` / `cube.policy-adam` (width-ladder ids via <see cref="CubeIds.ForWidth"/>).
 /// </summary>
-internal sealed class CubeImitationCampaign(ulong seed, float learningRate, int width, bool grow = false, int growEvery = 4096) : ITrainingCampaign, INetworkTelemetrySource
+public sealed class CubeImitationCampaign(ulong seed, float learningRate, int width, bool grow = false, int growEvery = 4096) : ITrainingCampaign, INetworkTelemetrySource
 {
     private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const int BatchSize = 256;

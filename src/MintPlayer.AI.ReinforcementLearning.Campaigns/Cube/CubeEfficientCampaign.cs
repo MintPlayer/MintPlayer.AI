@@ -9,6 +9,8 @@ using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
 using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// EfficientCube campaign (`--game cube-policy`) as an <see cref="ITrainingCampaign"/> on
 /// <see cref="CampaignRunner"/> (PLAN M25). Teacher-FREE: the label is the cube's own scramble reversal (no
@@ -18,7 +20,7 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 /// the Ilgpu.Hosting <c>AddGpuBackend()</c>; the container owns its lifetime). Resumes net + Adam + a persisted
 /// (samples, round) counter under distinct `policy-efficient*` ids, so the imitation net is never touched.
 /// </summary>
-internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes, bool grow = false, int growEvery = 50_000)
+public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes, bool grow = false, int growEvery = 50_000)
     : ITrainingCampaign, INetworkTelemetrySource
 {
     private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth

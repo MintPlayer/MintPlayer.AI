@@ -44,6 +44,8 @@ MintPlayer.AI.ReinforcementLearning.sln
 │   │                      seeded RNG, agents, trainers, planning, checkpoints, model store.   [SDK]
 │   ├── …Environments/     The games: GridWorld, FrozenLake, CartPole, MountainCar, Snake,
 │   │                      2048, RushHour, RubiksCube, FruitCake (+ inference search helpers). [SDK]
+│   ├── …Campaigns/        The ITrainingCampaign implementations (self-play, DQN-score, imitation,
+│   │                      DAVI) + shared training plumbing, per-game subfolders (PLAN M46.1).
 │   ├── …Hosting/          AIHost.CreateBuilder + DI (IModelStore, TimeProvider, CampaignRunner). [SDK]
 │   ├── …Ilgpu/            Optional GPU backend (ILGPU → CUDA/OpenCL/CPU). Plugs under autograd. [SDK]
 │   ├── …Ilgpu.Hosting/    DI glue: services.AddGpuBackend() (AdaptiveBackend CPU+GPU routing).   [SDK]
@@ -51,7 +53,7 @@ MintPlayer.AI.ReinforcementLearning.sln
 │   └── RLDemo.Web/        ASP.NET Core host + embedded Angular SPA playground (Watch AI/Play).  [app]
 ├── tests/…Tests/          xUnit: solve-threshold gates, determinism, web API contract tests.
 ├── tools/
-│   ├── …Lab/              Long-running, resumable training campaigns + A/B & search-eval harnesses.
+│   ├── …Lab/              Per-game CLI entry points for the campaigns + A/B & search-eval harnesses.
 │   └── …Bench/            Performance benchmarking harness.
 ├── models/                Shipped checkpoints (Git LFS, *.ckpt) — seeds the web app & A/B baselines.
 └── docs/                  PRDs, PLAN, OPTIMIZATIONS, ADDING_A_GAME, and this guide.
@@ -59,8 +61,9 @@ MintPlayer.AI.ReinforcementLearning.sln
 
 **Versioning.** `src/Directory.Build.props` holds a single `<RLNetVersion>` (e.g. `0.3.0`); the five SDK
 libraries set `<Version>$(RLNetVersion)</Version>` so the whole SDK releases in lockstep. Bump it once per
-release. Reference graph: `Environments`→`Core`; `Hosting`→`Core`; `Ilgpu`→`Core`; `Ilgpu.Hosting`→`Ilgpu`;
-the apps/tools reference what they need and stay unversioned.
+release. Reference graph: `Environments`→`Core`; `Campaigns`→`Core`+`Environments`+`Ilgpu`; `Hosting`→`Core`;
+`Ilgpu`→`Core`; `Ilgpu.Hosting`→`Ilgpu`; the apps/tools reference what they need and stay unversioned.
+(`Campaigns` is not packed yet — it ships to nuget.org once the M46.3 DI registration surface lands.)
 
 ---
 
@@ -349,9 +352,9 @@ stops early) and **score-maximizing** (eval = mean return; runs to the wall-cloc
 | [`…Hosting/AIHost.cs`](../src/MintPlayer.AI.ReinforcementLearning.Hosting/AIHost.cs) | `AIHost.CreateBuilder(dataDir).Build()` → DI with `IModelStore`, `TimeProvider`, `CampaignRunner`. |
 | [`…Ilgpu.Hosting/`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting/) | `services.AddGpuBackend()` registers `AdaptiveBackend` (opt-in; only large nets benefit). |
 | [`tools/…Lab/Program.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/Program.cs) | `--game <name>` dispatch → per-game Lab. |
-| [`tools/…Lab/FruitCakeLab.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCakeLab.cs) (+ [`…Campaign.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCakeDqnCampaign.cs)) | Flag parsing + the campaign; flags incl. `--hours`/`--steps`/`--seed`/`--lr`/`--gamma`/`--nstep`/`--shape`/`--noisy`/`--curriculum`/`--ab`/`--search-eval`. |
-| [`tools/…Lab/FruitCakeAb.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCakeAb.cs) | Paired-seed A/B of two nets → mean±SD, paired Δ±SE, verdict. |
-| [`tools/…Lab/FruitCakeSearchEval.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCakeSearchEval.cs) | Same net, **search vs greedy** on paired seeds → score + max-tier distribution + watermelon count. |
+| [`tools/…Lab/FruitCakeLab.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCake/FruitCakeLab.cs) (+ [`…Campaign.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/FruitCake/FruitCakeDqnCampaign.cs)) | Flag parsing + the campaign; flags incl. `--hours`/`--steps`/`--seed`/`--lr`/`--gamma`/`--nstep`/`--shape`/`--noisy`/`--curriculum`/`--ab`/`--search-eval`. |
+| [`tools/…Lab/FruitCakeAb.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCake/FruitCakeAb.cs) | Paired-seed A/B of two nets → mean±SD, paired Δ±SE, verdict. |
+| [`tools/…Lab/FruitCakeSearchEval.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCake/FruitCakeSearchEval.cs) | Same net, **search vs greedy** on paired seeds → score + max-tier distribution + watermelon count. |
 | [`tools/…Lab/CampaignCli.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CampaignCli.cs) | `ConsoleAndCsv(path)` — the `OnEval` IO bridge (console + CSV). |
 | [`Core/Telemetry/NetworkTelemetry.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Telemetry/NetworkTelemetry.cs) | Live-network telemetry seam (**pull** model): `INetworkTelemetrySource` (`NetKind`/`SnapshotParameters()`/`Sample()`) + `NetworkInspector` (describes/snapshots any net from its parameter tensors; bounded ≤24² weight heatmap). Read-only — training stays bitwise-identical. Every campaign implements the source. |
 | [`tools/…Lab/VizServer.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/VizServer.cs) + [`VizLauncher.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/VizLauncher.cs) | `--viz [port]` live viewer: an `HttpListener` on localhost serving one self-contained Canvas 2D page (node-link graph + heatmaps + **beginner hover tooltips**) + a **WebSocket** (`/ws`). Fully async (per-viewer `Channel` + async pump + async sample loop). `VizLauncher` is the shared flag handler, **gated to a Development environment**. Bidirectional-ready for future viewer→trainer controls. |
@@ -398,7 +401,7 @@ contents/heatmap in `NetworkInspector`; each campaign's `SnapshotParameters()`/`
 **Resume contract:** a campaign saves a *deployable* net (`<env>.dqn.ckpt`, **save-best guarded** for noisy
 DQN eval) and a *full resume state* (`<env>.dqn-state.ckpt`: optimizer + replay buffer + RNG + env snapshot).
 Re-running continues bitwise-identically. The cube's self-taught DAVI campaign has its own recipe in
-[`tools/…/Lab/CUBE_CAMPAIGN.md`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CUBE_CAMPAIGN.md).
+[`tools/…/Lab/CUBE_CAMPAIGN.md`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/Cube/CUBE_CAMPAIGN.md).
 
 ---
 
@@ -424,11 +427,11 @@ imitation teacher), a **Kociemba-imitation policy net** + beam search, and a **t
 | [`CubeValueSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/CubeValueSearch.cs) (+ [`Core/Planning/ValueGuidedSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Planning/ValueGuidedSearch.cs)) | Batch-weighted A\* over a learned cost-to-go (~depth-15 optimal in budget). |
 | [`Ilgpu/DeviceResidualMlp.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceResidualMlp.cs) + [`DeviceResidualTrainer.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceResidualTrainer.cs) | **GPU-resident** cube forward/train: weights stay on device, only batches cross the bus. |
 | [`Ilgpu/DeviceConvPolicyValueNet.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceConvPolicyValueNet.cs) (M43) + [`DeviceConvResidualTrainer.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceConvResidualTrainer.cs) (M44) | **GPU-resident** two-headed chess conv forward + training step, behind `IPolicyValueForward`/`IPolicyValueTrainStep`; sharded across all GPUs by `SelfPlayCampaign` (M45). |
-| `tools/…Lab/` [`Davi`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CubeDaviCampaign.cs) / [`Efficient`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CubeEfficientCampaign.cs) / [`Imitation`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CubeImitationCampaign.cs)`Campaign.cs` | The `--game cube-davi` / `cube-policy` / `cube` campaigns. |
+| `src/…Campaigns/Cube/` [`Davi`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/Cube/CubeDaviCampaign.cs) / [`Efficient`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/Cube/CubeEfficientCampaign.cs) / [`Imitation`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/Cube/CubeImitationCampaign.cs)`Campaign.cs` | The `--game cube-davi` / `cube-policy` / `cube` campaigns. |
 | [`RLDemo.Web/Controllers/CubeController.cs`](../src/RLDemo.Web/Controllers/CubeController.cs) | `/solve` (Kociemba) and `/solve-efficient` (policy beam, GPU-resident forward w/ CPU fallback). |
 
 The cube is the only game heavy enough to use the GPU backend (the small game nets stay on CPU). Full recipe +
-wall-clock: [`tools/…/Lab/CUBE_CAMPAIGN.md`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CUBE_CAMPAIGN.md).
+wall-clock: [`tools/…/Lab/CUBE_CAMPAIGN.md`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/Cube/CUBE_CAMPAIGN.md).
 *Change it:* representation in `FaceletCube`/`RubiksCubeEnv`; search budgets in `Cube*Search.cs`; curriculum/LR
 in the cube campaigns.
 
@@ -445,7 +448,7 @@ head is the heuristic) — optimally on the boards tested.
 | [`RushHourGenerator.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RushHour/RushHourGenerator.cs) | Seeded solvable-puzzle generator within a difficulty band. |
 | [`RushHourPolicyNet.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RushHour/RushHourPolicyNet.cs) | Two-headed net (32 move logits + scalar distance), hidden 384. |
 | [`RushHourPolicySearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RushHour/RushHourPolicySearch.cs) | Greedy rollout (cycle-aware) + policy-guided A\* (`h` = value head). |
-| [`tools/…Lab/RushHourImitationCampaign.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/RushHourImitationCampaign.cs) | Soft-CE over the optimal-action mask + Huber distance; ~50% on-policy DAgger; resumable. |
+| [`src/…Campaigns/RushHour/RushHourImitationCampaign.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/RushHour/RushHourImitationCampaign.cs) | Soft-CE over the optimal-action mask + Huber distance; ~50% on-policy DAgger; resumable. |
 | [`RLDemo.Web/Services/RushHourRollout.cs`](../src/RLDemo.Web/Services/RushHourRollout.cs) + [`Controllers/RushHourController.cs`](../src/RLDemo.Web/Controllers/RushHourController.cs) | `/analyze` (BFS optimal), `/solve` (greedy\|search\|dqn); returns AI + optimal trajectories for playback. |
 
 *Change it:* obs in `RushHourBoard.WriteObservation`; net capacity in `RushHourPolicyNet`; oracle budget + DAgger

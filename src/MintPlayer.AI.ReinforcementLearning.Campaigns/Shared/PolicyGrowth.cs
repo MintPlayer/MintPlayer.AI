@@ -1,6 +1,8 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// Progressive architecture growth for the imitation policy campaigns (a two-headed <see cref="IGrowableTrunkNet{T}"/>
 /// trained with a plain <see cref="Adam"/>): on a sample cadence it grows the net toward larger stages, each a single
@@ -8,7 +10,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Random;
 /// DQN games. Returns the grown net + a fresh optimizer (Adam moments are keyed to the parameter set) when it grows,
 /// else null — the caller reassigns its net/optimizer.
 /// </summary>
-internal static class PolicyGrowth
+public static class PolicyGrowth
 {
     public static (TNet Net, Adam Adam)? Maybe<TNet>(TNet net, long samples, bool grow, int growEvery,
         float learningRate, Xoshiro256StarStar rng, Action<string> log)

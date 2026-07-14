@@ -5,6 +5,8 @@ using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// FruitCake DQN campaign (`--game fruitcake`, PRD FRUITCAKE_AI §4.4/§7-A2) on the shared
 /// <see cref="DqnScoreCampaign"/> spine — the score-maximizing paradigm (an open-ended game whose eval is the mean
@@ -13,7 +15,7 @@ using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 /// shaping, the hyperparameters, the mean-score eval, and the plain→noisy / grow-input warm-net adaptation; the
 /// base owns resume/train/keep-best/checkpoint/growth/telemetry.
 /// </summary>
-internal sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false, int nStep = 1, bool shapeRewards = false, bool grow = false, int growEvery = 2000)
+public sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false, int nStep = 1, bool shapeRewards = false, bool grow = false, int growEvery = 2000)
     : DqnScoreCampaign(seed, chunkSteps, targetSteps, learningRate, grow, growEvery)
 {
     // Training env carries the reward shaping (ShapingGamma matches the learner's γ for policy-invariance); the eval

@@ -1,3 +1,4 @@
+using MintPlayer.AI.ReinforcementLearning.Campaigns;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 using MintPlayer.AI.ReinforcementLearning.Environments.Connect4;
 

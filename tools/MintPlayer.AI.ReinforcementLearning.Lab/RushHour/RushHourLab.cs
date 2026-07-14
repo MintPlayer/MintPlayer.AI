@@ -1,3 +1,5 @@
+using MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// The Lab's default `--game rushhour` entry point: parses the campaign flags and runs the
 /// <see cref="RushHourImitationCampaign"/> (PLAN M16) on the shared <see cref="CampaignRunner"/> (PLAN M25). The

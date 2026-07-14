@@ -1727,7 +1727,11 @@ as DI services, `[Inject]`/`[Register]` (MintPlayer.SourceGenerators 10.20.0, al
 the SHA256 determinism tests work. The refactor is narrow, and several "violations" are by design and stay
 (`Backend.Current` global, static `WriteObservation`, DI-free Polyglot `Pg*` cores behind facades).
 
-- **M46.1 🔜 — Campaigns → public library** (`…ReinforcementLearning.Campaigns`; retire `extern alias Lab`).
+- **M46.1 ✅ — Campaigns → public library** (`src/…ReinforcementLearning.Campaigns`, per-game subfolders
+  `SelfPlay/ Cube/ Snake/ FruitCake/ RushHour/ Shared/`; the Lab exe reorganized into matching per-game folders and
+  keeps only CLI/GPU/viz glue + `CliArgs` internals). `extern alias Lab` retired from the campaign tests (kept solely
+  for `CliArgsTests`). **Gate MET:** 29 targeted campaign/determinism/CLI tests green incl. the self-play checkpoint
+  SHA test; Campaigns/Lab/Tests build clean.
 - **M46.2 🔜 — Options records + injected environments** (DQN family gets its envs via ctor, like self-play's game).
 - **M46.3 🔜 — `[Register]`/`[Inject]` end-to-end** (games as singletons, per-game `Add<Game>Campaign()`, web model
   services via `[Inject]`; Lab `build` lambdas shrink to resolve-and-go).

@@ -8,11 +8,13 @@ using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// Fully-resolved cube-davi campaign settings (code defaults → appsettings.json → CLI, resolved in
 /// <see cref="CubeDaviLab"/>). A plain carrier so the campaign's constructor stays readable despite the knob count.
 /// </summary>
-internal sealed record CubeDaviSettings
+public sealed record CubeDaviSettings
 {
     public required ulong Seed { get; init; }
     public required string LogDirectory { get; init; }
@@ -62,7 +64,7 @@ internal sealed record CubeDaviSettings
 /// eval-only modes (greedy / A* / BWAS / time-budget / value-curve). The two depth-column CSVs are campaign-owned.
 /// </para>
 /// </summary>
-internal sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSettings settings) : ITrainingCampaign, INetworkTelemetrySource
+public sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSettings settings) : ITrainingCampaign, INetworkTelemetrySource
 {
     private const int TrainChunkIterations = 1000; // P.8: train in 1000-iter chunks so the GPU-idle eval runs less
     private const long ProbeEvery = 15_000;        // iters between in-loop BWAS capability probes

@@ -1,3 +1,5 @@
+using MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// `--game fruitcake` entry point: parses the campaign flags and runs the score-maximizing
 /// <see cref="FruitCakeDqnCampaign"/> on the shared <see cref="CampaignRunner"/>. CPU-only (the small 41→14

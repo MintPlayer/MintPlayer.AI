@@ -4,6 +4,8 @@ using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// Snake DQN campaign (`--game snake`, PLAN M22) on the shared <see cref="DqnScoreCampaign"/> spine — the
 /// score-maximizing paradigm: an *infinite-goal* game whose eval is the mean episodic score (food), not a solve
@@ -12,7 +14,7 @@ using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 /// resume/train/keep-best/checkpoint/growth/telemetry plumbing lives in the base; this type supplies only the env,
 /// the M22 hyperparameters, and the 12×12 food eval.
 /// </summary>
-internal sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, float stepPenalty, bool safeMask, bool grow = false, int growEvery = 5000)
+public sealed class SnakeDqnCampaign(ulong seed, int trainGrid, int evalGrid, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, float stepPenalty, bool safeMask, bool grow = false, int growEvery = 5000)
     : DqnScoreCampaign(seed, chunkSteps, targetSteps, learningRate, grow, growEvery)
 {
     private readonly SnakeEnv _env = new(trainGrid, stepPenalty, safeMask);

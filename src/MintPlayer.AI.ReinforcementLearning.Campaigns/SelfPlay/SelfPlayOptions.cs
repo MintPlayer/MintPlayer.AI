@@ -1,5 +1,7 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// All tunable configuration for a <see cref="SelfPlayCampaign{TState}"/>, as one record with sensible defaults.
 /// Bundling the knobs here keeps the campaign constructor small and makes adding a new knob a single field — not
@@ -8,7 +10,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 /// identically. The MCTS knobs (simulations, cpuct, Dirichlet α, root-noise) live in <see cref="Search"/>, which is
 /// already the options bag for search — no need to re-list them here.
 /// </summary>
-internal sealed record SelfPlayOptions
+public sealed record SelfPlayOptions
 {
     public ulong Seed { get; init; } = 1;
     public float LearningRate { get; init; } = 1e-3f;

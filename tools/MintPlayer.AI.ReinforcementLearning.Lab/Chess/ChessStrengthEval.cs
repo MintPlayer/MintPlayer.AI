@@ -1,3 +1,4 @@
+using MintPlayer.AI.ReinforcementLearning.Campaigns;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;

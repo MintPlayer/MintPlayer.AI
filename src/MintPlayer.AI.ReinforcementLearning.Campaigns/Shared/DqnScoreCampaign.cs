@@ -6,6 +6,8 @@ using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// The shared spine of a <b>score-maximizing</b> DQN campaign (Snake, FruitCake): an open-ended game whose eval is
 /// a mean episodic score, not a solve rate. It owns everything these campaigns do identically — resume-or-warm-start
@@ -20,7 +22,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Training;
 /// to the hand-rolled campaigns, so a run is bitwise-reproducible across the refactor.
 /// </para>
 /// </summary>
-internal abstract class DqnScoreCampaign(ulong seed, int chunkSteps, long targetSteps, float learningRate, bool grow, int growEvery)
+public abstract class DqnScoreCampaign(ulong seed, int chunkSteps, long targetSteps, float learningRate, bool grow, int growEvery)
     : ITrainingCampaign, INetworkTelemetrySource
 {
     protected const string NetId = "dqn";  // deployable DuelingQNet — the id the web loads

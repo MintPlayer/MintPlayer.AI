@@ -2,6 +2,8 @@ using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// Progressive architecture growth for any DQN campaign (a <see cref="DuelingQNet"/> in a
 /// <see cref="DqnTrainingState"/>): on a step cadence it grows the net toward larger stages, each a single
@@ -9,7 +11,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Random;
 /// with no loss spike. Shared by every DQN game (Snake, FruitCake). The schedule starts tiny and alternates
 /// wider → deeper so a viewer literally watches the graph grow both ways.
 /// </summary>
-internal static class DqnGrowth
+public static class DqnGrowth
 {
     /// <summary>Each stage is exactly one widen (same depth, larger widths) or deepen (one extra layer) from the
     /// previous. <see cref="Start"/> is the architecture a growing run should be constructed with.</summary>

@@ -3,6 +3,8 @@ using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// Shared live-viewer helpers for the cube campaigns. They train on shuffled scramble batches, not a running env,
 /// so there's no "current observation" — instead the viewer forwards ONE fixed scramble (a depth-8 board from a
@@ -10,7 +12,7 @@ using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
 /// board evolve as it learns. All forwards are read-only (no Backward) and, for a single row, stay on the CPU even
 /// under the GPU backend (well below its MAC threshold) — so they never contend with training.
 /// </summary>
-internal static class CubeViz
+public static class CubeViz
 {
     private static float[] Probe(ref float[]? cache)
     {

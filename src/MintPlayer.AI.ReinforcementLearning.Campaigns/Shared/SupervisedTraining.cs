@@ -3,12 +3,14 @@ using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// A rolling mean of the three per-batch supervised-training losses (cross-entropy, Huber, accuracy) accumulated
 /// across the rounds between two evaluations. Every imitation/policy campaign kept the same four fields and the same
 /// guarded divide-and-reset; this hides that bookkeeping behind <see cref="Add"/> and <see cref="MeanAndReset"/>.
 /// </summary>
-internal struct TrainWindow
+public struct TrainWindow
 {
     private double _ce, _huber, _acc;
     private long _count;
@@ -38,7 +40,7 @@ internal struct TrainWindow
 /// campaigns each copied, and defines the "no stored optimizer yet" case out of existence (a fresh Adam is
 /// returned) so the caller never branches on it.
 /// </summary>
-internal static class AdamState
+public static class AdamState
 {
     /// <summary>Restore Adam's moments from <paramref name="id"/> if present (re-pinning the CLI learning rate over
     /// the stored schedule position, and logging it), else return a fresh optimizer over <paramref name="parameters"/>.</summary>

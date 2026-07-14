@@ -7,6 +7,8 @@ using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RushHour;
 using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
 /// <summary>
 /// Rush Hour imitation campaign (PLAN M16, the Lab's default `--game rushhour`) as an
 /// <see cref="ITrainingCampaign"/> driven by <see cref="CampaignRunner"/> (PLAN M25). Each round streams a random
@@ -15,7 +17,7 @@ using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
 /// distance) on a DAgger mix of on-policy and stratified samples. Eval tracks the held-out official ThinkFun cards
 /// (1, 38, 39, 40) with reactive play and policy-guided A*, plus a 30-puzzle random hold-out set.
 /// </summary>
-internal sealed class RushHourImitationCampaign(ulong seed, float learningRate, bool grow = false, int growEvery = 2048) : ITrainingCampaign, INetworkTelemetrySource
+public sealed class RushHourImitationCampaign(ulong seed, float learningRate, bool grow = false, int growEvery = 2048) : ITrainingCampaign, INetworkTelemetrySource
 {
     private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const int BatchSize = 256;

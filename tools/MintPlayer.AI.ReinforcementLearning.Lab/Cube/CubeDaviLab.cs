@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using MintPlayer.AI.ReinforcementLearning.Campaigns;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
 
 /// <summary>

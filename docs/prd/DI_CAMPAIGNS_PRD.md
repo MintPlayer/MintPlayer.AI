@@ -118,6 +118,11 @@ breaks the determinism gate.
   `SnakeDqnCampaign`, `FruitCakeDqnCampaign`, `CubeImitationCampaign`, `RushHourImitationCampaign`,
   `CubeEfficientCampaign`, `CubeDaviCampaign`) move there and become `public`. The Lab exe keeps CLI
   parsing, GPU factory wiring, `VizLauncher`, and the per-game `Run(args)` glue.
+  Layout (owner, 2026-07-14): **per-game subfolders in both projects** — Campaigns gets
+  `SelfPlay/ Cube/ Snake/ FruitCake/ RushHour/ Shared/`, the Lab gets `Chess/ Connect4/ Cube/ FruitCake/
+  RushHour/ Snake/` with the shared host glue (`Program`, `LabHost`, `CliArgs`, `CampaignCli`, viz) at its
+  root. Folders are organizational only: the library keeps ONE flat `…Campaigns` namespace so consumers
+  don't chase per-game usings.
   Rationale for one project (not per-game): campaigns share `DqnScoreCampaign`/telemetry plumbing, and
   the two cube GPU campaigns take `AdaptiveBackend` directly — a single lib referencing Ilgpu is the
   honest dependency graph. (`SelfPlayCampaign` itself still must not use `Ilgpu` types — enforced by
