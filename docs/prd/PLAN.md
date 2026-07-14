@@ -1713,6 +1713,29 @@ the bottleneck after M44); cross-machine distributed / actor-learner (network tr
 coordinator, fault tolerance — the model store is local-FS only; a separate systems project). The seams M45 builds
 (per-device resident forwards, index-sharded generation, weight fan-out) are the ones such a harness would reuse.
 
+## M46 — Dependency-injectable campaigns & games + unit-test hardening  *(2026-07-14; see `DI_CAMPAIGNS_PRD.md`)* 🔜
+
+**Why:** the hosting layer is DI (`AIHost.CreateBuilder`/`LabHost.Run`, M25/M26), but campaigns are still
+`internal` classes in the Lab exe, hand-`new`ed in each Lab's `build` lambda from positional CLI primitives —
+tested only via an `extern alias Lab`/`InternalsVisibleTo` hack. The DQN campaigns `new` their environments in
+field initializers, and the self-play ladder does raw `File.*` I/O past `IModelStore`. Owner wants campaigns/games
+as DI services, `[Inject]`/`[Register]` (MintPlayer.SourceGenerators 10.20.0, already dogfooded on
+`CampaignRunner`) adopted end-to-end, then proper unit tests on the new seams.
+
+**Finding (3-agent analysis, 2026-07-14):** the repo is already seam-rich — RNG (`SeedSequence`/`RngStreams`),
+`TimeProvider`, `IModelStore`, backend + GPU factories, options records are all injectable, which is what makes
+the SHA256 determinism tests work. The refactor is narrow, and several "violations" are by design and stay
+(`Backend.Current` global, static `WriteObservation`, DI-free Polyglot `Pg*` cores behind facades).
+
+- **M46.1 🔜 — Campaigns → public library** (`…ReinforcementLearning.Campaigns`; retire `extern alias Lab`).
+- **M46.2 🔜 — Options records + injected environments** (DQN family gets its envs via ctor, like self-play's game).
+- **M46.3 🔜 — `[Register]`/`[Inject]` end-to-end** (games as singletons, per-game `Add<Game>Campaign()`, web model
+  services via `[Inject]`; Lab `build` lambdas shrink to resolve-and-go).
+- **M46.4 🔜 — Ladder persistence through the store seam + `ILogger`** (no raw `File.*` in campaigns).
+- **M46.5 🔜 — Unit tests on the new seams** (stub-env DQN contract tests, DI smoke tests, in-memory ladder tests).
+
+**Hard gate on every step:** training bitwise-identical — checkpoint SHA determinism tests unchanged, full suite green.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
