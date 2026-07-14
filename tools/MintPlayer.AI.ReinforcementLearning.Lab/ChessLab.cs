@@ -80,6 +80,10 @@ internal static class ChessLab
         // --gpu: route Tensor ops through the ILGPU AdaptiveBackend (large GEMMs → GPU). Pays off with --leaf-batch
         // (batched inference); batch-1 self-play barely uses a GPU. The training step (batched) benefits regardless.
         bool useGpu = a.Has("--gpu");
+        // --gpus (M45): which CUDA GPUs to shard self-play generation across. Default "all" — with --gpu the process
+        // auto-detects every GPU and uses them all; no need to state a count. Override with a count ("2") or explicit
+        // ordinals ("0,2"). Ignored without --gpu. One GPU (or CPU) behaves exactly as M43/M44.
+        string gpusSpec = a.Str("--gpus", "all");
         int? dop = a.Has("--dop") ? a.Int("--dop", System.Math.Max(1, System.Environment.ProcessorCount - 2)) : null;
 
         // Net architecture (M42): --arch conv builds an AlphaZero-style convolutional residual tower over the 18×8×8
@@ -112,18 +116,20 @@ internal static class ChessLab
             sp =>
             {
                 var adaptive = useGpu ? sp.GetRequiredService<AdaptiveBackend>() : null;
-                // GPU-resident conv forward for batched self-play (M43), when a GPU is present + the net is conv;
-                // else the autograd default. All the Ilgpu knowledge stays here, out of the generic campaign.
-                Func<IPolicyValueNet, IPolicyValueForward>? forwardFactory = adaptive is null ? null
-                    : net => adaptive.Gpus.FirstOrDefault() is { } gpu && net is ConvResidualPolicyValueNet conv
-                        ? gpu.CreateResidentForward(conv)
-                        : new AutogradPolicyValueForward(net, game.ObservationSize);
-                // GPU-resident conv TRAINING step (M44), when a GPU is present + the net is conv; else null → the
-                // campaign's autograd default. Only conv+GPU has a resident trainer; the MLP/CPU paths stay autograd.
-                // (M45.1: single-GPU via Gpus[0]; multi-GPU sharding of generation is M45.2.)
+                // The GPUs to shard generation across (M45): all detected, or the --gpus override; empty on CPU-only.
+                var gpus = SelectGpus(adaptive?.Gpus, gpusSpec);
+                // GPU-resident conv forwards for batched self-play — ONE per selected GPU (M43/M45), so generation
+                // shards across devices; else a single autograd forward. All Ilgpu knowledge stays here.
+                Func<IPolicyValueNet, IReadOnlyList<IPolicyValueForward>>? forwardFactory = adaptive is null ? null
+                    : net => gpus.Count > 0 && net is ConvResidualPolicyValueNet conv
+                        ? [.. gpus.Select(g => (IPolicyValueForward)g.CreateResidentForward(conv))]
+                        : [new AutogradPolicyValueForward(net, game.ObservationSize)];
+                // GPU-resident conv TRAINING step (M44) on the primary selected GPU; else null → the campaign's autograd
+                // default. Only conv+GPU has a resident trainer; the MLP/CPU paths stay autograd. Training is not sharded
+                // (generation is the bottleneck); it runs on gpus[0] and the trained weights fan out to all forwards.
                 Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory =
-                    (adaptive?.Gpus.FirstOrDefault() is null || netBuilder is not ConvNetBuilder) ? null
-                    : (net, adam) => adaptive!.Gpus[0].CreateResidentTrainer(
+                    (gpus.Count == 0 || netBuilder is not ConvNetBuilder) ? null
+                    : (net, adam) => gpus[0].CreateResidentTrainer(
                         (ConvResidualPolicyValueNet)net, batch, learningRate, clip, game.PolicySize, valueWeight);
                 return new SelfPlayCampaign<ChessState>(game, "chess", new SelfPlayOptions
                 {
@@ -136,5 +142,19 @@ internal static class ChessLab
             },
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
+    }
+
+    // Resolve --gpus (M45): pick which detected GPUs to shard generation across. "all" (default) → every detected GPU;
+    // an integer → the first N; explicit ordinals ("0,2") → those devices. Empty when no GPU is available. A spec that
+    // matches nothing falls back to all, so a typo never silently drops to CPU.
+    private static IReadOnlyList<IlgpuBackend> SelectGpus(IReadOnlyList<IlgpuBackend>? all, string spec)
+    {
+        if (all is null || all.Count == 0) return [];
+        if (spec.Equals("all", StringComparison.OrdinalIgnoreCase)) return all;
+        if (int.TryParse(spec, out int n)) return [.. all.Take(System.Math.Clamp(n, 1, all.Count))];
+        var picked = new List<IlgpuBackend>();
+        foreach (var part in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (int.TryParse(part, out int idx) && idx >= 0 && idx < all.Count) picked.Add(all[idx]);
+        return picked.Count > 0 ? picked : all;
     }
 }

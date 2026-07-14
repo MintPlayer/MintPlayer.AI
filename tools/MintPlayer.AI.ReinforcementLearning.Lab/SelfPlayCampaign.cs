@@ -77,12 +77,15 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     private readonly IPolicyValueNetBuilder _builder;
     private readonly string _checkpointKind;
     private IPolicyValueNet _net = null!;
-    // Inference forward for batched self-play (the GPU-resident seam, M43). Default = the autograd forward over _net;
-    // a device-resident impl can be installed via _forwardFactory. Built in Resume once _net exists, re-synced per chunk.
-    private IPolicyValueForward _forward = null!;
-    // Optional factory (from the lab entry point, which owns the GPU knowledge) that builds a resident forward for the
-    // loaded net; null → the autograd default. Keeps this generic campaign free of any Ilgpu dependency.
-    private readonly Func<IPolicyValueNet, IPolicyValueForward>? _forwardFactory;
+    // Inference forwards for batched self-play (the GPU-resident seam, M43; multi-GPU, M45). One forward PER selected
+    // GPU — each game routes its leaf batch to _forwards[globalIndex % Count] so generation shards across GPUs (each
+    // backend has its own device lock → parallel across devices). Single GPU / CPU → a one-element list (identical to
+    // M43/M44). Default = one autograd forward over _net; device-resident impls installed via _forwardFactory. Built in
+    // Resume once _net exists; re-synced (fanned out to every forward) per chunk.
+    private IReadOnlyList<IPolicyValueForward> _forwards = null!;
+    // Optional factory (from the lab entry point, which owns the GPU knowledge) that builds the resident forward(s) for
+    // the loaded net — one per selected GPU; null → a single autograd default. Keeps this campaign free of Ilgpu.
+    private readonly Func<IPolicyValueNet, IReadOnlyList<IPolicyValueForward>>? _forwardFactory;
     // Training step for the batch loop (the GPU-resident TRAINING seam, M44). Default = the autograd step over _net +
     // _adam (bitwise-identical to the pre-seam inline loss); a device-resident impl can be installed via
     // _trainStepFactory. Built in Resume once _net + _adam exist; SyncToHost'd back to _net before eval/checkpoint.
@@ -102,7 +105,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     /// <param name="backend">Optional compute backend (e.g. the GPU AdaptiveBackend) installed as Backend.Current.</param>
     public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, SelfPlayOptions options,
         IPolicyValueNetBuilder? netBuilder = null, IComputeBackend? backend = null,
-        Func<IPolicyValueNet, IPolicyValueForward>? forwardFactory = null,
+        Func<IPolicyValueNet, IReadOnlyList<IPolicyValueForward>>? forwardFactory = null,
         Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory = null)
     {
         _backend = backend;
@@ -164,7 +167,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             Log($"starting fresh {_environmentId} self-play ({_net.Describe()}, {_selfPlayCfg.Simulations} sims/move)");
         }
         _adam = AdamState.LoadOrInit(store, _environmentId, AdamId, _net.Parameters(), _learningRate, Log);
-        _forward = _forwardFactory?.Invoke(_net) ?? new AutogradPolicyValueForward(_net, _game.ObservationSize);
+        _forwards = _forwardFactory?.Invoke(_net) ?? [new AutogradPolicyValueForward(_net, _game.ObservationSize)];
         _trainStep = _trainStepFactory?.Invoke(_net, _adam)
             ?? new AutogradPolicyValueTrainStep(_net, _adam, _game.ObservationSize, _game.PolicySize, _valueWeight, _gradClipNorm);
         if (_ladder is not null) LoadLadderState();
@@ -227,10 +230,11 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             Log($"chunk-timing: gen {gen:F0} ms ({gen / total:P1}) | train {train:F0} ms ({train / total:P1}, {trainBatches} batches) | window {_window.Count}");
         }
         // Write the just-trained weights back into _net first (a resident trainer masters them on-device; the autograd
-        // default is a no-op since it trained _net in place), THEN re-sync the inference forward from _net so next
-        // chunk's generation — and eval/arena/checkpoint, which read _net — all see the trained weights.
+        // default is a no-op since it trained _net in place), THEN re-sync EVERY inference forward from _net (fan out to
+        // all per-GPU forwards, M45) so next chunk's generation — and eval/arena/checkpoint, which read _net — all see
+        // the trained weights.
         _trainStep.SyncToHost();
-        _forward.OnWeightsSynced(_net);
+        foreach (var forward in _forwards) forward.OnWeightsSynced(_net);
         return _totalGames;
     }
 
@@ -276,14 +280,16 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         // off-distribution positions a weak/unexpected move reaches — the direct fix for "a novel move disorients
         // the AI" (PLAN M39.3). The rest are pure self-play. Opening variety otherwise comes from temperature.
         // The learner's colour keys off the global game index (not a shared counter) so it's parallelism-independent.
+        // The game routes its batched leaf inference to one GPU's forward by index (M45) — deterministic per game,
+        // so games spread evenly across the selected GPUs and run in parallel (each forward has its own device lock).
         return _opponentRandomFrac > 0 && rng.NextDouble() < _opponentRandomFrac
             ? PlayVsRandom(learnerFirst: (globalIndex & 1) == 0, rng)
-            : PlaySelfPlay(rng);
+            : PlaySelfPlay(rng, _forwards[(int)(globalIndex % _forwards.Count)]);
     }
 
     // Both sides are the current net + MCTS; every position is a training sample. The outcome z alternates sign each
     // ply (zero-sum): the terminal result is for the side to move there, so the LAST position played gets its negation.
-    private List<Sample> PlaySelfPlay(Xoshiro256StarStar rng)
+    private List<Sample> PlaySelfPlay(Xoshiro256StarStar rng, IPolicyValueForward forward)
     {
         var state = _game.Root();
         var obsHistory = new List<float[]>(64);
@@ -294,7 +300,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         while (_game.Result(state) == GameResult.Ongoing && ply < _maxPlies)
         {
             float[] pi = _leafBatch > 1
-                ? Mcts.SearchBatched(_game, state, EvaluateBatch, _selfPlayCfg, rng, _leafBatch)
+                ? Mcts.SearchBatched(_game, state, states => EvaluateBatch(states, forward), _selfPlayCfg, rng, _leafBatch)
                 : Mcts.Search(_game, state, Evaluate, _selfPlayCfg, rng);
             var obs = new float[_game.ObservationSize];
             _game.WriteObservation(state, obs);
@@ -411,14 +417,14 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // Batched leaf evaluator for Mcts.SearchBatched: stack all leaf observations into one [B, obsSize] tensor, run a
     // SINGLE net.Forward, and split the result per leaf (masked-softmax priors + tanh value). This is what turns
     // self-play's batch-1 inference into batch-B — read-only over the shared net, so it's safe on the game threads.
-    private IReadOnlyList<(float[] Priors, float Value)> EvaluateBatch(IReadOnlyList<TState> states)
+    private IReadOnlyList<(float[] Priors, float Value)> EvaluateBatch(IReadOnlyList<TState> states, IPolicyValueForward forward)
     {
         int b = states.Count, obsSize = _game.ObservationSize, policy = _game.PolicySize;
         var obs = new float[b * obsSize];
         for (int i = 0; i < b; i++) _game.WriteObservation(states[i], obs.AsSpan(i * obsSize, obsSize));
-        // One batched forward through the inference seam (autograd default, or a GPU-resident impl). Returns raw
-        // logits [b*policy] + linear value [b]; masked-softmax + tanh stay here (they need each state's legal moves).
-        var (logits, value) = _forward.Forward(obs, b);
+        // One batched forward through the inference seam (autograd default, or a GPU-resident impl on this game's
+        // assigned GPU, M45). Returns raw logits [b*policy] + linear value [b]; masked-softmax + tanh stay here.
+        var (logits, value) = forward.Forward(obs, b);
         var results = new (float[], float)[b];
         for (int i = 0; i < b; i++)
         {

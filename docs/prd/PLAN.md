@@ -1678,7 +1678,7 @@ Determinism: a resident *trainer* mutates weights (non-bitwise) → **opt-in**; 
 
 **Non-goals:** resident Adam-state checkpointing (P.2 — shared cube/chess fix, later); WDL head; distribution; browser.
 
-## M45 — Single-box multi-GPU self-play  *(2026-07-14; see `MULTI_GPU_SELFPLAY_PRD.md`)* — 🟢 M45.1 shipped (library: enumerate GPUs, `.Gpus`); M45.2/3 not built
+## M45 — Single-box multi-GPU self-play  *(2026-07-14; see `MULTI_GPU_SELFPLAY_PRD.md`)* — 🟢 M45.1+M45.2 shipped (enumerate GPUs + shard generation); M45.3 measure needs ≥2 GPUs
 
 **Why:** `--gpu` uses one GPU — `IlgpuBackend.SelectDevice` enumerates all devices but takes `.FirstOrDefault()` of the
 CUDA ones (`IlgpuBackend.cs:191`). A multi-GPU box idles all but one. Since a chunk is generation-bound (M44.1), the win
@@ -1698,9 +1698,12 @@ already shards games by **global index** bitwise-invariantly (the clean per-GPU 
   router keeps a *private* primary `Gpus[0]`, so M43/M44 and `--gpu` are behaviourally unchanged. All 7 `.Gpu` sites
   migrated to `Gpus.FirstOrDefault()`. **Gate MET:** 2 new tests (pinned-device GEMM parity; `Gpus` consistency) + 37
   Ilgpu/cube/self-play tests green; web + Lab build clean.
-- **M45.2 — Lab: `--gpus` flag + sharded generation + weight fan-out.** One resident forward per GPU; route each game's
-  leaf batch to `_forwards[i % nGpus]` (index-deterministic); training stays on the primary GPU; `OnWeightsSynced` fans
-  out to all forwards per chunk. **Gate:** `--gpus 1` ≡ `--gpu`; CPU DOP-invariance SHA test green; `--gpus all` runs at N=1.
+- **M45.2 ✅ SHIPPED — Lab: auto-all `--gpu` + `--gpus` override + sharded generation + weight fan-out.** `SelfPlayCampaign._forwards`
+  (one per selected GPU); each game routes its leaf batch to `_forwards[globalIndex % Count]` (index-deterministic);
+  training stays on `gpus[0]`; `OnWeightsSynced` fans out to all forwards per chunk. `--gpu` auto-uses ALL detected GPUs;
+  `--gpus` overrides (count or ordinals) via `SelectGpus`. **Gate MET:** DOP-invariance SHA test bitwise-identical (N=1
+  byte-for-byte unchanged); 26 tests green; a real `--gpu` conv run (N=1, RTX 3060) trains through the new routing at
+  ~123 ms/128-batch (= M44.3), resident path engaged.
 - **M45.3 — Measure (needs ≥2 GPUs).** Generation throughput vs 1 GPU; near-linear expected until the owner-thread merge
   saturates. **Cannot be measured on the single RTX 3060** — M45.1/2 ship the capability + N=1 correctness; real scaling
   is validated on multi-GPU hardware. Stated honestly.

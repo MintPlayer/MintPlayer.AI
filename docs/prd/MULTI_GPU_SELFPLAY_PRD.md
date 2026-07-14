@@ -1,7 +1,8 @@
 # Single-box multi-GPU self-play — PRD
 
-**Status:** 🟢 **M45.1 SHIPPED** (library: enumerate all CUDA GPUs, device-addressable backend, `AdaptiveBackend.Gpus`,
-`.Gpu` removed); M45.2 (sharded generation) + M45.3 (multi-GPU measure) **not built**. 2026-07-14. **Owner:** Pieterjan.
+**Status:** 🟢 **M45.1 + M45.2 SHIPPED** (library enumerates all CUDA GPUs; self-play generation shards across them by
+game index, one resident forward per GPU, `--gpu` auto-uses ALL detected). M45.3 (measure on ≥2 GPUs) **needs multi-GPU
+hardware** — not runnable on the single RTX 3060. 2026-07-14. **Owner:** Pieterjan.
 **Milestone:** [PLAN.md](PLAN.md) M45 · **Depends on:** M43 GPU-resident conv forward (`DeviceConvPolicyValueNet`,
 `IPolicyValueForward`) and M44 GPU-resident conv trainer (`DeviceConvResidualTrainer`, `IPolicyValueTrainStep`) — this
 partitions the *dataflow* those built across every CUDA GPU present. **Promotes** the "distributed multi-GPU" roadmap
@@ -109,8 +110,10 @@ CUDA devices internally. No keyed services / no N registrations needed (§4a mak
 
 ### 4c. Lab — the `--gpus` flag + sharded generation (the only game-specific part)
 `SelfPlayCampaign` / `ChessLab`:
-- **`--gpus`** (parsed in `ChessLab.Run` beside `--gpu`, `ChessLab.cs:82`): `all` (default when set) / an integer count /
-  explicit ordinals (`0,1,3`). Absent → today's single-GPU behaviour. Feeds a `SelfPlayOptions` field.
+- **`--gpu` auto-uses every detected GPU; `--gpus` is an optional override.** With `--gpu`, generation shards across ALL
+  CUDA GPUs by default — no count needs stating. `--gpus` overrides: `all` (default), an integer count (first N), or
+  explicit ordinals (`0,2`); a spec matching nothing falls back to all (a typo never silently drops to CPU). Resolved by
+  a `SelectGpus` helper in `ChessLab`. `--gpu` stays the GPU opt-in (omit it to force CPU, e.g. for bitwise determinism).
 - **N resident forwards.** The campaign builds one `IPolicyValueForward` per selected GPU via a Core-typed factory (the
   Lab supplies `adaptive.Gpus[k].CreateResidentForward(conv)` per device; all Ilgpu knowledge stays in `ChessLab`, as
   M43/M44 already do). Falls back to a single autograd forward when `Gpus` is empty (CPU-only).
@@ -134,10 +137,14 @@ CUDA devices internally. No keyed services / no N registrations needed (§4a mak
   CubeDavi/Efficient, ChessLab). **Gate MET:** new tests `IlgpuBackend_PinnedToSharedContextDevice_MatchesManaged` +
   `AdaptiveBackend_Gpus_AreConsistent`; the Ilgpu/cube-trainer/self-play suites stay green (37 tests); the existing
   single-GPU `--gpu` path is behaviourally unchanged. Web + Lab build clean. Shippable alone.
-- **M45.2 — Lab: `--gpus` + sharded generation + weight fan-out.** N resident forwards, index→GPU routing in
-  `EvaluateBatch`, `OnWeightsSynced` fan-out. **Gate:** with one GPU (or CPU), output is identical to today (`--gpus 1`
-  ≡ `--gpu`); the DOP-invariance SHA test still passes on the CPU path; a short `--gpus all` run on the single dev GPU
-  runs correctly (exercises the plumbing at N=1).
+- **M45.2 ✅ SHIPPED — Lab: auto-all `--gpu` + `--gpus` override + sharded generation + weight fan-out.** `SelfPlayCampaign`
+  holds `_forwards` (one `IPolicyValueForward` per selected GPU; factory returns `IReadOnlyList<…>`); each game routes its
+  batched leaf inference to `_forwards[globalIndex % Count]` (`GenerateGame`→`PlaySelfPlay`→`EvaluateBatch(states,
+  forward)`), and `OnWeightsSynced` fans the trained weights out to every forward per chunk. Training stays on `gpus[0]`.
+  `ChessLab` auto-selects all detected GPUs (`--gpus` override via `SelectGpus`). **Gate MET:** DOP-invariance SHA test
+  still bitwise-identical (the plural refactor is byte-for-byte unchanged at N=1); 26 self-play/Ilgpu tests green; a real
+  `--gpu` conv run on the RTX 3060 (N=1) trains correctly through the new routing — train ~123 ms/128-batch (identical to
+  M44.3), resident forward+trainer engaged, no errors.
 - **M45.3 — Measure (needs a multi-GPU box).** On ≥2 NVIDIA GPUs, report generation throughput vs 1 GPU (target:
   near-linear in GPU count until the owner-thread merge / CPU MCTS bookkeeping saturates). **On the owner's single
   RTX 3060 this cannot be measured** — M45.1/2 deliver the *capability* + an N=1 correctness check; real N-GPU scaling is
