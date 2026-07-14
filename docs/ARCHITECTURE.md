@@ -83,7 +83,7 @@ bitwise-identical parallel row decomposition on CPU.
 | [`Nn/NetTransfer.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Nn/NetTransfer.cs) | Generic, function-preserving weight transfer: exact param copy (`CopyParameters`, behind every `CopyFrom`) + input-dimension growth (`TransferGrownInput`, behind `IValueNet.GrowInput`). |
 | [`Random/Xoshiro256StarStar.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Random/Xoshiro256StarStar.cs) | Version-stable PRNG (never `System.Random`); `GetState`/`SetState` for checkpointing. |
 | [`Random/SeedSequence.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Random/SeedSequence.cs) | One master seed → independent streams via `RngStreams` (`Environment`, `Policy`, `Init`, `Buffer`, `Evaluation`, `Noise`, …). |
-| [`src/…Ilgpu/`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/) | GPU backend: tiled shared-memory GEMM ([`IlgpuBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/IlgpuBackend.cs)); [`AdaptiveBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/AdaptiveBackend.cs) routes each GEMM to CPU or GPU by a MAC threshold and falls back to CPU when no device is present. Only large nets (cube) clear the threshold. |
+| [`src/…Ilgpu/`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/) | GPU backend: tiled shared-memory GEMM ([`IlgpuBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/IlgpuBackend.cs), device-addressable — one instance per accelerator); [`AdaptiveBackend.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/AdaptiveBackend.cs) enumerates **all** CUDA GPUs (`.Gpus`, M45), routes generic autograd GEMMs to CPU-or-primary-GPU by a MAC threshold, and falls back to CPU when no device is present. Generic GEMMs only cross the threshold for large nets (cube); the chess conv path instead uses **device-resident** forward/trainer objects ([`DeviceConvPolicyValueNet`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceConvPolicyValueNet.cs)/[`DeviceConvResidualTrainer`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceConvResidualTrainer.cs)) that bypass the global backend. |
 
 ```csharp
 // Numerics/Tensor.cs — every op records a backward closure run in reverse during Backward()
@@ -174,8 +174,15 @@ the cube fans out successors and scores them through an injected batched/GPU-**r
 `Ilgpu/DeviceMlp`, weights staying on-device). The chess conv net now has its resident analogue too —
 `Ilgpu/DeviceConvPolicyValueNet` (M43), behind the two-headed `Core/Nn/IPolicyValueForward` seam — so both families'
 GPU inference is resident (weights on-device, only the batch crosses the bus); it plugs into `Mcts.SearchBatched` via
-`SelfPlayCampaign`'s forward factory when `--gpu` is set. See
-[`GPU_RESIDENT_CONV_PRD.md`](prd/GPU_RESIDENT_CONV_PRD.md).
+`SelfPlayCampaign`'s forward factory when `--gpu` is set. The chess **training** step is resident too —
+`Ilgpu/DeviceConvResidualTrainer` (M44) behind `Core/Nn/IPolicyValueTrainStep` (the training dual of the forward seam):
+resident fwd→backward→clip→Adam, ~24× the host-span train step on an RTX 3060 (only 2 new device kernels; the softmax−π
+/ tanh-MSE head grads are computed host-side, since the repo keeps transcendentals off the device). And self-play
+**generation shards across every CUDA GPU** (M45): `--gpu` auto-uses all detected devices, `SelfPlayCampaign` holds one
+resident forward per GPU and routes each game by index, one resident trainer runs on GPU 0, and trained weights fan out
+to all forwards per chunk. See [`GPU_RESIDENT_CONV_PRD.md`](prd/GPU_RESIDENT_CONV_PRD.md) (M43),
+[`GPU_RESIDENT_CONV_TRAINER_PRD.md`](prd/GPU_RESIDENT_CONV_TRAINER_PRD.md) (M44),
+[`MULTI_GPU_SELFPLAY_PRD.md`](prd/MULTI_GPU_SELFPLAY_PRD.md) (M45).
 
 **`DqnOptions` knobs** (defaults in `DqnTrainer.cs`): `Hidden` `[64,64]`, `Gamma` `0.99`, `LearningRate`
 `1e-3`, `BufferCapacity` `50k`, `BatchSize` `64`, `WarmupSteps` `1000`, `TrainEvery` `1`, `TargetSyncEvery`
@@ -415,7 +422,8 @@ imitation teacher), a **Kociemba-imitation policy net** + beam search, and a **t
 | [`CubePolicyNet.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/CubePolicyNet.cs) + [`CubePolicySearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/CubePolicySearch.cs) | Two-headed net (move logits + distance); greedy / A\* / **beam search** (~2000 wide). |
 | [`CubeQSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/CubeQSearch.cs) | Q-guided A\* for the masked Double-DQN net. |
 | [`CubeValueSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/CubeValueSearch.cs) (+ [`Core/Planning/ValueGuidedSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Planning/ValueGuidedSearch.cs)) | Batch-weighted A\* over a learned cost-to-go (~depth-15 optimal in budget). |
-| [`Ilgpu/DeviceResidualMlp.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceResidualMlp.cs) + [`DeviceResidualTrainer.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceResidualTrainer.cs) | **GPU-resident** forward/train: weights stay on device, only batches cross the bus. |
+| [`Ilgpu/DeviceResidualMlp.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceResidualMlp.cs) + [`DeviceResidualTrainer.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceResidualTrainer.cs) | **GPU-resident** cube forward/train: weights stay on device, only batches cross the bus. |
+| [`Ilgpu/DeviceConvPolicyValueNet.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceConvPolicyValueNet.cs) (M43) + [`DeviceConvResidualTrainer.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu/DeviceConvResidualTrainer.cs) (M44) | **GPU-resident** two-headed chess conv forward + training step, behind `IPolicyValueForward`/`IPolicyValueTrainStep`; sharded across all GPUs by `SelfPlayCampaign` (M45). |
 | `tools/…Lab/` [`Davi`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CubeDaviCampaign.cs) / [`Efficient`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CubeEfficientCampaign.cs) / [`Imitation`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CubeImitationCampaign.cs)`Campaign.cs` | The `--game cube-davi` / `cube-policy` / `cube` campaigns. |
 | [`RLDemo.Web/Controllers/CubeController.cs`](../src/RLDemo.Web/Controllers/CubeController.cs) | `/solve` (Kociemba) and `/solve-efficient` (policy beam, GPU-resident forward w/ CPU fallback). |
 

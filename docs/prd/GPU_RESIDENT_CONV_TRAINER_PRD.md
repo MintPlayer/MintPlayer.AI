@@ -84,6 +84,7 @@ post-ReLU maps, per-LN x̂/1/σ). Forward = M43 chain but with `LaunchLayerNormT
 `IlgpuBackend.CreateResidentTrainer(ConvResidualPolicyValueNet, batch, lr, clipNorm, actions, valueWeight, …)`.
 
 ### 4c. Lab — wiring (the only lab-specific part)
+<!-- API note (M45): the `adaptive?.Gpu` in the snippet below became `adaptive.Gpus[0]` (multi-GPU); see MULTI_GPU_SELFPLAY_PRD.md. -->
 `SelfPlayCampaign` gains a Core-typed `Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory`; Resume
 builds `_trainStep` (else the autograd default); `TrainChunk` calls `_trainStep.Step(obs, pi, z, _batchSize)` in the
 batch loop and **`_trainStep.SyncToHost()` before `_forward.OnWeightsSynced(_net)`** so eval/arena/ladder/checkpoint see

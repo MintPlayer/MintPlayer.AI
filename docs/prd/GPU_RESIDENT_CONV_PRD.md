@@ -8,6 +8,10 @@ forward is **~15× faster** than the non-resident autograd path (109.9 ms vs 163
 commit `4801c98`) — the seam this plugs into. **Promotes** the deferred item in
 [RESIDUAL_CONV_NET_PRD.md](RESIDUAL_CONV_NET_PRD.md) §8.1 and [OPTIMIZATIONS.md](../OPTIMIZATIONS.md) F.3.
 
+> **API note (M45):** the `AdaptiveBackend.Gpu` used in the snippets below was later replaced by `AdaptiveBackend.Gpus`
+> (the list of all CUDA GPUs) — single-device callers use `Gpus.FirstOrDefault()`. See
+> [MULTI_GPU_SELFPLAY_PRD.md](MULTI_GPU_SELFPLAY_PRD.md). The snippets are kept as the as-designed record for M43.
+
 ## 1. Problem
 
 `--gpu` + `--leaf-batch` make self-play MCTS evaluate a *wave* of leaves per `net.Forward`, but the conv net's forward
