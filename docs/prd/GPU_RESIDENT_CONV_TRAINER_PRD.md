@@ -1,6 +1,6 @@
 # GPU-resident training step for the conv policy/value net — PRD
 
-**Status:** 🟢 **M44.1 MEASURED — GO for M44.3** (2026-07-14, RTX 3060); seam + kernels **not built yet**. **Owner:** Pieterjan.
+**Status:** 🟢 **M44.1 MEASURED → GO; M44.2 Core seam SHIPPED** (2026-07-14, RTX 3060); M44.3 Ilgpu kernels **not built yet**. **Owner:** Pieterjan.
 **Milestone:** [PLAN.md](PLAN.md) M44 · **Depends on:** M43 GPU-resident conv *forward* (`DeviceConvPolicyValueNet`,
 `IPolicyValueForward`; commits `852cf31`/`b49a4c2`/`f39cf2f`) — this is its training-side sibling. **Promotes** the
 "resident conv *trainer*" deferred item in [GPU_RESIDENT_CONV_PRD.md](GPU_RESIDENT_CONV_PRD.md) §Deferred.
@@ -108,9 +108,14 @@ gpu.CreateResidentTrainer(...) : null`) — all Ilgpu knowledge stays there.
   `(games·sims·plies)`. A tiny-window / huge-chunk run would be generation-bound and see little from a resident trainer;
   but the ~3 s/batch host-span cost is paid by *every* config with real training and is what M44.3 removes. (Measurement
   instrumentation is committed and reusable: set `CHESS_CHUNK_TIMING` to re-measure under any config.)
-- **M44.2 — Core seam + wiring (behaviour-preserving).** `IPolicyValueTrainStep` + `AutogradPolicyValueTrainStep`;
-  factory through `SelfPlayCampaign`/`ChessLab`; `TrainChunk` routes through it; `SyncToHost` before eval. **Gate:**
-  DOP-invariance SHA test still bitwise-identical (proves the refactor changed nothing); all tests green. Shippable alone.
+- **M44.2 ✅ SHIPPED — Core seam + wiring (behaviour-preserving).** `Core/Nn/IPolicyValueTrainStep.cs` = the seam +
+  `AutogradPolicyValueTrainStep` (inlines the exact former `PolicyValueTraining.TrainStep` loss/backward → the CPU path
+  is byte-for-byte unchanged). `SelfPlayCampaign` gained an optional `Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>`
+  factory (null → autograd default), builds `_trainStep` in `Resume`, routes the batch loop through `_trainStep.Step(...)`,
+  and calls `_trainStep.SyncToHost()` before `_forward.OnWeightsSynced(_net)`. The now-duplicate Lab `PolicyValueTraining`
+  was deleted (logic lives once in Core). `ChessLab` unchanged (factory stays null until M44.3's `CreateResidentTrainer`).
+  **Gate MET:** `SelfPlayCampaignTests.ParallelGeneration_ProducesBitwiseIdenticalCheckpoint_AtAnyDop` still passes
+  (checkpoint hash identical → the refactor changed nothing); all 3 SelfPlayCampaign tests green.
 - **M44.3 — Ilgpu trainer + 4 kernels (gated on M44.1).** `DeviceConvResidualTrainer` + `Col2Im`/`GatherNCHWToMOutC`/
   `PolicyCeGrad`/`ValueTanhMseGrad` + `LaunchLayerNormTrain` forward-caching + `CreateResidentTrainer` overload. **Gate:**
   a **gradient-parity test** vs the autograd backward on the ILGPU CPU accelerator (like `DeviceResidualTrainer_

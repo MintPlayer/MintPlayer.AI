@@ -1640,7 +1640,7 @@ beyond what `--gpu` already accepts; testable on ILGPU's CPU accelerator (no dis
 **Non-goals:** WDL/categorical value head; distributed actor→learner; browser conv perf (still deferred,
 RESIDUAL_CONV_NET_PRD §8). The resident conv *trainer* is now designed as **M44** (below).
 
-## M44 — GPU-resident training step for the conv net  *(2026-07-14; see `GPU_RESIDENT_CONV_TRAINER_PRD.md`)* — 🟢 M44.1 measured → GO; M44.2/3 not built
+## M44 — GPU-resident training step for the conv net  *(2026-07-14; see `GPU_RESIDENT_CONV_TRAINER_PRD.md`)* — 🟢 M44.1 measured → GO; M44.2 seam shipped; M44.3 not built
 
 **Why:** with `--gpu`, M43 made self-play *inference* resident (~15×), but the **training step** still runs host-span
 (weights re-upload per GEMM, CPU im2col/col2im). The cube already has the training-side answer (`DeviceResidualTrainer`
@@ -1662,9 +1662,11 @@ Determinism: a resident *trainer* mutates weights (non-bitwise) → **opt-in**; 
   train step is **~98 %** of chunk wall-time. Generation was never the bottleneck (M43's resident forward already owns
   it). **BUILD M44.3.** (Caveat: the split is config-dependent — a tiny-window/huge-chunk run is gen-bound — but every
   serious/cluster run has a large window and pays the ~3 s/batch host-span cost M44.3 removes.)
-- **M44.2 — Core seam + wiring (behaviour-preserving).** `IPolicyValueTrainStep` + `AutogradPolicyValueTrainStep`;
-  Core-typed factory through `SelfPlayCampaign`/`ChessLab`; `SyncToHost` before eval. **Gate:** DOP-invariance SHA test
-  still bitwise-identical. Shippable alone.
+- **M44.2 ✅ SHIPPED — Core seam + wiring (behaviour-preserving).** `Core/Nn/IPolicyValueTrainStep.cs` +
+  `AutogradPolicyValueTrainStep` (inlines the former `PolicyValueTraining.TrainStep` verbatim); `SelfPlayCampaign` takes
+  an optional Core-typed `Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>` factory (null → autograd), routes the batch
+  loop through `_trainStep.Step`, `SyncToHost` before the forward re-sync; the duplicate Lab `PolicyValueTraining` deleted.
+  **Gate MET:** the DOP-invariance checkpoint-hash test still passes bitwise; all 3 SelfPlayCampaign tests green.
 - **M44.3 — Ilgpu trainer + 4 kernels (gated on M44.1).** `DeviceConvResidualTrainer` + the 4 kernels + `CreateResident
   Trainer` overload. **Gate:** gradient-parity vs autograd on the ILGPU CPU accelerator (CI-safe) + `SyncToHost`
   round-trip; on-GPU throughput reported. **Adam-resume gap (P.2)** accepted (optimizer re-warms on `--gpu` resume).

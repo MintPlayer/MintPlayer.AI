@@ -83,6 +83,13 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // Optional factory (from the lab entry point, which owns the GPU knowledge) that builds a resident forward for the
     // loaded net; null → the autograd default. Keeps this generic campaign free of any Ilgpu dependency.
     private readonly Func<IPolicyValueNet, IPolicyValueForward>? _forwardFactory;
+    // Training step for the batch loop (the GPU-resident TRAINING seam, M44). Default = the autograd step over _net +
+    // _adam (bitwise-identical to the pre-seam inline loss); a device-resident impl can be installed via
+    // _trainStepFactory. Built in Resume once _net + _adam exist; SyncToHost'd back to _net before eval/checkpoint.
+    private IPolicyValueTrainStep _trainStep = null!;
+    // Optional factory (from the lab entry point, which owns the GPU knowledge) that builds a resident trainer for the
+    // loaded net + optimizer; null → the autograd default. Keeps this generic campaign free of any Ilgpu dependency.
+    private readonly Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? _trainStepFactory;
     private Adam _adam = null!;
     private readonly List<Sample> _window;
     private TrainWindow _lossWindow;
@@ -95,10 +102,12 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     /// <param name="backend">Optional compute backend (e.g. the GPU AdaptiveBackend) installed as Backend.Current.</param>
     public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, SelfPlayOptions options,
         IPolicyValueNetBuilder? netBuilder = null, IComputeBackend? backend = null,
-        Func<IPolicyValueNet, IPolicyValueForward>? forwardFactory = null)
+        Func<IPolicyValueNet, IPolicyValueForward>? forwardFactory = null,
+        Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory = null)
     {
         _backend = backend;
         _forwardFactory = forwardFactory;
+        _trainStepFactory = trainStepFactory;
         _parallel = options.Parallel;
         _maxDop = options.MaxDop;
         _ladder = options.Ladder;
@@ -156,6 +165,8 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         }
         _adam = AdamState.LoadOrInit(store, _environmentId, AdamId, _net.Parameters(), _learningRate, Log);
         _forward = _forwardFactory?.Invoke(_net) ?? new AutogradPolicyValueForward(_net, _game.ObservationSize);
+        _trainStep = _trainStepFactory?.Invoke(_net, _adam)
+            ?? new AutogradPolicyValueTrainStep(_net, _adam, _game.ObservationSize, _game.PolicySize, _valueWeight, _gradClipNorm);
         if (_ladder is not null) LoadLadderState();
         return resumed;
     }
@@ -201,7 +212,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
                         sample.Pi.CopyTo(pi.AsSpan(i * actions));
                         z[i] = sample.Z;
                     }
-                    var (pl, vl) = PolicyValueTraining.TrainStep(_net, _adam, obs, pi, z, _batchSize, obsSize, actions, _valueWeight, _gradClipNorm);
+                    var (pl, vl) = _trainStep.Step(obs, pi, z, _batchSize);
                     _lossWindow.Add(pl, vl, 0);
                     _liveLoss = pl + vl;
                     _totalSamples += _batchSize;
@@ -215,8 +226,10 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             double gen = swGen!.Elapsed.TotalMilliseconds, train = swTrain!.Elapsed.TotalMilliseconds, total = gen + train;
             Log($"chunk-timing: gen {gen:F0} ms ({gen / total:P1}) | train {train:F0} ms ({train / total:P1}, {trainBatches} batches) | window {_window.Count}");
         }
-        // Re-sync the inference forward to the just-trained weights, so next chunk's generation uses them. For the
-        // autograd default this re-points the same net (a no-op); for a GPU-resident forward it re-uploads the weights.
+        // Write the just-trained weights back into _net first (a resident trainer masters them on-device; the autograd
+        // default is a no-op since it trained _net in place), THEN re-sync the inference forward from _net so next
+        // chunk's generation — and eval/arena/checkpoint, which read _net — all see the trained weights.
+        _trainStep.SyncToHost();
         _forward.OnWeightsSynced(_net);
         return _totalGames;
     }
