@@ -118,6 +118,12 @@ internal static class ChessLab
                     : net => adaptive.Gpu is { } gpu && net is ConvResidualPolicyValueNet conv
                         ? gpu.CreateResidentForward(conv)
                         : new AutogradPolicyValueForward(net, game.ObservationSize);
+                // GPU-resident conv TRAINING step (M44), when a GPU is present + the net is conv; else null → the
+                // campaign's autograd default. Only conv+GPU has a resident trainer; the MLP/CPU paths stay autograd.
+                Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory =
+                    (adaptive?.Gpu is null || netBuilder is not ConvNetBuilder) ? null
+                    : (net, adam) => adaptive!.Gpu!.CreateResidentTrainer(
+                        (ConvResidualPolicyValueNet)net, batch, learningRate, clip, game.PolicySize, valueWeight);
                 return new SelfPlayCampaign<ChessState>(game, "chess", new SelfPlayOptions
                 {
                     Seed = seed, LearningRate = learningRate, Hidden = hidden, Search = cfg,
@@ -125,7 +131,7 @@ internal static class ChessLab
                     WindowCapacity = window, BatchSize = batch, EpochsPerChunk = epochs, MaxPlies = maxPlies,
                     OpponentRandomFrac = opponentRandom, Ladder = ladder, MaterialWeight = materialWeight,
                     ValueWeight = valueWeight, GradClipNorm = clip, Parallel = parallel, MaxDop = dop, LeafBatch = leafBatch,
-                }, netBuilder: netBuilder, backend: adaptive, forwardFactory: forwardFactory);
+                }, netBuilder: netBuilder, backend: adaptive, forwardFactory: forwardFactory, trainStepFactory: trainStepFactory);
             },
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);

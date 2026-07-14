@@ -1640,7 +1640,7 @@ beyond what `--gpu` already accepts; testable on ILGPU's CPU accelerator (no dis
 **Non-goals:** WDL/categorical value head; distributed actor→learner; browser conv perf (still deferred,
 RESIDUAL_CONV_NET_PRD §8). The resident conv *trainer* is now designed as **M44** (below).
 
-## M44 — GPU-resident training step for the conv net  *(2026-07-14; see `GPU_RESIDENT_CONV_TRAINER_PRD.md`)* — 🟢 M44.1 measured → GO; M44.2 seam shipped; M44.3 not built
+## M44 — GPU-resident training step for the conv net  *(2026-07-14; see `GPU_RESIDENT_CONV_TRAINER_PRD.md`)* — ✅ SHIPPED (M44.1 measured→GO, M44.2 seam, M44.3 resident trainer; ~24× train step on RTX 3060)
 
 **Why:** with `--gpu`, M43 made self-play *inference* resident (~15×), but the **training step** still runs host-span
 (weights re-upload per GEMM, CPU im2col/col2im). The cube already has the training-side answer (`DeviceResidualTrainer`
@@ -1667,9 +1667,14 @@ Determinism: a resident *trainer* mutates weights (non-bitwise) → **opt-in**; 
   an optional Core-typed `Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>` factory (null → autograd), routes the batch
   loop through `_trainStep.Step`, `SyncToHost` before the forward re-sync; the duplicate Lab `PolicyValueTraining` deleted.
   **Gate MET:** the DOP-invariance checkpoint-hash test still passes bitwise; all 3 SelfPlayCampaign tests green.
-- **M44.3 — Ilgpu trainer + 4 kernels (gated on M44.1).** `DeviceConvResidualTrainer` + the 4 kernels + `CreateResident
-  Trainer` overload. **Gate:** gradient-parity vs autograd on the ILGPU CPU accelerator (CI-safe) + `SyncToHost`
-  round-trip; on-GPU throughput reported. **Adam-resume gap (P.2)** accepted (optimizer re-warms on `--gpu` resume).
+- **M44.3 ✅ SHIPPED — Ilgpu trainer + 2 kernels.** `DeviceConvResidualTrainer : IPolicyValueTrainStep` (resident
+  forward caching x̂/σ + post-ReLU + im2col cols → two-headed backward → clip → Adam) + `CreateResidentTrainer` overload;
+  `ChessLab` wires it for `--gpu --arch conv`. Only **2 new device kernels** (`Col2Im`, `GatherNCHWToMOutC` — the
+  transposes of M43's im2col/scatter); the softmax−π / tanh-MSE head grads are computed on the **host** (the repo keeps
+  softmax/tanh off the device — CUDA can't JIT `ExpF`/`TanhF` without ILGPU.Algorithms — and the heads are tiny), so the
+  planned `PolicyCeGrad`/`ValueTanhMseGrad` kernels were dropped. **Gate MET:** gradient-parity vs autograd + SyncToHost
+  round-trip (CPU accelerator) green. **On-GPU (RTX 3060):** train step ~3000 ms → **~122 ms per 128-batch (~24×)**;
+  train share of a chunk 36→48→64 % → 3→5→8 %. **Adam-resume gap (P.2)** accepted (optimizer re-warms on `--gpu` resume).
 
 **Non-goals:** resident Adam-state checkpointing (P.2 — shared cube/chess fix, later); WDL head; distribution; browser.
 

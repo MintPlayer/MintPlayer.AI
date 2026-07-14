@@ -255,6 +255,87 @@ public class IlgpuBackendTests
         AssertCloseTol(valueT.Data, value, 3e-3f);
     }
 
+    /// <summary>
+    /// M44.3: the resident conv TRAINER's backward (<see cref="DeviceConvResidualTrainer"/>) must produce the same
+    /// gradients as the autograd path for one AlphaZero train step — validating every new/reused backward kernel at
+    /// once (col2im, the NCHW gather, the two loss grads, plus the reused GEMM-transposes / LN grads / ReLU grad / bias
+    /// grad over conv maps). Gradients (not post-Adam weights) are compared, since step-1 Adam ≈ lr·sign(grad) would
+    /// mask magnitude errors. Runs on the ILGPU CPU accelerator; the CUDA path runs the identical kernels.
+    /// </summary>
+    [Fact]
+    public void DeviceConvResidualTrainer_GradientsMatchAutograd()
+    {
+        const int planes = 3, board = 4, actions = 8, filters = 4, blocks = 2, batch = 4;
+        const float valueWeight = 0.5f;
+        int obsSize = planes * board * board;
+        var net = new ConvResidualPolicyValueNet(planes, board, board, actions, filters, blocks, new Xoshiro256StarStar(101));
+        var obs = Random(batch * obsSize, 202);
+        var pi = RandomDistributions(batch, actions, 203);          // each row sums to 1 (a valid π target)
+        var z = Random(batch, 204);                                 // outcomes in [-1,1]
+
+        // Autograd reference: the EXACT AutogradPolicyValueTrainStep loss path → backward → read grads.
+        var adam = new Adam(net.Parameters(), 1e-3f);
+        adam.ZeroGrad();
+        var (logits, value) = net.Forward(new Tensor(obs, batch, obsSize));
+        var ce = logits.LogSoftmax().Mul(new Tensor(pi, batch, actions)).Sum().MulScalar(-1f / batch);
+        var valueLoss = value.Reshape(batch).Tanh().MseLoss(new Tensor(z, batch));
+        ce.Add(valueLoss.MulScalar(valueWeight)).Backward();
+        var cpuGrads = net.Parameters().Select(p => p.Grad!.ToArray()).ToArray();
+
+        using var backend = new IlgpuBackend(preferCpu: true);
+        using var trainer = backend.CreateResidentTrainer(net, batch, learningRate: 1e-3f, clipNorm: 1e9f, actions, valueWeight);
+        var gpuGrads = trainer.DebugGradients(obs, pi, z);
+
+        Assert.Equal(cpuGrads.Length, gpuGrads.Length);
+        for (int p = 0; p < cpuGrads.Length; p++)
+        {
+            Assert.Equal(cpuGrads[p].Length, gpuGrads[p].Length);
+            for (int i = 0; i < cpuGrads[p].Length; i++)
+            {
+                float tol = 5e-3f * (1f + MathF.Abs(cpuGrads[p][i]));
+                Assert.True(MathF.Abs(cpuGrads[p][i] - gpuGrads[p][i]) <= tol,
+                    $"param {p} idx {i}: cpu {cpuGrads[p][i]}, gpu {gpuGrads[p][i]} (tol {tol})");
+            }
+        }
+    }
+
+    /// <summary>M44.3: after a step, SyncToHost writes the resident (trained) weights back into the CPU conv net so
+    /// eval/arena/checkpoint reflect them — and it actually changed the weights.</summary>
+    [Fact]
+    public void DeviceConvResidualTrainer_SyncToHost_RoundTrips()
+    {
+        const int planes = 3, board = 4, actions = 8, filters = 4, blocks = 1, batch = 4;
+        int obsSize = planes * board * board;
+        var net = new ConvResidualPolicyValueNet(planes, board, board, actions, filters, blocks, new Xoshiro256StarStar(111));
+        var before = net.Parameters().First().Data.ToArray();
+        var obs = Random(batch * obsSize, 222);
+        var pi = RandomDistributions(batch, actions, 223);
+        var z = Random(batch, 224);
+
+        using var backend = new IlgpuBackend(preferCpu: true);
+        using var trainer = backend.CreateResidentTrainer(net, batch, learningRate: 1e-2f, clipNorm: 5f, actions, valueWeight: 1f);
+        trainer.Step(obs, pi, z, batch);
+        trainer.SyncToHost();
+
+        var after = net.Parameters().First().Data.ToArray();
+        Assert.Contains(Enumerable.Range(0, before.Length), i => MathF.Abs(before[i] - after[i]) > 1e-6f);
+        _ = net.Forward(new Tensor(obs, batch, obsSize)); // the synced-back net still runs
+    }
+
+    // Random row-major [rows, cols] where each row is a probability distribution (positive, sums to 1).
+    private static float[] RandomDistributions(int rows, int cols, ulong seed)
+    {
+        var rng = new Xoshiro256StarStar(seed);
+        var data = new float[rows * cols];
+        for (int r = 0; r < rows; r++)
+        {
+            float sum = 0f;
+            for (int c = 0; c < cols; c++) { float v = (float)rng.NextDouble() + 1e-3f; data[r * cols + c] = v; sum += v; }
+            for (int c = 0; c < cols; c++) data[r * cols + c] /= sum;
+        }
+        return data;
+    }
+
     private static void AssertCloseTol(float[] expected, float[] actual, float rel)
     {
         Assert.Equal(expected.Length, actual.Length);

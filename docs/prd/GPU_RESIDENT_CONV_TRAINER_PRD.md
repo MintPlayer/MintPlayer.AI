@@ -1,6 +1,8 @@
 # GPU-resident training step for the conv policy/value net — PRD
 
-**Status:** 🟢 **M44.1 MEASURED → GO; M44.2 Core seam SHIPPED** (2026-07-14, RTX 3060); M44.3 Ilgpu kernels **not built yet**. **Owner:** Pieterjan.
+**Status:** ✅ **BUILT + GPU-measured** (2026-07-14, RTX 3060). M44.1 measured → GO; M44.2 Core seam shipped; M44.3
+Ilgpu resident trainer shipped — **~24× faster train step** (≈122 ms vs ≈3000 ms per 128-batch), gradient-parity vs
+autograd verified. **Owner:** Pieterjan.
 **Milestone:** [PLAN.md](PLAN.md) M44 · **Depends on:** M43 GPU-resident conv *forward* (`DeviceConvPolicyValueNet`,
 `IPolicyValueForward`; commits `852cf31`/`b49a4c2`/`f39cf2f`) — this is its training-side sibling. **Promotes** the
 "resident conv *trainer*" deferred item in [GPU_RESIDENT_CONV_PRD.md](GPU_RESIDENT_CONV_PRD.md) §Deferred.
@@ -32,9 +34,12 @@ is the real lever and a resident *trainer* buys little. So M44.1 is a measuremen
   (b) **`GatherNCHWToMOutC`** (dOut permute `[N,outC·oH·oW]→[M,outC]`, the transpose of the forward `ScatterBias`, no bias).
   Then dW/dInput/dBias are the existing GEMM-transposes + `LaunchBiasGrad` (which maps directly onto `dOutMat[M,outC]`
   with rows=M, dim=outC).
-- **The two-headed loss needs two new grad kernels** (the cube's `LaunchHuberGrad` is scalar/δ=1, doesn't fit):
-  (c) **`PolicyCeGrad`** — one thread/row: `dLogits[b,j] = (softmax(logits)_bj − π_bj) / B` (exact, because Σ_j π=1);
-  (d) **`ValueTanhMseGrad`** — `dValueLinear[i] = valueWeight · (2/B) · (tanh(v_i) − z_i) · (1 − tanh²(v_i))`.
+- **The two-headed loss grads are computed on the HOST, not as kernels** (revised during M44.3). They need
+  `softmax`/`tanh` (`ExpF`/`TanhF`), which the CUDA PTX backend cannot JIT without ILGPU.Algorithms/XMath — and the repo
+  deliberately keeps softmax/tanh off the device (`DeviceConvPolicyValueNet` returns a linear value; the caller tanhs).
+  The trainer already downloads the two heads for the loss, so it computes `dLogits[b,j] = (softmax(logits)_bj − π_bj)/B`
+  and `dValueLinear[i] = valueWeight·(2/B)·(tanh(v_i) − z_i)(1 − tanh²(v_i))` on the host and uploads them (the heads are
+  tiny → negligible transfer). The originally-planned `PolicyCeGrad`/`ValueTanhMseGrad` kernels were therefore dropped.
 - **Everything else reuses**, incl. the LayerNorm grad kernels (dim-generic → work over the conv's whole-row
   `dim = filters·hw`) — **with one forward-side change (no new kernel):** the resident training forward must use
   `LaunchLayerNormTrain` (caches x̂, 1/σ) instead of M43's inference `LaunchLayerNorm`, and allocate per-LN
@@ -74,9 +79,9 @@ behaviour-preserving refactor. (Tuple return matches `TrainStep` so `_lossWindow
 ### 4b. Ilgpu — `DeviceConvResidualTrainer : IPolicyValueTrainStep, IDisposable`
 A **separate** object from `DeviceConvPolicyValueNet` (mirrors `DeviceResidualTrainer` vs `DeviceResidualMlp`): holds
 `Param{W,G,M,V}` per parameter (Parameters() order + flat `_all`) + full activation caches (conv pre-activations,
-post-ReLU maps, per-LN x̂/1/σ). Forward = M43 chain but with `LaunchLayerNormTrain`; backward per §2; clip+Adam reuse.
-**4 new kernels:** `Col2Im_Kernel`, `GatherNCHWToMOutC_Kernel`, `PolicyCeGrad_Kernel`, `ValueTanhMseGrad_Kernel`.
-Factory: `IlgpuBackend.CreateResidentTrainer(ConvResidualPolicyValueNet, batch, lr, clipNorm, actions, valueWeight, …)`.
+post-ReLU maps, per-LN x̂/1/σ). Forward = M43 chain but with `LaunchLayerNormTrain`; backward per §2; clip+Adam reuse. **2 new device kernels:**
+`Col2Im_Kernel`, `GatherNCHWToMOutC_Kernel` (the two loss grads are host-side — see §2). Factory:
+`IlgpuBackend.CreateResidentTrainer(ConvResidualPolicyValueNet, batch, lr, clipNorm, actions, valueWeight, …)`.
 
 ### 4c. Lab — wiring (the only lab-specific part)
 `SelfPlayCampaign` gains a Core-typed `Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory`; Resume
@@ -116,10 +121,18 @@ gpu.CreateResidentTrainer(...) : null`) — all Ilgpu knowledge stays there.
   was deleted (logic lives once in Core). `ChessLab` unchanged (factory stays null until M44.3's `CreateResidentTrainer`).
   **Gate MET:** `SelfPlayCampaignTests.ParallelGeneration_ProducesBitwiseIdenticalCheckpoint_AtAnyDop` still passes
   (checkpoint hash identical → the refactor changed nothing); all 3 SelfPlayCampaign tests green.
-- **M44.3 — Ilgpu trainer + 4 kernels (gated on M44.1).** `DeviceConvResidualTrainer` + `Col2Im`/`GatherNCHWToMOutC`/
-  `PolicyCeGrad`/`ValueTanhMseGrad` + `LaunchLayerNormTrain` forward-caching + `CreateResidentTrainer` overload. **Gate:**
-  a **gradient-parity test** vs the autograd backward on the ILGPU CPU accelerator (like `DeviceResidualTrainer_
-  GradientsMatchAutograd`) within f32 tol + a `SyncToHost` round-trip test; then on-GPU throughput vs the CPU train step.
+- **M44.3 ✅ SHIPPED — Ilgpu trainer + 2 kernels (gated on M44.1).** `DeviceConvResidualTrainer : IPolicyValueTrainStep`
+  (resident forward caching x̂/σ + post-ReLU maps + im2col columns → full two-headed backward → grad-norm clip → Adam),
+  reusing `LaunchLayerNormTrain` + all the M20 backward kernels + the M43 conv kernels; `CreateResidentTrainer(ConvResidual
+  PolicyValueNet, …)` overload; `ChessLab` wires it for `--gpu --arch conv`. **Only TWO new device kernels** were needed
+  (`Col2Im`, `GatherNCHWToMOutC` — the transposes of M43's im2col/scatter); the two loss grads (softmax−π, tanh-MSE) are
+  computed on the **host**, because the repo deliberately keeps softmax/tanh off the device (no ILGPU.Algorithms/XMath —
+  a CUDA PTX JIT of `ExpF`/`TanhF` fails) and the heads are tiny, so PLANNED kernels `PolicyCeGrad`/`ValueTanhMseGrad`
+  were dropped (fewer kernels, no new dependency). **Gate MET:** `DeviceConvResidualTrainer_GradientsMatchAutograd`
+  (device backward == autograd within f32 tol on the ILGPU CPU accelerator) + `_SyncToHost_RoundTrips`, all green.
+  **On-GPU (RTX 3060, `CHESS_CHUNK_TIMING`, same config as M44.1):** the train step dropped from ~3000 ms to **~122 ms
+  per 128-batch (≈24×)**; train share of a chunk fell 36→48→64 % (M44.1) to **3→5→8 %**. Generation was never the target
+  (M43's resident forward owns it).
 
 ## 6. Risks
 1. **Generation dominates → low ROI.** ✅ **Retired by M44.1**: at the default 40 k window the train step is ~98 % of
@@ -136,14 +149,14 @@ gpu.CreateResidentTrainer(...) : null`) — all Ilgpu knowledge stays there.
 - M44.1 ✅: measured train-vs-gen share of a `--gpu` conv chunk on an RTX 3060 (36.5 → 47.8 → 63.5 % train as the window
   filled; ~3 s/128-batch host-span; asymptotes ~98 % at the 40 k default) → GO for M44.3. Re-run with `CHESS_CHUNK_TIMING`.
 - M44.2: DOP-invariance SHA test bitwise-identical (behaviour-preserving); all self-play tests green.
-- M44.3: gradient-parity (device vs autograd) on the ILGPU CPU accelerator within f32 tol; `SyncToHost` round-trip;
-  on-GPU train-step throughput vs CPU reported.
+- M44.3 ✅: `DeviceConvResidualTrainer_GradientsMatchAutograd` (device vs autograd, ILGPU CPU accelerator, f32 tol) +
+  `_SyncToHost_RoundTrips` green; on-GPU (RTX 3060) train step ≈122 ms vs ≈3000 ms per 128-batch (~24×).
 
 ## 8. Generic (library) vs lab
 | Piece | Layer |
 |---|---|
 | `IPolicyValueTrainStep` + `AutogradPolicyValueTrainStep` | **Core** (`Core/Nn/`) |
-| `DeviceConvResidualTrainer` + 4 kernels + `CreateResidentTrainer` overload | **Ilgpu** |
+| `DeviceConvResidualTrainer` + 2 kernels (`Col2Im`/`GatherNCHWToMOutC`) + `CreateResidentTrainer` overload | **Ilgpu** |
 | `trainStepFactory` construction (`gpu.CreateResidentTrainer(...)`) | **Lab** (`ChessLab`) |
 | Core-typed factory plumbing in `SelfPlayCampaign` | Lab campaign, but Ilgpu-free (Core delegate) |
 
