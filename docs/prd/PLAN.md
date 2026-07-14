@@ -1637,8 +1637,34 @@ beyond what `--gpu` already accepts; testable on ILGPU's CPU accelerator (no dis
   measured** (`--bench-forward`, RTX 3060): resident **14.9×** faster than autograd (109.9 vs 1634.7 ms/forward,
   leaf-batch 256; 2,329 vs 157 leaves/s), parity ~1e-6.
 
-**Non-goals:** resident conv *trainer* (training stays autograd on the owner thread); WDL/categorical value head;
-distributed actor→learner; browser conv perf. All still deferred (RESIDUAL_CONV_NET_PRD §8).
+**Non-goals:** WDL/categorical value head; distributed actor→learner; browser conv perf (still deferred,
+RESIDUAL_CONV_NET_PRD §8). The resident conv *trainer* is now designed as **M44** (below).
+
+## M44 — GPU-resident training step for the conv net  *(2026-07-14; see `GPU_RESIDENT_CONV_TRAINER_PRD.md`)* — 🔜 designed (3-agent analysis), not built
+
+**Why:** with `--gpu`, M43 made self-play *inference* resident (~15×), but the **training step** still runs host-span
+(weights re-upload per GEMM, CPU im2col/col2im). The cube already has the training-side answer (`DeviceResidualTrainer`
+/ `IResidentTrainStep`); this is its two-headed conv analogue. **But measure first** — a self-play *chunk* is dominated
+by *generation* (MCTS to the ply-cap straggler), not the owner-thread train step, so the resident trainer may buy little.
+
+**Finding (3-agent analysis):** the cube trainer transfers mostly unchanged (`Param{W,G,M,V}`, backward GEMM-transposes,
+on-device clip+Adam, `SyncToHost`, `BuildStack` wiring). The scalar `IResidentTrainStep` doesn't fit our two-headed
+CE+MSE loss → a new two-headed `IPolicyValueTrainStep` seam (the training dual of `IPolicyValueForward`). Only **4 new
+kernels**: `Col2Im` + `GatherNCHWToMOutC` (the transpose of M43's forward im2col/scatter) + `PolicyCeGrad` (softmax−π)/B
++ `ValueTanhMseGrad`; everything else (GEMM transposes, bias/ReLU/LayerNorm grads, clip, Adam) already exists, plus one
+forward-caching change (`LaunchLayerNormTrain` + x̂/1σ caches — no new kernel). Generic → library; only CLI/factory in the lab.
+Determinism: a resident *trainer* mutates weights (non-bitwise) → **opt-in**; the CPU autograd path stays the reference.
+
+- **M44.1 — MEASURE (gate).** Time train-step vs generation share of a `--gpu` conv chunk. Build M44.3 only if training
+  is a material share; else stop after M44.2 (the resident *forward* is the lever).
+- **M44.2 — Core seam + wiring (behaviour-preserving).** `IPolicyValueTrainStep` + `AutogradPolicyValueTrainStep`;
+  Core-typed factory through `SelfPlayCampaign`/`ChessLab`; `SyncToHost` before eval. **Gate:** DOP-invariance SHA test
+  still bitwise-identical. Shippable alone.
+- **M44.3 — Ilgpu trainer + 4 kernels (gated on M44.1).** `DeviceConvResidualTrainer` + the 4 kernels + `CreateResident
+  Trainer` overload. **Gate:** gradient-parity vs autograd on the ILGPU CPU accelerator (CI-safe) + `SyncToHost`
+  round-trip; on-GPU throughput reported. **Adam-resume gap (P.2)** accepted (optimizer re-warms on `--gpu` resume).
+
+**Non-goals:** resident Adam-state checkpointing (P.2 — shared cube/chess fix, later); WDL head; distribution; browser.
 
 ## Testing strategy (cross-cutting, from research)
 

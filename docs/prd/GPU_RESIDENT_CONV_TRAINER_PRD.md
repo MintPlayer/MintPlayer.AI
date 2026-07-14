@@ -1,0 +1,126 @@
+# GPU-resident training step for the conv policy/value net — PRD
+
+**Status:** 🔜 **designed** (3-agent analysis 2026-07-14), **not built**. **Owner:** Pieterjan.
+**Milestone:** [PLAN.md](PLAN.md) M44 · **Depends on:** M43 GPU-resident conv *forward* (`DeviceConvPolicyValueNet`,
+`IPolicyValueForward`; commits `852cf31`/`b49a4c2`/`f39cf2f`) — this is its training-side sibling. **Promotes** the
+"resident conv *trainer*" deferred item in [GPU_RESIDENT_CONV_PRD.md](GPU_RESIDENT_CONV_PRD.md) §Deferred.
+
+## 1. Problem
+
+With `--gpu`, self-play *inference* is now GPU-resident (M43, ~15× on an RTX 3060). But the **training step**
+(`PolicyValueTraining.TrainStep`: `net.Forward` → CE+MSE loss → `Backward` → clip → Adam) still runs through
+`Backend.Current` **host-span**: weights re-upload per GEMM and im2col/col2im run on the CPU between every conv — the
+same transfer-bound pattern M43 eliminated for the forward. The cube already has the training-side answer:
+`DeviceResidualTrainer` (`IResidentTrainStep`) keeps weights + gradients + Adam moments + activations on-device for the
+whole fwd→bwd→clip→Adam step. This PRD is the two-headed conv analogue.
+
+**⚠️ But measure first (see §5).** A self-play *chunk* is dominated by **generation** (MCTS to the ply-cap straggler),
+not the owner-thread training step. If generation dominates, the resident *forward* + `--leaf-batch` (already shipped)
+is the real lever and a resident *trainer* buys little. So M44.1 is a measurement gate before the expensive kernel work.
+
+## 2. Findings (3-agent read-only analysis, 2026-07-14)
+
+- **The cube trainer is a strong template, mostly reusable.** `DeviceResidualTrainer`'s `Param{W,G,M,V}` four-buffer
+  model (per parameter, in `Parameters()` order, + a flat `_all` list), pre-allocated activation caches, on-device
+  **grad-norm clip + Adam** (`LaunchSumSq`/`LaunchScaleInPlace`/`LaunchAdamUpdate` — fully layer-agnostic), and
+  `SyncToHost` all transfer unchanged. Backward GEMM vocabulary reuses: **dW = `GemmTiled(AtB)`**, **dInput =
+  `GemmTiled(ABt)`**, dBias = `LaunchBiasGrad`, plus `LaunchReluBackward`, `LaunchLayerNormParamGrad`/`InputGrad`,
+  `LaunchAddInto` (skip-grad). Wiring template = `CubeDaviCampaign.BuildStack` (obtain trainer from a backend factory,
+  inject as the Core seam, `SyncToHost` before checkpoint/eval).
+- **The conv backward is exactly two host-loops → two new kernels**, the transpose of what M43 added to the forward:
+  (a) **`Col2Im`** (dInput scatter-add — prefer **thread-per-input-element**, gather-sum every kernel tap → atomics-free),
+  (b) **`GatherNCHWToMOutC`** (dOut permute `[N,outC·oH·oW]→[M,outC]`, the transpose of the forward `ScatterBias`, no bias).
+  Then dW/dInput/dBias are the existing GEMM-transposes + `LaunchBiasGrad` (which maps directly onto `dOutMat[M,outC]`
+  with rows=M, dim=outC).
+- **The two-headed loss needs two new grad kernels** (the cube's `LaunchHuberGrad` is scalar/δ=1, doesn't fit):
+  (c) **`PolicyCeGrad`** — one thread/row: `dLogits[b,j] = (softmax(logits)_bj − π_bj) / B` (exact, because Σ_j π=1);
+  (d) **`ValueTanhMseGrad`** — `dValueLinear[i] = valueWeight · (2/B) · (tanh(v_i) − z_i) · (1 − tanh²(v_i))`.
+- **Everything else reuses**, incl. the LayerNorm grad kernels (dim-generic → work over the conv's whole-row
+  `dim = filters·hw`) — **with one forward-side change (no new kernel):** the resident training forward must use
+  `LaunchLayerNormTrain` (caches x̂, 1/σ) instead of M43's inference `LaunchLayerNorm`, and allocate per-LN
+  `xhat[B·dim]`/`invStd[B]` caches, so the LN-grad kernels have their inputs.
+- **The scalar `IResidentTrainStep` seam doesn't fit** (one target, one scalar loss). Need a new **two-headed** seam —
+  the training dual of the already-accepted two-headed `IPolicyValueForward`.
+- **Determinism:** a resident *trainer* MUTATES trained weights via non-associative GPU reductions → **not
+  bitwise-reproducible**, so (unlike the inference-only forward) it **cannot** be the reference under the DOP-invariance
+  SHA test. It must be **opt-in**; the **CPU autograd path stays the deterministic reference**. Guard with a
+  gradient-parity test vs autograd (as the cube does), not bitwise equality.
+- **Adam-resume (P.2):** the cube's resident Adam moments aren't downloaded into the campaign's Adam checkpoint, so a
+  resumed `--gpu` run re-warms the optimizer (weights resume fine). Accept the same gap; document it.
+
+## 3. Decision
+
+Build a **two-headed GPU-resident training step** as **library** code (Core seam + Ilgpu impl + 4 new kernels), wired
+into `SelfPlayCampaign` via a Core-typed factory (campaign stays Ilgpu-free). **Gate the expensive Ilgpu kernel work
+behind a measurement** (M44.1). Inference-side stays M43; the CPU autograd path stays the deterministic reference.
+
+## 4. Design (placement: generic → library)
+
+### 4a. Core — the seam (`Core/Nn/IPolicyValueTrainStep.cs`, GPU-agnostic)
+```csharp
+public interface IPolicyValueTrainStep
+{
+    // One AlphaZero batch: resident fwd + CE/MSE backward + grad-norm clip + Adam. policyTargets row-major
+    // [batch·actions] (rows sum to 1); valueTargets [batch] in [-1,1]. obsSize/actions/valueWeight/gradClip/lr are
+    // CONSTRUCTION params (baked into fixed buffers + on-device Adam), not per-Step args.
+    (double PolicyLoss, double ValueLoss) Step(float[] obs, float[] policyTargets, float[] valueTargets, int batch);
+    void SyncToHost();   // write resident weights back into the CPU net (eval/arena/ladder/checkpoint read it)
+}
+```
+Plus **`AutogradPolicyValueTrainStep`** (Core default): inlines the current `PolicyValueTraining.TrainStep` loss/backward
+over an `IPolicyValueNet`+`Adam`; `SyncToHost` = no-op (CPU net is master). Guarantees routing through the seam is a
+behaviour-preserving refactor. (Tuple return matches `TrainStep` so `_lossWindow.Add(pl, vl, 0)` is unchanged.)
+
+### 4b. Ilgpu — `DeviceConvResidualTrainer : IPolicyValueTrainStep, IDisposable`
+A **separate** object from `DeviceConvPolicyValueNet` (mirrors `DeviceResidualTrainer` vs `DeviceResidualMlp`): holds
+`Param{W,G,M,V}` per parameter (Parameters() order + flat `_all`) + full activation caches (conv pre-activations,
+post-ReLU maps, per-LN x̂/1/σ). Forward = M43 chain but with `LaunchLayerNormTrain`; backward per §2; clip+Adam reuse.
+**4 new kernels:** `Col2Im_Kernel`, `GatherNCHWToMOutC_Kernel`, `PolicyCeGrad_Kernel`, `ValueTanhMseGrad_Kernel`.
+Factory: `IlgpuBackend.CreateResidentTrainer(ConvResidualPolicyValueNet, batch, lr, clipNorm, actions, valueWeight, …)`.
+
+### 4c. Lab — wiring (the only lab-specific part)
+`SelfPlayCampaign` gains a Core-typed `Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory`; Resume
+builds `_trainStep` (else the autograd default); `TrainChunk` calls `_trainStep.Step(obs, pi, z, _batchSize)` in the
+batch loop and **`_trainStep.SyncToHost()` before `_forward.OnWeightsSynced(_net)`** so eval/arena/ladder/checkpoint see
+trained weights. `ChessLab` supplies the factory (`adaptive?.Gpu is {} gpu && net is ConvResidualPolicyValueNet conv ?
+gpu.CreateResidentTrainer(...) : null`) — all Ilgpu knowledge stays there.
+
+## 5. Phases
+
+- **M44.1 — MEASURE (gate).** Add a training-step-vs-generation timing to a `--gpu --arch conv --leaf-batch N` chunk
+  (extend `ConvForwardBench`, or instrument `TrainChunk`). **Decision:** build M44.3 only if the CPU train step is a
+  material share of chunk wall-time. If generation dominates (likely — ply-cap straggler), STOP after M44.2 and record
+  that the resident forward + `--leaf-batch` is the lever.
+- **M44.2 — Core seam + wiring (behaviour-preserving).** `IPolicyValueTrainStep` + `AutogradPolicyValueTrainStep`;
+  factory through `SelfPlayCampaign`/`ChessLab`; `TrainChunk` routes through it; `SyncToHost` before eval. **Gate:**
+  DOP-invariance SHA test still bitwise-identical (proves the refactor changed nothing); all tests green. Shippable alone.
+- **M44.3 — Ilgpu trainer + 4 kernels (gated on M44.1).** `DeviceConvResidualTrainer` + `Col2Im`/`GatherNCHWToMOutC`/
+  `PolicyCeGrad`/`ValueTanhMseGrad` + `LaunchLayerNormTrain` forward-caching + `CreateResidentTrainer` overload. **Gate:**
+  a **gradient-parity test** vs the autograd backward on the ILGPU CPU accelerator (like `DeviceResidualTrainer_
+  GradientsMatchAutograd`) within f32 tol + a `SyncToHost` round-trip test; then on-GPU throughput vs the CPU train step.
+
+## 6. Risks
+1. **Generation dominates → low ROI.** Mitigated by the M44.1 measurement gate (don't build M44.3 speculatively).
+2. **Conv backward kernel correctness** (col2im scatter-sum, the gather transpose, the two loss grads) — mitigated by
+   the M44.3 gradient-parity test on the CPU accelerator (CI-safe, no GPU) + the exact index-math specs in §2.
+3. **Determinism** — GPU training isn't bitwise-reproducible; kept opt-in, CPU autograd stays the reference (DOP test
+   runs on CPU only). No new loss beyond what `--gpu` already accepts.
+4. **Adam-resume (P.2)** — resident optimizer moments not checkpointed → re-warm on `--gpu` resume (weights fine).
+   Accepted, documented; if lossless resume is wanted later, add m/v download to `SyncToHost` + `AdamState` for BOTH
+   trainers as the shared P.2 fix.
+
+## 7. Verification
+- M44.1: reported training vs generation share of a `--gpu` conv chunk; go/no-go on M44.3.
+- M44.2: DOP-invariance SHA test bitwise-identical (behaviour-preserving); all self-play tests green.
+- M44.3: gradient-parity (device vs autograd) on the ILGPU CPU accelerator within f32 tol; `SyncToHost` round-trip;
+  on-GPU train-step throughput vs CPU reported.
+
+## 8. Generic (library) vs lab
+| Piece | Layer |
+|---|---|
+| `IPolicyValueTrainStep` + `AutogradPolicyValueTrainStep` | **Core** (`Core/Nn/`) |
+| `DeviceConvResidualTrainer` + 4 kernels + `CreateResidentTrainer` overload | **Ilgpu** |
+| `trainStepFactory` construction (`gpu.CreateResidentTrainer(...)`) | **Lab** (`ChessLab`) |
+| Core-typed factory plumbing in `SelfPlayCampaign` | Lab campaign, but Ilgpu-free (Core delegate) |
+
+See [PLAN.md](PLAN.md) M44, [GPU_RESIDENT_CONV_PRD.md](GPU_RESIDENT_CONV_PRD.md), [OPTIMIZATIONS.md](../OPTIMIZATIONS.md) (P.2).

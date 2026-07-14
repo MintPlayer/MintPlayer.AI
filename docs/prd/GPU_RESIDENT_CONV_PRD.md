@@ -109,7 +109,9 @@ public interface IPolicyValueForward
    GPU). Get the weight index order (`((c·k+kh)·k+kw)·outC+oc`) and per-channel bias broadcast exactly right.
 3. **Single-GPU lock contention** — every device touch serializes under `DeviceLock`; the win is **batch-B per call**
    (large `--leaf-batch`, few threads), not cross-thread GPU parallelism. Documented, not a blocker.
-4. **Scope creep** — resident conv *trainer*, WDL head, distribution are **out of scope** (still deferred, PRD §8).
+4. **Scope creep** — WDL head + distribution stay **out of scope** (deferred, RESIDUAL_CONV_NET_PRD §8). The resident
+   conv *trainer* (this forward's training-side sibling) is now designed as **M44** —
+   [GPU_RESIDENT_CONV_TRAINER_PRD.md](GPU_RESIDENT_CONV_TRAINER_PRD.md).
 
 ## 7. Verification
 - M43.1: self-play + DOP-determinism tests green; `EvaluateBatch` via autograd default bitwise-identical to today.
