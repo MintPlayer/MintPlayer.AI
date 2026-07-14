@@ -1,6 +1,7 @@
 # Single-box multi-GPU self-play — PRD
 
-**Status:** 🔜 **designed** (3-agent read-only analysis, 2026-07-14), **not built**. **Owner:** Pieterjan.
+**Status:** 🟢 **M45.1 SHIPPED** (library: enumerate all CUDA GPUs, device-addressable backend, `AdaptiveBackend.Gpus`,
+`.Gpu` removed); M45.2 (sharded generation) + M45.3 (multi-GPU measure) **not built**. 2026-07-14. **Owner:** Pieterjan.
 **Milestone:** [PLAN.md](PLAN.md) M45 · **Depends on:** M43 GPU-resident conv forward (`DeviceConvPolicyValueNet`,
 `IPolicyValueForward`) and M44 GPU-resident conv trainer (`DeviceConvResidualTrainer`, `IPolicyValueTrainStep`) — this
 partitions the *dataflow* those built across every CUDA GPU present. **Promotes** the "distributed multi-GPU" roadmap
@@ -125,10 +126,14 @@ CUDA devices internally. No keyed services / no N registrations needed (§4a mak
 
 ## 5. Phases
 
-- **M45.1 — Library: enumerate + device-addressable backend.** `SelectDevices`, `IlgpuBackend(Context, Device)` ctor,
-  `AdaptiveBackend.Gpus`. **Gate:** a test asserts `Gpus` has one entry per CUDA device (on CI/CPU-only boxes: `Gpus`
-  empty, `.Gpu` null, everything falls back — unchanged); `DescribeDevices` already proves enumeration works. No
-  behaviour change to the existing single-GPU `--gpu` path (its tests stay green). Shippable alone.
+- **M45.1 ✅ SHIPPED — Library: enumerate + device-addressable backend.** `SelectDevice` → `SelectDevices` (all CUDA, or
+  CPU); a device-pinning `IlgpuBackend(Context, Device)` ctor (shared context, `_ownsContext=false` so the caller
+  disposes it); `AdaptiveBackend` builds one backend per CUDA device on one shared context and exposes `Gpus`
+  (`IReadOnlyList<IlgpuBackend>`, empty when CPU-only) — **`.Gpu` removed**; the autograd GEMM router keeps a private
+  primary (`Gpus[0]`). All 7 `.Gpu` call sites migrated to `Gpus.FirstOrDefault()` (CubeModelService, ConvForwardBench,
+  CubeDavi/Efficient, ChessLab). **Gate MET:** new tests `IlgpuBackend_PinnedToSharedContextDevice_MatchesManaged` +
+  `AdaptiveBackend_Gpus_AreConsistent`; the Ilgpu/cube-trainer/self-play suites stay green (37 tests); the existing
+  single-GPU `--gpu` path is behaviourally unchanged. Web + Lab build clean. Shippable alone.
 - **M45.2 — Lab: `--gpus` + sharded generation + weight fan-out.** N resident forwards, index→GPU routing in
   `EvaluateBatch`, `OnWeightsSynced` fan-out. **Gate:** with one GPU (or CPU), output is identical to today (`--gpus 1`
   ≡ `--gpu`); the DOP-invariance SHA test still passes on the CPU path; a short `--gpus all` run on the single dev GPU

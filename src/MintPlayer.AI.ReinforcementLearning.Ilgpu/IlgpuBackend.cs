@@ -131,16 +131,30 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     // comparison (see BenchGemmGflops); never on the production routing path.
     private readonly Action<Index1D, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, ArrayView1D<float, Stride1D.Dense>, GemmDims> _gemmNaive;
     private readonly object _lock = new();
+    private readonly bool _ownsContext; // dispose _context in Dispose (true only for the standalone/own-context path)
 
     /// <param name="preferCpu">
     /// When true, selects ILGPU's CPU accelerator even if a GPU is present (used by tests so
-    /// they run identically on any machine). Default false: pick the best device — the CUDA
-    /// GPU when available, otherwise CPU.
+    /// they run identically on any machine). Default false: pick the best device — the first
+    /// CUDA GPU when available, otherwise CPU.
     /// </param>
-    public IlgpuBackend(bool preferCpu = false)
+    public IlgpuBackend(bool preferCpu = false) : this(Context.CreateDefault(), preferCpu) { }
+
+    // Owns a freshly-created context; pins to the first device SelectDevices returns (CUDA-first, else CPU).
+    private IlgpuBackend(Context ownedContext, bool preferCpu)
+        : this(ownedContext, SelectDevices(ownedContext, preferCpu)[0], ownsContext: true) { }
+
+    /// <summary>Pin a backend to a specific <paramref name="device"/> on a SHARED <paramref name="context"/> (multi-GPU,
+    /// M45): the caller owns and disposes the context, so this backend disposes only its accelerator. Enumerate devices
+    /// with <see cref="SelectDevices"/>.</summary>
+    internal IlgpuBackend(Context context, Device device) : this(context, device, ownsContext: false) { }
+
+    // Core ctor: build the accelerator on `device` and JIT every kernel onto it.
+    private IlgpuBackend(Context context, Device device, bool ownsContext)
     {
-        _context = Context.CreateDefault();
-        _accelerator = SelectDevice(_context, preferCpu).CreateAccelerator(_context);
+        _context = context;
+        _ownsContext = ownsContext;
+        _accelerator = device.CreateAccelerator(_context);
 
         // Largest square tile whose thread group (tile²) fits the device limit, capped at MaxTile.
         // GPU: 1024 limit → tile 16. CPU accelerator: limit = #logical cores → a smaller tile.
@@ -178,19 +192,20 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     }
 
     /// <summary>
-    /// Picks the device. Default: prefer a discrete CUDA GPU specifically — on laptops with
-    /// both an integrated Intel iGPU (OpenCL) and a discrete NVIDIA card, ILGPU's
-    /// <c>GetPreferredDevice</c> picks the weaker iGPU, so we select CUDA first, then any
-    /// other non-CPU device, then the CPU accelerator. <paramref name="preferCpu"/> forces
-    /// the CPU accelerator (tests, GPU-less machines).
+    /// Enumerates the devices to build accelerators on. Default: <b>every</b> discrete CUDA GPU (in ILGPU's device
+    /// order) — on a multi-GPU box all NVIDIA cards are returned so the self-play dataflow can be sharded across them
+    /// (M45); on a laptop with an Intel iGPU (OpenCL) + one NVIDIA card, only the CUDA card is returned (never the
+    /// weaker iGPU). If no CUDA device exists, falls back to a single other non-CPU device, else the CPU accelerator.
+    /// <paramref name="preferCpu"/> forces the single CPU accelerator (tests, GPU-less machines).
     /// </summary>
-    private static Device SelectDevice(Context context, bool preferCpu)
+    internal static IReadOnlyList<Device> SelectDevices(Context context, bool preferCpu)
     {
         if (preferCpu)
-            return context.GetPreferredDevice(preferCPU: true);
-        return context.Devices.OfType<CudaDevice>().Cast<Device>().FirstOrDefault()
-            ?? context.Devices.FirstOrDefault(d => d.AcceleratorType != AcceleratorType.CPU)
-            ?? context.GetPreferredDevice(preferCPU: true);
+            return [context.GetPreferredDevice(preferCPU: true)];
+        var cuda = context.Devices.OfType<CudaDevice>().Cast<Device>().ToList();
+        if (cuda.Count > 0) return cuda;
+        return [context.Devices.FirstOrDefault(d => d.AcceleratorType != AcceleratorType.CPU)
+            ?? context.GetPreferredDevice(preferCPU: true)];
     }
 
     /// <summary>The selected device's name (e.g. "NVIDIA GeForce RTX 3060 Laptop GPU" or a CPU).</summary>
@@ -872,6 +887,6 @@ public sealed class IlgpuBackend : IComputeBackend, IDisposable
     public void Dispose()
     {
         _accelerator.Dispose();
-        _context.Dispose();
+        if (_ownsContext) _context.Dispose(); // a shared context (multi-GPU) is owned + disposed by the caller
     }
 }

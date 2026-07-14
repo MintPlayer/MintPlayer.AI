@@ -1678,7 +1678,7 @@ Determinism: a resident *trainer* mutates weights (non-bitwise) → **opt-in**; 
 
 **Non-goals:** resident Adam-state checkpointing (P.2 — shared cube/chess fix, later); WDL head; distribution; browser.
 
-## M45 — Single-box multi-GPU self-play  *(2026-07-14; see `MULTI_GPU_SELFPLAY_PRD.md`)* — 🔜 designed (3-agent analysis), not built
+## M45 — Single-box multi-GPU self-play  *(2026-07-14; see `MULTI_GPU_SELFPLAY_PRD.md`)* — 🟢 M45.1 shipped (library: enumerate GPUs, `.Gpus`); M45.2/3 not built
 
 **Why:** `--gpu` uses one GPU — `IlgpuBackend.SelectDevice` enumerates all devices but takes `.FirstOrDefault()` of the
 CUDA ones (`IlgpuBackend.cs:191`). A multi-GPU box idles all but one. Since a chunk is generation-bound (M44.1), the win
@@ -1692,11 +1692,12 @@ already shards games by **global index** bitwise-invariantly (the clean per-GPU 
 (parallel across GPUs); the M43/M44 device seams; and the per-chunk `SyncToHost → _net → OnWeightsSynced` weight lifecycle
 (→ a fan-out). One box, one process, one campaign, one local store are all **kept** — this is why single-box ≪ cluster.
 
-- **M45.1 — Library: enumerate + device-addressable backend.** `SelectDevices` (all CUDA, or CPU), `IlgpuBackend(Context,
-  Device)` ctor, `AdaptiveBackend.Gpus` (the list) — **`.Gpu` (singular) removed** (deliberate breaking API change; the
-  CPU-vs-GPU GEMM router keeps a *private* primary `Gpus[0]`, so M43/M44 and `--gpu` are behaviourally unchanged).
-  Migrate the ~7 `.Gpu` call sites → `Gpus.FirstOrDefault()` (CubeModelService, ConvForwardBench, CubeDavi/Efficient) or
-  the full list (ChessLab). **Gate:** `Gpus` has one entry per CUDA device (empty on CPU-only); existing tests green.
+- **M45.1 ✅ SHIPPED — Library: enumerate + device-addressable backend.** `SelectDevices` (all CUDA, or CPU); device-
+  pinning `IlgpuBackend(Context, Device)` ctor (shared context, caller-owned); `AdaptiveBackend` builds one backend per
+  CUDA device on one shared context, exposes `Gpus` (list, empty on CPU-only) — **`.Gpu` removed**; the autograd GEMM
+  router keeps a *private* primary `Gpus[0]`, so M43/M44 and `--gpu` are behaviourally unchanged. All 7 `.Gpu` sites
+  migrated to `Gpus.FirstOrDefault()`. **Gate MET:** 2 new tests (pinned-device GEMM parity; `Gpus` consistency) + 37
+  Ilgpu/cube/self-play tests green; web + Lab build clean.
 - **M45.2 — Lab: `--gpus` flag + sharded generation + weight fan-out.** One resident forward per GPU; route each game's
   leaf batch to `_forwards[i % nGpus]` (index-deterministic); training stays on the primary GPU; `OnWeightsSynced` fans
   out to all forwards per chunk. **Gate:** `--gpus 1` ≡ `--gpu`; CPU DOP-invariance SHA test green; `--gpus all` runs at N=1.

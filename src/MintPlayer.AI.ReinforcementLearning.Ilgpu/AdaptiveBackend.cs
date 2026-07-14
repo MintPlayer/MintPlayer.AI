@@ -1,3 +1,5 @@
+using System.Linq;
+using ILGPU;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 
 namespace MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -23,7 +25,10 @@ public sealed class AdaptiveBackend : IComputeBackend, IDisposable
     public const long DefaultGpuMacThreshold = 256_000_000;
 
     private readonly ManagedBackend _cpu;
-    private readonly IlgpuBackend? _gpu;
+    // Every CUDA GPU on this machine as a device-resident backend (M45), on ONE shared context; empty when CPU-only.
+    private readonly Context? _context;                  // owns the accelerators in _gpus; null when CPU-only
+    private readonly IReadOnlyList<IlgpuBackend> _gpus;
+    private readonly IlgpuBackend? _primary;             // the single-device autograd GEMM path routes here (Gpus[0])
     private readonly long _gpuMacThreshold;
 
     /// <param name="gpuMacThreshold">m·k·n at/above which GEMMs route to the GPU (if one exists).</param>
@@ -33,30 +38,37 @@ public sealed class AdaptiveBackend : IComputeBackend, IDisposable
         _cpu = new ManagedBackend(cpuMaxDegreeOfParallelism);
         _gpuMacThreshold = gpuMacThreshold;
 
-        // Spin up a GPU backend only if a real discrete/accelerator GPU is present; otherwise
-        // dispose it and stay CPU-only (the CPU accelerator would just re-measure the CPU).
-        var gpu = new IlgpuBackend();
-        if (gpu.IsGpu) _gpu = gpu;
-        else gpu.Dispose();
+        // Enumerate every real GPU on ONE shared context and build a device-resident backend per device (M45). Each
+        // backend = one accelerator = one lock, so they run in parallel across GPUs. When no GPU is present, drop the
+        // context and stay CPU-only (the CPU accelerator would just re-measure the CPU).
+        var context = Context.CreateDefault();
+        var built = IlgpuBackend.SelectDevices(context, preferCpu: false)
+            .Select(d => new IlgpuBackend(context, d)).ToList();
+        _gpus = built.Where(b => b.IsGpu).ToList();
+        foreach (var notGpu in built.Where(b => !b.IsGpu)) notGpu.Dispose();
+        if (_gpus.Count > 0) { _context = context; _primary = _gpus[0]; }
+        else context.Dispose();
     }
 
-    /// <summary>True when a GPU was found and large GEMMs will be offloaded to it.</summary>
-    public bool GpuAvailable => _gpu is not null;
+    /// <summary>True when at least one GPU was found and large GEMMs will be offloaded.</summary>
+    public bool GpuAvailable => _gpus.Count > 0;
 
     /// <summary>
-    /// The GPU backend, or null when CPU-only. Exposed so a caller can reuse this single GPU
-    /// context for device-resident inference (e.g. <see cref="IlgpuBackend.MlpForwardScalar"/>)
-    /// instead of spinning up a second one.
+    /// Every CUDA GPU on this machine, each a device-resident <see cref="IlgpuBackend"/> (empty when CPU-only). This is
+    /// the public GPU surface: a consumer that wants a single device uses <c>Gpus[0]</c>/<c>Gpus.FirstOrDefault()</c>
+    /// for resident inference/training; a consumer that shards the dataflow uses all of them (M45).
     /// </summary>
-    public IlgpuBackend? Gpu => _gpu;
+    public IReadOnlyList<IlgpuBackend> Gpus => _gpus;
 
     /// <summary>One-line description of the routing for diagnostics/logging.</summary>
-    public string Describe() => _gpu is null
+    public string Describe() => _gpus.Count == 0
         ? "CPU only (no GPU found)"
-        : $"CPU + GPU ({_gpu.AcceleratorName}); GEMMs ≥ {_gpuMacThreshold:N0} MACs → GPU";
+        : $"CPU + {_gpus.Count} GPU(s) ({string.Join(", ", _gpus.Select(g => g.AcceleratorName))}); GEMMs ≥ {_gpuMacThreshold:N0} MACs → GPU";
 
+    // The autograd/Tensor GEMM path is single-device (one Gemm → one device), so it routes to the primary GPU (Gpus[0]);
+    // multi-GPU sharding happens through the per-GPU resident forwards, not here.
     private IComputeBackend Route(int m, int k, int n)
-        => _gpu is not null && (long)m * k * n >= _gpuMacThreshold ? _gpu : _cpu;
+        => _primary is not null && (long)m * k * n >= _gpuMacThreshold ? _primary : _cpu;
 
     public void Gemm(ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> c, int m, int k, int n)
         => Route(m, k, n).Gemm(a, b, c, m, k, n);
@@ -95,5 +107,9 @@ public sealed class AdaptiveBackend : IComputeBackend, IDisposable
     public void LayerNormParamGradInto(ReadOnlySpan<float> dy, ReadOnlySpan<float> xhat, int rows, int cols, Span<float> dGamma, Span<float> dBeta) => _cpu.LayerNormParamGradInto(dy, xhat, rows, cols, dGamma, dBeta);
     public void LayerNormInputGradInto(ReadOnlySpan<float> dy, ReadOnlySpan<float> xhat, ReadOnlySpan<float> invStd, ReadOnlySpan<float> gamma, int rows, int cols, Span<float> dx) => _cpu.LayerNormInputGradInto(dy, xhat, invStd, gamma, rows, cols, dx);
 
-    public void Dispose() => _gpu?.Dispose(); // ManagedBackend holds no unmanaged state
+    public void Dispose() // ManagedBackend holds no unmanaged state; dispose the GPU backends then the shared context
+    {
+        foreach (var g in _gpus) g.Dispose();
+        _context?.Dispose();
+    }
 }

@@ -322,6 +322,35 @@ public class IlgpuBackendTests
         _ = net.Forward(new Tensor(obs, batch, obsSize)); // the synced-back net still runs
     }
 
+    /// <summary>M45.1: a backend pinned to a specific device on a SHARED context (the multi-GPU ctor) computes the same
+    /// GEMM as the CPU, and disposing it leaves the caller-owned context usable. Runs on the CPU accelerator (portable);
+    /// the real multi-GPU path builds one such backend per CUDA device on one shared context.</summary>
+    [Fact]
+    public void IlgpuBackend_PinnedToSharedContextDevice_MatchesManaged()
+    {
+        using var context = ILGPU.Context.CreateDefault();
+        var devices = IlgpuBackend.SelectDevices(context, preferCpu: true); // the CPU accelerator — portable
+        Assert.Single(devices);
+        var a = Random(M * K, 1); var b = Random(K * N, 2);
+        var cpu = new float[M * N]; var gpu = new float[M * N];
+        new ManagedBackend(1).Gemm(a, b, cpu, M, K, N);
+        using (var backend = new IlgpuBackend(context, devices[0])) // shared context: backend disposes only its accelerator
+            backend.Gemm(a, b, gpu, M, K, N);
+        AssertClose(cpu, gpu);
+        Assert.NotEmpty(context.Devices); // context survived the backend's disposal (it did not own it)
+    }
+
+    /// <summary>M45.1: `AdaptiveBackend.Gpus` enumerates one device-resident backend per CUDA GPU (empty on a CPU-only
+    /// box); every entry is a real GPU and `GpuAvailable` agrees with the count. Portable — asserts the invariant, not a
+    /// specific device count.</summary>
+    [Fact]
+    public void AdaptiveBackend_Gpus_AreConsistent()
+    {
+        using var adaptive = new AdaptiveBackend();
+        Assert.Equal(adaptive.Gpus.Count > 0, adaptive.GpuAvailable);
+        foreach (var g in adaptive.Gpus) Assert.True(g.IsGpu);
+    }
+
     // Random row-major [rows, cols] where each row is a probability distribution (positive, sums to 1).
     private static float[] RandomDistributions(int rows, int cols, ulong seed)
     {

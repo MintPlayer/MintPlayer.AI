@@ -115,14 +115,15 @@ internal static class ChessLab
                 // GPU-resident conv forward for batched self-play (M43), when a GPU is present + the net is conv;
                 // else the autograd default. All the Ilgpu knowledge stays here, out of the generic campaign.
                 Func<IPolicyValueNet, IPolicyValueForward>? forwardFactory = adaptive is null ? null
-                    : net => adaptive.Gpu is { } gpu && net is ConvResidualPolicyValueNet conv
+                    : net => adaptive.Gpus.FirstOrDefault() is { } gpu && net is ConvResidualPolicyValueNet conv
                         ? gpu.CreateResidentForward(conv)
                         : new AutogradPolicyValueForward(net, game.ObservationSize);
                 // GPU-resident conv TRAINING step (M44), when a GPU is present + the net is conv; else null → the
                 // campaign's autograd default. Only conv+GPU has a resident trainer; the MLP/CPU paths stay autograd.
+                // (M45.1: single-GPU via Gpus[0]; multi-GPU sharding of generation is M45.2.)
                 Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory =
-                    (adaptive?.Gpu is null || netBuilder is not ConvNetBuilder) ? null
-                    : (net, adam) => adaptive!.Gpu!.CreateResidentTrainer(
+                    (adaptive?.Gpus.FirstOrDefault() is null || netBuilder is not ConvNetBuilder) ? null
+                    : (net, adam) => adaptive!.Gpus[0].CreateResidentTrainer(
                         (ConvResidualPolicyValueNet)net, batch, learningRate, clip, game.PolicySize, valueWeight);
                 return new SelfPlayCampaign<ChessState>(game, "chess", new SelfPlayOptions
                 {

@@ -19,7 +19,7 @@ internal static class ConvForwardBench
         Console.WriteLine("  devices: " + IlgpuBackend.DescribeDevices());
 
         var adaptive = new AdaptiveBackend();
-        Console.WriteLine($"  selected: {adaptive.Gpu?.AcceleratorName ?? "CPU accelerator only"}");
+        Console.WriteLine($"  selected: {adaptive.Gpus.FirstOrDefault()?.AcceleratorName ?? "CPU accelerator only"}");
 
         var rng = new Xoshiro256StarStar(1);
         var net = new ConvResidualPolicyValueNet(planes, board, board, actions, filters, blocks, rng);
@@ -34,7 +34,7 @@ internal static class ConvForwardBench
         double autoMs = TimeMs(() => autograd.Forward(obs, leafBatch), iters);
         Console.WriteLine($"  autograd (AdaptiveBackend): {autoMs:F2} ms/forward  ({leafBatch / (autoMs / 1000):N0} leaves/s)");
 
-        if (adaptive.Gpu is { } gpu)
+        if (adaptive.Gpus.FirstOrDefault() is { } gpu)
         {
             using var device = gpu.CreateResidentForward(net);
             var (dL, dV) = device.Forward(obs, leafBatch); // warm up (weight upload + JIT)
