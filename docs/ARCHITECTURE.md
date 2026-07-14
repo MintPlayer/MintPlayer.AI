@@ -171,10 +171,11 @@ learned value net lives in `Core/Planning`; inference-time **search** lives next
 seam, and net shape, so they share no search code. Both independently need to **batch the net forward during search**
 for GPU throughput, but by different mechanisms: MCTS collects a wave of leaves via virtual loss (`Mcts.SearchBatched`);
 the cube fans out successors and scores them through an injected batched/GPU-**resident** forward (`ITargetForward` +
-`Ilgpu/DeviceMlp`, weights staying on-device). The chess conv net has **no resident-forward analogue yet** — it routes
-through `Backend.Current` (re-uploading per GEMM), so its GPU path is currently less efficient than the cube's. A
-conv-net `DeviceMlp` equivalent is the one piece that would unify the two GPU paths; it is **postponed** (see
-[`RESIDUAL_CONV_NET_PRD.md`](prd/RESIDUAL_CONV_NET_PRD.md) §Deferred and [`OPTIMIZATIONS.md`](OPTIMIZATIONS.md)).
+`Ilgpu/DeviceMlp`, weights staying on-device). The chess conv net now has its resident analogue too —
+`Ilgpu/DeviceConvPolicyValueNet` (M43), behind the two-headed `Core/Nn/IPolicyValueForward` seam — so both families'
+GPU inference is resident (weights on-device, only the batch crosses the bus); it plugs into `Mcts.SearchBatched` via
+`SelfPlayCampaign`'s forward factory when `--gpu` is set. See
+[`GPU_RESIDENT_CONV_PRD.md`](prd/GPU_RESIDENT_CONV_PRD.md).
 
 **`DqnOptions` knobs** (defaults in `DqnTrainer.cs`): `Hidden` `[64,64]`, `Gamma` `0.99`, `LearningRate`
 `1e-3`, `BufferCapacity` `50k`, `BatchSize` `64`, `WarmupSteps` `1000`, `TrainEvery` `1`, `TargetSyncEvery`

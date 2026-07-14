@@ -1611,7 +1611,7 @@ gains a conv forward (inference-only), so that's a first-class phase, not a foll
 **Non-goals:** removing `PolicyValueNet` (stays the connect-4/cube-policy/rush-hour net + fast baseline) or `ResidualMlp`
 (stays the cube DAVI value net); spatial BatchNorm (reuse LayerNorm); Net2Net growth for the conv net (stays MLP-only).
 
-## M43 — GPU-resident batched forward for the conv net  *(2026-07-14; see `GPU_RESIDENT_CONV_PRD.md`)* — 🔜 designed (3-agent analysis), not built
+## M43 — GPU-resident batched forward for the conv net  *(2026-07-14; see `GPU_RESIDENT_CONV_PRD.md`)* — ✅ BUILT (M43.1 `852cf31` / M43.2 `b49a4c2` / M43.3 `f39cf2f`); correctness verified on the ILGPU CPU accelerator, on-GPU throughput number pending a CUDA box
 
 **Why:** `--gpu` + `--leaf-batch` (M42.5) batch the leaves, but the conv forward still routes through `Backend.Current`
 (weights re-upload per GEMM; activations round-trip host↔device between the tower's ~14 convs). The cube's value net
@@ -1627,13 +1627,14 @@ existing resident kernels, and the net's whole-row LayerNorm maps onto `LaunchLa
 the library; only CLI/DI selection is lab-specific. Inference-only (training stays autograd); no new determinism loss
 beyond what `--gpu` already accepts; testable on ILGPU's CPU accelerator (no discrete GPU needed).
 
-- **M43.1 — Core seam.** `IPolicyValueForward` (two-headed, inference-only, weight-sync lifecycle) + a bitwise-identical
-  `AutogradPolicyValueForward` CPU default; expose the conv net's shape; route `SelfPlayCampaign.EvaluateBatch` through it.
-- **M43.2 — Ilgpu impl + kernels.** `DeviceConvPolicyValueNet` + `LaunchIm2Col` + `LaunchScatterBias` +
-  `CreateResidentForward(ConvResidualPolicyValueNet)`. **Gate:** parity vs `ConvResidualPolicyValueNet.Forward` on the
-  ILGPU CPU accelerator within f32 tol.
-- **M43.3 — Lab wiring + measure.** Build the resident forward when `--gpu` + conv; re-sync weights per chunk; report
-  forward-throughput vs the non-resident path.
+- **M43.1 ✅ (`852cf31`) — Core seam.** `IPolicyValueForward` (two-headed, inference-only, weight-sync lifecycle) + a
+  bitwise-identical `AutogradPolicyValueForward` CPU default; conv-net shape exposed; `EvaluateBatch` routed through it.
+- **M43.2 ✅ (`b49a4c2`) — Ilgpu impl + kernels.** `DeviceConvPolicyValueNet` + the two new kernels (`Im2Col_Kernel`,
+  `ScatterBias_Kernel`) + `CreateResidentForward(ConvResidualPolicyValueNet)`. **Gate MET:** parity vs
+  `ConvResidualPolicyValueNet.Forward` on the ILGPU CPU accelerator within f32 tol (`IlgpuBackendTests`).
+- **M43.3 ✅ (`f39cf2f`) — Lab wiring.** Core-typed `forwardFactory` (campaign stays Ilgpu-free); `ChessLab` supplies the
+  GPU-aware factory + per-chunk `OnWeightsSynced`; `--gpu` safe on GPU-less machines (autograd fallback).
+  ⏳ on-GPU throughput measurement pending a CUDA box.
 
 **Non-goals:** resident conv *trainer* (training stays autograd on the owner thread); WDL/categorical value head;
 distributed actor→learner; browser conv perf. All still deferred (RESIDUAL_CONV_NET_PRD §8).

@@ -1,6 +1,7 @@
 # GPU-resident batched forward for the conv policy/value net — PRD
 
-**Status:** 🔜 designed (3-agent analysis 2026-07-14), not built. **Owner:** Pieterjan.
+**Status:** ✅ **BUILT** 2026-07-14 (M43.1 `852cf31` Core seam, M43.2 `b49a4c2` Ilgpu impl + kernels, M43.3 `f39cf2f`
+Lab wiring) — correctness verified on the ILGPU **CPU accelerator**; the on-GPU throughput number is pending a CUDA box. **Owner:** Pieterjan.
 **Milestone:** [PLAN.md](PLAN.md) M43 · **Depends on:** M42.5 batched leaf inference (`Mcts.SearchBatched` / `BatchEvaluate`,
 commit `4801c98`) — the seam this plugs into. **Promotes** the deferred item in
 [RESIDUAL_CONV_NET_PRD.md](RESIDUAL_CONV_NET_PRD.md) §8.1 and [OPTIMIZATIONS.md](../OPTIMIZATIONS.md) F.3.
@@ -84,15 +85,17 @@ public interface IPolicyValueForward
 
 ## 5. Phases
 
-- **M43.1 — Core seam.** `IPolicyValueForward` + `AutogradPolicyValueForward`; expose conv-net shape; refactor
-  `EvaluateBatch` to call the seam (CPU default). **Gate:** all self-play/determinism tests green, EvaluateBatch
-  bitwise-identical via the autograd default.
-- **M43.2 — Ilgpu impl + kernels.** `DeviceConvPolicyValueNet` + `LaunchIm2Col` + `LaunchScatterBias` +
-  `CreateResidentForward` overload. **Gate:** a parity test (on ILGPU's **CPU accelerator**, so it runs without a discrete
-  GPU) — `DeviceConvPolicyValueNet.Forward` vs `ConvResidualPolicyValueNet.Forward` on a real batch within f32 tolerance
-  (like `IlgpuBackendTests`).
-- **M43.3 — Lab wiring + measure.** Build the resident forward in `SelfPlayCampaign` when `--gpu` + conv; per-chunk sync.
-  **Gate:** self-play runs end-to-end with `--gpu --leaf-batch N`; report forward throughput vs the non-resident path.
+- **M43.1 ✅ (`852cf31`) — Core seam.** `IPolicyValueForward` + `AutogradPolicyValueForward`; conv-net shape exposed;
+  `EvaluateBatch` routed through the seam. **Gate MET:** `PolicyValueForwardTests` proves the autograd default is
+  bitwise-identical to `net.Forward` (rows 1 & 5); all self-play/determinism tests green.
+- **M43.2 ✅ (`b49a4c2`) — Ilgpu impl + kernels.** `DeviceConvPolicyValueNet` + the two new kernels (`Im2Col_Kernel`,
+  `ScatterBias_Kernel`) + `LaunchIm2Col`/`LaunchScatterBias` + `CreateResidentForward(ConvResidualPolicyValueNet)`.
+  **Gate MET:** `IlgpuBackendTests.DeviceConvForward_matches_autograd_conv_net` (rows 1 & 6) passes on the ILGPU **CPU
+  accelerator** within f32 tol (runs in CI; the CUDA path runs the same kernels).
+- **M43.3 ✅ (`f39cf2f`) — Lab wiring.** `SelfPlayCampaign` takes a Core-typed `forwardFactory` (keeps it Ilgpu-free);
+  `ChessLab` supplies the GPU-aware factory (`--gpu` + conv → resident; else autograd) and per-chunk `OnWeightsSynced`.
+  **Gate:** wiring green, `--gpu` safe on GPU-less machines (falls back). ⏳ **Throughput measurement pending a CUDA box**
+  (no discrete GPU here; correctness verified via M43.2).
 
 ## 6. Risks
 
