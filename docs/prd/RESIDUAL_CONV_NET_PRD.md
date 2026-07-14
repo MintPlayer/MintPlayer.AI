@@ -179,8 +179,10 @@ deliberately deferred (they only pay off on a GPU cluster / long run, and should
    routes through `Backend.Current`, which re-uploads weights per GEMM; the cube's value net keeps weights on-device
    across steps via `DeviceMlp`/`ITargetForward`. A conv `DeviceMlp` is the one piece that would (a) make the chess GPU
    path as efficient as the cube's and (b) **unify the two families' GPU inference** (see `ARCHITECTURE.md` §4, "Two
-   distinct neural-search families"). It's a genuine build, not a refactor, and only worth it once a GPU run is
-   actually happening — **postponed.**
+   distinct neural-search families"). **→ Now designed** (3-agent analysis 2026-07-14): a two-headed `IPolicyValueForward`
+   Core seam + an Ilgpu `DeviceConvPolicyValueNet` needing only **two new kernels** (device im2col + scatter/bias); full
+   plan in **[GPU_RESIDENT_CONV_PRD.md](GPU_RESIDENT_CONV_PRD.md)** (milestone M43). Still gated on a real GPU/cluster
+   run being worth it, but the build is now specified rather than vague.
 2. **Distributed actor→learner topology** — many self-play workers feeding a central trainer + weight broadcast
    (the standard multi-GPU AlphaZero layout). Single-process today; would be built from scratch. **Postponed.**
 3. **Quality features a strong run needs** — WDL/categorical value head, auxiliary targets (moves-left, material),
