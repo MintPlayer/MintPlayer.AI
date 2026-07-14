@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 using MintPlayer.AI.ReinforcementLearning.Environments.Chess;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -101,14 +102,24 @@ internal static class ChessLab
         var cfg = new Mcts.Config(Simulations: sims, Cpuct: a.Flt("--cpuct", 1.25f),
             DirichletAlpha: a.Flt("--dirichlet-alpha", 0.3f), RootNoiseFrac: a.Flt("--root-noise", 0.25f));
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: useGpu,
-            sp => new SelfPlayCampaign<ChessState>(game, "chess", new SelfPlayOptions
+            sp =>
             {
-                Seed = seed, LearningRate = learningRate, Hidden = hidden, Search = cfg,
-                GamesPerChunk = gamesPerChunk, TempMoves = tempMoves, EvalGames = evalGames,
-                WindowCapacity = window, BatchSize = batch, EpochsPerChunk = epochs, MaxPlies = maxPlies,
-                OpponentRandomFrac = opponentRandom, Ladder = ladder, MaterialWeight = materialWeight,
-                ValueWeight = valueWeight, GradClipNorm = clip, Parallel = parallel, MaxDop = dop, LeafBatch = leafBatch,
-            }, netBuilder: netBuilder, backend: useGpu ? sp.GetRequiredService<AdaptiveBackend>() : null),
+                var adaptive = useGpu ? sp.GetRequiredService<AdaptiveBackend>() : null;
+                // GPU-resident conv forward for batched self-play (M43), when a GPU is present + the net is conv;
+                // else the autograd default. All the Ilgpu knowledge stays here, out of the generic campaign.
+                Func<IPolicyValueNet, IPolicyValueForward>? forwardFactory = adaptive is null ? null
+                    : net => adaptive.Gpu is { } gpu && net is ConvResidualPolicyValueNet conv
+                        ? gpu.CreateResidentForward(conv)
+                        : new AutogradPolicyValueForward(net, game.ObservationSize);
+                return new SelfPlayCampaign<ChessState>(game, "chess", new SelfPlayOptions
+                {
+                    Seed = seed, LearningRate = learningRate, Hidden = hidden, Search = cfg,
+                    GamesPerChunk = gamesPerChunk, TempMoves = tempMoves, EvalGames = evalGames,
+                    WindowCapacity = window, BatchSize = batch, EpochsPerChunk = epochs, MaxPlies = maxPlies,
+                    OpponentRandomFrac = opponentRandom, Ladder = ladder, MaterialWeight = materialWeight,
+                    ValueWeight = valueWeight, GradClipNorm = clip, Parallel = parallel, MaxDop = dop, LeafBatch = leafBatch,
+                }, netBuilder: netBuilder, backend: adaptive, forwardFactory: forwardFactory);
+            },
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
     }

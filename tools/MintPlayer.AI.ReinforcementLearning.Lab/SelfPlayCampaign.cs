@@ -78,8 +78,11 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     private readonly string _checkpointKind;
     private IPolicyValueNet _net = null!;
     // Inference forward for batched self-play (the GPU-resident seam, M43). Default = the autograd forward over _net;
-    // a device-resident impl can be installed here. Built in Resume once _net exists.
+    // a device-resident impl can be installed via _forwardFactory. Built in Resume once _net exists, re-synced per chunk.
     private IPolicyValueForward _forward = null!;
+    // Optional factory (from the lab entry point, which owns the GPU knowledge) that builds a resident forward for the
+    // loaded net; null → the autograd default. Keeps this generic campaign free of any Ilgpu dependency.
+    private readonly Func<IPolicyValueNet, IPolicyValueForward>? _forwardFactory;
     private Adam _adam = null!;
     private readonly List<Sample> _window;
     private TrainWindow _lossWindow;
@@ -91,9 +94,11 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     /// <param name="netBuilder">Net architecture factory (default = the flat MLP, sized from <c>options.Hidden</c>).</param>
     /// <param name="backend">Optional compute backend (e.g. the GPU AdaptiveBackend) installed as Backend.Current.</param>
     public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, SelfPlayOptions options,
-        IPolicyValueNetBuilder? netBuilder = null, IComputeBackend? backend = null)
+        IPolicyValueNetBuilder? netBuilder = null, IComputeBackend? backend = null,
+        Func<IPolicyValueNet, IPolicyValueForward>? forwardFactory = null)
     {
         _backend = backend;
+        _forwardFactory = forwardFactory;
         _parallel = options.Parallel;
         _maxDop = options.MaxDop;
         _ladder = options.Ladder;
@@ -150,7 +155,7 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             Log($"starting fresh {_environmentId} self-play ({_net.Describe()}, {_selfPlayCfg.Simulations} sims/move)");
         }
         _adam = AdamState.LoadOrInit(store, _environmentId, AdamId, _net.Parameters(), _learningRate, Log);
-        _forward = new AutogradPolicyValueForward(_net, _game.ObservationSize); // M43.3 may swap in a GPU-resident impl
+        _forward = _forwardFactory?.Invoke(_net) ?? new AutogradPolicyValueForward(_net, _game.ObservationSize);
         if (_ladder is not null) LoadLadderState();
         return resumed;
     }
@@ -193,6 +198,9 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
                 }
             }
         }
+        // Re-sync the inference forward to the just-trained weights, so next chunk's generation uses them. For the
+        // autograd default this re-points the same net (a no-op); for a GPU-resident forward it re-uploads the weights.
+        _forward.OnWeightsSynced(_net);
         return _totalGames;
     }
 
