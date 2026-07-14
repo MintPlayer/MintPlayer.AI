@@ -31,6 +31,19 @@ internal static class ChessLab
         // --demo: play one self-play game with the (trained) net and print FENs to watch — no training.
         if (a.Has("--demo")) { ChessDemo.Run(dataDir, sims, seed, a.Int("--demo-plies", 100)); return; }
 
+        // --vs-minimax: NON-SATURATING strength eval — the (trained) net vs a fixed material alpha-beta of --minimax-depth.
+        // Unlike winRate-vs-random (saturates) or self-play material (self-referential), this measures whether training
+        // actually improved play: a genuinely stronger net beats a deeper opponent. Raise --minimax-depth as the net grows.
+        if (a.Has("--vs-minimax"))
+        {
+            ChessStrengthEval.Run(
+                ckptPath: a.Str("--ckpt", Path.Combine(dataDir, "chess.az.ckpt")),
+                arch: a.Str("--arch", "conv"), filters: a.Int("--filters", 64), blocks: a.Int("--blocks", 6),
+                hidden: [hidden, hidden], sims: sims, depth: a.Int("--minimax-depth", 2),
+                games: a.Int("--strength-games", 40), maxPlies: maxPlies, openingPlies: a.Int("--opening-plies", 4), seed: seed);
+            return;
+        }
+
         // --ladder: hands-off difficulty ladder (M40.4). Whenever the live net beats the last-promoted checkpoint by a
         // margin in a net-vs-net arena, a new tier .ckpt + updated manifest are written straight into the web app's
         // models dir — so `--game chess --ladder --hours N` grows the site's difficulty roster with no manual steps.
