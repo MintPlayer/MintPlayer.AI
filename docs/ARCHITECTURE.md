@@ -158,11 +158,23 @@ learned value net lives in `Core/Planning`; inference-time **search** lives next
 | [`Core/Training/NStepAccumulator.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Training/NStepAccumulator.cs) | Folds n-step returns before buffering: reward → Σ discounted next-n; bootstrap → γⁿ. Handles terminal vs truncation at episode ends. |
 | [`Core/Training/PpoTrainer.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Training/PpoTrainer.cs) | PPO: vectorized envs, GAE(λ), clipped surrogate, orthogonal init, LR anneal. |
 | [`Core/Training/Evaluator.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Training/Evaluator.cs) | Greedy evaluation runner (returns, lengths, success rate). |
+| [`Core/Planning/Mcts.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Planning/Mcts.cs) | AlphaZero-style **two-player PUCT MCTS** over an `IZeroSumGame` + a two-headed policy/value net. `Search` is the sequential (batch-1) path; `SearchBatched` adds **virtual-loss batched leaf inference** (evaluate a wave of leaves in one `Forward` — the GPU-utilization path). Used by **chess + connect-4 self-play** (`SelfPlayCampaign`). |
 | [`Core/Planning/ValueIterationTrainer.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Planning/ValueIterationTrainer.cs) | Teacher-free deep approximate value iteration (DAVI / DeepCubeA style) over a forward model. |
 | [`Core/Planning/ValueGuidedSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Planning/ValueGuidedSearch.cs), [`GreedyValuePlanner.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Planning/GreedyValuePlanner.cs) | Weighted-A\* / greedy solve over a learned cost-to-go. |
 | [`Environments/FruitCake/FruitCakeSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/FruitCakeSearch.cs) | Depth-1→3 forward search; known current+next maximize, the 3rd ply is an **expectimax chance node** over the unknown fruit. |
 | [`Environments/Game2048/Expectimax2048.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/Game2048/Expectimax2048.cs) | Expectimax over the n-tuple afterstate value (chance node = the random tile spawn). |
 | [`Environments/RubiksCube/CubePolicySearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/CubePolicySearch.cs), [`CubeValueSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/CubeValueSearch.cs) | Beam / value-guided search over the cube nets. |
+
+**Two distinct neural-search families — not duplicates.** Chess/connect-4 use **`Mcts`** (two-player PUCT over
+`IZeroSumGame`, two-headed net); the cube uses **`ValueIterationTrainer` + `ValueGuidedSearch`/`GreedyValuePlanner`**
+(single-agent value iteration / beam over `IDeterministicModel`, scalar cost-to-go net). Different algorithm, game
+seam, and net shape, so they share no search code. Both independently need to **batch the net forward during search**
+for GPU throughput, but by different mechanisms: MCTS collects a wave of leaves via virtual loss (`Mcts.SearchBatched`);
+the cube fans out successors and scores them through an injected batched/GPU-**resident** forward (`ITargetForward` +
+`Ilgpu/DeviceMlp`, weights staying on-device). The chess conv net has **no resident-forward analogue yet** — it routes
+through `Backend.Current` (re-uploading per GEMM), so its GPU path is currently less efficient than the cube's. A
+conv-net `DeviceMlp` equivalent is the one piece that would unify the two GPU paths; it is **postponed** (see
+[`RESIDUAL_CONV_NET_PRD.md`](prd/RESIDUAL_CONV_NET_PRD.md) §Deferred and [`OPTIMIZATIONS.md`](OPTIMIZATIONS.md)).
 
 **`DqnOptions` knobs** (defaults in `DqnTrainer.cs`): `Hidden` `[64,64]`, `Gamma` `0.99`, `LearningRate`
 `1e-3`, `BufferCapacity` `50k`, `BatchSize` `64`, `WarmupSteps` `1000`, `TrainEvery` `1`, `TargetSyncEvery`

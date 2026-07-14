@@ -1536,7 +1536,7 @@ bitwise-reproducibility invariant (M25/M26/**M36 SHA-verified**) is preservable 
 campaign; the pattern is generic and matches Core's existing determinism approach, so it should be (and now will be)
 extracted. **Non-goals:** GPU/batched-MCTS (separate, larger effort); parallelizing the DQN campaigns (not the bottleneck).
 
-## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED (merged to master, PR #31) · M42.3 🟡 partial (draw-collapse pathology diagnosed + fixed, commit `282c665`, but strength gains UNPROVEN — tiers don't beat baseline on a fair eval + metrics saturate; needs non-saturating eval + scale) · M42.4 🟡 steps 1+3 done (`c1c7d8e`), browser wiring (2+4) remains. No conv tier shippable yet.
+## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED (merged to master, PR #31) · M42.3 🟡 partial (draw-collapse pathology diagnosed + fixed, commit `282c665`, but strength gains UNPROVEN — tiers don't beat baseline on a fair eval + metrics saturate; needs non-saturating eval + scale) · M42.4 🟡 steps 1+3 done (`c1c7d8e`), browser wiring (2+4) remains · M42.5 🟡 scale-readiness (batched leaf inference + `--gpu` + non-saturating strength eval shipped; resident-conv-forward, distribution, WDL/history deferred). No conv tier shippable yet.
 
 **Why:** chess self-play has **plateaued at ~random** (M40.4: winRate-vs-random ~50%→35%, material margin flat ~+0.1
 of the +0.75 gate, no tier ever promotes) despite 256 sims + material-shaped targets. The honest bottleneck is the
@@ -1597,6 +1597,14 @@ gains a conv forward (inference-only), so that's a first-class phase, not a foll
   MintPlayer.Polyglot#29). **Remaining:** TS conv parser in `chess-net.ts` + regen `chess_solver.ts` (CLI at
   `C:\Repos\MintPlayer.Polyglot`) + wire `loadChessNet`/`chess-director.ts` + copy the chosen conv tier into
   `wwwroot/models`. Best done **interactively** (regenerating the committed `.ts` blind risks the live MLP `/chess`).
+- **M42.5 🟡 scale-readiness (repo value = *prove the SDK can train a chess AI*, not our weak net).** Shipped:
+  **batched leaf inference** (`Mcts.SearchBatched`, virtual loss → a wave of leaves per `net.Forward`; `--leaf-batch`;
+  `leafBatch=1` bitwise-identical to sequential, proven) + **`--gpu`** wiring (commit `4801c98`); non-saturating
+  **`--vs-minimax`** strength eval (`7526bd7`); **`--value-weight`** (`71366dd`). **Deferred (postponed, only pays off
+  on a real GPU/cluster run — see PRD §8):** (a) a **GPU-resident batched forward for the conv net** (conv analogue of
+  `Ilgpu/DeviceMlp`) — the one piece that unifies the chess-MCTS and cube-value GPU paths; (b) distributed
+  actor→learner topology; (c) quality features (WDL head, aux targets, history planes); (d) de-ceiling knobs via a
+  `SelfPlayOptions` record (avoid ctor boilerplate).
 
 **Non-goals:** removing `PolicyValueNet` (stays the connect-4/cube-policy/rush-hour net + fast baseline) or `ResidualMlp`
 (stays the cube DAVI value net); spatial BatchNorm (reuse LayerNorm); Net2Net growth for the conv net (stays MLP-only).

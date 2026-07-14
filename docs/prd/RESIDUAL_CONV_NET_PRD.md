@@ -159,4 +159,31 @@ The whole M40 browser story is single-source Polyglot inference: `PgPolicyValueN
 - M42.3: chess conv run **beats the MLP baseline** on material margin / winRate with ≥1 tier promoted; determinism preserved.
 - M42.4: `ChessNetParityTests` green on conv `.ckpt`; `/chess` plays a conv tier end-to-end.
 
-See [PLAN.md](PLAN.md) M42.
+## 8. Scale-out & Deferred (postponed — for a well-resourced training run)
+
+The pipeline is a correct **single-machine** trainer. Two items were built to remove scaling ceilings; the rest are
+deliberately deferred (they only pay off on a GPU cluster / long run, and shouldn't be retrofitted speculatively).
+
+**Shipped (scale-readiness):**
+- ✅ **Batched leaf inference** — `Mcts.SearchBatched` (virtual-loss; evaluates a wave of MCTS leaves in one
+  `net.Forward`) + `--leaf-batch`, so self-play isn't stuck at batch-1. Opt-in; `leafBatch=1` is bitwise-identical to
+  the sequential path (proven by test). Commit `4801c98`.
+- ✅ **`--gpu`** wiring — installs the ILGPU `AdaptiveBackend` as `Backend.Current` (was hardcoded CPU-only for chess).
+
+**Deferred (postponed):**
+1. **GPU-*resident* batched forward for the conv net (a conv analogue of `Ilgpu/DeviceMlp`).** Today the conv net
+   routes through `Backend.Current`, which re-uploads weights per GEMM; the cube's value net keeps weights on-device
+   across steps via `DeviceMlp`/`ITargetForward`. A conv `DeviceMlp` is the one piece that would (a) make the chess GPU
+   path as efficient as the cube's and (b) **unify the two families' GPU inference** (see `ARCHITECTURE.md` §4, "Two
+   distinct neural-search families"). It's a genuine build, not a refactor, and only worth it once a GPU run is
+   actually happening — **postponed.**
+2. **Distributed actor→learner topology** — many self-play workers feeding a central trainer + weight broadcast
+   (the standard multi-GPU AlphaZero layout). Single-process today; would be built from scratch. **Postponed.**
+3. **Quality features a strong run needs** — WDL/categorical value head, auxiliary targets (moves-left, material),
+   input history planes, larger default `--filters/--blocks`. Research-backed (Leela/KataGo); **postponed** behind the
+   scale decision.
+4. **De-ceiling knobs** — expose the remaining hardcoded hyperparameters (replay-window, batch, Dirichlet α/ε, cpuct,
+   epochs-per-chunk, grad-clip) via a `SelfPlayOptions` record (one config bag, not more ctor params — avoids the
+   telescoping-constructor boilerplate). Small; do it when a real run needs the knobs.
+
+See [PLAN.md](PLAN.md) M42 and [OPTIMIZATIONS.md](../OPTIMIZATIONS.md).
