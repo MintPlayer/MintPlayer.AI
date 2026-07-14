@@ -1536,7 +1536,7 @@ bitwise-reproducibility invariant (M25/M26/**M36 SHA-verified**) is preservable 
 campaign; the pattern is generic and matches Core's existing determinism approach, so it should be (and now will be)
 extracted. **Non-goals:** GPU/batched-MCTS (separate, larger effort); parallelizing the DQN campaigns (not the bottleneck).
 
-## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED (merged to master, PR #31) · M42.3 ✅ core goal met (conv beats MLP baseline; draw-collapse fixed, commit `282c665`; limit = net capacity) · M42.4 🟡 steps 1+3 done (`c1c7d8e`), browser wiring (2+4) remains
+## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED (merged to master, PR #31) · M42.3 🟡 partial (draw-collapse pathology diagnosed + fixed, commit `282c665`, but strength gains UNPROVEN — tiers don't beat baseline on a fair eval + metrics saturate; needs non-saturating eval + scale) · M42.4 🟡 steps 1+3 done (`c1c7d8e`), browser wiring (2+4) remains. No conv tier shippable yet.
 
 **Why:** chess self-play has **plateaued at ~random** (M40.4: winRate-vs-random ~50%→35%, material margin flat ~+0.1
 of the +0.75 gate, no tier ever promotes) despite 256 sims + material-shaped targets. The honest bottleneck is the
@@ -1581,12 +1581,16 @@ gains a conv forward (inference-only), so that's a first-class phase, not a foll
     the outcome signal vanishes ⇒ net collapses to passive, material-bleeding play. (My throughput tuning — low sims +
     short plies — *caused* it.) Fix: **material-adjudicate ply-capped games** (`GameResult.Ongoing` at cap + ≥1.5-pawn
     edge → win/loss z, else true draw; no-op for materialless games → Connect-4 determinism stays bitwise-green).
-    **Result: collapse broken** — same config went −9 → **+3.78 pawns and a merit Level-2 promotion**. Multiple merit
-    tiers then promote (conv **beats the MLP baseline** — M42.3 gate met).
-  - **Remaining limit (honest):** post-fix the 64f/64-sim self-play **oscillates** (winRate-vs-random ~45–56%) rather
-    than climbing monotonically; the ladder captures peaks. Lower LR (`3e-4`) helped stability; **doubling sims (128)
-    did NOT lift the ceiling** → bottleneck is **net capacity (filters/blocks)**, the clear next lever (for a
-    user-supervised longer run). Overnight run-by-run detail: `data/chess-conv-autorun-log.md`.
+    **Result: collapse broken** — same config went −9 → **+3.78 pawns** in self-play, and the material regression
+    stopped. Merit tiers promoted — but on **8-game-noisy** evals + the self-play **material** metric.
+  - **Honest limit — strength gains UNPROVEN.** A fair **40-game winRate-vs-random** ranking of the captured tiers
+    (`data/tier-ranking.txt`) came out ~50–59% and **did not beat the barely-trained baseline** (L1 58.8% ≥ L3 52.5%),
+    so the conv net at 64f/64-sim after ~100–200 games doesn't demonstrably play stronger than its baseline. Caveats:
+    winRate-vs-random **saturates** (any net that draws-but-can't-mate random ≈ 50%) so it can't cleanly rank them
+    either; and the draw-collapse fix is genuinely real. **The real gap: no non-saturating strength metric.** Next:
+    (a) add a non-saturating eval (vs a simple material-greedy / depth-2 minimax opponent) to *measure* strength;
+    (b) then scale training volume (AlphaZero needs ≫200 games), net capacity, and sims (128 didn't help → capacity/
+    volume is the limit). Overnight detail: `data/chess-conv-autorun-log.md`. **No conv tier shippable yet.**
 - **M42.4 🟡 steps 1+3 DONE (commit `c1c7d8e`); steps 2+4 (browser wiring) remain.** The conv forward is single-sourced
   in `chess_solver.pg` (`PgConvNet`) with a C# parity test (`ChessNetParityTests`) green on real conv `.ckpt` bytes
   (<2e-3); dispatch via a nullable `PgPolicyValueNet.conv` field (no `.pg` interface feature — filed

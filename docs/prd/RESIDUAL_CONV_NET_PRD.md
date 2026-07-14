@@ -1,6 +1,6 @@
 # Convolutional residual policy/value net (Core) + chess adoption — PRD
 
-**Status:** M42.1 + M42.2 ✅ SHIPPED 2026-07-13 (merged to master via PR #31) · M42.3 ✅ **core goal met** — conv beats the MLP baseline (draw-collapse diagnosed + fixed, commit `282c665`; multiple merit tiers promote); remaining limit is oscillation → sims/capacity, see below · M42.4 🟡 steps 1+3 done (`c1c7d8e`), steps 2+4 (browser wiring) remain.
+**Status:** M42.1 + M42.2 ✅ SHIPPED 2026-07-13 (merged to master via PR #31) · M42.3 🟡 **partial** — a real training pathology (draw-collapse) was diagnosed + fixed (commit `282c665`) and the self-play material regression stopped, BUT genuine playing-strength gains are **not yet demonstrated**: over a fair 40-game eval the ladder tiers don't beat the barely-trained baseline, and both available metrics saturate/are self-referential (see below). Needs a non-saturating strength eval + far more scale · M42.4 🟡 steps 1+3 done (`c1c7d8e`), steps 2+4 (browser wiring) remain. **No conv tier is shippable yet** (none proven stronger than the current MLP demo).
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M42 · **Depends on:** M41 (parallel self-play — makes the training iterations this needs affordable) · **Supersedes** the "flat MLP is the ceiling" note in [CHESS_WEB_POLYGLOT_PRD.md](CHESS_WEB_POLYGLOT_PRD.md) and [CHESS_SELFPLAY_PRD.md](CHESS_SELFPLAY_PRD.md).
 
@@ -47,13 +47,20 @@
     win/loss instead of z=0, so non-mating games carry a real signal (no-op for materialless games like Connect-4, so
     the DOP-determinism test stays bitwise-green). **Result: collapse broken** — same fast config went from −9 pawns to
     **+3.78 and a merit Level-2 promotion** at the same game count.
-  - **Remaining limit (honest): oscillation, not mastery.** With adjudication, the ladder reliably promotes merit tiers
-    (verified across runs), but 64-filter/64-sim self-play **oscillates** (winRate-vs-random bounces ~45–56%) rather
-    than climbing monotonically; lowering LR (`3e-4`) stabilised it somewhat (promoted L1/L2/L3 with rising external
-    winRate) but didn't remove the oscillation. The ladder's job is to capture the peaks, which it does. The clear next
-    lever — being tested overnight — is **search depth (`--sims`)**: deeper MCTS → less-noisy policy targets → higher
-    ceiling. Bigger `--filters/--blocks` is the capacity lever after that. *(Full run-by-run detail lived in
-    `data/chess-conv-autorun-log.md` during the autonomous session.)*
+  - **Honest limit — strength gains UNPROVEN; the metrics saturate.** The ladder promoted merit tiers, but on
+    **8-game-noisy** evals + the **material** metric (which adjudication amplifies *within self-play* but doesn't
+    necessarily translate to external strength). A fair **40-game winRate-vs-random** ranking of the captured tiers
+    (constant sims/seed) came out ~50–59% and **did not beat the barely-trained baseline** (L1 58.8%, L3 52.5%). So the
+    conv net at 64f/64-sim after ~100–200 games does **not** demonstrably play stronger chess than its own baseline.
+    Two caveats keep this from being purely negative: (1) `winRate-vs-random` itself **saturates** — any net that draws
+    random but can't mate it scores ~50%, so it can't cleanly rank these tiers either; (2) the draw-collapse fix is
+    real (the non-adjudicated run's material slid to −9; adjudication stopped that regression). **Real gap:** there is
+    **no non-saturating strength metric** — both signals are saturating (winRate) or self-referential/gameable
+    (material-in-self-play). **Next steps (evidence-backed):** (a) add a non-saturating eval — play vs a simple
+    material-greedy or depth-2 minimax opponent — to actually *measure* strength; (b) only then scale **training volume
+    (AlphaZero needs far more than ~200 games)**, **net capacity (`--filters/--blocks`)**, and **`--sims`**. Doubling
+    sims to 128 overnight did **not** lift the ceiling, consistent with capacity/volume being the real limit.
+    *(Full run-by-run detail: `data/chess-conv-autorun-log.md`.)*
 - **M42.4** 🟡 **steps 1+3 DONE (commit `c1c7d8e`)**: the conv forward is single-sourced in `chess_solver.pg`
   (`PgConvNet`, direct nested-loop conv + whole-row LayerNorm + residual tower + both heads) and a C# parity test
   (`ChessNetParityTests`) proves it matches `ConvResidualPolicyValueNet.Forward` on real conv `.ckpt` bytes (<2e-3).
