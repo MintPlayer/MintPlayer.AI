@@ -281,7 +281,7 @@ internal sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSetting
     {
         (_targetForward as IDisposable)?.Dispose();
         _residentTrain?.Dispose();
-        _targetForward = _backend.Gpu is { } gpu
+        _targetForward = _backend.Gpus.FirstOrDefault() is { } gpu
             ? _net switch
             {
                 Mlp m => gpu.CreateResidentForward(m),
@@ -289,7 +289,7 @@ internal sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSetting
                 _ => (ITargetForward?)null,
             }
             : null;
-        _residentTrain = _backend.Gpu is { } gpu2 && _net is ResidualMlp resNet
+        _residentTrain = _backend.Gpus.FirstOrDefault() is { } gpu2 && _net is ResidualMlp resNet
             ? gpu2.CreateResidentTrainer(resNet, _options.BatchSize, _options.LearningRate, _options.GradClipNorm, _options.HuberDelta, _options.AdamBeta2)
             : null;
         _trainer = new ValueIterationTrainer<FaceletCube>(_model, Featurize, _net, _adam, _options, _targetForward, _residentTrain);

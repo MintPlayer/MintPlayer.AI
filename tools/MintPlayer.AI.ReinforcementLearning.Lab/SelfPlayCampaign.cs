@@ -20,7 +20,9 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
 {
     private const string NetId = "az";
     private const string AdamId = "az-adam";
-    private const int BatchSize = 128;
+    private readonly int _batchSize;
+    private readonly int _epochsPerChunk;
+    private readonly float _gradClipNorm;
 
     private readonly IZeroSumGame<TState> _game;
     private readonly string _environmentId;
@@ -60,58 +62,95 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // (null → pure outcome, unchanged); `_materialWeight` (α) = blend; MaterialScale squashes pawns → [-1,1] via tanh.
     private readonly IMaterialScore<TState>? _material;
     private readonly float _materialWeight;
+    // Weight on the value (MSE) loss relative to the policy (CE) loss (1 = equal). Down-weighting is the standard fix
+    // for value-head overfitting → strength regression at small scale (Leela Zero cut it 1.0→0.25).
+    private readonly float _valueWeight;
+    // Leaf-inference batch size for self-play MCTS. 1 = sequential (bitwise back-compat). >1 uses Mcts.SearchBatched
+    // (virtual loss) so each net.Forward sees a batch of leaves — the only way self-play keeps a GPU busy.
+    private readonly int _leafBatch;
+    // Optional compute backend (e.g. the GPU AdaptiveBackend). When set, installed as Backend.Current in Resume — a
+    // plain (non-thread-static) global, so the parallel self-play worker threads route their GEMMs through it too.
+    private readonly IComputeBackend? _backend;
     private const float MaterialScale = 5f;
 
     // How the net is built + reloaded (arch-agnostic seam: MLP by default, conv when a ConvNetBuilder is passed).
     private readonly IPolicyValueNetBuilder _builder;
     private readonly string _checkpointKind;
     private IPolicyValueNet _net = null!;
+    // Inference forwards for batched self-play (the GPU-resident seam, M43; multi-GPU, M45). One forward PER selected
+    // GPU — each game routes its leaf batch to _forwards[globalIndex % Count] so generation shards across GPUs (each
+    // backend has its own device lock → parallel across devices). Single GPU / CPU → a one-element list (identical to
+    // M43/M44). Default = one autograd forward over _net; device-resident impls installed via _forwardFactory. Built in
+    // Resume once _net exists; re-synced (fanned out to every forward) per chunk.
+    private IReadOnlyList<IPolicyValueForward> _forwards = null!;
+    // Optional factory (from the lab entry point, which owns the GPU knowledge) that builds the resident forward(s) for
+    // the loaded net — one per selected GPU; null → a single autograd default. Keeps this campaign free of Ilgpu.
+    private readonly Func<IPolicyValueNet, IReadOnlyList<IPolicyValueForward>>? _forwardFactory;
+    // Training step for the batch loop (the GPU-resident TRAINING seam, M44). Default = the autograd step over _net +
+    // _adam (bitwise-identical to the pre-seam inline loss); a device-resident impl can be installed via
+    // _trainStepFactory. Built in Resume once _net + _adam exist; SyncToHost'd back to _net before eval/checkpoint.
+    private IPolicyValueTrainStep _trainStep = null!;
+    // Optional factory (from the lab entry point, which owns the GPU knowledge) that builds a resident trainer for the
+    // loaded net + optimizer; null → the autograd default. Keeps this generic campaign free of any Ilgpu dependency.
+    private readonly Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? _trainStepFactory;
     private Adam _adam = null!;
     private readonly List<Sample> _window;
     private TrainWindow _lossWindow;
     private long _totalSamples, _totalGames;
     private double _liveLoss = double.NaN, _lastWinRate = double.NaN;
 
-    public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, ulong seed, float learningRate,
-        int hidden, Mcts.Config selfPlayCfg, int gamesPerChunk = 32, int tempMoves = 8, int evalGames = 20,
-        int windowCapacity = 40_000, int maxPlies = 512, long targetGames = 0, double opponentRandomFrac = 0,
-        LadderOptions? ladder = null, float materialWeight = 0f, bool parallel = false, int? maxDop = null,
-        IPolicyValueNetBuilder? netBuilder = null)
+    /// <param name="options">All tunable config (see <see cref="SelfPlayOptions"/>). Defaults reproduce the previous
+    /// constructor defaults exactly.</param>
+    /// <param name="netBuilder">Net architecture factory (default = the flat MLP, sized from <c>options.Hidden</c>).</param>
+    /// <param name="backend">Optional compute backend (e.g. the GPU AdaptiveBackend) installed as Backend.Current.</param>
+    public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, SelfPlayOptions options,
+        IPolicyValueNetBuilder? netBuilder = null, IComputeBackend? backend = null,
+        Func<IPolicyValueNet, IReadOnlyList<IPolicyValueForward>>? forwardFactory = null,
+        Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory = null)
     {
-        _parallel = parallel;
-        _maxDop = maxDop;
-        _ladder = ladder;
+        _backend = backend;
+        _forwardFactory = forwardFactory;
+        _trainStepFactory = trainStepFactory;
+        _parallel = options.Parallel;
+        _maxDop = options.MaxDop;
+        _ladder = options.Ladder;
         _material = game as IMaterialScore<TState>; // dense material shaping when the game supports it
-        _materialWeight = materialWeight;
+        _materialWeight = options.MaterialWeight;
+        _valueWeight = options.ValueWeight;
+        _leafBatch = options.LeafBatch < 1 ? 1 : options.LeafBatch;
+        _batchSize = options.BatchSize;
+        _epochsPerChunk = options.EpochsPerChunk;
+        _gradClipNorm = options.GradClipNorm;
         // Independent stream (not from SeedSequence) so the arena can't perturb the training/eval RNG → reproducible.
-        _arenaRng = new Xoshiro256StarStar(unchecked(seed * 0x9E3779B97F4A7C15UL + 0xD1B54A32D192ED03UL));
-        _opponentRandomFrac = opponentRandomFrac;
+        _arenaRng = new Xoshiro256StarStar(unchecked(options.Seed * 0x9E3779B97F4A7C15UL + 0xD1B54A32D192ED03UL));
+        _opponentRandomFrac = options.OpponentRandomFrac;
         _game = game;
         _environmentId = environmentId;
-        _learningRate = learningRate;
-        _hidden = [hidden, hidden];
+        _learningRate = options.LearningRate;
+        _hidden = [options.Hidden, options.Hidden];
         _builder = netBuilder ?? new MlpNetBuilder(_hidden); // default = the flat MLP (back-compat)
         _checkpointKind = _builder.CheckpointKind;
-        _selfPlayCfg = selfPlayCfg;
-        _evalCfg = selfPlayCfg with { RootNoiseFrac = 0f }; // eval plays deterministically (no exploration noise)
-        _gamesPerChunk = gamesPerChunk;
-        _tempMoves = tempMoves;
-        _evalGames = evalGames;
-        _windowCapacity = windowCapacity;
-        _maxPlies = maxPlies;
-        _targetGames = targetGames;
-        _seeds = new SeedSequence(seed);
+        _selfPlayCfg = options.Search;
+        _evalCfg = options.Search with { RootNoiseFrac = 0f }; // eval plays deterministically (no exploration noise)
+        _gamesPerChunk = options.GamesPerChunk;
+        _tempMoves = options.TempMoves;
+        _evalGames = options.EvalGames;
+        _windowCapacity = options.WindowCapacity;
+        _maxPlies = options.MaxPlies;
+        _targetGames = options.TargetGames;
+        _seeds = new SeedSequence(options.Seed);
         // The training-window shuffle runs on the owner thread; it gets the Buffer stream so it never collides with
         // the Policy stream that per-game generation derives its RNGs from (game 0 would otherwise share a seed).
         _shuffleRng = _seeds.CreateRng(RngStreams.Buffer);
         _evalRng = _seeds.CreateRng(RngStreams.Evaluation);
-        _window = new List<Sample>(windowCapacity);
+        _window = new List<Sample>(options.WindowCapacity);
     }
 
     public string Environment => _environmentId;
 
     public bool Resume(IModelStore store)
     {
+        if (_backend is not null) Backend.Current = _backend; // route all Tensor ops (incl. worker threads) to it
         bool resumed = false;
         using (var s = store.TryOpenRead(_environmentId, NetId))
         {
@@ -128,12 +167,22 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             Log($"starting fresh {_environmentId} self-play ({_net.Describe()}, {_selfPlayCfg.Simulations} sims/move)");
         }
         _adam = AdamState.LoadOrInit(store, _environmentId, AdamId, _net.Parameters(), _learningRate, Log);
+        _forwards = _forwardFactory?.Invoke(_net) ?? [new AutogradPolicyValueForward(_net, _game.ObservationSize)];
+        _trainStep = _trainStepFactory?.Invoke(_net, _adam)
+            ?? new AutogradPolicyValueTrainStep(_net, _adam, _game.ObservationSize, _game.PolicySize, _valueWeight, _gradClipNorm);
         if (_ladder is not null) LoadLadderState();
         return resumed;
     }
 
+    // M44.1 gate: when CHESS_CHUNK_TIMING is set, log the generation-vs-training wall-time split per chunk. This is the
+    // measurement that decides whether a GPU-resident TRAINER (M44.3) is worth building: if generation dominates (the
+    // ply-cap straggler), the resident forward + --leaf-batch already shipped is the real lever and a resident trainer
+    // buys little. Off by default (no per-chunk log noise in real runs); a couple of chunks under it answer the gate.
+    private static readonly bool _chunkTiming = System.Environment.GetEnvironmentVariable("CHESS_CHUNK_TIMING") is not null;
+
     public long TrainChunk()
     {
+        var swGen = _chunkTiming ? System.Diagnostics.Stopwatch.StartNew() : null;
         // Generate the chunk's games (each on its own index-derived RNG, over the stable read-only net), then merge
         // their samples into the rolling window in ascending game index — identical to the old sequential add order,
         // and independent of how many cores ran it.
@@ -143,30 +192,49 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         foreach (var samples in perGame)
             foreach (var sample in samples) AddSample(sample);
         _totalGames += _gamesPerChunk;
+        swGen?.Stop();
 
-        // Train one shuffled pass over the current window (skip until a full batch has accumulated).
-        if (_window.Count >= BatchSize)
+        var swTrain = _chunkTiming ? System.Diagnostics.Stopwatch.StartNew() : null;
+        int trainBatches = 0;
+        // Train EpochsPerChunk shuffled passes over the current window (skip until a full batch has accumulated).
+        if (_window.Count >= _batchSize)
         {
-            CubePolicyTraining.Shuffle(_window, _shuffleRng);
             int obsSize = _game.ObservationSize, actions = _game.PolicySize;
-            for (int offset = 0; offset + BatchSize <= _window.Count; offset += BatchSize)
+            for (int epoch = 0; epoch < _epochsPerChunk; epoch++)
             {
-                var obs = new float[BatchSize * obsSize];
-                var pi = new float[BatchSize * actions];
-                var z = new float[BatchSize];
-                for (int i = 0; i < BatchSize; i++)
+                CubePolicyTraining.Shuffle(_window, _shuffleRng);
+                for (int offset = 0; offset + _batchSize <= _window.Count; offset += _batchSize)
                 {
-                    var sample = _window[offset + i];
-                    sample.Obs.CopyTo(obs.AsSpan(i * obsSize));
-                    sample.Pi.CopyTo(pi.AsSpan(i * actions));
-                    z[i] = sample.Z;
+                    var obs = new float[_batchSize * obsSize];
+                    var pi = new float[_batchSize * actions];
+                    var z = new float[_batchSize];
+                    for (int i = 0; i < _batchSize; i++)
+                    {
+                        var sample = _window[offset + i];
+                        sample.Obs.CopyTo(obs.AsSpan(i * obsSize));
+                        sample.Pi.CopyTo(pi.AsSpan(i * actions));
+                        z[i] = sample.Z;
+                    }
+                    var (pl, vl) = _trainStep.Step(obs, pi, z, _batchSize);
+                    _lossWindow.Add(pl, vl, 0);
+                    _liveLoss = pl + vl;
+                    _totalSamples += _batchSize;
+                    trainBatches++;
                 }
-                var (pl, vl) = PolicyValueTraining.TrainStep(_net, _adam, obs, pi, z, BatchSize, obsSize, actions);
-                _lossWindow.Add(pl, vl, 0);
-                _liveLoss = pl + vl;
-                _totalSamples += BatchSize;
             }
         }
+        swTrain?.Stop();
+        if (_chunkTiming)
+        {
+            double gen = swGen!.Elapsed.TotalMilliseconds, train = swTrain!.Elapsed.TotalMilliseconds, total = gen + train;
+            Log($"chunk-timing: gen {gen:F0} ms ({gen / total:P1}) | train {train:F0} ms ({train / total:P1}, {trainBatches} batches) | window {_window.Count}");
+        }
+        // Write the just-trained weights back into _net first (a resident trainer masters them on-device; the autograd
+        // default is a no-op since it trained _net in place), THEN re-sync EVERY inference forward from _net (fan out to
+        // all per-GPU forwards, M45) so next chunk's generation — and eval/arena/checkpoint, which read _net — all see
+        // the trained weights.
+        _trainStep.SyncToHost();
+        foreach (var forward in _forwards) forward.OnWeightsSynced(_net);
         return _totalGames;
     }
 
@@ -212,14 +280,16 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         // off-distribution positions a weak/unexpected move reaches — the direct fix for "a novel move disorients
         // the AI" (PLAN M39.3). The rest are pure self-play. Opening variety otherwise comes from temperature.
         // The learner's colour keys off the global game index (not a shared counter) so it's parallelism-independent.
+        // The game routes its batched leaf inference to one GPU's forward by index (M45) — deterministic per game,
+        // so games spread evenly across the selected GPUs and run in parallel (each forward has its own device lock).
         return _opponentRandomFrac > 0 && rng.NextDouble() < _opponentRandomFrac
             ? PlayVsRandom(learnerFirst: (globalIndex & 1) == 0, rng)
-            : PlaySelfPlay(rng);
+            : PlaySelfPlay(rng, _forwards[(int)(globalIndex % _forwards.Count)]);
     }
 
     // Both sides are the current net + MCTS; every position is a training sample. The outcome z alternates sign each
     // ply (zero-sum): the terminal result is for the side to move there, so the LAST position played gets its negation.
-    private List<Sample> PlaySelfPlay(Xoshiro256StarStar rng)
+    private List<Sample> PlaySelfPlay(Xoshiro256StarStar rng, IPolicyValueForward forward)
     {
         var state = _game.Root();
         var obsHistory = new List<float[]>(64);
@@ -229,7 +299,9 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         int ply = 0;
         while (_game.Result(state) == GameResult.Ongoing && ply < _maxPlies)
         {
-            float[] pi = Mcts.Search(_game, state, Evaluate, _selfPlayCfg, rng);
+            float[] pi = _leafBatch > 1
+                ? Mcts.SearchBatched(_game, state, states => EvaluateBatch(states, forward), _selfPlayCfg, rng, _leafBatch)
+                : Mcts.Search(_game, state, Evaluate, _selfPlayCfg, rng);
             var obs = new float[_game.ObservationSize];
             _game.WriteObservation(state, obs);
             obsHistory.Add(obs);
@@ -240,7 +312,13 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         }
 
         var samples = new List<Sample>(obsHistory.Count);
-        float zTerminalMover = _game.Result(state) switch { GameResult.Loss => -1f, GameResult.Win => 1f, _ => 0f };
+        float zTerminalMover = _game.Result(state) switch
+        {
+            GameResult.Loss => -1f,
+            GameResult.Win => 1f,
+            GameResult.Ongoing => AdjudicateCapped(state), // hit the ply cap → decide by material, not a forced draw
+            _ => 0f,                                       // true draw (stalemate / repetition / insufficient material)
+        };
         float z = -zTerminalMover;
         for (int i = obsHistory.Count - 1; i >= 0; i--)
         {
@@ -286,7 +364,8 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
         {
             GameResult.Loss => learnerToMove ? -1f : 1f, // side-to-move lost → learner lost iff it was to move
             GameResult.Win => learnerToMove ? 1f : -1f,
-            _ => 0f,                                     // draw or ply-cap
+            GameResult.Ongoing => learnerToMove ? AdjudicateCapped(state) : -AdjudicateCapped(state), // ply cap → material
+            _ => 0f,                                     // true draw
         };
         var samples = new List<Sample>(obsHistory.Count);
         for (int i = 0; i < obsHistory.Count; i++)
@@ -296,6 +375,19 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
 
     // Per-position material target from the side-to-move's view, squashed to [-1,1] (0 when the game has no material).
     private float MaterialTarget(TState state) => _material is null ? 0f : MathF.Tanh(_material.MaterialAdvantage(state) / MaterialScale);
+
+    // A game that hit the ply cap is NOT a genuine draw — training a materially winning position as z=0 starves the
+    // outcome signal and collapses the net onto passive, shuffle-to-the-cap play (observed overnight: the net's
+    // material vs its own baseline slid −2 → −9 pawns while value loss fell to ~0). Adjudicate the capped position by
+    // material from the side-to-move's view: a decisive edge (≥ margin pawns) trains as a win/loss, otherwise a true
+    // 0. No-op when the game has no material notion (_material null), so Connect-4 etc. are unaffected.
+    private const float AdjudicationMargin = 1.5f; // pawns — a clearly decisive material edge
+    private float AdjudicateCapped(TState state)
+    {
+        if (_material is null) return 0f;
+        float m = _material.MaterialAdvantage(state);
+        return m > AdjudicationMargin ? 1f : m < -AdjudicationMargin ? -1f : 0f;
+    }
 
     // Blend the sparse game outcome z with the dense material target (α = _materialWeight); pure z when no material.
     private float Blend(float z, float mat) => _material is null ? z : (1f - _materialWeight) * z + _materialWeight * mat;
@@ -320,6 +412,26 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
             var priors = MaskedSoftmax(logits.Data, _game.LegalMoves(state));
             return (priors, MathF.Tanh(value.Data[0]));
         }
+    }
+
+    // Batched leaf evaluator for Mcts.SearchBatched: stack all leaf observations into one [B, obsSize] tensor, run a
+    // SINGLE net.Forward, and split the result per leaf (masked-softmax priors + tanh value). This is what turns
+    // self-play's batch-1 inference into batch-B — read-only over the shared net, so it's safe on the game threads.
+    private IReadOnlyList<(float[] Priors, float Value)> EvaluateBatch(IReadOnlyList<TState> states, IPolicyValueForward forward)
+    {
+        int b = states.Count, obsSize = _game.ObservationSize, policy = _game.PolicySize;
+        var obs = new float[b * obsSize];
+        for (int i = 0; i < b; i++) _game.WriteObservation(states[i], obs.AsSpan(i * obsSize, obsSize));
+        // One batched forward through the inference seam (autograd default, or a GPU-resident impl on this game's
+        // assigned GPU, M45). Returns raw logits [b*policy] + linear value [b]; masked-softmax + tanh stay here.
+        var (logits, value) = forward.Forward(obs, b);
+        var results = new (float[], float)[b];
+        for (int i = 0; i < b; i++)
+        {
+            var row = logits.AsSpan(i * policy, policy).ToArray();
+            results[i] = (MaskedSoftmax(row, _game.LegalMoves(states[i])), MathF.Tanh(value[i]));
+        }
+        return results;
     }
 
     private float[] MaskedSoftmax(float[] logits, IReadOnlyList<int> legal)
@@ -351,32 +463,43 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     }
 
     // ── Eval: the model (net + MCTS, no root noise, argmax) vs a random-legal opponent, colors alternated ──
+    // These games are independent and inference-only, so they run across cores via the same DeterministicParallel
+    // primitive self-play uses — with a heavy net (conv) this sequential loop otherwise dominates wall time and, since
+    // it runs on the owner thread between training chunks, stalls training itself. One base seed is drawn per call so
+    // each game's RNG is a pure function of (cycle, game index): reproducible and identical at any degree of
+    // parallelism. Inference-only ⇒ it never touches trained weights, so checkpoints stay bitwise-identical per seed.
     private double ArenaVsRandom()
     {
-        double score = 0; // win = 1, draw = 0.5
-        for (int game = 0; game < _evalGames; game++)
-        {
-            int modelSide = game % 2 == 0 ? 1 : 2; // model is player 1 on even games, player 2 on odd
-            var state = _game.Root();
-            int mover = 1, ply = 0;
-            GameResult result;
-            while ((result = _game.Result(state)) == GameResult.Ongoing && ply < _maxPlies)
-            {
-                int move = mover == modelSide ? ModelMove(state) : RandomLegalMove(state, _evalRng);
-                state = _game.Apply(state, move);
-                mover = 3 - mover;
-                ply++;
-            }
-            // result is for the side to move in the terminal state (who did NOT just move). Loss ⇒ the last mover won.
-            if (result == GameResult.Loss) { int lastMover = 3 - mover; if (lastMover == modelSide) score += 1; }
-            else if (result != GameResult.Win) score += 0.5; // draw (ply cap or full board)
-        }
+        ulong baseSeed = _evalRng.NextUInt64();
+        var scores = DeterministicParallel.Generate(_evalGames, baseSeed, baseIndex: 0,
+            (game, rng) => PlayEvalGame(game, rng), _parallel, _maxDop);
+        double score = 0;
+        foreach (double s in scores) score += s;
         return score / _evalGames;
     }
 
-    private int ModelMove(TState state)
+    // One eval game: model (net + MCTS) vs a random-legal opponent. Returns win = 1, draw = 0.5, loss = 0.
+    private double PlayEvalGame(int game, Xoshiro256StarStar rng)
     {
-        float[] pi = Mcts.Search(_game, state, Evaluate, _evalCfg, _evalRng);
+        int modelSide = game % 2 == 0 ? 1 : 2; // model is player 1 on even games, player 2 on odd
+        var state = _game.Root();
+        int mover = 1, ply = 0;
+        GameResult result;
+        while ((result = _game.Result(state)) == GameResult.Ongoing && ply < _maxPlies)
+        {
+            int move = mover == modelSide ? ModelMove(state, rng) : RandomLegalMove(state, rng);
+            state = _game.Apply(state, move);
+            mover = 3 - mover;
+            ply++;
+        }
+        // result is for the side to move in the terminal state (who did NOT just move). Loss ⇒ the last mover won.
+        if (result == GameResult.Loss) { int lastMover = 3 - mover; return lastMover == modelSide ? 1 : 0; }
+        return result != GameResult.Win ? 0.5 : 0; // draw (ply cap or full board), else a win for the mover (not model)
+    }
+
+    private int ModelMove(TState state, Xoshiro256StarStar rng)
+    {
+        float[] pi = Mcts.Search(_game, state, Evaluate, _evalCfg, rng);
         int best = 0;
         for (int a = 1; a < pi.Length; a++) if (pi[a] > pi[best]) best = a;
         return best;
@@ -433,40 +556,52 @@ internal sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTele
     // MCTS argmax, no root noise); games diversified by a short randomized opening drawn from `_arenaRng` (independent
     // of the training/eval streams). Returns BOTH the win/draw Score (win 1 / draw 0.5) AND the challenger's average
     // end-of-game material margin in pawns — the non-saturating signal that separates two nets that only ever draw.
+    // Parallelized like ArenaVsRandom (independent, inference-only games); one base seed per call keeps the arena
+    // reproducible and DOP-invariant, and it never mutates trained weights.
     private (double Score, double Material) ArenaVsNet(IPolicyValueNet challenger, IPolicyValueNet champion, int games)
     {
+        ulong baseSeed = _arenaRng.NextUInt64();
+        var results = DeterministicParallel.Generate(games, baseSeed, baseIndex: 0,
+            (g, rng) => PlayArenaGame(g, rng, challenger, champion), _parallel, _maxDop);
         double score = 0, material = 0;
-        for (int g = 0; g < games; g++)
-        {
-            int challengerSide = g % 2 == 0 ? 1 : 2;
-            int openingPlies = _ladder!.OpeningPlies == 0 ? 0 : _arenaRng.NextInt(_ladder.OpeningPlies + 1);
-            var state = _game.Root();
-            int mover = 1, ply = 0;
-            GameResult result;
-            while ((result = _game.Result(state)) == GameResult.Ongoing && ply < _maxPlies)
-            {
-                int move = ply < openingPlies
-                    ? RandomLegalMove(state, _arenaRng)                                   // neutral randomized opening
-                    : ModelMoveWith(mover == challengerSide ? challenger : champion, state);
-                state = _game.Apply(state, move);
-                mover = 3 - mover;
-                ply++;
-            }
-            if (result == GameResult.Loss) { int lastMover = 3 - mover; if (lastMover == challengerSide) score += 1; }
-            else if (result != GameResult.Win) score += 0.5; // draw / ply-cap
-            if (_material is not null)
-            {
-                // MaterialAdvantage is side-to-move relative; at the terminal state the side to move is `mover`.
-                float mat = _material.MaterialAdvantage(state);
-                material += mover == challengerSide ? mat : -mat;
-            }
-        }
+        foreach (var (s, m) in results) { score += s; material += m; }
         return (score / games, material / games);
     }
 
-    private int ModelMoveWith(IPolicyValueNet net, TState state)
+    // One arena game: challenger vs champion, colours by index, a short randomized opening from the per-game RNG.
+    // Returns the win/draw Score (win 1 / draw 0.5 / loss 0) and the challenger's end-of-game material margin in pawns.
+    private (double Score, double Material) PlayArenaGame(int g, Xoshiro256StarStar rng, IPolicyValueNet challenger, IPolicyValueNet champion)
     {
-        float[] pi = Mcts.Search(_game, state, s => EvaluateWith(net, s), _evalCfg, _arenaRng);
+        int challengerSide = g % 2 == 0 ? 1 : 2;
+        int openingPlies = _ladder!.OpeningPlies == 0 ? 0 : rng.NextInt(_ladder.OpeningPlies + 1);
+        var state = _game.Root();
+        int mover = 1, ply = 0;
+        GameResult result;
+        while ((result = _game.Result(state)) == GameResult.Ongoing && ply < _maxPlies)
+        {
+            int move = ply < openingPlies
+                ? RandomLegalMove(state, rng)                                        // neutral randomized opening
+                : ModelMoveWith(mover == challengerSide ? challenger : champion, state, rng);
+            state = _game.Apply(state, move);
+            mover = 3 - mover;
+            ply++;
+        }
+        double score = 0;
+        if (result == GameResult.Loss) { int lastMover = 3 - mover; if (lastMover == challengerSide) score = 1; }
+        else if (result != GameResult.Win) score = 0.5; // draw / ply-cap
+        double material = 0;
+        if (_material is not null)
+        {
+            // MaterialAdvantage is side-to-move relative; at the terminal state the side to move is `mover`.
+            float mat = _material.MaterialAdvantage(state);
+            material = mover == challengerSide ? mat : -mat;
+        }
+        return (score, material);
+    }
+
+    private int ModelMoveWith(IPolicyValueNet net, TState state, Xoshiro256StarStar rng)
+    {
+        float[] pi = Mcts.Search(_game, state, s => EvaluateWith(net, s), _evalCfg, rng);
         int best = 0;
         for (int a = 1; a < pi.Length; a++) if (pi[a] > pi[best]) best = a;
         return best;

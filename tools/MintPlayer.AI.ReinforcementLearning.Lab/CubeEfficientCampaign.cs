@@ -131,7 +131,7 @@ internal sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed
 
         // Beam search runs the bulk of the forwards — route them through a GPU-resident DeviceMlp over the
         // policy head (weights uploaded once per eval) when a GPU is present; CPU autograd otherwise.
-        DeviceMlp? device = _adaptive.Gpu is { } gpu ? gpu.CreateResidentForward(_net.PolicyAsMlp()) : null;
+        DeviceMlp? device = _adaptive.Gpus.FirstOrDefault() is { } gpu ? gpu.CreateResidentForward(_net.PolicyAsMlp()) : null;
         Func<float[], int, float[]> beamLogits = device is not null
             ? device.Forward
             : (features, rows) =>

@@ -1,3 +1,4 @@
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -225,5 +226,153 @@ public class IlgpuBackendTests
 
         for (int i = 0; i < once.Length; i++)
             Assert.Equal(2f * once[i], twice[i], 3);
+    }
+
+    /// <summary>
+    /// M43.2: the GPU-resident conv forward (<see cref="DeviceConvPolicyValueNet"/>) must match the autograd conv net's
+    /// forward. Runs on the ILGPU CPU accelerator (no discrete GPU needed); cross-backend agreement is approximate
+    /// (the resident tower's fused/sequential GEMMs + LayerNorm round differently than the CPU autograd path), so a
+    /// relative+absolute tolerance, looser than the single-GEMM test to absorb accumulation over the ~14-conv tower.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(6)]
+    public void DeviceConvForward_matches_autograd_conv_net(int rows)
+    {
+        const int planes = 18, board = 8, actions = 4672;
+        int obsSize = planes * board * board;
+        var net = new ConvResidualPolicyValueNet(planes, board, board, actions, filters: 8, blocks: 2,
+            new Xoshiro256StarStar(1));
+        var obs = Random(rows * obsSize, 7);
+
+        var (logitsT, valueT) = net.Forward(new Core.Numerics.Tensor(obs, rows, obsSize)); // CPU autograd reference
+
+        using var backend = new IlgpuBackend(preferCpu: true);
+        using var device = backend.CreateResidentForward(net);
+        var (logits, value) = device.Forward(obs, rows);
+
+        AssertCloseTol(logitsT.Data, logits, 3e-3f);
+        AssertCloseTol(valueT.Data, value, 3e-3f);
+    }
+
+    /// <summary>
+    /// M44.3: the resident conv TRAINER's backward (<see cref="DeviceConvResidualTrainer"/>) must produce the same
+    /// gradients as the autograd path for one AlphaZero train step — validating every new/reused backward kernel at
+    /// once (col2im, the NCHW gather, the two loss grads, plus the reused GEMM-transposes / LN grads / ReLU grad / bias
+    /// grad over conv maps). Gradients (not post-Adam weights) are compared, since step-1 Adam ≈ lr·sign(grad) would
+    /// mask magnitude errors. Runs on the ILGPU CPU accelerator; the CUDA path runs the identical kernels.
+    /// </summary>
+    [Fact]
+    public void DeviceConvResidualTrainer_GradientsMatchAutograd()
+    {
+        const int planes = 3, board = 4, actions = 8, filters = 4, blocks = 2, batch = 4;
+        const float valueWeight = 0.5f;
+        int obsSize = planes * board * board;
+        var net = new ConvResidualPolicyValueNet(planes, board, board, actions, filters, blocks, new Xoshiro256StarStar(101));
+        var obs = Random(batch * obsSize, 202);
+        var pi = RandomDistributions(batch, actions, 203);          // each row sums to 1 (a valid π target)
+        var z = Random(batch, 204);                                 // outcomes in [-1,1]
+
+        // Autograd reference: the EXACT AutogradPolicyValueTrainStep loss path → backward → read grads.
+        var adam = new Adam(net.Parameters(), 1e-3f);
+        adam.ZeroGrad();
+        var (logits, value) = net.Forward(new Tensor(obs, batch, obsSize));
+        var ce = logits.LogSoftmax().Mul(new Tensor(pi, batch, actions)).Sum().MulScalar(-1f / batch);
+        var valueLoss = value.Reshape(batch).Tanh().MseLoss(new Tensor(z, batch));
+        ce.Add(valueLoss.MulScalar(valueWeight)).Backward();
+        var cpuGrads = net.Parameters().Select(p => p.Grad!.ToArray()).ToArray();
+
+        using var backend = new IlgpuBackend(preferCpu: true);
+        using var trainer = backend.CreateResidentTrainer(net, batch, learningRate: 1e-3f, clipNorm: 1e9f, actions, valueWeight);
+        var gpuGrads = trainer.DebugGradients(obs, pi, z);
+
+        Assert.Equal(cpuGrads.Length, gpuGrads.Length);
+        for (int p = 0; p < cpuGrads.Length; p++)
+        {
+            Assert.Equal(cpuGrads[p].Length, gpuGrads[p].Length);
+            for (int i = 0; i < cpuGrads[p].Length; i++)
+            {
+                float tol = 5e-3f * (1f + MathF.Abs(cpuGrads[p][i]));
+                Assert.True(MathF.Abs(cpuGrads[p][i] - gpuGrads[p][i]) <= tol,
+                    $"param {p} idx {i}: cpu {cpuGrads[p][i]}, gpu {gpuGrads[p][i]} (tol {tol})");
+            }
+        }
+    }
+
+    /// <summary>M44.3: after a step, SyncToHost writes the resident (trained) weights back into the CPU conv net so
+    /// eval/arena/checkpoint reflect them — and it actually changed the weights.</summary>
+    [Fact]
+    public void DeviceConvResidualTrainer_SyncToHost_RoundTrips()
+    {
+        const int planes = 3, board = 4, actions = 8, filters = 4, blocks = 1, batch = 4;
+        int obsSize = planes * board * board;
+        var net = new ConvResidualPolicyValueNet(planes, board, board, actions, filters, blocks, new Xoshiro256StarStar(111));
+        var before = net.Parameters().First().Data.ToArray();
+        var obs = Random(batch * obsSize, 222);
+        var pi = RandomDistributions(batch, actions, 223);
+        var z = Random(batch, 224);
+
+        using var backend = new IlgpuBackend(preferCpu: true);
+        using var trainer = backend.CreateResidentTrainer(net, batch, learningRate: 1e-2f, clipNorm: 5f, actions, valueWeight: 1f);
+        trainer.Step(obs, pi, z, batch);
+        trainer.SyncToHost();
+
+        var after = net.Parameters().First().Data.ToArray();
+        Assert.Contains(Enumerable.Range(0, before.Length), i => MathF.Abs(before[i] - after[i]) > 1e-6f);
+        _ = net.Forward(new Tensor(obs, batch, obsSize)); // the synced-back net still runs
+    }
+
+    /// <summary>M45.1: a backend pinned to a specific device on a SHARED context (the multi-GPU ctor) computes the same
+    /// GEMM as the CPU, and disposing it leaves the caller-owned context usable. Runs on the CPU accelerator (portable);
+    /// the real multi-GPU path builds one such backend per CUDA device on one shared context.</summary>
+    [Fact]
+    public void IlgpuBackend_PinnedToSharedContextDevice_MatchesManaged()
+    {
+        using var context = ILGPU.Context.CreateDefault();
+        var devices = IlgpuBackend.SelectDevices(context, preferCpu: true); // the CPU accelerator — portable
+        Assert.Single(devices);
+        var a = Random(M * K, 1); var b = Random(K * N, 2);
+        var cpu = new float[M * N]; var gpu = new float[M * N];
+        new ManagedBackend(1).Gemm(a, b, cpu, M, K, N);
+        using (var backend = new IlgpuBackend(context, devices[0])) // shared context: backend disposes only its accelerator
+            backend.Gemm(a, b, gpu, M, K, N);
+        AssertClose(cpu, gpu);
+        Assert.NotEmpty(context.Devices); // context survived the backend's disposal (it did not own it)
+    }
+
+    /// <summary>M45.1: `AdaptiveBackend.Gpus` enumerates one device-resident backend per CUDA GPU (empty on a CPU-only
+    /// box); every entry is a real GPU and `GpuAvailable` agrees with the count. Portable — asserts the invariant, not a
+    /// specific device count.</summary>
+    [Fact]
+    public void AdaptiveBackend_Gpus_AreConsistent()
+    {
+        using var adaptive = new AdaptiveBackend();
+        Assert.Equal(adaptive.Gpus.Count > 0, adaptive.GpuAvailable);
+        foreach (var g in adaptive.Gpus) Assert.True(g.IsGpu);
+    }
+
+    // Random row-major [rows, cols] where each row is a probability distribution (positive, sums to 1).
+    private static float[] RandomDistributions(int rows, int cols, ulong seed)
+    {
+        var rng = new Xoshiro256StarStar(seed);
+        var data = new float[rows * cols];
+        for (int r = 0; r < rows; r++)
+        {
+            float sum = 0f;
+            for (int c = 0; c < cols; c++) { float v = (float)rng.NextDouble() + 1e-3f; data[r * cols + c] = v; sum += v; }
+            for (int c = 0; c < cols; c++) data[r * cols + c] /= sum;
+        }
+        return data;
+    }
+
+    private static void AssertCloseTol(float[] expected, float[] actual, float rel)
+    {
+        Assert.Equal(expected.Length, actual.Length);
+        for (int i = 0; i < expected.Length; i++)
+        {
+            float tol = rel * (1f + MathF.Abs(expected[i]));
+            Assert.True(MathF.Abs(expected[i] - actual[i]) <= tol,
+                $"index {i}: expected {expected[i]}, got {actual[i]} (tol {tol})");
+        }
     }
 }

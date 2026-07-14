@@ -1,12 +1,15 @@
+using Microsoft.Extensions.DependencyInjection;
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 using MintPlayer.AI.ReinforcementLearning.Environments.Chess;
+using MintPlayer.AI.ReinforcementLearning.Ilgpu;
 
 /// <summary>
 /// `--game chess` entry point (PLAN M39.2): AlphaZero-style self-play on chess — the second consumer of the reusable
 /// self-play stack (<see cref="Mcts"/> + <see cref="SelfPlayCampaign{TState}"/>), which is reused UNCHANGED; only the
 /// perft-verified <see cref="ChessGame"/> is new. CPU-only and honestly bounded (a small MLP over a flattened board →
-/// legal, steadily-improving play, not engine strength). Flags: --sims, --games, --eval-games, --hidden, plus the
-/// common --hours/--data/--seed/--lr.
+/// legal, steadily-improving play, not engine strength). Flags: --sims, --games, --eval-games, --hidden, --max-plies,
+/// plus the common --hours/--data/--seed/--lr.
 /// </summary>
 internal static class ChessLab
 {
@@ -21,11 +24,35 @@ internal static class ChessLab
         int sims = a.Int("--sims", 64);           // modest — chess movegen per node is heavy on CPU
         int gamesPerChunk = a.Int("--games", 8);
         int evalGames = a.Int("--eval-games", 10);
+        // Hard ply cap per self-play game. A weak net rarely mates, so games otherwise run to this cap; since a chunk's
+        // wall time is bounded by its SLOWEST game (the straggler that finishes last, single-threaded), the cap — not
+        // the average game — sets self-play throughput. Lower it for a heavy net (conv) to keep evals frequent.
+        int maxPlies = a.Int("--max-plies", 200);
         double opponentRandom = a.Dbl("--opponent-random", 0); // fraction of games vs a random opponent (robustness)
         bool evalOnly = a.Has("--eval-only");
 
         // --demo: play one self-play game with the (trained) net and print FENs to watch — no training.
         if (a.Has("--demo")) { ChessDemo.Run(dataDir, sims, seed, a.Int("--demo-plies", 100)); return; }
+
+        // --bench-forward: M43 micro-benchmark — resident conv forward vs autograd, on the selected device (+ on-GPU parity).
+        if (a.Has("--bench-forward"))
+        {
+            ConvForwardBench.Run(a.Int("--filters", 64), a.Int("--blocks", 6), a.Int("--leaf-batch", 256), a.Int("--bench-iters", 30));
+            return;
+        }
+
+        // --vs-minimax: NON-SATURATING strength eval — the (trained) net vs a fixed material alpha-beta of --minimax-depth.
+        // Unlike winRate-vs-random (saturates) or self-play material (self-referential), this measures whether training
+        // actually improved play: a genuinely stronger net beats a deeper opponent. Raise --minimax-depth as the net grows.
+        if (a.Has("--vs-minimax"))
+        {
+            ChessStrengthEval.Run(
+                ckptPath: a.Str("--ckpt", Path.Combine(dataDir, "chess.az.ckpt")),
+                arch: a.Str("--arch", "conv"), filters: a.Int("--filters", 64), blocks: a.Int("--blocks", 6),
+                hidden: [hidden, hidden], sims: sims, depth: a.Int("--minimax-depth", 2),
+                games: a.Int("--strength-games", 40), maxPlies: maxPlies, openingPlies: a.Int("--opening-plies", 4), seed: seed);
+            return;
+        }
 
         // --ladder: hands-off difficulty ladder (M40.4). Whenever the live net beats the last-promoted checkpoint by a
         // margin in a net-vs-net arena, a new tier .ckpt + updated manifest are written straight into the web app's
@@ -33,10 +60,30 @@ internal static class ChessLab
         // Dense material-shaped value target (α): blend of game outcome + per-position material advantage. 0 = pure
         // outcome (old behaviour); default 0.5 gives a weak net a gradient on every capture (the anti-plateau fix).
         float materialWeight = a.Flt("--material-weight", 0.5f);
+        // Value-loss weight (relative to policy loss). Default 1 = equal. Lower (e.g. 0.3) counters value-head
+        // overfitting → strength regression at small scale — the observed "loss drops but play regresses" failure.
+        float valueWeight = a.Flt("--value-weight", 1f);
+        // Leaf-inference batch size for self-play MCTS (M42.5). 1 = sequential batch-1 (default, back-compat). >1 uses
+        // virtual-loss batched MCTS so each net.Forward evaluates N leaves at once — required for any GPU utilization.
+        int leafBatch = a.Int("--leaf-batch", 1);
+        // De-ceiling knobs (defaults preserve current behaviour; a large run raises them). The MCTS knobs
+        // (--cpuct/--dirichlet-alpha/--root-noise) go into the Mcts.Config below; --temp-moves was hardcoded at 12.
+        int tempMoves = a.Int("--temp-moves", 12);
+        int window = a.Int("--window", 40_000);   // replay-window capacity (AlphaZero-scale runs want ~500k+)
+        int batch = a.Int("--batch", 128);
+        int epochs = a.Int("--epochs", 1);         // shuffled passes over the window per chunk
+        float clip = a.Flt("--clip", 5f);          // gradient-norm clip
 
         // Parallel self-play generation (M41.2): --parallel fans the chunk's games across cores (default cores-2),
         // --dop caps the degree of parallelism. Trained weights are identical at any DOP for a given seed.
         bool parallel = a.Has("--parallel");
+        // --gpu: route Tensor ops through the ILGPU AdaptiveBackend (large GEMMs → GPU). Pays off with --leaf-batch
+        // (batched inference); batch-1 self-play barely uses a GPU. The training step (batched) benefits regardless.
+        bool useGpu = a.Has("--gpu");
+        // --gpus (M45): which CUDA GPUs to shard self-play generation across. Default "all" — with --gpu the process
+        // auto-detects every GPU and uses them all; no need to state a count. Override with a count ("2") or explicit
+        // ordinals ("0,2"). Ignored without --gpu. One GPU (or CPU) behaves exactly as M43/M44.
+        string gpusSpec = a.Str("--gpus", "all");
         int? dop = a.Has("--dop") ? a.Int("--dop", System.Math.Max(1, System.Environment.ProcessorCount - 2)) : null;
 
         // Net architecture (M42): --arch conv builds an AlphaZero-style convolutional residual tower over the 18×8×8
@@ -63,12 +110,51 @@ internal static class ChessLab
         double? evalEvery = a.Has("--eval-every") ? a.Dbl("--eval-every", 10) : null;
 
         var game = new ChessGame();
-        var cfg = new Mcts.Config(Simulations: sims);
-        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            _ => new SelfPlayCampaign<ChessState>(game, "chess", seed, learningRate, hidden, cfg, gamesPerChunk,
-                tempMoves: 12, evalGames: evalGames, maxPlies: 200, opponentRandomFrac: opponentRandom, ladder: ladder,
-                materialWeight: materialWeight, parallel: parallel, maxDop: dop, netBuilder: netBuilder),
+        var cfg = new Mcts.Config(Simulations: sims, Cpuct: a.Flt("--cpuct", 1.25f),
+            DirichletAlpha: a.Flt("--dirichlet-alpha", 0.3f), RootNoiseFrac: a.Flt("--root-noise", 0.25f));
+        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: useGpu,
+            sp =>
+            {
+                var adaptive = useGpu ? sp.GetRequiredService<AdaptiveBackend>() : null;
+                // The GPUs to shard generation across (M45): all detected, or the --gpus override; empty on CPU-only.
+                var gpus = SelectGpus(adaptive?.Gpus, gpusSpec);
+                // GPU-resident conv forwards for batched self-play — ONE per selected GPU (M43/M45), so generation
+                // shards across devices; else a single autograd forward. All Ilgpu knowledge stays here.
+                Func<IPolicyValueNet, IReadOnlyList<IPolicyValueForward>>? forwardFactory = adaptive is null ? null
+                    : net => gpus.Count > 0 && net is ConvResidualPolicyValueNet conv
+                        ? [.. gpus.Select(g => (IPolicyValueForward)g.CreateResidentForward(conv))]
+                        : [new AutogradPolicyValueForward(net, game.ObservationSize)];
+                // GPU-resident conv TRAINING step (M44) on the primary selected GPU; else null → the campaign's autograd
+                // default. Only conv+GPU has a resident trainer; the MLP/CPU paths stay autograd. Training is not sharded
+                // (generation is the bottleneck); it runs on gpus[0] and the trained weights fan out to all forwards.
+                Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory =
+                    (gpus.Count == 0 || netBuilder is not ConvNetBuilder) ? null
+                    : (net, adam) => gpus[0].CreateResidentTrainer(
+                        (ConvResidualPolicyValueNet)net, batch, learningRate, clip, game.PolicySize, valueWeight);
+                return new SelfPlayCampaign<ChessState>(game, "chess", new SelfPlayOptions
+                {
+                    Seed = seed, LearningRate = learningRate, Hidden = hidden, Search = cfg,
+                    GamesPerChunk = gamesPerChunk, TempMoves = tempMoves, EvalGames = evalGames,
+                    WindowCapacity = window, BatchSize = batch, EpochsPerChunk = epochs, MaxPlies = maxPlies,
+                    OpponentRandomFrac = opponentRandom, Ladder = ladder, MaterialWeight = materialWeight,
+                    ValueWeight = valueWeight, GradClipNorm = clip, Parallel = parallel, MaxDop = dop, LeafBatch = leafBatch,
+                }, netBuilder: netBuilder, backend: adaptive, forwardFactory: forwardFactory, trainStepFactory: trainStepFactory);
+            },
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
+    }
+
+    // Resolve --gpus (M45): pick which detected GPUs to shard generation across. "all" (default) → every detected GPU;
+    // an integer → the first N; explicit ordinals ("0,2") → those devices. Empty when no GPU is available. A spec that
+    // matches nothing falls back to all, so a typo never silently drops to CPU.
+    private static IReadOnlyList<IlgpuBackend> SelectGpus(IReadOnlyList<IlgpuBackend>? all, string spec)
+    {
+        if (all is null || all.Count == 0) return [];
+        if (spec.Equals("all", StringComparison.OrdinalIgnoreCase)) return all;
+        if (int.TryParse(spec, out int n)) return [.. all.Take(System.Math.Clamp(n, 1, all.Count))];
+        var picked = new List<IlgpuBackend>();
+        foreach (var part in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (int.TryParse(part, out int idx) && idx >= 0 && idx < all.Count) picked.Add(all[idx]);
+        return picked.Count > 0 ? picked : all;
     }
 }

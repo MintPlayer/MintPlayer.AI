@@ -1536,7 +1536,7 @@ bitwise-reproducibility invariant (M25/M26/**M36 SHA-verified**) is preservable 
 campaign; the pattern is generic and matches Core's existing determinism approach, so it should be (and now will be)
 extracted. **Non-goals:** GPU/batched-MCTS (separate, larger effort); parallelizing the DQN campaigns (not the bottleneck).
 
-## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED · M42.3 ⏳ training · M42.4 🔜 (gated on M42.3)
+## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED (merged to master, PR #31) · M42.3 🟡 partial (draw-collapse pathology diagnosed + fixed, commit `282c665`, but strength gains UNPROVEN — tiers don't beat baseline on a fair eval + metrics saturate; needs non-saturating eval + scale) · M42.4 🟡 steps 1+3 done (`c1c7d8e`), browser wiring (2+4) remains · M42.5 🟡 scale-readiness (batched leaf inference + `--gpu` + non-saturating strength eval + `SelfPlayOptions` de-ceiling refactor shipped; resident-conv-forward, distribution, WDL/history deferred). No conv tier shippable yet.
 
 **Why:** chess self-play has **plateaued at ~random** (M40.4: winRate-vs-random ~50%→35%, material margin flat ~+0.1
 of the +0.75 gate, no tier ever promotes) despite 256 sims + material-shaped targets. The honest bottleneck is the
@@ -1564,15 +1564,154 @@ gains a conv forward (inference-only), so that's a first-class phase, not a foll
   conv --filters --blocks`. **Gate MET** (`ConvResidualNetTests`): head shapes, exact save/load round-trip, loss falls
   under Adam. (De-risking residual-MLP step skipped — went straight to conv.) Commit `21b779d`.
 - **M42.3 ⏳ — train chess with the conv net.** `--arch conv --filters 64 --blocks 6` + material shaping + ladder,
-  running in the background. **Gate:** beats the MLP baseline — material margin ≥ +0.75 and/or winRate ≫ 50% with **≥1
-  ladder tier promoted**; determinism preserved. *(Long run; evaluated from the background training, not blocking.)*
-- **M42.4 🔜 (gated on M42.3) — browser conv forward + parity.** Add an inference-only conv2d forward to
-  `chess_solver.pg` + teach `chess-net.ts` the conv `.ckpt` layout; regenerate the C#/TS twin. **Gate:**
-  `ChessNetParityTests` green on conv `.ckpt`; `/chess` plays a shipped conv tier. **Deliberately not started until M42.3
-  proves the conv net is worth shipping** (PRD risk #2 — don't port to the browser a net that doesn't beat the baseline).
+  running in the background (branch `m42-chess-conv-net`). **Gate:** beats the MLP baseline — material margin ≥ +0.75
+  and/or winRate ≫ 50% with **≥1 ladder tier promoted** (on merit, not the automatic Level-1 baseline); determinism
+  preserved. *(Long run; evaluated from the background training, not blocking.)*
+  - **Perf fix (commit `71fe44c`) that unblocked useful throughput — parallelize eval + ladder arena.** The conv net's
+    per-node cost exposed a bottleneck M41's analysis missed: not self-play generation but the **measurement** phase.
+    `ArenaVsRandom` + `ArenaVsNet` ran **sequentially on the owner thread between chunks**, so at conv cost they *stalled
+    training* (observed ~0.8 cores for ~24 min/cycle, one eval every ~30 min). Refactored both onto the same
+    `DeterministicParallel` primitive (per-game RNG, inference-only). Trained weights untouched — DOP-invariance
+    checkpoint test still **bitwise-identical**; all `SelfPlayCampaign` tests green. Also added **`--max-plies`** (a
+    chunk's wall time is bounded by its slowest game, so the ply cap sets throughput). Tuned run:
+    `--sims 64 --games 16 --max-plies 100 --eval-games 8 --arena-games 12` → ~4–5 min/chunk (was 20–30).
+  - **Root-cause fix — DRAW-COLLAPSE (commit `282c665`), core goal MET.** With the arena noise removed (`--arena-games
+    40`) the trustworthy signal showed the net *regressing* (material vs baseline −2→−9 pawns, value loss →0.03, winRate
+    pinned 50%). Cause: a non-mating net + short ply cap ⇒ nearly all self-play games are ply-capped **draws (z=0)** ⇒
+    the outcome signal vanishes ⇒ net collapses to passive, material-bleeding play. (My throughput tuning — low sims +
+    short plies — *caused* it.) Fix: **material-adjudicate ply-capped games** (`GameResult.Ongoing` at cap + ≥1.5-pawn
+    edge → win/loss z, else true draw; no-op for materialless games → Connect-4 determinism stays bitwise-green).
+    **Result: collapse broken** — same config went −9 → **+3.78 pawns** in self-play, and the material regression
+    stopped. Merit tiers promoted — but on **8-game-noisy** evals + the self-play **material** metric.
+  - **Honest limit — strength gains UNPROVEN.** A fair **40-game winRate-vs-random** ranking of the captured tiers
+    (`data/tier-ranking.txt`) came out ~50–59% and **did not beat the barely-trained baseline** (L1 58.8% ≥ L3 52.5%),
+    so the conv net at 64f/64-sim after ~100–200 games doesn't demonstrably play stronger than its baseline. Caveats:
+    winRate-vs-random **saturates** (any net that draws-but-can't-mate random ≈ 50%) so it can't cleanly rank them
+    either; and the draw-collapse fix is genuinely real. **The real gap: no non-saturating strength metric.** Next:
+    (a) add a non-saturating eval (vs a simple material-greedy / depth-2 minimax opponent) to *measure* strength;
+    (b) then scale training volume (AlphaZero needs ≫200 games), net capacity, and sims (128 didn't help → capacity/
+    volume is the limit). Overnight detail: `data/chess-conv-autorun-log.md`. **No conv tier shippable yet.**
+- **M42.4 🟡 steps 1+3 DONE (commit `c1c7d8e`); steps 2+4 (browser wiring) remain.** The conv forward is single-sourced
+  in `chess_solver.pg` (`PgConvNet`) with a C# parity test (`ChessNetParityTests`) green on real conv `.ckpt` bytes
+  (<2e-3); dispatch via a nullable `PgPolicyValueNet.conv` field (no `.pg` interface feature — filed
+  MintPlayer.Polyglot#29). **Remaining:** TS conv parser in `chess-net.ts` + regen `chess_solver.ts` (CLI at
+  `C:\Repos\MintPlayer.Polyglot`) + wire `loadChessNet`/`chess-director.ts` + copy the chosen conv tier into
+  `wwwroot/models`. Best done **interactively** (regenerating the committed `.ts` blind risks the live MLP `/chess`).
+- **M42.5 🟡 scale-readiness (repo value = *prove the SDK can train a chess AI*, not our weak net).** Shipped:
+  **batched leaf inference** (`Mcts.SearchBatched`, virtual loss → a wave of leaves per `net.Forward`; `--leaf-batch`;
+  `leafBatch=1` bitwise-identical to sequential, proven) + **`--gpu`** wiring (commit `4801c98`); non-saturating
+  **`--vs-minimax`** strength eval (`7526bd7`); **`--value-weight`** (`71366dd`); and the **`SelfPlayOptions`
+  de-ceiling refactor** (`8c382ae`) — one options record replacing the ~20-param telescoping ctor, exposing
+  `--window`/`--batch`/`--epochs`/`--clip`/`--temp-moves`/`--cpuct`/`--dirichlet-alpha`/`--root-noise` (defaults
+  bitwise-identical). **Deferred (postponed, only pays off on a real GPU/cluster run — see PRD §8):** (a) a
+  **GPU-resident batched forward for the conv net** (conv analogue of `Ilgpu/DeviceMlp`) — the one piece that unifies
+  the chess-MCTS and cube-value GPU paths; (b) distributed actor→learner topology; (c) quality features (WDL head,
+  aux targets, history planes).
 
 **Non-goals:** removing `PolicyValueNet` (stays the connect-4/cube-policy/rush-hour net + fast baseline) or `ResidualMlp`
 (stays the cube DAVI value net); spatial BatchNorm (reuse LayerNorm); Net2Net growth for the conv net (stays MLP-only).
+
+## M43 — GPU-resident batched forward for the conv net  *(2026-07-14; see `GPU_RESIDENT_CONV_PRD.md`)* — ✅ BUILT + GPU-measured (M43.1 `852cf31` / M43.2 `b49a4c2` / M43.3 `f39cf2f`); resident **14.9× faster** than autograd on an RTX 3060 (leaf-batch 256), on-GPU parity ~1e-6
+
+**Why:** `--gpu` + `--leaf-batch` (M42.5) batch the leaves, but the conv forward still routes through `Backend.Current`
+(weights re-upload per GEMM; activations round-trip host↔device between the tower's ~14 convs). The cube's value net
+already runs **GPU-resident** (`DeviceMlp`/`DeviceResidualMlp`). This is the piece that makes the chess GPU path as
+efficient as the cube's and **unifies the two families' GPU inference** (ARCHITECTURE §4). Repo value = *prove the SDK
+can train a chess AI (GPU and all)* — so it lives in the **library**, not the lab.
+
+**Finding (3-agent analysis):** the resident pattern is **Core seam → Ilgpu impl → Lab wiring**; `DeviceResidualMlp` is a
+near-exact scaffold; **only two new GPU kernels** are needed (device im2col + scatter/bias) — the tower/heads reuse
+existing resident kernels, and the net's whole-row LayerNorm maps onto `LaunchLayerNorm` as-is. The existing
+`ITargetForward` is scalar; the conv net is two-headed → a **new** two-headed seam. Everything generic
+(`ConvResidualPolicyValueNet`, `Mcts`, `Conv2D`, `IPolicyValueNet`) is already in Core, so the resident path belongs in
+the library; only CLI/DI selection is lab-specific. Inference-only (training stays autograd); no new determinism loss
+beyond what `--gpu` already accepts; testable on ILGPU's CPU accelerator (no discrete GPU needed).
+
+- **M43.1 ✅ (`852cf31`) — Core seam.** `IPolicyValueForward` (two-headed, inference-only, weight-sync lifecycle) + a
+  bitwise-identical `AutogradPolicyValueForward` CPU default; conv-net shape exposed; `EvaluateBatch` routed through it.
+- **M43.2 ✅ (`b49a4c2`) — Ilgpu impl + kernels.** `DeviceConvPolicyValueNet` + the two new kernels (`Im2Col_Kernel`,
+  `ScatterBias_Kernel`) + `CreateResidentForward(ConvResidualPolicyValueNet)`. **Gate MET:** parity vs
+  `ConvResidualPolicyValueNet.Forward` on the ILGPU CPU accelerator within f32 tol (`IlgpuBackendTests`).
+- **M43.3 ✅ (`f39cf2f`) — Lab wiring.** Core-typed `forwardFactory` (campaign stays Ilgpu-free); `ChessLab` supplies the
+  GPU-aware factory + per-chunk `OnWeightsSynced`; `--gpu` safe on GPU-less machines (autograd fallback). **On-GPU
+  measured** (`--bench-forward`, RTX 3060): resident **14.9×** faster than autograd (109.9 vs 1634.7 ms/forward,
+  leaf-batch 256; 2,329 vs 157 leaves/s), parity ~1e-6.
+
+**Non-goals:** WDL/categorical value head; distributed actor→learner; browser conv perf (still deferred,
+RESIDUAL_CONV_NET_PRD §8). The resident conv *trainer* is now designed as **M44** (below).
+
+## M44 — GPU-resident training step for the conv net  *(2026-07-14; see `GPU_RESIDENT_CONV_TRAINER_PRD.md`)* — ✅ SHIPPED (M44.1 measured→GO, M44.2 seam, M44.3 resident trainer; ~24× train step on RTX 3060)
+
+**Why:** with `--gpu`, M43 made self-play *inference* resident (~15×), but the **training step** still runs host-span
+(weights re-upload per GEMM, CPU im2col/col2im). The cube already has the training-side answer (`DeviceResidualTrainer`
+/ `IResidentTrainStep`); this is its two-headed conv analogue. **But measure first** — a self-play *chunk* is dominated
+by *generation* (MCTS to the ply-cap straggler), not the owner-thread train step, so the resident trainer may buy little.
+
+**Finding (3-agent analysis):** the cube trainer transfers mostly unchanged (`Param{W,G,M,V}`, backward GEMM-transposes,
+on-device clip+Adam, `SyncToHost`, `BuildStack` wiring). The scalar `IResidentTrainStep` doesn't fit our two-headed
+CE+MSE loss → a new two-headed `IPolicyValueTrainStep` seam (the training dual of `IPolicyValueForward`). Only **4 new
+kernels**: `Col2Im` + `GatherNCHWToMOutC` (the transpose of M43's forward im2col/scatter) + `PolicyCeGrad` (softmax−π)/B
++ `ValueTanhMseGrad`; everything else (GEMM transposes, bias/ReLU/LayerNorm grads, clip, Adam) already exists, plus one
+forward-caching change (`LaunchLayerNormTrain` + x̂/1σ caches — no new kernel). Generic → library; only CLI/factory in the lab.
+Determinism: a resident *trainer* mutates weights (non-bitwise) → **opt-in**; the CPU autograd path stays the reference.
+
+- **M44.1 ✅ MEASURED → GO.** Instrumented `TrainChunk` (gen-vs-train split behind env `CHESS_CHUNK_TIMING`, off by
+  default). On an **RTX 3060** (`--gpu --arch conv --parallel --leaf-batch 128 --games 6 --sims 48 --max-plies 60`),
+  train share rose **36.5 → 47.8 → 63.5 %** as the window filled (360 → 720 → 1080), gen ~**constant** at ~15 s. Each
+  128-batch costs **~3 s** host-span; batches/chunk = `epochs·⌊window/batch⌋`, so at the **default 40 k window** the
+  train step is **~98 %** of chunk wall-time. Generation was never the bottleneck (M43's resident forward already owns
+  it). **BUILD M44.3.** (Caveat: the split is config-dependent — a tiny-window/huge-chunk run is gen-bound — but every
+  serious/cluster run has a large window and pays the ~3 s/batch host-span cost M44.3 removes.)
+- **M44.2 ✅ SHIPPED — Core seam + wiring (behaviour-preserving).** `Core/Nn/IPolicyValueTrainStep.cs` +
+  `AutogradPolicyValueTrainStep` (inlines the former `PolicyValueTraining.TrainStep` verbatim); `SelfPlayCampaign` takes
+  an optional Core-typed `Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>` factory (null → autograd), routes the batch
+  loop through `_trainStep.Step`, `SyncToHost` before the forward re-sync; the duplicate Lab `PolicyValueTraining` deleted.
+  **Gate MET:** the DOP-invariance checkpoint-hash test still passes bitwise; all 3 SelfPlayCampaign tests green.
+- **M44.3 ✅ SHIPPED — Ilgpu trainer + 2 kernels.** `DeviceConvResidualTrainer : IPolicyValueTrainStep` (resident
+  forward caching x̂/σ + post-ReLU + im2col cols → two-headed backward → clip → Adam) + `CreateResidentTrainer` overload;
+  `ChessLab` wires it for `--gpu --arch conv`. Only **2 new device kernels** (`Col2Im`, `GatherNCHWToMOutC` — the
+  transposes of M43's im2col/scatter); the softmax−π / tanh-MSE head grads are computed on the **host** (the repo keeps
+  softmax/tanh off the device — CUDA can't JIT `ExpF`/`TanhF` without ILGPU.Algorithms — and the heads are tiny), so the
+  planned `PolicyCeGrad`/`ValueTanhMseGrad` kernels were dropped. **Gate MET:** gradient-parity vs autograd + SyncToHost
+  round-trip (CPU accelerator) green. **On-GPU (RTX 3060):** train step ~3000 ms → **~122 ms per 128-batch (~24×)**;
+  train share of a chunk 36→48→64 % → 3→5→8 %. **Adam-resume gap (P.2)** accepted (optimizer re-warms on `--gpu` resume).
+
+**Non-goals:** resident Adam-state checkpointing (P.2 — shared cube/chess fix, later); WDL head; distribution; browser.
+
+## M45 — Single-box multi-GPU self-play  *(2026-07-14; see `MULTI_GPU_SELFPLAY_PRD.md`)* — 🟢 M45.1+M45.2 shipped (enumerate GPUs + shard generation); M45.3 measure needs ≥2 GPUs
+
+**Why:** `--gpu` uses one GPU — `IlgpuBackend.SelectDevice` enumerates all devices but takes `.FirstOrDefault()` of the
+CUDA ones (`IlgpuBackend.cs:191`). A multi-GPU box idles all but one. Since a chunk is generation-bound (M44.1), the win
+is to run self-play **generation on every CUDA GPU** at once. Owner's flow: enumerate all CUDA GPUs → shard the dataflow
+across them → CPU fallback (the CUDA↔CPU fallback already exists; it just never enumerates past the first device).
+
+**Finding (3-agent analysis):** the single-GPU assumption is a handful of localized seams (`SelectDevice` `FirstOrDefault`;
+one `Context`/`Accelerator`/`DeviceLock` per `IlgpuBackend`; `AdaptiveBackend` builds one; `AddSingleton<AdaptiveBackend>`;
+the `Backend.Current` global; one `_forward`/`_trainStep`). But the enablers exist: `DeterministicParallel.Generate`
+already shards games by **global index** bitwise-invariantly (the clean per-GPU axis); **N backends = N independent locks**
+(parallel across GPUs); the M43/M44 device seams; and the per-chunk `SyncToHost → _net → OnWeightsSynced` weight lifecycle
+(→ a fan-out). One box, one process, one campaign, one local store are all **kept** — this is why single-box ≪ cluster.
+
+- **M45.1 ✅ SHIPPED — Library: enumerate + device-addressable backend.** `SelectDevices` (all CUDA, or CPU); device-
+  pinning `IlgpuBackend(Context, Device)` ctor (shared context, caller-owned); `AdaptiveBackend` builds one backend per
+  CUDA device on one shared context, exposes `Gpus` (list, empty on CPU-only) — **`.Gpu` removed**; the autograd GEMM
+  router keeps a *private* primary `Gpus[0]`, so M43/M44 and `--gpu` are behaviourally unchanged. All 7 `.Gpu` sites
+  migrated to `Gpus.FirstOrDefault()`. **Gate MET:** 2 new tests (pinned-device GEMM parity; `Gpus` consistency) + 37
+  Ilgpu/cube/self-play tests green; web + Lab build clean.
+- **M45.2 ✅ SHIPPED — Lab: auto-all `--gpu` + `--gpus` override + sharded generation + weight fan-out.** `SelfPlayCampaign._forwards`
+  (one per selected GPU); each game routes its leaf batch to `_forwards[globalIndex % Count]` (index-deterministic);
+  training stays on `gpus[0]`; `OnWeightsSynced` fans out to all forwards per chunk. `--gpu` auto-uses ALL detected GPUs;
+  `--gpus` overrides (count or ordinals) via `SelectGpus`. **Gate MET:** DOP-invariance SHA test bitwise-identical (N=1
+  byte-for-byte unchanged); 26 tests green; a real `--gpu` conv run (N=1, RTX 3060) trains through the new routing at
+  ~123 ms/128-batch (= M44.3), resident path engaged.
+- **M45.3 — Measure (needs ≥2 GPUs).** Generation throughput vs 1 GPU; near-linear expected until the owner-thread merge
+  saturates. **Cannot be measured on the single RTX 3060** — M45.1/2 ship the capability + N=1 correctness; real scaling
+  is validated on multi-GPU hardware. Stated honestly.
+
+**Out of scope:** data-parallel *training* across GPUs (gradient all-reduce; ILGPU has no collectives, and training isn't
+the bottleneck after M44); cross-machine distributed / actor-learner (network transport, cross-process replay buffer,
+coordinator, fault tolerance — the model store is local-FS only; a separate systems project). The seams M45 builds
+(per-device resident forwards, index-sharded generation, weight fan-out) are the ones such a harness would reuse.
 
 ## Testing strategy (cross-cutting, from research)
 

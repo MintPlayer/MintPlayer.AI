@@ -1,0 +1,192 @@
+# Single-box multi-GPU self-play — PRD
+
+**Status:** 🟢 **M45.1 + M45.2 SHIPPED** (library enumerates all CUDA GPUs; self-play generation shards across them by
+game index, one resident forward per GPU, `--gpu` auto-uses ALL detected). M45.3 (measure on ≥2 GPUs) **needs multi-GPU
+hardware** — not runnable on the single RTX 3060. 2026-07-14. **Owner:** Pieterjan.
+**Milestone:** [PLAN.md](PLAN.md) M45 · **Depends on:** M43 GPU-resident conv forward (`DeviceConvPolicyValueNet`,
+`IPolicyValueForward`) and M44 GPU-resident conv trainer (`DeviceConvResidualTrainer`, `IPolicyValueTrainStep`) — this
+partitions the *dataflow* those built across every CUDA GPU present. **Promotes** the "distributed multi-GPU" roadmap
+noted in [GPU_RESIDENT_CONV_TRAINER_PRD.md](GPU_RESIDENT_CONV_TRAINER_PRD.md).
+
+## 1. Problem
+
+`--gpu` uses exactly **one** GPU. `IlgpuBackend.SelectDevice` (`IlgpuBackend.cs:187-194`) enumerates every device via
+`context.Devices` but takes `.OfType<CudaDevice>().FirstOrDefault()` — it deliberately prefers a discrete NVIDIA card
+over an Intel iGPU, but then **collapses N CUDA devices to one**. A box with 2–16 NVIDIA GPUs runs self-play on a single
+one; the rest sit idle. Because a self-play chunk is **generation-bound** (M44.1: generation ≈ constant ~15 s/chunk and
+dominates; the train step is now ~122 ms/batch after M44), the highest-value scaling lever is to **run self-play
+generation on all available GPUs at once**.
+
+Desired behaviour (owner's flow): **(1)** find all CUDA GPUs; **(2)** parallelize the self-play dataflow across them;
+**(3)** fall back to the CPU accelerator when no GPU is present. Step (3) already exists — the CUDA↔CPU fallback is in
+`SelectDevice` (final `GetPreferredDevice(preferCPU:true)`) and `AdaptiveBackend` (drops the GPU when `!IsGpu`); it just
+never enumerates past the first CUDA device.
+
+## 2. Findings (3-agent read-only analysis, 2026-07-14)
+
+### The single-GPU seams (each is a small, well-localized assumption)
+- **`IlgpuBackend.SelectDevice` (`:191`)** — `FirstOrDefault()` picks one CUDA device. The one true choke point.
+  `context.Devices.OfType<CudaDevice>()` already yields the full ordered list (`DescribeDevices`, `:203-207`, prints all).
+- **`IlgpuBackend` ctor (`:140-143`)** — one `Context` + one `Accelerator` + ~25 JIT'd kernels + one `DeviceLock`
+  (`_lock`, `:133`) per instance. Confirmed **1 backend = 1 accelerator = 1 GPU = 1 lock**. This is exactly what we want
+  *per GPU*; the ctor just needs to accept *which* `Device` instead of always calling `SelectDevice`.
+- **`AdaptiveBackend` ctor (`AdaptiveBackend.cs:38`)** — hardcodes a single `new IlgpuBackend()`; exposes it as `.Gpu`.
+- **`AddGpuBackend` (`GpuBackendServiceCollectionExtensions.cs:20`)** — `AddSingleton<AdaptiveBackend>()`, one instance.
+- **`Backend.Current` (`IComputeBackend.cs:110-113`)** — a plain process-global compute backend that all autograd
+  `Tensor` ops route through. Crucially, `IComputeBackend.Gemm(...)` is a **single-device operation**: one GEMM call
+  goes to one device — you cannot fan a single `Tensor` GEMM across GPUs through this interface. So the global is *not*
+  the multi-GPU driver and doesn't need to be: multi-GPU partitions via the **resident forward objects**, which each
+  own their own `IlgpuBackend`/accelerator and **bypass `Backend.Current` entirely**. Keeping one global
+  `AdaptiveBackend` is therefore fine — it *owns* all GPUs (via `.Gpus`), and the sharded generation never routes
+  through it, so it's never a contention point. The autograd/`Tensor` path (eval/arena `_net.Forward`, the CPU-side
+  loss ops) stays single-device on the internal primary (`Gpus[0]`) or CPU.
+- **`SelfPlayCampaign._forward` / `_trainStep` (`SelfPlayCampaign.cs:82,89`)** — single resident instances on one GPU;
+  today all N generation threads call the one `_forward` and **serialize on its single `DeviceLock`**
+  (`DeviceConvPolicyValueNet.Forward` holds the lock for its whole body, `DeviceConvPolicyValueNet.cs:92`). The device
+  lock is the current throughput ceiling.
+
+### The seams that already make this tractable (no rewrite)
+- **Generation shards by global game-index, bitwise-invariantly.** `DeterministicParallel.Generate`
+  (`DeterministicParallel.cs:40`) runs `makeItem(i, DeriveRng(baseSeed, baseIndex + i))`; the per-game RNG is keyed on
+  the **global index** (`baseIndex + i`, golden-ratio stride, `:79-80`), never execution order, and the result is
+  "bitwise-identical whether produced in parallel or sequentially, and at any degree of parallelism." So game index
+  ranges assigned to different GPUs produce identical samples regardless of which device runs them → the clean shard axis.
+- **N backends = N independent locks.** Each `IlgpuBackend` serializes only against itself, so games on GPU0 run fully
+  in parallel with games on GPU1. Precisely the concurrency we need.
+- **Clean device seams already exist**: `IPolicyValueForward` (inference, M43) per GPU for generation;
+  `IPolicyValueTrainStep` (training, M44) on one GPU for the learner.
+- **The weight lifecycle is already a broadcast seam.** Per chunk: `_trainStep.SyncToHost()` writes trained weights into
+  the CPU master `_net`, then `_forward.OnWeightsSynced(_net)` re-uploads to the device (`SelfPlayCampaign.cs:232-233`).
+  For multi-GPU this becomes a fan-out: `OnWeightsSynced` to **every** per-GPU forward, at the same per-chunk cadence.
+- **Results already merge by index** into `_window` in ascending game order (`SelfPlayCampaign.cs:189-190`) — an
+  index-range shard merges identically, no new reduction.
+
+### What the infra layer assumes (and can keep)
+- **Local model store, one campaign.** `FileModelStore` writes `<data>/chess.az.ckpt` + `chess.az-adam.ckpt`
+  (`ModelStore.cs:35-36`); `CampaignRunner.Run` drives exactly one campaign to a wall-clock deadline
+  (`CampaignRunner.cs:51`). **Single-box multi-GPU keeps one process, one campaign, one store** — generation just fans
+  across local GPUs *inside* a chunk. No store/orchestration change needed (this is why single-box ≪ cross-machine).
+- **Determinism.** Bitwise DOP-invariance (`ParallelGeneration_ProducesBitwiseIdenticalCheckpoint_AtAnyDop`,
+  `SelfPlayCampaignTests.cs:97`) is a **CPU-only** guarantee already forfeited by `--gpu` (GPU float reductions aren't
+  associative). Multi-GPU keeps the same stance: opt-in, CPU autograd stays the reproducible reference. Game→GPU mapping
+  is by index (a given game always lands on the same GPU for a config) so assignment is reproducible even though the
+  bytes aren't.
+
+## 3. Decision
+
+Add **single-box multi-GPU self-play generation** as **library capability + Lab wiring**: enumerate all CUDA GPUs, build
+one GPU-resident forward per device, and shard self-play generation across them by game-index range; keep the training
+step on the primary GPU and fan the trained weights out to every device's forward each chunk. CPU-accelerator fallback
+is unchanged. **Out of scope** (explicitly, to keep the win tractable): data-parallel *training* across GPUs (gradient
+all-reduce — ILGPU has no collectives, and training is not the bottleneck), and cross-machine distributed training
+(actor-learner over a network — a separate systems project; see §6).
+
+## 4. Design (placement: generic → library)
+
+### 4a. Library — enumerate devices; `AdaptiveBackend.Gpus` is the one GPU surface
+`Ilgpu`:
+- **`IlgpuBackend`**: split `SelectDevice` into `SelectDevices(context, preferCpu) → IReadOnlyList<Device>` (all CUDA
+  devices in order; or the single CPU accelerator when none / `preferCpu`). Add an internal ctor
+  `IlgpuBackend(Context, Device)` so a backend can be pinned to a specific device instead of always re-selecting. The
+  existing `IlgpuBackend(bool preferCpu)` stays (picks the first).
+- **`AdaptiveBackend` owns N GPUs and exposes them as a list — `.Gpu` (singular) is REMOVED.** The public GPU surface
+  becomes `.Gpus` = `IReadOnlyList<IlgpuBackend>` (one per CUDA device, in order; **empty when CPU-only**) plus
+  `GpuAvailable => Gpus.Count > 0`. There is no privileged single GPU in the API — a consumer that wants one device uses
+  `Gpus[0]` / `Gpus.FirstOrDefault()`, a consumer that shards uses all of `Gpus`. **This is a deliberate breaking public-API
+  change** (owner's library — acceptable), correcting a surface that pretended one GPU was special. One `AdaptiveBackend`
+  still absorbs the multi-GPU complexity; it disposes all its backends.
+- **The CPU-vs-GPU GEMM router stays, but privately.** `AdaptiveBackend` is still the single `Backend.Current`, and its
+  `Route(...)` must send a large autograd `Tensor` GEMM to one device — so it keeps a *private* primary (`_gpus.Count > 0
+  ? _gpus[0] : null`), an internal detail, not a public property. M43/M44 and the existing `--gpu` path are behaviourally
+  unchanged (they just resolve their device through `Gpus[0]` instead of `.Gpu`).
+- **Migrate the `.Gpu` call sites** (part of M45.1 — small, mechanical): single-resident-net consumers →
+  `Gpus.FirstOrDefault()`: `CubeModelService.cs:132,141`, `ConvForwardBench.cs:22,37`, `CubeDaviCampaign.cs:284,292`,
+  `CubeEfficientCampaign.cs:134`. Chess self-play (`ChessLab.cs:118,124-125`) → the full `Gpus` list for the sharded
+  forwards + `Gpus[0]` for the single trainer.
+
+### 4b. Hosting — unchanged DI shape
+`Ilgpu.Hosting`: `AddGpuBackend()` still registers one `AdaptiveBackend` singleton; that singleton now discovers all
+CUDA devices internally. No keyed services / no N registrations needed (§4a makes the wrapper multi-GPU-aware).
+
+### 4c. Lab — the `--gpus` flag + sharded generation (the only game-specific part)
+`SelfPlayCampaign` / `ChessLab`:
+- **`--gpu` auto-uses every detected GPU; `--gpus` is an optional override.** With `--gpu`, generation shards across ALL
+  CUDA GPUs by default — no count needs stating. `--gpus` overrides: `all` (default), an integer count (first N), or
+  explicit ordinals (`0,2`); a spec matching nothing falls back to all (a typo never silently drops to CPU). Resolved by
+  a `SelectGpus` helper in `ChessLab`. `--gpu` stays the GPU opt-in (omit it to force CPU, e.g. for bitwise determinism).
+- **N resident forwards.** The campaign builds one `IPolicyValueForward` per selected GPU via a Core-typed factory (the
+  Lab supplies `adaptive.Gpus[k].CreateResidentForward(conv)` per device; all Ilgpu knowledge stays in `ChessLab`, as
+  M43/M44 already do). Falls back to a single autograd forward when `Gpus` is empty (CPU-only).
+- **Shard generation by index.** In `EvaluateBatch`, route a game's leaf batch to `_forwards[gpuFor(globalIndex)]` where
+  `gpuFor(i) = i % nGpus` (or contiguous ranges). Because `DeterministicParallel` already keys each game on its global
+  index, the game→GPU assignment is deterministic; with `--parallel` and `MaxDop ≥ nGpus`, games on different GPUs run
+  concurrently (each GPU's games serialize only on that GPU's own lock). The generation closure needs the game's GPU id
+  threaded through (game index is already available).
+- **Training stays on one GPU** (`_trainStep` built from `Gpus[0]`), after the join, as today. **Weight fan-out:** replace
+  the single `_forward.OnWeightsSynced(_net)` with a loop over all per-GPU forwards, at the same per-chunk cadence.
+- Eval/arena (`ArenaVsRandom`/`ArenaVsNet`) stay on the owner thread via `_net.Forward` — not sharded (small, and they
+  run between chunks); a later refinement could shard them the same way.
+
+## 5. Phases
+
+- **M45.1 ✅ SHIPPED — Library: enumerate + device-addressable backend.** `SelectDevice` → `SelectDevices` (all CUDA, or
+  CPU); a device-pinning `IlgpuBackend(Context, Device)` ctor (shared context, `_ownsContext=false` so the caller
+  disposes it); `AdaptiveBackend` builds one backend per CUDA device on one shared context and exposes `Gpus`
+  (`IReadOnlyList<IlgpuBackend>`, empty when CPU-only) — **`.Gpu` removed**; the autograd GEMM router keeps a private
+  primary (`Gpus[0]`). All 7 `.Gpu` call sites migrated to `Gpus.FirstOrDefault()` (CubeModelService, ConvForwardBench,
+  CubeDavi/Efficient, ChessLab). **Gate MET:** new tests `IlgpuBackend_PinnedToSharedContextDevice_MatchesManaged` +
+  `AdaptiveBackend_Gpus_AreConsistent`; the Ilgpu/cube-trainer/self-play suites stay green (37 tests); the existing
+  single-GPU `--gpu` path is behaviourally unchanged. Web + Lab build clean. Shippable alone.
+- **M45.2 ✅ SHIPPED — Lab: auto-all `--gpu` + `--gpus` override + sharded generation + weight fan-out.** `SelfPlayCampaign`
+  holds `_forwards` (one `IPolicyValueForward` per selected GPU; factory returns `IReadOnlyList<…>`); each game routes its
+  batched leaf inference to `_forwards[globalIndex % Count]` (`GenerateGame`→`PlaySelfPlay`→`EvaluateBatch(states,
+  forward)`), and `OnWeightsSynced` fans the trained weights out to every forward per chunk. Training stays on `gpus[0]`.
+  `ChessLab` auto-selects all detected GPUs (`--gpus` override via `SelectGpus`). **Gate MET:** DOP-invariance SHA test
+  still bitwise-identical (the plural refactor is byte-for-byte unchanged at N=1); 26 self-play/Ilgpu tests green; a real
+  `--gpu` conv run on the RTX 3060 (N=1) trains correctly through the new routing — train ~123 ms/128-batch (identical to
+  M44.3), resident forward+trainer engaged, no errors.
+- **M45.3 — Measure (needs a multi-GPU box).** On ≥2 NVIDIA GPUs, report generation throughput vs 1 GPU (target:
+  near-linear in GPU count until the owner-thread merge / CPU MCTS bookkeeping saturates). **On the owner's single
+  RTX 3060 this cannot be measured** — M45.1/2 deliver the *capability* + an N=1 correctness check; real N-GPU scaling is
+  validated wherever a multi-GPU machine is available. Documented honestly, not hidden.
+
+## 6. Risks & explicitly out of scope
+
+1. **Can't measure real speedup on a 1-GPU dev box.** Mitigated: M45.1/2 are correctness + capability (N=1 ≡ today);
+   M45.3 scaling is gated on multi-GPU hardware and reported when available. No pretending it's measured.
+2. **`Backend.Current` is a single global — a non-issue by design.** `IComputeBackend.Gemm` is single-device, so the
+   global can't (and needn't) drive multi-GPU. Sharded generation runs through per-GPU **resident** forwards that bypass
+   `Backend.Current`; the global handles only the single-device autograd path (`Gpus[0]`/CPU). One `AdaptiveBackend`
+   owning all GPUs is kept.
+3. **Determinism.** Multi-GPU forfeits bitwise reproducibility further (cross-device non-associative reductions), exactly
+   as `--gpu` already does. Kept opt-in; CPU autograd remains the reproducible reference; game→GPU mapping is
+   index-deterministic. The CPU-only DOP-invariance SHA gate is unaffected.
+4. **P.2 Adam-resume gap compounds.** The resident trainer's device m/v moments are never downloaded into the persisted
+   `Adam` (`OPTIMIZATIONS.md` P.2; `GPU_RESIDENT_CONV_TRAINER_PRD.md` §Risks) — a `--gpu` resume re-warms the optimizer.
+   Multi-GPU doesn't worsen it (training stays on one GPU), but the fix (download m/v in `SyncToHost`) is a shared
+   prerequisite for any lossless-resume story. Cross-linked, not solved here.
+5. **OUT OF SCOPE — data-parallel training across GPUs.** Replica-per-GPU + gradient all-reduce would need NCCL-style
+   collectives ILGPU lacks (hand-rolled), and training isn't the bottleneck after M44. Deferred.
+6. **OUT OF SCOPE — cross-machine distributed (the "16-GPU supercluster").** That needs the full actor–learner control
+   plane: self-play actor processes, a cross-process/streamed replay buffer, a network sample transport + checkpoint
+   distribution, a coordinator, and fault tolerance — none of which exist (the model store is local-FS only,
+   `CampaignRunner` drives one campaign). Single-box multi-GPU is the tractable, in-SDK step; the seams it builds
+   (per-device resident forwards, index-sharded generation, weight fan-out) are the same ones a distributed harness
+   would compose. Roadmap, not this milestone.
+
+## 7. Verification
+- M45.1: `Gpus` enumerates one backend per CUDA device (or empty on CPU-only); existing `--gpu` + M43/M44 tests green.
+- M45.2: `--gpus 1` ≡ `--gpu` (identical run); CPU DOP-invariance SHA test green; `--gpus all` runs correctly at N=1.
+- M45.3 (multi-GPU hardware): generation throughput vs 1 GPU reported; near-linear scaling expected until the
+  owner-thread merge saturates.
+
+## 8. Generic (library) vs lab
+| Piece | Layer |
+|---|---|
+| `SelectDevices`, `IlgpuBackend(Context, Device)` ctor, `AdaptiveBackend.Gpus` (**remove `.Gpu`**) | **Ilgpu** |
+| `AddGpuBackend` (unchanged shape; wrapper now multi-GPU-aware) | **Ilgpu.Hosting** |
+| Migrate `.Gpu` → `Gpus.FirstOrDefault()` for single-net consumers | **Web** (`CubeModelService`) + **Lab** (`ConvForwardBench`, `CubeDaviCampaign`, `CubeEfficientCampaign`) |
+| `--gpus` flag, N resident forwards, index→GPU routing, `OnWeightsSynced` fan-out | **Lab** (`ChessLab` + `SelfPlayCampaign`) |
+
+See [PLAN.md](PLAN.md) M45, [GPU_RESIDENT_CONV_PRD.md](GPU_RESIDENT_CONV_PRD.md) (M43 forward),
+[GPU_RESIDENT_CONV_TRAINER_PRD.md](GPU_RESIDENT_CONV_TRAINER_PRD.md) (M44 trainer + P.2), [OPTIMIZATIONS.md](../OPTIMIZATIONS.md).

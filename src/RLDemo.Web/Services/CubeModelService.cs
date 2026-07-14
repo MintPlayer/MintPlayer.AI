@@ -129,7 +129,7 @@ public sealed class CubeModelService : IModelStartupService, IDisposable
     private void RebuildResidentValue(ResidualMlp net)
     {
         _residentValue?.Dispose();
-        _residentValue = _backend.Gpu is { } gpu ? gpu.CreateResidentForward(net) : null;
+        _residentValue = _backend.Gpus.FirstOrDefault() is { } gpu ? gpu.CreateResidentForward(net) : null;
         _logger.LogInformation("Rebuilt cube DAVI value forward ({Mode}).",
             _residentValue is not null ? "resident GPU" : "CPU");
     }
@@ -138,7 +138,7 @@ public sealed class CubeModelService : IModelStartupService, IDisposable
     private void RebuildResidentEfficient(CubePolicyNet net)
     {
         _residentEfficient?.Dispose();
-        _residentEfficient = _backend.Gpu is { } gpu ? gpu.CreateResidentForward(net.PolicyAsMlp()) : null;
+        _residentEfficient = _backend.Gpus.FirstOrDefault() is { } gpu ? gpu.CreateResidentForward(net.PolicyAsMlp()) : null;
         _logger.LogInformation("Rebuilt EfficientCube policy forward ({Mode}).",
             _residentEfficient is not null ? "resident GPU" : "CPU");
     }

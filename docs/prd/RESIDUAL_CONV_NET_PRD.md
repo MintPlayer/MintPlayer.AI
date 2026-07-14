@@ -1,6 +1,6 @@
 # Convolutional residual policy/value net (Core) + chess adoption — PRD
 
-**Status:** M42.1 + M42.2 ✅ SHIPPED 2026-07-13 (branch `m39-chess-selfplay-plan`, PR #32) · M42.3 ⏳ training · M42.4 🔜 gated on M42.3.
+**Status:** M42.1 + M42.2 ✅ SHIPPED 2026-07-13 (merged to master via PR #31) · M42.3 🟡 **partial** — a real training pathology (draw-collapse) was diagnosed + fixed (commit `282c665`) and the self-play material regression stopped, BUT genuine playing-strength gains are **not yet demonstrated**: over a fair 40-game eval the ladder tiers don't beat the barely-trained baseline, and both available metrics saturate/are self-referential (see below). Needs a non-saturating strength eval + far more scale · M42.4 🟡 steps 1+3 done (`c1c7d8e`), steps 2+4 (browser wiring) remain. **No conv tier is shippable yet** (none proven stronger than the current MLP demo).
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M42 · **Depends on:** M41 (parallel self-play — makes the training iterations this needs affordable) · **Supersedes** the "flat MLP is the ceiling" note in [CHESS_WEB_POLYGLOT_PRD.md](CHESS_WEB_POLYGLOT_PRD.md) and [CHESS_SELFPLAY_PRD.md](CHESS_SELFPLAY_PRD.md).
 
@@ -12,10 +12,63 @@
   with an `IPolicyValueNetBuilder` (Mlp/Conv) as the arch factory. **The de-risking two-headed-residual-MLP checkpoint
   (§M42.2) was SKIPPED** — went straight to the conv net. Gate MET: head shapes, exact save/load round-trip, loss falls;
   MLP self-play determinism gate still byte-identical (zero behaviour change).
-- **M42.3** ⏳ conv training (`--arch conv --filters 64 --blocks 6`) — runs offline via the Lab; owner-driven (paused
-  during PR merge, to be restarted). Gate unchanged: beat the MLP baseline / ≥1 ladder tier promotes.
-- **M42.4** 🔜 browser conv forward + parity — **not started, deliberately gated on M42.3** proving the conv net beats
-  the baseline (PRD risk #2). The current shipped browser demo uses the flat-MLP net (committed at `chess.az.d1.ckpt`).
+- **M42.3** ⏳ conv training (`--arch conv --filters 64 --blocks 6`) — runs offline via the Lab (branch
+  `m42-chess-conv-net`, off master). Gate unchanged: beat the MLP baseline / ≥1 ladder tier promotes.
+  - **Perf fix that unblocked it (commit `71fe44c`): parallelize eval + ladder arena.** The conv net is ~10–50× heavier
+    per MCTS node than the MLP, and that surfaced a bottleneck the PRD's cost analysis (risk #3) missed: **it wasn't
+    self-play generation — it was the *measurement* phase.** After each chunk, on the owner thread, `ArenaVsRandom`
+    (`--eval-games` games) + `ArenaVsNet` (`--arena-games` games) ran **sequentially**, single-threaded, at full conv
+    cost — and because they run between chunks, **they stalled training itself** (no gradient steps while the arena
+    grinds; observed ~24 min at ~0.8 cores per cycle, one eval every ~30 min). The PRD left them sequential assuming a
+    cheap MLP; false for conv. Fix: `ArenaVsRandom`/`ArenaVsNet` now run their independent, inference-only games on the
+    **same `DeterministicParallel` primitive** self-play uses (one base seed per call → per-game RNG a pure function of
+    `(cycle, game index)`). Inference-only ⇒ trained weights are untouched: the DOP-invariance checkpoint test still
+    passes **bitwise**, and eval/arena metrics are reproducible + DOP-invariant by construction.
+  - **New knob (same commit): `--max-plies`** (default 200). A chunk's wall time is bounded by its **slowest** game, so
+    the ply cap — not the average game — sets self-play throughput; a weak net rarely mates, so games otherwise run to
+    the cap. Lower it for a heavy net to keep evals frequent.
+  - **Tuned config for the conv net's per-node cost:** `--sims 64 --games 16 --max-plies 100 --eval-games 8
+    --arena-games 12 --parallel --ladder --material-weight 0.5`. (256 sims / 200 plies / 10+20 sequential eval games —
+    the MLP-era defaults — made a single chunk+eval cycle take 20–30 min; this cut it to ~4–5 min/chunk with regular
+    evals, all cores busy in *both* phases.)
+  - **Early trend (positive — conv is learning, not plateauing like the MLP):** by ~48 self-play games, policy loss
+    **8.09 → 6.78** (falling off the ~8.45 uniform), value loss **0.235 → 0.096**, and material margin vs the Level-1
+    baseline **+0.50 pawns** (climbing toward the +0.75 promote gate). Contrast the MLP plateau (§1): policy barely moved
+    2.35→2.22 over 500 games, margin stuck ~+0.1, no tier ever promoted. The concrete gate is a **merit tier promotion**
+    (Level 2+ on material/head-to-head, not the automatic Level-1 baseline).
+  - **Root-cause fix — DRAW-COLLAPSE (commit `282c665`).** Once the arena noise was removed (`--arena-games 40`), the
+    trustworthy signal showed the conv net *regressing*: material vs its own baseline slid −2→−9 pawns while value loss
+    fell to ~0.03 and winRate-vs-random stayed pinned at 50%. Diagnosis: a weak net that can't force mate + a short ply
+    cap ⇒ **nearly all self-play games hit the cap as draws (z=0)** ⇒ the outcome signal vanished ⇒ the net trivially
+    learned "value=0 always" and collapsed onto passive, shuffle-to-the-cap play, bleeding material to any real
+    opponent. **My earlier throughput tuning (low sims + short plies) *caused* it** by starving the outcome signal —
+    and the earlier "noisy-arena +1.00 @g160 promotion" was arena-12 noise, not real strength. Fix: **material-adjudicate
+    ply-capped games** — a `GameResult.Ongoing`-at-cap position with a decisive material edge (≥1.5 pawns) trains as a
+    win/loss instead of z=0, so non-mating games carry a real signal (no-op for materialless games like Connect-4, so
+    the DOP-determinism test stays bitwise-green). **Result: collapse broken** — same fast config went from −9 pawns to
+    **+3.78 and a merit Level-2 promotion** at the same game count.
+  - **Honest limit — strength gains UNPROVEN; the metrics saturate.** The ladder promoted merit tiers, but on
+    **8-game-noisy** evals + the **material** metric (which adjudication amplifies *within self-play* but doesn't
+    necessarily translate to external strength). A fair **40-game winRate-vs-random** ranking of the captured tiers
+    (constant sims/seed) came out ~50–59% and **did not beat the barely-trained baseline** (L1 58.8%, L3 52.5%). So the
+    conv net at 64f/64-sim after ~100–200 games does **not** demonstrably play stronger chess than its own baseline.
+    Two caveats keep this from being purely negative: (1) `winRate-vs-random` itself **saturates** — any net that draws
+    random but can't mate it scores ~50%, so it can't cleanly rank these tiers either; (2) the draw-collapse fix is
+    real (the non-adjudicated run's material slid to −9; adjudication stopped that regression). **Real gap:** there is
+    **no non-saturating strength metric** — both signals are saturating (winRate) or self-referential/gameable
+    (material-in-self-play). **Next steps (evidence-backed):** (a) add a non-saturating eval — play vs a simple
+    material-greedy or depth-2 minimax opponent — to actually *measure* strength; (b) only then scale **training volume
+    (AlphaZero needs far more than ~200 games)**, **net capacity (`--filters/--blocks`)**, and **`--sims`**. Doubling
+    sims to 128 overnight did **not** lift the ceiling, consistent with capacity/volume being the real limit.
+    *(Full run-by-run detail: `data/chess-conv-autorun-log.md`.)*
+- **M42.4** 🟡 **steps 1+3 DONE (commit `c1c7d8e`)**: the conv forward is single-sourced in `chess_solver.pg`
+  (`PgConvNet`, direct nested-loop conv + whole-row LayerNorm + residual tower + both heads) and a C# parity test
+  (`ChessNetParityTests`) proves it matches `ConvResidualPolicyValueNet.Forward` on real conv `.ckpt` bytes (<2e-3).
+  Dispatch is via a nullable `PgPolicyValueNet.conv` field (no interface feature in the `.pg`; filed
+  [MintPlayer.Polyglot#29](https://github.com/MintPlayer/MintPlayer.Polyglot/issues/29)), so the MLP browser path is
+  unchanged. **Steps 2+4 remain** (TS conv parser in `chess-net.ts` + regen `chess_solver.ts` via the CLI at
+  `C:\Repos\MintPlayer.Polyglot` + wire `loadChessNet`/`chess-director.ts` + copy the chosen conv tier into
+  `wwwroot/models`) — best done interactively (regenerating the committed `.ts` blind risks the live MLP `/chess` page).
 
 ## 1. Problem
 
@@ -96,7 +149,7 @@ The whole M40 browser story is single-source Polyglot inference: `PgPolicyValueN
 ## 6. Risks
 1. **Conv correctness** — mitigated by the finite-difference gradient gate (M42.1) before any net is built on it.
 2. **Conv net still doesn't beat the plateau** — possible if the block is targets/search, not capacity; the M42.2 residual-MLP de-risking checkpoint surfaces this cheaply. Fallback levers if so: more sims, longer training (M41 makes this affordable), or revisiting the value target.
-3. **Training cost** — a conv tower is far heavier than the MLP; **this is exactly why M41 (parallel self-play) lands first.** The im2col+GEMM route keeps the heavy math on the GPU-routed GEMM.
+3. **Training cost** — a conv tower is far heavier than the MLP; **this is exactly why M41 (parallel self-play) lands first.** The im2col+GEMM route keeps the heavy math on the GPU-routed GEMM. **Realized nuance (M42.3):** M41 parallelized self-play *generation*, but the conv net's per-node cost exposed a *second* sequential hot path this analysis missed — the eval + ladder **arena**, which run on the owner thread between chunks and so stall training. Both must be parallel for a heavy net; the M42.3 perf fix (commit `71fe44c`) does that. Lesson: with an expensive net, audit **every** per-chunk phase for hidden single-threaded work, not just generation.
 4. **Browser perf** — a conv forward per MCTS node in JS may be slow; if so, cap browser sims per difficulty tier (the tier system already sets per-tier sims) or ship a smaller `filters/blocks` for the web than for the strongest offline tier. Flag during M42.4.
 5. **Checkpoint/interface churn** — the `IPolicyValueNet` refactor touches the shared self-play path; the SHA-identical-MLP gate (M42.2) guards against a silent regression to connect-4/chess.
 
@@ -106,4 +159,34 @@ The whole M40 browser story is single-source Polyglot inference: `PgPolicyValueN
 - M42.3: chess conv run **beats the MLP baseline** on material margin / winRate with ≥1 tier promoted; determinism preserved.
 - M42.4: `ChessNetParityTests` green on conv `.ckpt`; `/chess` plays a conv tier end-to-end.
 
-See [PLAN.md](PLAN.md) M42.
+## 8. Scale-out & Deferred (postponed — for a well-resourced training run)
+
+The pipeline is a correct **single-machine** trainer. Two items were built to remove scaling ceilings; the rest are
+deliberately deferred (they only pay off on a GPU cluster / long run, and shouldn't be retrofitted speculatively).
+
+**Shipped (scale-readiness):**
+- ✅ **Batched leaf inference** — `Mcts.SearchBatched` (virtual-loss; evaluates a wave of MCTS leaves in one
+  `net.Forward`) + `--leaf-batch`, so self-play isn't stuck at batch-1. Opt-in; `leafBatch=1` is bitwise-identical to
+  the sequential path (proven by test). Commit `4801c98`.
+- ✅ **`--gpu`** wiring — installs the ILGPU `AdaptiveBackend` as `Backend.Current` (was hardcoded CPU-only for chess).
+- ✅ **De-ceiling knobs via a `SelfPlayOptions` record** (commit `8c382ae`) — folded the campaign's ~20-param
+  telescoping constructor into one options record and exposed the previously-hardcoded knobs a large run needs:
+  `--window` (replay capacity), `--batch`, `--epochs`, `--clip`, `--temp-moves`, and the MCTS
+  `--cpuct`/`--dirichlet-alpha`/`--root-noise`. Defaults reproduce prior behaviour bitwise (determinism test green).
+
+**Deferred (postponed):**
+1. **GPU-*resident* batched forward for the conv net (a conv analogue of `Ilgpu/DeviceMlp`).** Today the conv net
+   routes through `Backend.Current`, which re-uploads weights per GEMM; the cube's value net keeps weights on-device
+   across steps via `DeviceMlp`/`ITargetForward`. A conv `DeviceMlp` is the one piece that would (a) make the chess GPU
+   path as efficient as the cube's and (b) **unify the two families' GPU inference** (see `ARCHITECTURE.md` §4, "Two
+   distinct neural-search families"). **→ ✅ BUILT** (M43, 2026-07-14): a two-headed `IPolicyValueForward`
+   Core seam + an Ilgpu `DeviceConvPolicyValueNet` (needed only **two new kernels** — device im2col + scatter/bias);
+   correctness verified on the ILGPU CPU accelerator, on-GPU throughput pending a CUDA box. Full write-up in
+   **[GPU_RESIDENT_CONV_PRD.md](GPU_RESIDENT_CONV_PRD.md)**.
+2. **Distributed actor→learner topology** — many self-play workers feeding a central trainer + weight broadcast
+   (the standard multi-GPU AlphaZero layout). Single-process today; would be built from scratch. **Postponed.**
+3. **Quality features a strong run needs** — WDL/categorical value head, auxiliary targets (moves-left, material),
+   input history planes, larger default `--filters/--blocks`. Research-backed (Leela/KataGo); **postponed** behind the
+   scale decision.
+
+See [PLAN.md](PLAN.md) M42 and [OPTIMIZATIONS.md](../OPTIMIZATIONS.md).

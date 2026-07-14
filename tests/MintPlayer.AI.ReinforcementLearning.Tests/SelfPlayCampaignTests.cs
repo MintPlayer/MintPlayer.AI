@@ -16,9 +16,11 @@ namespace MintPlayer.AI.ReinforcementLearning.Tests;
 public class SelfPlayCampaignTests
 {
     private static Lab::SelfPlayCampaign<Connect4State> Fresh() =>
-        new(new Connect4Game(), "connect4", seed: 1, learningRate: 1e-3f, hidden: 32,
-            selfPlayCfg: new Mcts.Config(Simulations: 8),
-            gamesPerChunk: 4, tempMoves: 2, evalGames: 2, windowCapacity: 4000, maxPlies: 64);
+        new(new Connect4Game(), "connect4", new Lab::SelfPlayOptions
+        {
+            Seed = 1, LearningRate = 1e-3f, Hidden = 32, Search = new Mcts.Config(Simulations: 8),
+            GamesPerChunk = 4, TempMoves = 2, EvalGames = 2, WindowCapacity = 4000, MaxPlies = 64,
+        });
 
     [Fact]
     [Trait("Category", "Slow")]
@@ -67,10 +69,12 @@ public class SelfPlayCampaignTests
         try
         {
             var store = new FileModelStore(dir.FullName);
-            var c = new Lab::SelfPlayCampaign<Connect4State>(new Connect4Game(), "connect4", seed: 2,
-                learningRate: 1e-3f, hidden: 32, selfPlayCfg: new Mcts.Config(Simulations: 8),
-                gamesPerChunk: 6, tempMoves: 2, evalGames: 2, windowCapacity: 4000, maxPlies: 64,
-                targetGames: 0, opponentRandomFrac: 1.0);
+            var c = new Lab::SelfPlayCampaign<Connect4State>(new Connect4Game(), "connect4", new Lab::SelfPlayOptions
+            {
+                Seed = 2, LearningRate = 1e-3f, Hidden = 32, Search = new Mcts.Config(Simulations: 8),
+                GamesPerChunk = 6, TempMoves = 2, EvalGames = 2, WindowCapacity = 4000, MaxPlies = 64,
+                TargetGames = 0, OpponentRandomFrac = 1.0,
+            });
 
             Assert.False(c.Resume(store));
             Assert.Equal(6, c.TrainChunk());
@@ -107,10 +111,12 @@ public class SelfPlayCampaignTests
         try
         {
             var store = new FileModelStore(dir.FullName);
-            var c = new Lab::SelfPlayCampaign<Connect4State>(new Connect4Game(), "connect4", seed: 42,
-                learningRate: 1e-3f, hidden: 32, selfPlayCfg: new Mcts.Config(Simulations: 8),
-                gamesPerChunk: 16, tempMoves: 2, evalGames: 2, windowCapacity: 4000, maxPlies: 64,
-                parallel: parallel, maxDop: maxDop);
+            var c = new Lab::SelfPlayCampaign<Connect4State>(new Connect4Game(), "connect4", new Lab::SelfPlayOptions
+            {
+                Seed = 42, LearningRate = 1e-3f, Hidden = 32, Search = new Mcts.Config(Simulations: 8),
+                GamesPerChunk = 16, TempMoves = 2, EvalGames = 2, WindowCapacity = 4000, MaxPlies = 64,
+                Parallel = parallel, MaxDop = maxDop,
+            });
             c.Resume(store);
             for (int i = 0; i < 3; i++) c.TrainChunk();
             c.Checkpoint(store);
