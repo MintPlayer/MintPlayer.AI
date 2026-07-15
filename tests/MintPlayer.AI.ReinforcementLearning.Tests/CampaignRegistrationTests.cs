@@ -5,6 +5,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments; // generated AddReinforcementLearningGames()
 using MintPlayer.AI.ReinforcementLearning.Environments.Chess;
 using MintPlayer.AI.ReinforcementLearning.Environments.Connect4;
+using MintPlayer.AI.ReinforcementLearning.Environments.Draughts;
 using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 using MintPlayer.AI.ReinforcementLearning.Hosting;
@@ -42,6 +43,10 @@ public class CampaignRegistrationTests : IDisposable
         Assert.IsType<ChessGame>(sp.GetRequiredService<IZeroSumGame<ChessState>>());
         Assert.IsType<ChessGame>(sp.GetRequiredService<IMaterialScore<ChessState>>());
         Assert.IsType<Connect4Game>(sp.GetRequiredService<IZeroSumGame<Connect4State>>());
+        Assert.IsType<DraughtsGame>(sp.GetRequiredService<IZeroSumGame<DraughtsState>>());
+        Assert.IsType<DraughtsGame>(sp.GetRequiredService<IMaterialScore<DraughtsState>>());
+        // The generated registration is the international 10×10 showcase variant (PolicySize 50×50).
+        Assert.Equal(2500, sp.GetRequiredService<IZeroSumGame<DraughtsState>>().PolicySize);
     }
 
     [Fact]
@@ -49,6 +54,9 @@ public class CampaignRegistrationTests : IDisposable
     {
         using (var cpu = Build(s => s.AddSelfPlayCampaign<Connect4State>("connect4", new SelfPlayOptions())))
             Assert.IsType<SelfPlayCampaign<Connect4State>>(cpu.GetRequiredService<ITrainingCampaign>());
+        using (var cpu = Build(s => s.AddSelfPlayCampaign<DraughtsState>("draughts", new SelfPlayOptions(),
+                   netBuilder: new ConvNetBuilder(planes: 5, boardH: 10, boardW: 10, filters: 8, blocks: 1))))
+            Assert.IsType<SelfPlayCampaign<DraughtsState>>(cpu.GetRequiredService<ITrainingCampaign>());
         // The GPU path exercises the compute wiring moved out of ChessLab (resident forwards/trainer selection);
         // AdaptiveBackend falls back to the CPU accelerator on GPU-less machines.
         using (var gpu = Build(s => s.AddSelfPlayCampaign<ChessState>("chess", new SelfPlayOptions(),

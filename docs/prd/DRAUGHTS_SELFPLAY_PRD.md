@@ -112,13 +112,20 @@ cheap movegen makes CPU generation fast anyway.
 
 ## 5. Milestones & gates (falsifiable, in order)
 
-- **M47.1 — Engine.** `draughts_solver.pg` parameterized 10×10/8×8, full-sequence movegen, `IZeroSumGame` +
+- **M47.1 — Engine.** ✅ SHIPPED 2026-07-15. `draughts_solver.pg` parameterized 10×10/8×8, full-sequence movegen, `IZeroSumGame` +
   `IMaterialScore`, no-progress rule; C# facade + `[Register]`. **Gate: perft matches published tables for BOTH
   variants** (10×10 start: 9/81/658/4265/27117…; 8×8: 7/49/302/1469/7361…) **+ capture-dense positions
   exercising majority, Turkish strike, promotion-mid-sequence.** No training before this gate.
-- **M47.2 — Encoding + observation.** (from,to) policy map + canonical tie-break; 5-plane observation.
+  *Gate result: perft green 10×10 d1–d8 (incl. 6,483,961) + 8×8 d1–d9 (incl. 3,963,680); 8 hand-verified rule
+  tests. Design note: english "man crowning mid-jump stops" is EMERGENT in sequence movegen (english men capture
+  forward-only; no forward jump exists from the last row) — three rule flags suffice, not four.*
+- **M47.2 — Encoding + observation.** ✅ SHIPPED 2026-07-15. (from,to) policy map + canonical tie-break; 5-plane observation.
   **Gate: encode→decode→apply round-trip over thousands of random playouts, with a collision audit** (count and
   log canonical-pick events; zero unmapped legal moves).
+  *Gate result: 27,345 intl + 21,486 english random-playout positions round-trip clean; collisions 4 intl / 0
+  english (~0.015% — the predicted rare Turkish forks) + a directed english fork pins the canonical pick.
+  Mover-relative frame (obs AND indices 180°-rotated for Black — one perspective to learn, no side-to-move
+  plane needed) proven by start-position index symmetry + plane rotation tests.*
 - **M47.3 — Lab + eval + tests.** `--game draughts` (`--variant checkers8` flag), `StrengthEval<TState>`
   generalization, DI smoke tests, self-play contract + determinism-SHA tests instantiated with the new state.
   **Gate: one training chunk end-to-end + bitwise DOP-invariance SHA + `--vs-minimax` produces a number + a

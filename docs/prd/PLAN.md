@@ -1798,11 +1798,19 @@ no-progress-counter plane; in-engine no-progress draw rule (defines king-shuffle
 locked chess-post-mortem constants (lr 3e-4, material-weight 0.5, arena ≥40, sims floored by decisiveness,
 `--vs-minimax` auto-run at every promotion).
 
-- **M47.1 — Engine** (`draughts_solver.pg`, both variants, full-sequence movegen, `IZeroSumGame`+`IMaterialScore`,
+- **M47.1 — Engine** ✅ (2026-07-15) (`draughts_solver.pg`, both variants, full-sequence movegen, `IZeroSumGame`+`IMaterialScore`,
   no-progress rule). **Gate:** perft vs published tables (10×10 d5=27117, 8×8 d5=7361) + capture-dense positions.
-- **M47.2 — Encoding + observation.** **Gate:** encode→decode→apply round-trip over random playouts + collision audit.
-- **M47.3 — Lab + eval + tests** (`--game draughts`, `StrengthEval<TState>` generalization, DI + contract + SHA tests).
+  *Green: 10×10 d1–d8 + 8×8 d1–d9 exact; 8 hand-verified rule tests (majority, Turkish-strike king loop with
+  FMJD dedup, promote-through-crown, flying-king landings, forced completion, no-progress draw, blocked loss).*
+- **M47.2 — Encoding + observation.** ✅ (2026-07-15) **Gate:** encode→decode→apply round-trip over random playouts + collision audit.
+  *Green: ~49k positions round-trip clean, zero unmapped; 4 intl / 0 english collisions (~0.015%) + directed
+  english fork pins the canonical pick; mover-relative frame (obs+indices rotate 180° for Black) proven.*
+- **M47.3 — Lab + eval + tests** (`--game draughts` + `--variant checkers8`, `StrengthEval<TState>` generalization, DI + contract + SHA tests).
   **Gate:** end-to-end chunk, bitwise DOP-invariance, `--vs-minimax` runs, micro-bench of the 5×10×10 tower.
+  *`MaterialMinimaxPlayer<TState>` promoted to Core.Planning and the eval loop to a public `StrengthEval` in the
+  Campaigns library (returns `StrengthResult`; console tail stays in the Lab's `StrengthCli`). Micro-bench on the
+  RTX 3060: 5×10×10/2500 tower, 256-leaf resident forward 92.7 ms (2,762 leaves/s) = 14.0× over autograd,
+  parity ~1e-6.*
 - **M47.4 — Showcase run** (owner-decided 2026-07-15: cheap 8×8 pipeline-validation run first, then flip the
   variant flag to 10×10 for the dammen showcase; `--gpu --leaf-batch` — the M44 resident trainer's 24× applies to
   the dominant train-step cost, generation batching modest at 64 sims × branching ~4). **Gates:** natural-decisive ≥50% by g200; **beat minimax-d1 ≥60% incl. ≥10 wins/40

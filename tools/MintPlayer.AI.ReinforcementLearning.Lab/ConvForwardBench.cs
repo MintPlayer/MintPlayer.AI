@@ -8,14 +8,15 @@ using MintPlayer.AI.ReinforcementLearning.Ilgpu;
 /// Micro-benchmark for the M43 GPU-resident conv forward: times the resident <see cref="DeviceConvPolicyValueNet"/>
 /// against the autograd forward (through the <see cref="AdaptiveBackend"/> — the current non-resident path) at a
 /// realistic self-play leaf batch, on the selected device. Also checks on-GPU parity (the M43.2 test verifies this on
-/// the CPU accelerator; this exercises the real CUDA kernels). Dev tool — `--game chess --bench-forward`.
+/// the CPU accelerator; this exercises the real CUDA kernels). Dev tool — `--game <chess|draughts> --bench-forward`,
+/// parameterized over the game's tower shape (chess 18×8×8/4672, draughts 5×10×10/2500, checkers8 5×8×8/1024).
 /// </summary>
 internal static class ConvForwardBench
 {
-    public static void Run(int filters, int blocks, int leafBatch, int iters)
+    public static void Run(int planes, int board, int actions, int filters, int blocks, int leafBatch, int iters)
     {
-        const int planes = 18, board = 8, actions = 4672, obsSize = planes * board * board;
-        Console.WriteLine($"conv-forward bench: {filters}f×{blocks}b, leaf-batch {leafBatch}, {iters} timed iters");
+        int obsSize = planes * board * board;
+        Console.WriteLine($"conv-forward bench: {planes}×{board}×{board} → {actions} | {filters}f×{blocks}b, leaf-batch {leafBatch}, {iters} timed iters");
         Console.WriteLine("  devices: " + IlgpuBackend.DescribeDevices());
 
         var adaptive = new AdaptiveBackend();
