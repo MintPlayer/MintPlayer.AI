@@ -15,10 +15,10 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
-    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,8 +29,9 @@
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Environments\MintPlayer.AI.ReinforcementLearning.Environments.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj" />
+    <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Campaigns\MintPlayer.AI.ReinforcementLearning.Campaigns.csproj" />
     <ProjectReference Include="..\..\src\RLDemo.Web\RLDemo.Web.csproj" />
-    <!-- Contract-tests the training campaigns (internals exposed via InternalsVisibleTo in the Lab). Aliased so
+    <!-- Only CliArgs (still internal to the Lab exe, via InternalsVisibleTo) is tested from here. Aliased so
          the Lab exe's generated top-level `Program` doesn't collide with RLDemo.Web's in WebApplicationFactory. -->
     <ProjectReference Include="..\..\tools\MintPlayer.AI.ReinforcementLearning.Lab\MintPlayer.AI.ReinforcementLearning.Lab.csproj" Aliases="Lab" />
   </ItemGroup>

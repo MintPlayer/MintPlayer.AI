@@ -1,4 +1,5 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.SourceGenerators.Attributes;
 using MintPlayer.AI.ReinforcementLearning.Environments.Game2048;
 
 namespace RLDemo.Web.Services;
@@ -8,6 +9,7 @@ namespace RLDemo.Web.Services;
 /// machine via self-play, the M5 recipe, and committed to <c>models/</c> via Git LFS — the web never trains,
 /// PRD §14).
 /// </summary>
+[Register(ServiceLifetime.Singleton, "RLDemoWebModelServices")]
 public sealed class Game2048ModelService(IModelStore store, ILogger<Game2048ModelService> logger) : IModelStartupService
 {
     public const string EnvironmentId = "2048";

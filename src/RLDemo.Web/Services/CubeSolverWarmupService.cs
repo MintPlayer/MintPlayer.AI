@@ -1,4 +1,5 @@
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
+using MintPlayer.SourceGenerators.Attributes;
 
 namespace RLDemo.Web.Services;
 
@@ -8,6 +9,7 @@ namespace RLDemo.Web.Services;
 /// via the shared <see cref="ModelStartupHostedService"/> instead of on the first
 /// user's solve request.
 /// </summary>
+[Register(typeof(IModelStartupService), ServiceLifetime.Singleton, "RLDemoWebModelServices")]
 public sealed class CubeSolverWarmupService(ILogger<CubeSolverWarmupService> logger) : IModelStartupService
 {
     public void Initialize(CancellationToken cancellationToken)

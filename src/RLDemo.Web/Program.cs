@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.StaticFiles;
 using MintPlayer.AspNetCore.SpaServices.Extensions;
 using MintPlayer.AI.ReinforcementLearning.Hosting;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting;
+using RLDemo.Web; // generated AddRLDemoWebModelServices()
 using RLDemo.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -36,15 +37,18 @@ builder.Services.AddSingleton(sp => new RushHourDeckStore(
 // present (local dev) and falls back to the multithreaded CPU otherwise (e.g. a GPU-less Hetzner
 // container) — so the self-taught cube solver gets a resident GPU forward where available, CPU elsewhere.
 builder.Services.AddGpuBackend();
-builder.Services.AddSingleton<RushHourModelService>();
-builder.Services.AddSingleton<Game2048ModelService>();
-builder.Services.AddSingleton<CubeModelService>();
+// The model services register themselves via [Register] (MintPlayer.SourceGenerators, PLAN M46.3) — this
+// generated call adds RushHourModelService / Game2048ModelService / CubeModelService as singletons plus the
+// CubeSolverWarmupService as an IModelStartupService.
+builder.Services.AddRLDemoWebModelServices();
 // FruitCake has no server model service: its AI (physics + net + depth-3 search) runs entirely in the browser
 // from the single-source Polyglot core + the shipped ClientApp/public/fruitcake-net.ckpt (M32). Zero server inference.
+// The startup-loader forwardings must reuse the SAME singleton instances the controllers inject (the hosted
+// service loads checkpoints INTO them), so they stay hand-written — [Register(typeof(IModelStartupService))]
+// would register separate instances.
 builder.Services.AddSingleton<IModelStartupService>(sp => sp.GetRequiredService<RushHourModelService>());
 builder.Services.AddSingleton<IModelStartupService>(sp => sp.GetRequiredService<Game2048ModelService>());
 builder.Services.AddSingleton<IModelStartupService>(sp => sp.GetRequiredService<CubeModelService>());
-builder.Services.AddSingleton<IModelStartupService, CubeSolverWarmupService>();
 
 // Integration tests control the model store themselves and host no SPA.
 bool isTesting = builder.Environment.IsEnvironment("Testing");

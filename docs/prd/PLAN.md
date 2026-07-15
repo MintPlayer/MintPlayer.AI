@@ -1713,6 +1713,71 @@ the bottleneck after M44); cross-machine distributed / actor-learner (network tr
 coordinator, fault tolerance — the model store is local-FS only; a separate systems project). The seams M45 builds
 (per-device resident forwards, index-sharded generation, weight fan-out) are the ones such a harness would reuse.
 
+## M46 — Dependency-injectable campaigns & games + unit-test hardening  *(2026-07-14; see `DI_CAMPAIGNS_PRD.md`)* 🔜
+
+**Why:** the hosting layer is DI (`AIHost.CreateBuilder`/`LabHost.Run`, M25/M26), but campaigns are still
+`internal` classes in the Lab exe, hand-`new`ed in each Lab's `build` lambda from positional CLI primitives —
+tested only via an `extern alias Lab`/`InternalsVisibleTo` hack. The DQN campaigns `new` their environments in
+field initializers, and the self-play ladder does raw `File.*` I/O past `IModelStore`. Owner wants campaigns/games
+as DI services, `[Inject]`/`[Register]` (MintPlayer.SourceGenerators 10.20.0, already dogfooded on
+`CampaignRunner`) adopted end-to-end, then proper unit tests on the new seams.
+
+**Finding (3-agent analysis, 2026-07-14):** the repo is already seam-rich — RNG (`SeedSequence`/`RngStreams`),
+`TimeProvider`, `IModelStore`, backend + GPU factories, options records are all injectable, which is what makes
+the SHA256 determinism tests work. The refactor is narrow, and several "violations" are by design and stay
+(`Backend.Current` global, static `WriteObservation`, DI-free Polyglot `Pg*` cores behind facades).
+
+- **M46.1 ✅ — Campaigns → public library** (`src/…ReinforcementLearning.Campaigns`, per-game subfolders
+  `SelfPlay/ Cube/ Snake/ FruitCake/ RushHour/ Shared/`; the Lab exe reorganized into matching per-game folders and
+  keeps only CLI/GPU/viz glue + `CliArgs` internals). `extern alias Lab` retired from the campaign tests (kept solely
+  for `CliArgsTests`). **Gate MET:** 29 targeted campaign/determinism/CLI tests green incl. the self-play checkpoint
+  SHA test; Campaigns/Lab/Tests build clean.
+- **M46.2 ✅ — Options records + injected environments.** `DqnScoreOptions` (+`FruitCakeDqnOptions` adding
+  Noisy/NStep), `CubeImitationOptions`, `RushHourImitationOptions`, `CubeEfficientOptions` (defaults = the Lab flag
+  defaults; `SelfPlayOptions`/`CubeDaviSettings` already existed) replace every positional-primitive campaign ctor.
+  The DQN spine takes its **training env as a ctor dependency** (`DqnScoreCampaign(IEnvironment, DqnScoreOptions)`);
+  Snake/FruitCake take (trainEnv, evalEnv, options) — env construction (grids, step penalty, reward shaping) moved
+  to the Labs. Snake needed no options subclass at all (grid labels read `SnakeEnv.Size`). **Gate MET:** new
+  `DqnScoreCampaignTests` runs the whole resume→train→checkpoint→resume contract against a pure in-memory stub
+  `IEnvironment` (the M46.2 seam proof); 11 targeted campaign/contract/SHA tests green; envs/seeds/DqnOptions
+  value-identical so training is unchanged.
+- **M46.3 ✅ — `[Register]` end-to-end + campaign registration surface.** `ChessGame`/`Connect4Game` carry
+  `[Register(typeof(IZeroSumGame<…>), Singleton, "ReinforcementLearningGames")]` → generated
+  `AddReinforcementLearningGames()`; the Campaigns lib gains hand-written `Add<Game>Campaign(options)` extensions
+  (hand-written because each closes over per-run options — the generator registers types, not configured factories),
+  with `AddSelfPlayCampaign<TState>` **owning the M43–M45 GPU-resident forward/train-step wiring** formerly inlined in
+  ChessLab (the game resolves from the container). `LabHost.Run` now takes `Action<IServiceCollection>` and resolves
+  `ITrainingCampaign` — no hand-`new`ed campaign anywhere; all 8 Labs shrank to parse-flags→register. Web:
+  `[Register(…, "RLDemoWebModelServices")]` on the model services → generated `AddRLDemoWebModelServices()` replaces
+  the hand-list in `Program.cs` (the same-instance `IModelStartupService` forwardings stay hand-written — the
+  generator's `[Register(typeof(IModelStartupService))]` would register *separate* instances). **`[Inject]` finding,
+  stated honestly:** the codebase's C# 12 primary constructors already do what `[Inject]` generates, and `[Inject]`
+  can't feed field initializers (CS0236), so it was adopted nowhere — `[Register]` is the generator win here.
+  **Gate MET:** new `CampaignRegistrationTests` resolve every registration on CPU and GPU (`AddGpuBackend`) paths;
+  24 targeted DI/contract/SHA/web-API tests green.
+- **M46.4 ✅ — Ladder persistence through a store seam + optional `ILogger`.** New `ILadderStore` (tier ckpts +
+  the `{env}-difficulties.json` manifest) with `FileLadderStore` preserving the exact atomic temp+rename behavior;
+  `SelfPlayCampaign` takes an optional store (default = file store over `Ladder.Dir`) — kept separate from
+  `IModelStore` because the ladder writes *public web assets* into a different directory (forcing both through one
+  store would leak that distinction). Every campaign gains an optional `ILogger` (null → today's timestamped
+  console lines, byte-identical; tests can inject a sink). **Honest exception:** `CubeDaviCampaign`'s append-only
+  diagnostic CSVs still write files directly — they're run telemetry (the campaign-side twin of `CampaignCli`'s
+  CSVs), not model state; a metrics-sink seam is a separate refactor. **Gate MET:** new `SelfPlayLadderTests`
+  runs the promote → manifest → resume round-trip fully in memory (in-memory ladder + model stores, no disk);
+  13 targeted campaign/DI/SHA tests green.
+- **M46.5 ✅ — Unit tests on the new seams** — delivered incrementally as each seam landed, not as a separate pass:
+  stub-env DQN spine contract test (`DqnScoreCampaignTests`, M46.2), DI container smoke tests
+  (`CampaignRegistrationTests`, CPU + GPU paths, M46.3), in-memory ladder round-trip (`SelfPlayLadderTests`, M46.4);
+  `CliArgs` parsing was already covered (`CliArgsTests`), and flag→options mapping stays covered by the Lab
+  `--eval-only` smokes. **Gate MET:** campaigns/games are testable without disk, GPU, or `extern alias`; suite green.
+
+**M46 COMPLETE** — campaigns are public DI services with options records and injected environments, registration is
+source-generated where type-shaped (`[Register]`) and hand-written where option-shaped (`Add<Game>Campaign()`), the
+ladder and logging have test seams, and training stayed bitwise-identical throughout (checkpoint SHA tests unchanged
+at every step).
+
+**Hard gate on every step:** training bitwise-identical — checkpoint SHA determinism tests unchanged, full suite green.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.

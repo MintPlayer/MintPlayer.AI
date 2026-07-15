@@ -1,4 +1,5 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.SourceGenerators.Attributes;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RushHour;
@@ -10,6 +11,7 @@ namespace RLDemo.Web.Services;
 /// and shipped in <c>models/</c> via Git LFS — the web never trains, PRD §14). Also serves the imitation policy
 /// net when present. Thread-safe readiness snapshot for /api/rushhour/status.
 /// </summary>
+[Register(ServiceLifetime.Singleton, "RLDemoWebModelServices")]
 public sealed class RushHourModelService(IModelStore store, ILogger<RushHourModelService> logger) : IModelStartupService
 {
     public const string EnvironmentId = "rushhour";

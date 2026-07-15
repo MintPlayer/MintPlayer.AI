@@ -1,4 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
+using MintPlayer.SourceGenerators.Attributes;
 
 namespace MintPlayer.AI.ReinforcementLearning.Environments.Chess;
 
@@ -10,6 +12,8 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.Chess;
 /// unchanged from M39.1. (Board geometry is absolute — the net learns both colours via the side-to-move plane;
 /// perspective canonicalization is a later efficiency lever, PLAN M39.3.)
 /// </summary>
+[Register(typeof(IZeroSumGame<ChessState>), ServiceLifetime.Singleton, "ReinforcementLearningGames")]
+[Register(typeof(IMaterialScore<ChessState>), ServiceLifetime.Singleton, "ReinforcementLearningGames")]
 public sealed class ChessGame : IZeroSumGame<ChessState>, IMaterialScore<ChessState>
 {
     private const int Planes = 18;

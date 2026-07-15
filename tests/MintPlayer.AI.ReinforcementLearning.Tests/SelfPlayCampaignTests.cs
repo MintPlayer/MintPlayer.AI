@@ -1,6 +1,5 @@
-extern alias Lab; // SelfPlayCampaign is internal to the Lab exe (InternalsVisibleTo), aliased like the other campaigns
-
 using System.Security.Cryptography;
+using MintPlayer.AI.ReinforcementLearning.Campaigns;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 using MintPlayer.AI.ReinforcementLearning.Environments.Connect4;
@@ -15,8 +14,8 @@ namespace MintPlayer.AI.ReinforcementLearning.Tests;
 /// </summary>
 public class SelfPlayCampaignTests
 {
-    private static Lab::SelfPlayCampaign<Connect4State> Fresh() =>
-        new(new Connect4Game(), "connect4", new Lab::SelfPlayOptions
+    private static SelfPlayCampaign<Connect4State> Fresh() =>
+        new(new Connect4Game(), "connect4", new SelfPlayOptions
         {
             Seed = 1, LearningRate = 1e-3f, Hidden = 32, Search = new Mcts.Config(Simulations: 8),
             GamesPerChunk = 4, TempMoves = 2, EvalGames = 2, WindowCapacity = 4000, MaxPlies = 64,
@@ -69,7 +68,7 @@ public class SelfPlayCampaignTests
         try
         {
             var store = new FileModelStore(dir.FullName);
-            var c = new Lab::SelfPlayCampaign<Connect4State>(new Connect4Game(), "connect4", new Lab::SelfPlayOptions
+            var c = new SelfPlayCampaign<Connect4State>(new Connect4Game(), "connect4", new SelfPlayOptions
             {
                 Seed = 2, LearningRate = 1e-3f, Hidden = 32, Search = new Mcts.Config(Simulations: 8),
                 GamesPerChunk = 6, TempMoves = 2, EvalGames = 2, WindowCapacity = 4000, MaxPlies = 64,
@@ -111,7 +110,7 @@ public class SelfPlayCampaignTests
         try
         {
             var store = new FileModelStore(dir.FullName);
-            var c = new Lab::SelfPlayCampaign<Connect4State>(new Connect4Game(), "connect4", new Lab::SelfPlayOptions
+            var c = new SelfPlayCampaign<Connect4State>(new Connect4Game(), "connect4", new SelfPlayOptions
             {
                 Seed = 42, LearningRate = 1e-3f, Hidden = 32, Search = new Mcts.Config(Simulations: 8),
                 GamesPerChunk = 16, TempMoves = 2, EvalGames = 2, WindowCapacity = 4000, MaxPlies = 64,

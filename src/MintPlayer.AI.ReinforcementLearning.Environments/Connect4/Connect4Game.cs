@@ -1,4 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
+using MintPlayer.SourceGenerators.Attributes;
 
 namespace MintPlayer.AI.ReinforcementLearning.Environments.Connect4;
 
@@ -21,6 +23,7 @@ public sealed class Connect4State
 /// converges from random self-play in minutes on CPU, and a shallow negamax gives an exact test oracle). The action
 /// index is the column (0..6); the observation is a side-to-move-relative two-plane (mine / theirs) board.
 /// </summary>
+[Register(typeof(IZeroSumGame<Connect4State>), ServiceLifetime.Singleton, "ReinforcementLearningGames")]
 public sealed class Connect4Game : IZeroSumGame<Connect4State>
 {
     public int PolicySize => Connect4State.Columns;              // one action per column

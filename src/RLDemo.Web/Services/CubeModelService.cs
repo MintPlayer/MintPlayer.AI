@@ -1,4 +1,5 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.SourceGenerators.Attributes;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube;
@@ -12,6 +13,7 @@ namespace RLDemo.Web.Services;
 /// committed to <c>models/</c> via Git LFS — the web never trains, PRD §14). Holds the device-resident GPU
 /// forwards for the deep solvers when a CUDA device is present.
 /// </summary>
+[Register(ServiceLifetime.Singleton, "RLDemoWebModelServices")]
 public sealed class CubeModelService : IModelStartupService, IDisposable
 {
     public const string EnvironmentId = "cube";

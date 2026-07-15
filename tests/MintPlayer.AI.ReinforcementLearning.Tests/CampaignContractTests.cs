@@ -1,9 +1,8 @@
-extern alias Lab; // the Lab exe's campaigns; aliased so its generated `Program` doesn't clash with RLDemo.Web's
-using SnakeDqnCampaign = Lab::SnakeDqnCampaign;
-using FruitCakeDqnCampaign = Lab::FruitCakeDqnCampaign;
-using RushHourImitationCampaign = Lab::RushHourImitationCampaign;
+using MintPlayer.AI.ReinforcementLearning.Campaigns;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
+using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
+using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 
 namespace MintPlayer.AI.ReinforcementLearning.Tests;
 
@@ -27,7 +26,11 @@ public class CampaignContractTests
             var store = new FileModelStore(dir.FullName);
             // Small grid + tiny step budget: this asserts the CONTRACT (advance/checkpoint/resume), not learning.
             // chunk 1500 → first chunk lands at 1500 (< target), the second continues to the 3000 cap (IsComplete).
-            SnakeDqnCampaign Fresh() => new(seed: 1, trainGrid: 5, evalGrid: 6, chunkSteps: 1500, targetSteps: 3000, evalEpisodes: 3, learningRate: 5e-4f, epsilonStart: 1.0f, hidden: [128, 128], gamma: 0.99, stepPenalty: -0.01f, safeMask: false);
+            SnakeDqnCampaign Fresh() => new(
+                trainEnv: new SnakeEnv(5, stepPenalty: -0.01f, safeMask: false),
+                evalEnv: new SnakeEnv(6, stepPenalty: -0.01f, safeMask: false),
+                options: new DqnScoreOptions { Seed = 1, ChunkSteps = 1500, TargetSteps = 3000, EvalEpisodes = 3, LearningRate = 5e-4f, EpsilonStart = 1.0f, Hidden = [128, 128], Gamma = 0.99 },
+                logger: null);
 
             var c1 = Fresh();
             Assert.False(c1.Resume(store));            // nothing in the store yet → fresh
@@ -69,7 +72,10 @@ public class CampaignContractTests
             var store = new FileModelStore(dir.FullName);
             // Tiny drop budget: asserts the CONTRACT (advance/checkpoint/resume), not learning.
             // chunk 40 → first chunk lands at 40 (< target); the second continues to the 80 cap (IsComplete).
-            FruitCakeDqnCampaign Fresh() => new(seed: 1, chunkSteps: 40, targetSteps: 80, evalEpisodes: 2, learningRate: 5e-4f, epsilonStart: 1.0f, hidden: [64, 64], gamma: 0.99);
+            FruitCakeDqnCampaign Fresh() => new(
+                trainEnv: new FruitCakeEnv { ShapingGamma = 0.99 },
+                evalEnv: new FruitCakeEnv(),
+                new FruitCakeDqnOptions { Seed = 1, ChunkSteps = 40, TargetSteps = 80, EvalEpisodes = 2, LearningRate = 5e-4f, EpsilonStart = 1.0f, Hidden = [64, 64], Gamma = 0.99 });
 
             var c1 = Fresh();
             Assert.False(c1.Resume(store));            // nothing in the store yet → fresh
@@ -109,7 +115,10 @@ public class CampaignContractTests
         try
         {
             var store = new FileModelStore(dir.FullName);
-            FruitCakeDqnCampaign Fresh() => new(seed: 1, chunkSteps: 40, targetSteps: 80, evalEpisodes: 2, learningRate: 5e-4f, epsilonStart: 1.0f, hidden: [64, 64], gamma: 0.99, noisy: true);
+            FruitCakeDqnCampaign Fresh() => new(
+                trainEnv: new FruitCakeEnv { ShapingGamma = 0.99 },
+                evalEnv: new FruitCakeEnv(),
+                new FruitCakeDqnOptions { Seed = 1, ChunkSteps = 40, TargetSteps = 80, EvalEpisodes = 2, LearningRate = 5e-4f, EpsilonStart = 1.0f, Hidden = [64, 64], Gamma = 0.99, Noisy = true });
 
             var c1 = Fresh();
             Assert.False(c1.Resume(store));
@@ -149,7 +158,7 @@ public class CampaignContractTests
         try
         {
             var store = new FileModelStore(dir.FullName);
-            var c1 = new RushHourImitationCampaign(seed: 1, learningRate: 3e-4f);
+            var c1 = new RushHourImitationCampaign(new RushHourImitationOptions { Seed = 1, LearningRate = 3e-4f });
             Assert.False(c1.Resume(store));            // fresh
             long samples = c1.TrainChunk();            // one BFS-oracle config + supervised batches
             Assert.True(samples > 0, "a training chunk should process samples");
@@ -158,7 +167,7 @@ public class CampaignContractTests
             using (var net = store.TryOpenRead("rushhour", "policy")) Assert.NotNull(net);
             using (var adam = store.TryOpenRead("rushhour", "policy-adam")) Assert.NotNull(adam);
 
-            var c2 = new RushHourImitationCampaign(seed: 1, learningRate: 3e-4f);
+            var c2 = new RushHourImitationCampaign(new RushHourImitationOptions { Seed = 1, LearningRate = 3e-4f });
             Assert.True(c2.Resume(store));             // the saved net is picked up
             c2.Dispose();
         }

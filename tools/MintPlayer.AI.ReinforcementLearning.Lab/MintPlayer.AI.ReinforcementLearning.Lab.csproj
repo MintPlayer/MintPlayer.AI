@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The test project contract-tests the campaigns (Resume/TrainChunk/Checkpoint/IsComplete). -->
+    <!-- The test project unit-tests CliArgs (the campaigns moved to the public Campaigns library, PLAN M46.1). -->
     <InternalsVisibleTo Include="MintPlayer.AI.ReinforcementLearning.Tests" />
   </ItemGroup>
 
@@ -22,6 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Campaigns\MintPlayer.AI.ReinforcementLearning.Campaigns.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Environments\MintPlayer.AI.ReinforcementLearning.Environments.csproj" />
     <ProjectReference Include="..\..\src\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj" />
