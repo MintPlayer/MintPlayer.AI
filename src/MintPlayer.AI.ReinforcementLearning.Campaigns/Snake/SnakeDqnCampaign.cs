@@ -1,9 +1,9 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Environments;
-using Microsoft.Extensions.Logging;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
+using MintPlayer.SourceGenerators.Attributes;
 
 namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 
@@ -14,16 +14,23 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// fast, dense food; the size-invariant observation transfers) and evaluates mean food on the injected eval grid
 /// (typically the deployed 12×12). Both envs are constructor dependencies (PLAN M46.2): the caller owns grid
 /// size / step penalty / safe mask. All resume/train/keep-best/checkpoint/growth/telemetry plumbing lives in the
-/// base; this type supplies only the M22 hyperparameters and the food eval.
+/// base; this type supplies only the M22 hyperparameters and the food eval. The constructor is source-generated:
+/// the [Inject] eval env plus the base's forwarded dependencies (train env, options, logger).
 /// </summary>
-public sealed class SnakeDqnCampaign(SnakeEnv trainEnv, SnakeEnv evalEnv, DqnScoreOptions options, ILogger? logger = null)
-    : DqnScoreCampaign(trainEnv, options, logger)
+public sealed partial class SnakeDqnCampaign : DqnScoreCampaign
 {
+    [Inject] private readonly SnakeEnv evalEnv;
+
+    /// <summary>The base's train env, downcast for its grid size — this campaign is always handed a
+    /// <see cref="SnakeEnv"/> (the generated ctor's param is the base's <see cref="IEnvironment{TObs,TAct}"/>,
+    /// which can't be narrowed per subclass).</summary>
+    private SnakeEnv TrainSnakeEnv => (SnakeEnv)TrainEnv;
+
     public override string Environment => "snake";
     protected override string StepNoun => "steps";
     protected override string GateLabel => $"food@{evalEnv.Size}";
     protected override string DisplayName => "Snake DQN";
-    protected override string FreshStartDetail => $" (train {trainEnv.Size}×{trainEnv.Size}, eval {evalEnv.Size}×{evalEnv.Size})";
+    protected override string FreshStartDetail => $" (train {TrainSnakeEnv.Size}×{TrainSnakeEnv.Size}, eval {evalEnv.Size}×{evalEnv.Size})";
     protected override int ObservationSize => SnakeEnv.ObservationSize;
     protected override IReadOnlyList<string>? InputLabels => SnakeEnv.ObservationLabels;
     protected override IReadOnlyList<string>? OutputLabels => SnakeEnv.ActionLabels;

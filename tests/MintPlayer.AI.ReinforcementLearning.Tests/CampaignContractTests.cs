@@ -29,7 +29,8 @@ public class CampaignContractTests
             SnakeDqnCampaign Fresh() => new(
                 trainEnv: new SnakeEnv(5, stepPenalty: -0.01f, safeMask: false),
                 evalEnv: new SnakeEnv(6, stepPenalty: -0.01f, safeMask: false),
-                new DqnScoreOptions { Seed = 1, ChunkSteps = 1500, TargetSteps = 3000, EvalEpisodes = 3, LearningRate = 5e-4f, EpsilonStart = 1.0f, Hidden = [128, 128], Gamma = 0.99 });
+                options: new DqnScoreOptions { Seed = 1, ChunkSteps = 1500, TargetSteps = 3000, EvalEpisodes = 3, LearningRate = 5e-4f, EpsilonStart = 1.0f, Hidden = [128, 128], Gamma = 0.99 },
+                logger: null);
 
             var c1 = Fresh();
             Assert.False(c1.Resume(store));            // nothing in the store yet → fresh

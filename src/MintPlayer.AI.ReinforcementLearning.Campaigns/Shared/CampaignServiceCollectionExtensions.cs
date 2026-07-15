@@ -56,7 +56,10 @@ public static class CampaignServiceCollectionExtensions
     /// <summary>Score-maximizing Snake DQN: small training grid, deployed-size eval grid (PLAN M22).</summary>
     public static IServiceCollection AddSnakeDqnCampaign(this IServiceCollection services,
         SnakeEnv trainEnv, SnakeEnv evalEnv, DqnScoreOptions options)
-        => services.AddSingleton<ITrainingCampaign>(_ => new SnakeDqnCampaign(trainEnv, evalEnv, options));
+        // Named args: the campaign's ctor is [Inject]-generated (own deps first, then the base's), so the two
+        // same-typed envs must never be passed positionally.
+        => services.AddSingleton<ITrainingCampaign>(_ =>
+            new SnakeDqnCampaign(evalEnv: evalEnv, trainEnv: trainEnv, options: options, logger: null));
 
     /// <summary>Score-maximizing FruitCake DQN; the training env carries any reward shaping, the eval env
     /// stays a plain game (see <see cref="FruitCakeDqnCampaign"/>).</summary>

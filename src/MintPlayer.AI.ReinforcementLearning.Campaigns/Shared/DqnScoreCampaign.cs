@@ -1,5 +1,6 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using Microsoft.Extensions.Logging;
+using MintPlayer.SourceGenerators.Attributes;
 using MintPlayer.AI.ReinforcementLearning.Core.Environments;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
@@ -25,15 +26,28 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// across the refactor.
 /// </para>
 /// </summary>
-public abstract class DqnScoreCampaign(IEnvironment<float[], int> trainEnv, DqnScoreOptions options, ILogger? logger = null)
-    : ITrainingCampaign, INetworkTelemetrySource
+public abstract partial class DqnScoreCampaign : ITrainingCampaign, INetworkTelemetrySource
 {
+    // The constructor is source-generated from these [Inject] fields (declaration order = parameter order);
+    // a subclass chains to it automatically when its own constructor is generated (PLAN M46).
+    [Inject] private readonly IEnvironment<float[], int> trainEnv;
+    [Inject] private readonly DqnScoreOptions options;
+    [Inject] private readonly ILogger? logger;
+
     protected const string NetId = "dqn";  // deployable DuelingQNet — the id the web loads
 
     // Progressive-growth demo (DqnGrowth): grow the net wider+deeper on the GrowEvery cadence. Seeded independently
-    // of the training streams so growth is deterministic and never perturbs the trainer's RNG.
-    private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x9E3779B97F4A7C15UL);
-    protected readonly SeedSequence Seeds = new(options.Seed);
+    // of the training streams so growth is deterministic and never perturbs the trainer's RNG. Both are derived
+    // from the injected options, which a field initializer can't read (CS0236) — hence [PostConstruct].
+    private Xoshiro256StarStar _growRng = null!;
+    protected SeedSequence Seeds = null!;
+
+    [PostConstruct]
+    private void Initialize()
+    {
+        _growRng = new(options.Seed ^ 0x9E3779B97F4A7C15UL);
+        Seeds = new(options.Seed);
+    }
 
     protected DqnTrainingState? State;
     private IValueNet? _warmNet; // deployable net to warm-start from when there's no full resume state
@@ -72,6 +86,9 @@ public abstract class DqnScoreCampaign(IEnvironment<float[], int> trainEnv, DqnS
     /// <summary>The shared knobs, exposed so a subclass's <see cref="BaseOptions"/> reuses the values the base
     /// already owns (learning rate, hidden widths, γ, ε-start, eval episodes) rather than capturing them twice.</summary>
     protected DqnScoreOptions Options => options;
+
+    /// <summary>The injected training env, exposed for subclasses that report on it (e.g. Snake's grid size).</summary>
+    protected IEnvironment<float[], int> TrainEnv => trainEnv;
 
     public bool Resume(IModelStore store)
     {
