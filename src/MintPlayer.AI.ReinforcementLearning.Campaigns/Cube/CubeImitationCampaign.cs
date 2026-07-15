@@ -16,15 +16,15 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// quarter-turn + Huber on distance-to-go), and reports per-depth greedy/search solve rates. Resumes the net +
 /// Adam from `cube.policy` / `cube.policy-adam` (width-ladder ids via <see cref="CubeIds.ForWidth"/>).
 /// </summary>
-public sealed class CubeImitationCampaign(ulong seed, float learningRate, int width, bool grow = false, int growEvery = 4096) : ITrainingCampaign, INetworkTelemetrySource
+public sealed class CubeImitationCampaign(CubeImitationOptions options) : ITrainingCampaign, INetworkTelemetrySource
 {
-    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth
+    private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const int BatchSize = 256;
     private const int SamplesPerRound = 4096;
     private static readonly int[] EvalDepths = [2, 4, 6, 8, 10, 12, 16, 20];
 
-    private readonly CubeIds.NetIds _ids = CubeIds.ForWidth(width);
-    private readonly Xoshiro256StarStar _rng = new(seed);
+    private readonly CubeIds.NetIds _ids = CubeIds.ForWidth(options.Width);
+    private readonly Xoshiro256StarStar _rng = new(options.Seed);
     private readonly int _generators = Math.Max(1, System.Environment.ProcessorCount - 2);
 
     private CubePolicyNet _net = null!;
@@ -48,15 +48,15 @@ public sealed class CubeImitationCampaign(ulong seed, float learningRate, int wi
             }
             else
             {
-                var initRng = new Xoshiro256StarStar(seed ^ 0xDEADBEEF);
-                _net = grow ? new CubePolicyNet(initRng, DqnGrowth.Start) : new CubePolicyNet(initRng, hidden: width);
-                Log(grow
+                var initRng = new Xoshiro256StarStar(options.Seed ^ 0xDEADBEEF);
+                _net = options.Grow ? new CubePolicyNet(initRng, DqnGrowth.Start) : new CubePolicyNet(initRng, hidden: options.Width);
+                Log(options.Grow
                     ? $"initialized a fresh GROWING cube policy net '{_ids.Policy}' (start trunk [{string.Join(",", DqnGrowth.Start)}])"
-                    : $"initialized a fresh cube policy net '{_ids.Policy}' (trunk width {width})");
+                    : $"initialized a fresh cube policy net '{_ids.Policy}' (trunk width {options.Width})");
                 resumed = false;
             }
         }
-        _adam = AdamState.LoadOrInit(store, CubeIds.Environment, _ids.PolicyAdam, _net.Parameters(), learningRate, Log);
+        _adam = AdamState.LoadOrInit(store, CubeIds.Environment, _ids.PolicyAdam, _net.Parameters(), options.LearningRate, Log);
         Log("warming the Kociemba tables…");
         CubeSolver.WarmUp();
         return resumed;
@@ -68,7 +68,7 @@ public sealed class CubeImitationCampaign(ulong seed, float learningRate, int wi
         // → supervised batches. Window-mean loss accumulates across rounds until the runner calls Evaluate.
         // DeterministicParallel derives each generator's RNG from (roundBase, worker+1) — byte-identical to the old
         // hand-rolled `roundBase + φ·(worker+1)` seeding, and each returns its own list (no shared window/counter).
-        ulong roundBase = unchecked(seed + (ulong)(++_round) * 1_000_003UL);
+        ulong roundBase = unchecked(options.Seed + (ulong)(++_round) * 1_000_003UL);
         int per = SamplesPerRound / _generators;
         var perWorker = DeterministicParallel.Generate(_generators, roundBase, baseIndex: 1, (worker, rng) =>
         {
@@ -98,7 +98,7 @@ public sealed class CubeImitationCampaign(ulong seed, float learningRate, int wi
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
-        if (PolicyGrowth.Maybe(_net, _totalSamples, grow, growEvery, learningRate, _growRng, Log) is var g && g.HasValue)
+        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, _growRng, Log) is var g && g.HasValue)
             (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }

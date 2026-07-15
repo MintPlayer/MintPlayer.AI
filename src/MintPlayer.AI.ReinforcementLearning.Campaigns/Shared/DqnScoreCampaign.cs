@@ -16,21 +16,23 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// beats the best seen), the full-state checkpoint, progressive net growth (<see cref="DqnGrowth"/>, PLAN M37), and
 /// the live-telemetry seam (<see cref="INetworkTelemetrySource"/>, PLAN M36) a viewer samples while it trains.
 /// <para>
-/// A subclass supplies only what genuinely differs: its env + DQN hyperparameters (<see cref="BaseOptions"/>), how
+/// A subclass supplies only what genuinely differs: its DQN hyperparameters (<see cref="BaseOptions"/>), how
 /// to evaluate the net (<see cref="EvaluateNet"/>), the neuron labels, and — for a net whose warm-start needs
-/// adaptation (plain→noisy, grow-input) — <see cref="AdaptWarmNet"/>. Resume/train/checkpoint stay byte-identical
-/// to the hand-rolled campaigns, so a run is bitwise-reproducible across the refactor.
+/// adaptation (plain→noisy, grow-input) — <see cref="AdaptWarmNet"/>. The training env is INJECTED (PLAN M46.2):
+/// the campaign trains whatever <see cref="IEnvironment{TObs,TAct}"/> it's handed, so a unit test can pass a stub.
+/// Resume/train/checkpoint stay byte-identical to the hand-rolled campaigns, so a run is bitwise-reproducible
+/// across the refactor.
 /// </para>
 /// </summary>
-public abstract class DqnScoreCampaign(ulong seed, int chunkSteps, long targetSteps, float learningRate, bool grow, int growEvery)
+public abstract class DqnScoreCampaign(IEnvironment<float[], int> trainEnv, DqnScoreOptions options)
     : ITrainingCampaign, INetworkTelemetrySource
 {
     protected const string NetId = "dqn";  // deployable DuelingQNet — the id the web loads
 
-    // Progressive-growth demo (DqnGrowth): grow the net wider+deeper on the growEvery cadence. Seeded independently
+    // Progressive-growth demo (DqnGrowth): grow the net wider+deeper on the GrowEvery cadence. Seeded independently
     // of the training streams so growth is deterministic and never perturbs the trainer's RNG.
-    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x9E3779B97F4A7C15UL);
-    protected readonly SeedSequence Seeds = new(seed);
+    private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x9E3779B97F4A7C15UL);
+    protected readonly SeedSequence Seeds = new(options.Seed);
 
     protected DqnTrainingState? State;
     private IValueNet? _warmNet; // deployable net to warm-start from when there's no full resume state
@@ -43,7 +45,6 @@ public abstract class DqnScoreCampaign(ulong seed, int chunkSteps, long targetSt
     public abstract string Environment { get; }
     /// <summary>Model-store id for the full resume state (default "dqn-state"; a separate line, e.g. noisy, overrides).</summary>
     protected virtual string StateId => "dqn-state";
-    protected abstract IEnvironment<float[], int> TrainEnv { get; }
     protected abstract DqnOptions BaseOptions { get; }
     /// <summary>The progress unit shown in logs/metrics ("steps" / "drops").</summary>
     protected abstract string StepNoun { get; }
@@ -67,9 +68,9 @@ public abstract class DqnScoreCampaign(ulong seed, int chunkSteps, long targetSt
     /// <summary>The net being trained/served: the live online net, else the warm-start net (for eval-only runs).</summary>
     protected IValueNet? CurrentNet => State?.Online ?? _warmNet;
 
-    /// <summary>The learning rate, exposed so a subclass's <see cref="BaseOptions"/> reuses the value it already
-    /// hands the base (which owns it for optimizer rebuilds on growth) rather than capturing the ctor param twice.</summary>
-    protected float LearningRate => learningRate;
+    /// <summary>The shared knobs, exposed so a subclass's <see cref="BaseOptions"/> reuses the values the base
+    /// already owns (learning rate, hidden widths, γ, ε-start, eval episodes) rather than capturing them twice.</summary>
+    protected DqnScoreOptions Options => options;
 
     public bool Resume(IModelStore store)
     {
@@ -113,20 +114,20 @@ public abstract class DqnScoreCampaign(ulong seed, int chunkSteps, long targetSt
     public long TrainChunk()
     {
         int from = State?.StepsCompleted ?? 0;
-        int to = from + chunkSteps;
-        if (targetSteps > 0) to = (int)Math.Min(to, targetSteps);
+        int to = from + options.ChunkSteps;
+        if (options.TargetSteps > 0) to = (int)Math.Min(to, options.TargetSteps);
         // EvalEvery == the chunk size so the trainer's own eval fires at most once per chunk — the campaign's
         // authoritative eval is Evaluate(). MaxSteps is ABSOLUTE: resuming raises the ceiling.
-        var options = BaseOptions with { MaxSteps = to, EvalEvery = Math.Max(1, chunkSteps) };
+        var dqnOptions = BaseOptions with { MaxSteps = to, EvalEvery = Math.Max(1, options.ChunkSteps) };
         // First chunk: resume the full state if present, else warm-start from the deployable net (if any).
-        var result = DqnTrainer.Train(TrainEnv, options, Seeds, resume: State, warmStart: State is null ? _warmNet : null);
+        var result = DqnTrainer.Train(trainEnv, dqnOptions, Seeds, resume: State, warmStart: State is null ? _warmNet : null);
         State = result.State;
-        State = DqnGrowth.Maybe(State, grow, growEvery, learningRate, _growRng, Log);
+        State = DqnGrowth.Maybe(State, options.Grow, options.GrowEvery, options.LearningRate, _growRng, Log);
         return State.StepsCompleted;
     }
 
     /// <summary>Score-maximizing: no hard goal. Stops on the runner's time budget, or an optional absolute step cap.</summary>
-    public bool IsComplete => targetSteps > 0 && (State?.StepsCompleted ?? 0) >= targetSteps;
+    public bool IsComplete => options.TargetSteps > 0 && (State?.StepsCompleted ?? 0) >= options.TargetSteps;
 
     public CampaignEval Evaluate()
     {
@@ -168,7 +169,7 @@ public abstract class DqnScoreCampaign(ulong seed, int chunkSteps, long targetSt
     IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
         => CurrentNet is { } net ? [.. net.Parameters()] : null;
     NetworkMetrics INetworkTelemetrySource.Sample()
-        => new(State?.StepsCompleted ?? 0, targetSteps, State?.LastLoss ?? double.NaN, _lastGate, double.NaN);
+        => new(State?.StepsCompleted ?? 0, options.TargetSteps, State?.LastLoss ?? double.NaN, _lastGate, double.NaN);
     IReadOnlyList<string>? INetworkTelemetrySource.InputLabels => InputLabels;
     IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => OutputLabels;
     (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo()

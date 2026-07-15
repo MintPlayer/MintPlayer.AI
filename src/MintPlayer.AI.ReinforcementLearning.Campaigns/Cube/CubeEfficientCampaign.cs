@@ -20,10 +20,10 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// the Ilgpu.Hosting <c>AddGpuBackend()</c>; the container owns its lifetime). Resumes net + Adam + a persisted
 /// (samples, round) counter under distinct `policy-efficient*` ids, so the imitation net is never touched.
 /// </summary>
-public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, float learningRate, int width, int maxScramble, int beamWidth, int evalEpisodes, bool grow = false, int growEvery = 50_000)
+public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficientOptions options)
     : ITrainingCampaign, INetworkTelemetrySource
 {
-    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth
+    private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const string PolicyId = "policy-efficient";
     private const string PolicyAdamId = "policy-efficient-adam";
     private const string PolicyProgressId = "policy-efficient-progress";
@@ -31,7 +31,7 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, 
     private const int SamplesPerRound = 50_000;
     private static readonly int[] EvalDepths = [4, 8, 12, 14, 16, 18, 20, 22, 24, 26];
 
-    private readonly Xoshiro256StarStar _rng = new(seed);
+    private readonly Xoshiro256StarStar _rng = new(options.Seed);
     private readonly int _generators = Math.Max(1, System.Environment.ProcessorCount - 2);
     private readonly AdaptiveBackend _adaptive = adaptive;
 
@@ -60,15 +60,15 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, 
             }
             else
             {
-                var initRng = new Xoshiro256StarStar(seed ^ 0xC0FFEE);
-                _net = grow ? new CubePolicyNet(initRng, DqnGrowth.Start) : new CubePolicyNet(initRng, hidden: width);
-                Log(grow
+                var initRng = new Xoshiro256StarStar(options.Seed ^ 0xC0FFEE);
+                _net = options.Grow ? new CubePolicyNet(initRng, DqnGrowth.Start) : new CubePolicyNet(initRng, hidden: options.Width);
+                Log(options.Grow
                     ? $"initialized a fresh GROWING EfficientCube net '{PolicyId}' (start trunk [{string.Join(",", DqnGrowth.Start)}])"
-                    : $"initialized a fresh EfficientCube net '{PolicyId}' (trunk width {width})");
+                    : $"initialized a fresh EfficientCube net '{PolicyId}' (trunk width {options.Width})");
                 resumed = false;
             }
         }
-        _adam = AdamState.LoadOrInit(store, CubeIds.Environment, PolicyAdamId, _net.Parameters(), learningRate, Log);
+        _adam = AdamState.LoadOrInit(store, CubeIds.Environment, PolicyAdamId, _net.Parameters(), options.LearningRate, Log);
         // Persisted progress: cumulative samples (displayed count) + the round counter (so the scramble RNG
         // continues its stream on resume rather than regenerating the same scrambles).
         using (var progress = store.TryOpenRead(CubeIds.Environment, PolicyProgressId))
@@ -81,7 +81,7 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, 
                 Log($"resumed progress: {_totalSamples:N0} samples generated, data stream at round {_round}");
             }
         }
-        Log($"teacher-free (no Kociemba), max scramble {maxScramble}, beam {beamWidth}");
+        Log($"teacher-free (no Kociemba), max scramble {options.MaxScramble}, beam {options.BeamWidth}");
         return resumed;
     }
 
@@ -90,13 +90,13 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, 
         // Self-supervised data gen on all cores: scrambling is independent and (unlike Kociemba imitation) no
         // solver bounds throughput — generation is nearly free. DeterministicParallel derives each generator's RNG
         // from (roundBase, worker+1) — byte-identical to the old hand-rolled `roundBase + φ·(worker+1)` seeding.
-        ulong roundBase = unchecked(seed + (ulong)(++_round) * 1_000_003UL);
+        ulong roundBase = unchecked(options.Seed + (ulong)(++_round) * 1_000_003UL);
         int per = SamplesPerRound / _generators;
         var perWorker = DeterministicParallel.Generate(_generators, roundBase, baseIndex: 1, (worker, rng) =>
         {
             var local = new List<CubeOracle.LabeledState>(per + 64);
             while (local.Count < per)
-                local.AddRange(CubeSelfSupervised.LabelScramblePath(rng, maxScramble));
+                local.AddRange(CubeSelfSupervised.LabelScramblePath(rng, options.MaxScramble));
             return local;
         }, parallel: true);
 
@@ -112,7 +112,7 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, 
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
-        if (PolicyGrowth.Maybe(_net, _totalSamples, grow, growEvery, learningRate, _growRng, Log) is var g && g.HasValue)
+        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, _growRng, Log) is var g && g.HasValue)
             (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }
@@ -146,7 +146,7 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, 
             foreach (int depth in EvalDepths)
             {
                 int greedySolved = 0, beamSolved = 0, beamLen = 0;
-                for (int episode = 0; episode < evalEpisodes; episode++)
+                for (int episode = 0; episode < options.EvalEpisodes; episode++)
                 {
                     var evalRng = new Xoshiro256StarStar((ulong)(100_000 * depth + episode));
                     var cube = new FaceletCube();
@@ -154,13 +154,13 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, ulong seed, 
                     if (cube.IsSolved) { greedySolved++; beamSolved++; continue; }
 
                     if (CubePolicySearch.GreedyRollout(_net, cube).Solved) greedySolved++;
-                    var beam = CubePolicySearch.BeamSearch(beamLogits, cube, beamWidth);
+                    var beam = CubePolicySearch.BeamSearch(beamLogits, cube, options.BeamWidth);
                     if (beam.Solved) { beamSolved++; beamLen += beam.Moves.Length; }
                 }
-                metrics.Add(new($"d{depth}_greedy", greedySolved / (double)evalEpisodes, "F3"));
-                metrics.Add(new($"d{depth}_beam", beamSolved / (double)evalEpisodes, "F3"));
+                metrics.Add(new($"d{depth}_greedy", greedySolved / (double)options.EvalEpisodes, "F3"));
+                metrics.Add(new($"d{depth}_beam", beamSolved / (double)options.EvalEpisodes, "F3"));
                 string lenTag = beamSolved > 0 ? $" ({beamLen / (double)beamSolved:F1}qt)" : "";
-                report.Append($"d{depth}: {greedySolved}/{evalEpisodes}g {beamSolved}/{evalEpisodes}b{lenTag} | ");
+                report.Append($"d{depth}: {greedySolved}/{options.EvalEpisodes}g {beamSolved}/{options.EvalEpisodes}b{lenTag} | ");
             }
         }
         finally

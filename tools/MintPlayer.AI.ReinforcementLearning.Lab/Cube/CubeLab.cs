@@ -20,7 +20,10 @@ internal static class CubeLab
         int growEvery = a.Int("--grow-every", 4096); // samples between growth steps (with --grow)
 
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            _ => new CubeImitationCampaign(seed, learningRate, width, grow, growEvery),
+            _ => new CubeImitationCampaign(new CubeImitationOptions
+            {
+                Seed = seed, LearningRate = learningRate, Width = width, Grow = grow, GrowEvery = growEvery,
+            }),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "cube-imitation.csv")));
     }
 }

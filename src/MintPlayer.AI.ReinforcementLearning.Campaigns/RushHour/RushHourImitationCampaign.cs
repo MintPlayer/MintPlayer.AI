@@ -17,14 +17,14 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// distance) on a DAgger mix of on-policy and stratified samples. Eval tracks the held-out official ThinkFun cards
 /// (1, 38, 39, 40) with reactive play and policy-guided A*, plus a 30-puzzle random hold-out set.
 /// </summary>
-public sealed class RushHourImitationCampaign(ulong seed, float learningRate, bool grow = false, int growEvery = 2048) : ITrainingCampaign, INetworkTelemetrySource
+public sealed class RushHourImitationCampaign(RushHourImitationOptions options) : ITrainingCampaign, INetworkTelemetrySource
 {
-    private readonly Xoshiro256StarStar _growRng = new(seed ^ 0x6C0FFEEUL); // dedicated stream for growth
+    private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const int BatchSize = 256;
     private const int SamplesPerConfig = 1024;
     private const int MaxStatesPerConfig = 150_000;
 
-    private readonly Xoshiro256StarStar _rng = new(seed);
+    private readonly Xoshiro256StarStar _rng = new(options.Seed);
 
     private RushHourPolicyNet _net = null!;
     private Adam _adam = null!;
@@ -76,16 +76,16 @@ public sealed class RushHourImitationCampaign(ulong seed, float learningRate, bo
             }
             else
             {
-                var initRng = new Xoshiro256StarStar(seed ^ 0xDEADBEEF);
-                _net = grow ? new RushHourPolicyNet(initRng, DqnGrowth.Start) : new RushHourPolicyNet(initRng);
-                Log(grow ? $"initialized a fresh GROWING policy net (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                var initRng = new Xoshiro256StarStar(options.Seed ^ 0xDEADBEEF);
+                _net = options.Grow ? new RushHourPolicyNet(initRng, DqnGrowth.Start) : new RushHourPolicyNet(initRng);
+                Log(options.Grow ? $"initialized a fresh GROWING policy net (start trunk [{string.Join(",", DqnGrowth.Start)}])"
                          : "initialized a fresh policy net");
                 resumed = false;
             }
         }
         // Restore Adam's moment estimates when continuing a campaign — without them, resumed
         // training spends its first minutes re-estimating gradient statistics from zero.
-        _adam = AdamState.LoadOrInit(store, "rushhour", "policy-adam", _net.Parameters(), learningRate, Log);
+        _adam = AdamState.LoadOrInit(store, "rushhour", "policy-adam", _net.Parameters(), options.LearningRate, Log);
         return resumed;
     }
 
@@ -114,7 +114,7 @@ public sealed class RushHourImitationCampaign(ulong seed, float learningRate, bo
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
-        if (PolicyGrowth.Maybe(_net, _totalSamples, grow, growEvery, learningRate, _growRng, Log) is var g && g.HasValue)
+        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, _growRng, Log) is var g && g.HasValue)
             (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }

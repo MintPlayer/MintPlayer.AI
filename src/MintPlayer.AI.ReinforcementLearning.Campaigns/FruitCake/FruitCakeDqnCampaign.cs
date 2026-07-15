@@ -11,23 +11,19 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// FruitCake DQN campaign (`--game fruitcake`, PRD FRUITCAKE_AI §4.4/§7-A2) on the shared
 /// <see cref="DqnScoreCampaign"/> spine — the score-maximizing paradigm (an open-ended game whose eval is the mean
 /// episodic score). Trains a Double+Dueling <see cref="DuelingQNet"/> on the headless <see cref="FruitCakeEnv"/>
-/// (one step = one drop, simulated to rest in pure compute; rotation off). This type supplies the env + reward
-/// shaping, the hyperparameters, the mean-score eval, and the plain→noisy / grow-input warm-net adaptation; the
-/// base owns resume/train/keep-best/checkpoint/growth/telemetry.
+/// (one step = one drop, simulated to rest in pure compute; rotation off). Both envs are constructor dependencies
+/// (PLAN M46.2): the caller owns the training env's reward shaping (its <c>ShapingGamma</c> should match the
+/// learner's γ for policy-invariance), and the eval env stays a plain game so keep-best/A/B always judge real
+/// merge points, never the shaped signal. This type supplies the hyperparameters, the mean-score eval, and the
+/// plain→noisy / grow-input warm-net adaptation; the base owns resume/train/keep-best/checkpoint/growth/telemetry.
 /// </summary>
-public sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long targetSteps, int evalEpisodes, float learningRate, float epsilonStart, int[] hidden, double gamma, bool noisy = false, int nStep = 1, bool shapeRewards = false, bool grow = false, int growEvery = 2000)
-    : DqnScoreCampaign(seed, chunkSteps, targetSteps, learningRate, grow, growEvery)
+public sealed class FruitCakeDqnCampaign(FruitCakeEnv trainEnv, FruitCakeEnv evalEnv, FruitCakeDqnOptions options)
+    : DqnScoreCampaign(trainEnv, options)
 {
-    // Training env carries the reward shaping (ShapingGamma matches the learner's γ for policy-invariance); the eval
-    // env stays a plain game so keep-best/A/B always judge real merge points, never the shaped signal.
-    private readonly FruitCakeEnv _env = new() { ShapeRewards = shapeRewards, ShapingGamma = gamma };
-    private readonly FruitCakeEnv _evalEnv = new();
-
     public override string Environment => "fruitcake";
     // Noisy training is a SEPARATE line with its own resume state: it must never resume a PLAIN state as a plain net
     // (which would then train with ε=0 and NO exploration). The deployable NetId is shared and keep-best gated.
-    protected override string StateId => noisy ? "dqn-noisy-state" : "dqn-state";
-    protected override IEnvironment<float[], int> TrainEnv => _env;
+    protected override string StateId => options.Noisy ? "dqn-noisy-state" : "dqn-state";
     protected override string StepNoun => "drops";
     protected override string GateLabel => "mean score";
     protected override string DisplayName => "FruitCake DQN";
@@ -40,19 +36,19 @@ public sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long target
     {
         Dueling = true,
         DoubleDqn = true,
-        NoisyNets = noisy, // learned exploration replaces ε-greedy; the trainer forces ε=0 and resamples noise
+        NoisyNets = options.Noisy, // learned exploration replaces ε-greedy; the trainer forces ε=0 and resamples noise
 
-        Hidden = hidden,
-        Gamma = gamma,
-        NStep = nStep, // n-step returns: propagate the sparse high-tier reward backward faster (PRD §4.C C4)
-        LearningRate = LearningRate,
+        Hidden = Options.Hidden,
+        Gamma = Options.Gamma,
+        NStep = options.NStep, // n-step returns: propagate the sparse high-tier reward backward faster (PRD §4.C C4)
+        LearningRate = Options.LearningRate,
         BufferCapacity = 100_000,
         BatchSize = 128,
         WarmupSteps = 2_000,
         TargetSyncEvery = 1_000,
         // Fresh runs explore from ε=1.0; a warm-start continuation passes a low ε (e.g. 0.2) so it refines the
         // already-competent net instead of randomizing it away.
-        Epsilon = new LinearSchedule(epsilonStart, 0.05, 30_000),
+        Epsilon = new LinearSchedule(Options.EpsilonStart, 0.05, 30_000),
         EvalEpisodes = 10,
     };
 
@@ -61,7 +57,7 @@ public sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long target
         // Promote-plain→noisy: the shipped net is plain, but a noisy run needs a noisy net. Copy its trained weights
         // into the means + add fresh σ — behaviorally identical with noise off, so the run continues the ~current
         // policy and merely adds learnable exploration.
-        IValueNet warm = noisy && !loaded.Noisy ? loaded.ToNoisy(Seeds.CreateRng(RngStreams.Init)) : loaded;
+        IValueNet warm = options.Noisy && !loaded.Noisy ? loaded.ToNoisy(Seeds.CreateRng(RngStreams.Init)) : loaded;
         // If the observation has gained features since this net was trained (e.g. the big-fruit-position inputs),
         // grow its input to fit — function-preserving (new inputs zero-init), so the baseline eval and warm-start
         // continue the trained net rather than retraining from scratch.
@@ -90,25 +86,25 @@ public sealed class FruitCakeDqnCampaign(ulong seed, int chunkSteps, long target
     {
         var agent = new GreedyQAgent(net, FruitCakeEnv.ColumnCount);
         double totalScore = 0, totalMaxTier = 0, totalReturn = 0;
-        for (int e = 0; e < evalEpisodes; e++)
+        for (int e = 0; e < Options.EvalEpisodes; e++)
         {
-            var (obs, _) = _evalEnv.Reset((ulong)(5_000 + e));
+            var (obs, _) = evalEnv.Reset((ulong)(5_000 + e));
             double epReturn = 0;
             int epMaxTier = 0;
             while (true)
             {
                 int action = agent.Act(obs, greedy: true);
-                var step = _evalEnv.Step(action);
+                var step = evalEnv.Step(action);
                 epReturn += step.Reward;
                 obs = step.Observation;
-                foreach (var b in _evalEnv.World.Bodies)
+                foreach (var b in evalEnv.World.Bodies)
                     if (b.Tier > epMaxTier) epMaxTier = b.Tier;
                 if (step.Done) break;
             }
-            totalScore += _evalEnv.Score;
+            totalScore += evalEnv.Score;
             totalMaxTier += epMaxTier;
             totalReturn += epReturn;
         }
-        return (totalScore / evalEpisodes, totalMaxTier / evalEpisodes, totalReturn / evalEpisodes);
+        return (totalScore / Options.EvalEpisodes, totalMaxTier / Options.EvalEpisodes, totalReturn / Options.EvalEpisodes);
     }
 }

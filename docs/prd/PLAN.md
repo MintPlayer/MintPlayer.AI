@@ -1732,7 +1732,15 @@ the SHA256 determinism tests work. The refactor is narrow, and several "violatio
   keeps only CLI/GPU/viz glue + `CliArgs` internals). `extern alias Lab` retired from the campaign tests (kept solely
   for `CliArgsTests`). **Gate MET:** 29 targeted campaign/determinism/CLI tests green incl. the self-play checkpoint
   SHA test; Campaigns/Lab/Tests build clean.
-- **M46.2 🔜 — Options records + injected environments** (DQN family gets its envs via ctor, like self-play's game).
+- **M46.2 ✅ — Options records + injected environments.** `DqnScoreOptions` (+`FruitCakeDqnOptions` adding
+  Noisy/NStep), `CubeImitationOptions`, `RushHourImitationOptions`, `CubeEfficientOptions` (defaults = the Lab flag
+  defaults; `SelfPlayOptions`/`CubeDaviSettings` already existed) replace every positional-primitive campaign ctor.
+  The DQN spine takes its **training env as a ctor dependency** (`DqnScoreCampaign(IEnvironment, DqnScoreOptions)`);
+  Snake/FruitCake take (trainEnv, evalEnv, options) — env construction (grids, step penalty, reward shaping) moved
+  to the Labs. Snake needed no options subclass at all (grid labels read `SnakeEnv.Size`). **Gate MET:** new
+  `DqnScoreCampaignTests` runs the whole resume→train→checkpoint→resume contract against a pure in-memory stub
+  `IEnvironment` (the M46.2 seam proof); 11 targeted campaign/contract/SHA tests green; envs/seeds/DqnOptions
+  value-identical so training is unchanged.
 - **M46.3 🔜 — `[Register]`/`[Inject]` end-to-end** (games as singletons, per-game `Add<Game>Campaign()`, web model
   services via `[Inject]`; Lab `build` lambdas shrink to resolve-and-go).
 - **M46.4 🔜 — Ladder persistence through the store seam + `ILogger`** (no raw `File.*` in campaigns).

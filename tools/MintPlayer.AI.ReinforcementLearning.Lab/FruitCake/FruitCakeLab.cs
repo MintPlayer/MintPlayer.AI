@@ -1,4 +1,5 @@
 using MintPlayer.AI.ReinforcementLearning.Campaigns;
+using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 
 /// <summary>
 /// `--game fruitcake` entry point: parses the campaign flags and runs the score-maximizing
@@ -53,8 +54,19 @@ internal static class FruitCakeLab
             return;
         }
 
+        var options = new FruitCakeDqnOptions
+        {
+            Seed = seed, ChunkSteps = chunkSteps, TargetSteps = targetSteps, EvalEpisodes = evalEpisodes,
+            LearningRate = learningRate, EpsilonStart = explore, Hidden = hidden, Gamma = gamma,
+            Noisy = noisy, NStep = nStep, Grow = grow, GrowEvery = growEvery,
+        };
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            _ => new FruitCakeDqnCampaign(seed, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, noisy, nStep, shape, grow, growEvery),
+            // Shaping lives on the training env (ShapingGamma matches the learner's γ for policy-invariance);
+            // the eval env stays a plain game so keep-best/A/B judge real merge points, never the shaped signal.
+            _ => new FruitCakeDqnCampaign(
+                trainEnv: new FruitCakeEnv { ShapeRewards = shape, ShapingGamma = gamma },
+                evalEnv: new FruitCakeEnv(),
+                options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "fruitcake-dqn.csv")));
     }
 }

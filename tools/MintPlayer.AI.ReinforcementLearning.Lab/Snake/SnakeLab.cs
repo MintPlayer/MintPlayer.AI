@@ -57,8 +57,17 @@ internal static class SnakeLab
             return;
         }
 
+        var options = new DqnScoreOptions
+        {
+            Seed = seed, ChunkSteps = chunkSteps, TargetSteps = targetSteps, EvalEpisodes = evalEpisodes,
+            LearningRate = learningRate, EpsilonStart = explore, Hidden = hidden, Gamma = gamma,
+            Grow = grow, GrowEvery = growEvery,
+        };
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            _ => new SnakeDqnCampaign(seed, trainGrid, evalGrid, chunkSteps, targetSteps, evalEpisodes, learningRate, explore, hidden, gamma, stepPenalty, safeMask, grow, growEvery),
+            _ => new SnakeDqnCampaign(
+                trainEnv: new SnakeEnv(trainGrid, stepPenalty, safeMask),
+                evalEnv: new SnakeEnv(evalGrid, stepPenalty, safeMask),
+                options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "snake-dqn.csv")));
     }
 

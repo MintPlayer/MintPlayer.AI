@@ -27,7 +27,11 @@ internal static class CubePolicyLab
         // GPU: the cube nets are large enough to win on GPU, so the campaign runs on the AdaptiveBackend
         // (useGpu: true → LabHost registers it and this build pulls it from the container).
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: true,
-            sp => new CubeEfficientCampaign(sp.GetRequiredService<AdaptiveBackend>(), seed, learningRate, width, maxScramble, beamWidth, evalEpisodes, grow, growEvery),
+            sp => new CubeEfficientCampaign(sp.GetRequiredService<AdaptiveBackend>(), new CubeEfficientOptions
+            {
+                Seed = seed, LearningRate = learningRate, Width = width, MaxScramble = maxScramble,
+                BeamWidth = beamWidth, EvalEpisodes = evalEpisodes, Grow = grow, GrowEvery = growEvery,
+            }),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "cube-policy.csv")));
     }
 }
