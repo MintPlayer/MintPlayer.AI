@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.Extensions.Logging;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
@@ -16,7 +17,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// quarter-turn + Huber on distance-to-go), and reports per-depth greedy/search solve rates. Resumes the net +
 /// Adam from `cube.policy` / `cube.policy-adam` (width-ladder ids via <see cref="CubeIds.ForWidth"/>).
 /// </summary>
-public sealed class CubeImitationCampaign(CubeImitationOptions options) : ITrainingCampaign, INetworkTelemetrySource
+public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger? logger = null) : ITrainingCampaign, INetworkTelemetrySource
 {
     private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const int BatchSize = 256;
@@ -198,5 +199,9 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options) : ITrain
     float[][]? INetworkTelemetrySource.SampleActivations() => CubeViz.SampleActivations(_net, ref _probeObs);
     private float[]? _probeObs;
 
-    private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+    private void Log(string message)
+    {
+        if (logger is null) Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+        else logger.LogInformation("{Message}", message);
+    }
 }

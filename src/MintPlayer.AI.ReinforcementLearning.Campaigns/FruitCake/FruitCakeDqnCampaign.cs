@@ -1,4 +1,5 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Environments;
+using Microsoft.Extensions.Logging;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
 using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
@@ -17,8 +18,8 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// merge points, never the shaped signal. This type supplies the hyperparameters, the mean-score eval, and the
 /// plain→noisy / grow-input warm-net adaptation; the base owns resume/train/keep-best/checkpoint/growth/telemetry.
 /// </summary>
-public sealed class FruitCakeDqnCampaign(FruitCakeEnv trainEnv, FruitCakeEnv evalEnv, FruitCakeDqnOptions options)
-    : DqnScoreCampaign(trainEnv, options)
+public sealed class FruitCakeDqnCampaign(FruitCakeEnv trainEnv, FruitCakeEnv evalEnv, FruitCakeDqnOptions options, ILogger? logger = null)
+    : DqnScoreCampaign(trainEnv, options, logger)
 {
     public override string Environment => "fruitcake";
     // Noisy training is a SEPARATE line with its own resume state: it must never resume a PLAIN state as a plain net

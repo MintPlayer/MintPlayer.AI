@@ -1755,8 +1755,26 @@ the SHA256 determinism tests work. The refactor is narrow, and several "violatio
   can't feed field initializers (CS0236), so it was adopted nowhere — `[Register]` is the generator win here.
   **Gate MET:** new `CampaignRegistrationTests` resolve every registration on CPU and GPU (`AddGpuBackend`) paths;
   24 targeted DI/contract/SHA/web-API tests green.
-- **M46.4 🔜 — Ladder persistence through the store seam + `ILogger`** (no raw `File.*` in campaigns).
-- **M46.5 🔜 — Unit tests on the new seams** (stub-env DQN contract tests, DI smoke tests, in-memory ladder tests).
+- **M46.4 ✅ — Ladder persistence through a store seam + optional `ILogger`.** New `ILadderStore` (tier ckpts +
+  the `{env}-difficulties.json` manifest) with `FileLadderStore` preserving the exact atomic temp+rename behavior;
+  `SelfPlayCampaign` takes an optional store (default = file store over `Ladder.Dir`) — kept separate from
+  `IModelStore` because the ladder writes *public web assets* into a different directory (forcing both through one
+  store would leak that distinction). Every campaign gains an optional `ILogger` (null → today's timestamped
+  console lines, byte-identical; tests can inject a sink). **Honest exception:** `CubeDaviCampaign`'s append-only
+  diagnostic CSVs still write files directly — they're run telemetry (the campaign-side twin of `CampaignCli`'s
+  CSVs), not model state; a metrics-sink seam is a separate refactor. **Gate MET:** new `SelfPlayLadderTests`
+  runs the promote → manifest → resume round-trip fully in memory (in-memory ladder + model stores, no disk);
+  13 targeted campaign/DI/SHA tests green.
+- **M46.5 ✅ — Unit tests on the new seams** — delivered incrementally as each seam landed, not as a separate pass:
+  stub-env DQN spine contract test (`DqnScoreCampaignTests`, M46.2), DI container smoke tests
+  (`CampaignRegistrationTests`, CPU + GPU paths, M46.3), in-memory ladder round-trip (`SelfPlayLadderTests`, M46.4);
+  `CliArgs` parsing was already covered (`CliArgsTests`), and flag→options mapping stays covered by the Lab
+  `--eval-only` smokes. **Gate MET:** campaigns/games are testable without disk, GPU, or `extern alias`; suite green.
+
+**M46 COMPLETE** — campaigns are public DI services with options records and injected environments, registration is
+source-generated where type-shaped (`[Register]`) and hand-written where option-shaped (`Add<Game>Campaign()`), the
+ladder and logging have test seams, and training stayed bitwise-identical throughout (checkpoint SHA tests unchanged
+at every step).
 
 **Hard gate on every step:** training bitwise-identical — checkpoint SHA determinism tests unchanged, full suite green.
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
@@ -53,6 +54,8 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
     // independently of the training/eval streams) and is inference-only, so enabling it does NOT change trained weights
     // for a given seed. Disabled when `_ladder` is null.
     private readonly LadderOptions? _ladder;
+    private readonly ILadderStore? _ladderStore; // non-null iff the ladder is on (or a test injected one)
+    private readonly ILogger? _logger;           // null → timestamped console lines (the Lab format)
     private readonly Xoshiro256StarStar _arenaRng;
     private IPolicyValueNet? _champion;            // frozen snapshot of the last-promoted net (null until tier 1)
     private int _tierCount;
@@ -105,10 +108,14 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
     /// constructor defaults exactly.</param>
     /// <param name="netBuilder">Net architecture factory (default = the flat MLP, sized from <c>options.Hidden</c>).</param>
     /// <param name="backend">Optional compute backend (e.g. the GPU AdaptiveBackend) installed as Backend.Current.</param>
+    /// <param name="ladderStore">Ladder persistence (PLAN M46.4); default = a <see cref="FileLadderStore"/> over
+    /// <c>options.Ladder.Dir</c>. Inject an in-memory store to unit-test promotion without disk.</param>
+    /// <param name="logger">Optional log sink; default = timestamped console lines (the Lab format).</param>
     public SelfPlayCampaign(IZeroSumGame<TState> game, string environmentId, SelfPlayOptions options,
         IPolicyValueNetBuilder? netBuilder = null, IComputeBackend? backend = null,
         Func<IPolicyValueNet, IReadOnlyList<IPolicyValueForward>>? forwardFactory = null,
-        Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory = null)
+        Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory = null,
+        ILadderStore? ladderStore = null, ILogger? logger = null)
     {
         _backend = backend;
         _forwardFactory = forwardFactory;
@@ -116,6 +123,8 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
         _parallel = options.Parallel;
         _maxDop = options.MaxDop;
         _ladder = options.Ladder;
+        _ladderStore = ladderStore ?? (options.Ladder is null ? null : new FileLadderStore(options.Ladder.Dir));
+        _logger = logger;
         _material = game as IMaterialScore<TState>; // dense material shaping when the game supports it
         _materialWeight = options.MaterialWeight;
         _valueWeight = options.ValueWeight;
@@ -540,16 +549,10 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
     private void PromoteTier(string reason)
     {
         _tierCount++;
-        Directory.CreateDirectory(_ladder!.Dir);
-        string ckptName = $"{_environmentId}.az.d{_tierCount}.ckpt";
-        string ckptPath = Path.Combine(_ladder.Dir, ckptName);
-        string tmp = ckptPath + ".tmp";
-        using (var fs = File.Create(tmp)) _net.Save(fs, _checkpointKind);
-        if (File.Exists(ckptPath)) File.Delete(ckptPath);
-        File.Move(tmp, ckptPath);
+        string ckptName = _ladderStore!.SaveTier(_environmentId, _tierCount, s => _net.Save(s, _checkpointKind));
 
         _champion = Freeze(_net); // frozen snapshot; continued training on _net won't mutate the champion
-        _tiers.Add(new TierInfo($"Level {_tierCount}", $"/models/{ckptName}", _ladder.Sims, 0.0, 1.5, _lastWinRate, _totalGames));
+        _tiers.Add(new TierInfo($"Level {_tierCount}", $"/models/{ckptName}", _ladder!.Sims, 0.0, 1.5, _lastWinRate, _totalGames));
         WriteManifest();
         Log($"ladder: PROMOTED Level {_tierCount} → {ckptName} ({reason}); winRate-vs-random {_lastWinRate:P1}, games {_totalGames:N0}");
     }
@@ -620,46 +623,34 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
 
     private void WriteManifest()
     {
-        string path = Path.Combine(_ladder!.Dir, $"{_environmentId}-difficulties.json");
         var payload = _tiers.Select(t => new
         {
             label = t.Label, ckpt = t.Ckpt, sims = t.Sims,
             temperature = t.Temperature, cpuct = t.Cpuct, winRateVsRandom = t.WinRate, games = t.Games,
         });
-        var tmp = path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
-        if (File.Exists(path)) File.Delete(path);
-        File.Move(tmp, path);
+        _ladderStore!.WriteManifest(_environmentId, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
     }
 
-    // Resume an existing ladder: adopt the highest tier on disk as the champion and rebuild the manifest list, so a
+    // Resume an existing ladder: adopt the highest stored tier as the champion and rebuild the manifest list, so a
     // resumed run continues the ladder (higher tiers) instead of restarting at Level 1.
     private void LoadLadderState()
     {
-        var dir = _ladder!.Dir;
-        if (!Directory.Exists(dir)) return;
-        int highest = 0;
-        foreach (var f in Directory.EnumerateFiles(dir, $"{_environmentId}.az.d*.ckpt"))
-        {
-            string name = Path.GetFileNameWithoutExtension(f); // env.az.dK
-            int dot = name.LastIndexOf(".d", StringComparison.Ordinal);
-            if (dot >= 0 && int.TryParse(name[(dot + 2)..], out int k) && k > highest) highest = k;
-        }
+        int highest = _ladderStore!.HighestTier(_environmentId);
         if (highest == 0) return;
 
         try { RebuildTiersFromManifest(); } catch { _tiers.Clear(); }
         _tierCount = highest;
-        string championPath = Path.Combine(dir, $"{_environmentId}.az.d{highest}.ckpt");
-        using var s = File.OpenRead(championPath);
+        using var s = _ladderStore.TryOpenTier(_environmentId, highest);
+        if (s is null) return;
         _champion = _builder.Load(s, _game.ObservationSize, _game.PolicySize);
-        Log($"ladder: resumed at Level {_tierCount} (champion {Path.GetFileName(championPath)})");
+        Log($"ladder: resumed at Level {_tierCount} (champion {_environmentId}.az.d{highest}.ckpt)");
     }
 
     private void RebuildTiersFromManifest()
     {
-        string path = Path.Combine(_ladder!.Dir, $"{_environmentId}-difficulties.json");
-        if (!File.Exists(path)) return;
-        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        string? json = _ladderStore!.TryReadManifest(_environmentId);
+        if (json is null) return;
+        using var doc = JsonDocument.Parse(json);
         foreach (var e in doc.RootElement.EnumerateArray())
         {
             _tiers.Add(new TierInfo(
@@ -680,7 +671,11 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
     NetworkMetrics INetworkTelemetrySource.Sample()
         => new(_totalGames, _targetGames, _liveLoss, _lastWinRate, double.NaN);
 
-    private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+    private void Log(string message)
+    {
+        if (_logger is null) Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+        else _logger.LogInformation("{Message}", message);
+    }
 
     private sealed record Sample(float[] Obs, float[] Pi, float Z);
     private sealed record TierInfo(string Label, string Ckpt, int Sims, double Temperature, double Cpuct, double WinRate, long Games);

@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.Extensions.Logging;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
@@ -17,7 +18,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// distance) on a DAgger mix of on-policy and stratified samples. Eval tracks the held-out official ThinkFun cards
 /// (1, 38, 39, 40) with reactive play and policy-guided A*, plus a 30-puzzle random hold-out set.
 /// </summary>
-public sealed class RushHourImitationCampaign(RushHourImitationOptions options) : ITrainingCampaign, INetworkTelemetrySource
+public sealed class RushHourImitationCampaign(RushHourImitationOptions options, ILogger? logger = null) : ITrainingCampaign, INetworkTelemetrySource
 {
     private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
     private const int BatchSize = 256;
@@ -297,7 +298,11 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options) 
         }
     }
 
-    private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+    private void Log(string message)
+    {
+        if (logger is null) Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+        else logger.LogInformation("{Message}", message);
+    }
 
     // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
     string INetworkTelemetrySource.NetKind => "rushhour-policy";

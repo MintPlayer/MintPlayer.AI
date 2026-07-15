@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.Extensions.Logging;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
@@ -20,7 +21,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// the Ilgpu.Hosting <c>AddGpuBackend()</c>; the container owns its lifetime). Resumes net + Adam + a persisted
 /// (samples, round) counter under distinct `policy-efficient*` ids, so the imitation net is never touched.
 /// </summary>
-public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficientOptions options)
+public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficientOptions options, ILogger? logger = null)
     : ITrainingCampaign, INetworkTelemetrySource
 {
     private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
@@ -196,5 +197,9 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficien
     float[][]? INetworkTelemetrySource.SampleActivations() => CubeViz.SampleActivations(_net, ref _probeObs);
     private float[]? _probeObs;
 
-    private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+    private void Log(string message)
+    {
+        if (logger is null) Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+        else logger.LogInformation("{Message}", message);
+    }
 }

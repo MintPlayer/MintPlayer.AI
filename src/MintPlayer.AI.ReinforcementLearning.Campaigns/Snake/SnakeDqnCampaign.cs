@@ -1,4 +1,5 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Environments;
+using Microsoft.Extensions.Logging;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Schedules;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
@@ -15,8 +16,8 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// size / step penalty / safe mask. All resume/train/keep-best/checkpoint/growth/telemetry plumbing lives in the
 /// base; this type supplies only the M22 hyperparameters and the food eval.
 /// </summary>
-public sealed class SnakeDqnCampaign(SnakeEnv trainEnv, SnakeEnv evalEnv, DqnScoreOptions options)
-    : DqnScoreCampaign(trainEnv, options)
+public sealed class SnakeDqnCampaign(SnakeEnv trainEnv, SnakeEnv evalEnv, DqnScoreOptions options, ILogger? logger = null)
+    : DqnScoreCampaign(trainEnv, options, logger)
 {
     public override string Environment => "snake";
     protected override string StepNoun => "steps";

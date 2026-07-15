@@ -1,4 +1,5 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using Microsoft.Extensions.Logging;
 using MintPlayer.AI.ReinforcementLearning.Core.Environments;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
@@ -24,7 +25,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// across the refactor.
 /// </para>
 /// </summary>
-public abstract class DqnScoreCampaign(IEnvironment<float[], int> trainEnv, DqnScoreOptions options)
+public abstract class DqnScoreCampaign(IEnvironment<float[], int> trainEnv, DqnScoreOptions options, ILogger? logger = null)
     : ITrainingCampaign, INetworkTelemetrySource
 {
     protected const string NetId = "dqn";  // deployable DuelingQNet — the id the web loads
@@ -193,5 +194,9 @@ public abstract class DqnScoreCampaign(IEnvironment<float[], int> trainEnv, DqnS
         catch { return null; }
     }
 
-    protected static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+    protected void Log(string message)
+    {
+        if (logger is null) Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+        else logger.LogInformation("{Message}", message);
+    }
 }

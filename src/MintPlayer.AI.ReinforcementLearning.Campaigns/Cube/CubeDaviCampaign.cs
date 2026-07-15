@@ -1,4 +1,5 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using Microsoft.Extensions.Logging;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
@@ -64,7 +65,7 @@ public sealed record CubeDaviSettings
 /// eval-only modes (greedy / A* / BWAS / time-budget / value-curve). The two depth-column CSVs are campaign-owned.
 /// </para>
 /// </summary>
-public sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSettings settings) : ITrainingCampaign, INetworkTelemetrySource
+public sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSettings settings, ILogger? logger = null) : ITrainingCampaign, INetworkTelemetrySource
 {
     private const int TrainChunkIterations = 1000; // P.8: train in 1000-iter chunks so the GPU-idle eval runs less
     private const long ProbeEvery = 15_000;        // iters between in-loop BWAS capability probes
@@ -568,5 +569,9 @@ public sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSettings 
         _ => net.GetType().Name,
     };
 
-    private static void Log(string message) => Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+    private void Log(string message)
+    {
+        if (logger is null) Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} {message}");
+        else logger.LogInformation("{Message}", message);
+    }
 }
