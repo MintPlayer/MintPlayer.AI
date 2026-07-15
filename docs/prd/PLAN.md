@@ -1802,8 +1802,10 @@ locked chess-post-mortem constants (lr 3e-4, material-weight 0.5, arena ≥40, s
   no-progress rule). **Gate:** perft vs published tables (10×10 d5=27117, 8×8 d5=7361) + capture-dense positions.
 - **M47.2 — Encoding + observation.** **Gate:** encode→decode→apply round-trip over random playouts + collision audit.
 - **M47.3 — Lab + eval + tests** (`--game draughts`, `StrengthEval<TState>` generalization, DI + contract + SHA tests).
-  **Gate:** end-to-end chunk, bitwise DOP-invariance, `--vs-minimax` runs.
-- **M47.4 — Showcase run.** **Gates:** natural-decisive ≥50% by g200; **beat minimax-d1 ≥60% incl. ≥10 wins/40
+  **Gate:** end-to-end chunk, bitwise DOP-invariance, `--vs-minimax` runs, micro-bench of the 5×10×10 tower.
+- **M47.4 — Showcase run** (owner-decided 2026-07-15: cheap 8×8 pipeline-validation run first, then flip the
+  variant flag to 10×10 for the dammen showcase; `--gpu --leaf-batch` — the M44 resident trainer's 24× applies to
+  the dominant train-step cost, generation batching modest at 64 sims × branching ~4). **Gates:** natural-decisive ≥50% by g200; **beat minimax-d1 ≥60% incl. ≥10 wins/40
   within 500 games**; d2 ≥55% within ~2000; capped-equal ≤30%; no-thrash stop-loss (judge at g160–200, one lever
   per intervention, two same-gate failures ⇒ stop and write up).
 - **M47.5 — (stretch, deferred) browser play** — TS side of the `.pg` + Angular page (M40 chess pattern).

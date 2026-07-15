@@ -100,6 +100,16 @@ is already generic).
 ladder on · `--vs-minimax` wired from day one and run automatically at every promotion. Dropped as signals:
 winRate-vs-random (saturates → 100% here) and material-vs-champion (self-referential) — cosmetic only.
 
+### 4.1 GPU recipe (owner Q 2026-07-15: "too few matmuls?" — no)
+Run M47.4 with `--gpu --leaf-batch`. The **training step is the proven win**: the M44 resident trainer measured
+**~24×** per 128-batch on the chess conv tower, is generic over `ConvResidualPolicyValueNet`, and the draughts
+tower does ~1.5× the per-sample GEMM work of chess (100 spatial positions vs 64; the thinner 5-plane input only
+affects the first layer) — plus M44.1 showed the train step dominating chunk wall-clock (→~98%) at the default
+40k window, so the 24× applies to the dominant cost. **Generation is the caveat**: batch-1 MCTS barely uses a
+GPU; `--leaf-batch` (M42.5 virtual-loss batching) helps, but with 64 sims × branching ~4 the effective leaf
+batches are modest — expect a real but unspectacular generation speedup, which matters little since draughts'
+cheap movegen makes CPU generation fast anyway.
+
 ## 5. Milestones & gates (falsifiable, in order)
 
 - **M47.1 — Engine.** `draughts_solver.pg` parameterized 10×10/8×8, full-sequence movegen, `IZeroSumGame` +
@@ -111,8 +121,13 @@ winRate-vs-random (saturates → 100% here) and material-vs-champion (self-refer
   log canonical-pick events; zero unmapped legal moves).
 - **M47.3 — Lab + eval + tests.** `--game draughts` (`--variant checkers8` flag), `StrengthEval<TState>`
   generalization, DI smoke tests, self-play contract + determinism-SHA tests instantiated with the new state.
-  **Gate: one training chunk end-to-end + bitwise DOP-invariance SHA + `--vs-minimax` produces a number.**
-- **M47.4 — The showcase run.** Constants of §4. **Gates:** natural-decisive fraction ≥ 50% by game 200 (else
+  **Gate: one training chunk end-to-end + bitwise DOP-invariance SHA + `--vs-minimax` produces a number + a
+  `--bench-forward`-style micro-bench of the 5×10×10 tower** (real resident-forward/trainer numbers for this
+  net before the showcase run, not extrapolations from chess).
+- **M47.4 — The showcase run** (decided with owner 2026-07-15): **start with a cheap 8×8 validation run** —
+  strongest field precedent, smallest policy head, fastest possible proof that the whole pipeline learns — and
+  once it demonstrably climbs the minimax ladder, **flip the variant flag to 10×10 for the real dammen
+  showcase**. Constants of §4, GPU recipe of §4.1. **Gates:** natural-decisive fraction ≥ 50% by game 200 (else
   stop-and-diagnose); **beat minimax-d1 with ≥ 60% score INCLUDING ≥ 10 real wins per 40 games, within 500
   self-play games**; d2 ≥ 55% within ~2,000 games; capped-equal-material games ≤ 30%. **No-thrash stop-loss:**
   judge each config at g160–200, one lever per intervention, two same-gate failures ⇒ it's a code/design
