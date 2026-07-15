@@ -1816,6 +1816,9 @@ locked chess-post-mortem constants (lr 3e-4, material-weight 0.5, arena ≥40, s
   the dominant train-step cost, generation batching modest at 64 sims × branching ~4). **Gates:** natural-decisive ≥50% by g200; **beat minimax-d1 ≥60% incl. ≥10 wins/40
   within 500 games**; d2 ≥55% within ~2000; capped-equal ≤30%; no-thrash stop-loss (judge at g160–200, one lever
   per intervention, two same-gate failures ⇒ stop and write up).
+  *8×8 leg ✅ (2026-07-15): one 1-hour run, 312 games, zero interventions — vs d1 **26W 13D 1L = 81.2%**
+  (+6.55 men), vs d2 already **56.2%**; two ladder tiers promoted. Chess's best was 40%/0 wins vs d1.
+  Remaining: the 10×10 dammen run (3–8 h).*
 - **M47.5 — (stretch, deferred) browser play** — TS side of the `.pg` + Angular page (M40 chess pattern).
 
 ## Testing strategy (cross-cutting, from research)

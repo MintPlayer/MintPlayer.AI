@@ -149,6 +149,15 @@ scheme, and rebuilding the M43/M44 GPU-resident forward/trainer whose kernels co
   self-play games**; d2 ≥ 55% within ~2,000 games; capped-equal-material games ≤ 30%. **No-thrash stop-loss:**
   judge each config at g160–200, one lever per intervention, two same-gate failures ⇒ it's a code/design
   problem — stop and write up. Ladder tiers promoted on the way = the site's future difficulty roster.
+  **✅ 8×8 validation leg PASSED 2026-07-15** — ONE 1-hour run (`--variant checkers8 --gpu --leaf-batch 32
+  --parallel --ladder`, RTX 3060 laptop), 312 games, zero interventions: **vs minimax-d1 26W 13D 1L = 81.2%,
+  +6.55 men** (gate: ≥60% incl. ≥10 wins, within 500 games — passed at 312 with 26 wins); **vs minimax-d2
+  10W 25D 5L = 56.2%, +2.80 men** (gate: ≥55% within ~2,000 — already passed at 312); two ladder tiers
+  promoted (L2 at g200, +3.08 material over champion); winRate-vs-random saturated at 100% by g40 (as
+  predicted — cosmetic); mid-run probe at the g200 judge point was already 87.5% vs d1. Reference: chess's
+  best-ever config was 40% with 0 wins vs d1 after days of runs. The natural-decisive fraction isn't logged
+  as a metric (worth instrumenting for 10×10), but the strength results subsume the concern. **Remaining leg:
+  flip to 10×10 (drop `--variant`) for the 3–8 h dammen showcase.**
 - **M47.5 — (stretch, deferred) Browser play.** TS side of the `.pg` + `.ckpt` parser + Angular page, the M40
   chess pattern; pure frontend by construction. Not part of the M47 gate.
 
