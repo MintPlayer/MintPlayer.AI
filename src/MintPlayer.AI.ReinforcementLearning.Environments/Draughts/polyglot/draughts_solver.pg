@@ -352,4 +352,402 @@ class PgDraughtsState {
     }
     return out
   }
+
+  // The 5-plane observation the net consumes (M47.2), single-sourced for the browser (M47.5): planes
+  // 0/1 = my men/kings, 2/3 = theirs, 4 = the normalized no-progress clock (uniform fill). MOVER-
+  // relative: Black sees the 180°-rotated board (moverSq), matching the action-index rotation. Must
+  // match DraughtsGame.WriteObservation exactly (pinned by a parity test).
+  fn writeObservation(): List<f64> {
+    let cells = this.size * this.size
+    let total = 5 * cells
+    var obs: List<f64> = List<f64>()
+    for i in 0..total { obs.add(0.0) }
+    for sq in 0..cells {
+      let p = this.squares[sq]
+      if p == 0 { continue }
+      let base = if isWhitePiece(p) == this.whiteToMove { 0 } else { 2 }
+      let plane = base + pieceKind(p) - 1
+      obs[plane * cells + this.moverSq(sq)] = 1.0
+    }
+    var clock = this.noProgress * 1.0 / this.noProgressLimit
+    if clock > 1.0 { clock = 1.0 }
+    for sq in 0..cells { obs[4 * cells + sq] = clock }
+    return obs
+  }
+}
+
+// ── Two-headed policy/value net inference (single-source forward pass, M47.5 browser path) ────────
+// Mirrors the chess solver's net section (types renamed PgDraughts* — the generated C# twins share
+// one global namespace with chess's). INFERENCE ONLY — training stays on the SDK autograd/GEMM. The
+// per-platform parser (draughts-net.ts / the C# parity test) loads float32 .ckpt weights into these
+// flat f64 arrays; per-block conv layers are CONCATENATED with per-block offsets.
+
+record PgDraughtsNetOut(logits: List<f64>, value: f64)
+
+// AlphaZero-style conv residual tower over the 5×N×N board — the checkers/draughts showcase net.
+// Direct nested-loop convolution (mathematically identical to the C# im2col→GEMM); NCHW flat tensors
+// (index c*H*W + h*W + w); weight layout matches C# Conv `[inC·k·k, outC]` row-major; LayerNorm is
+// over the ENTIRE flattened feature map, eps 1e-5.
+class PgDraughtsConvNet {
+  var planes: i32
+  var boardH: i32
+  var boardW: i32
+  var filters: i32
+  var blocks: i32
+  var actions: i32
+  var stemW: List<f64>          // [planes·9, filters]
+  var stemB: List<f64>          // [filters]
+  var stemNG: List<f64>         // stem LayerNorm gamma [filters·hw]
+  var stemNB: List<f64>         // stem LayerNorm beta  [filters·hw]
+  var b1W: List<f64>            // per block: conv1 weight [filters·9, filters], concatenated
+  var b1B: List<f64>            // per block: conv1 bias   [filters]
+  var n1G: List<f64>            // per block: norm1 gamma  [filters·hw]
+  var n1B: List<f64>            // per block: norm1 beta   [filters·hw]
+  var b2W: List<f64>            // per block: conv2 weight [filters·9, filters]
+  var b2B: List<f64>            // per block: conv2 bias   [filters]
+  var n2G: List<f64>            // per block: norm2 gamma  [filters·hw]
+  var n2B: List<f64>            // per block: norm2 beta   [filters·hw]
+  var pConvW: List<f64>         // policy 1×1 conv [filters, 2]
+  var pConvB: List<f64>         // [2]
+  var pNG: List<f64>            // policy LayerNorm gamma [2·hw]
+  var pNB: List<f64>            // policy LayerNorm beta  [2·hw]
+  var pHeadW: List<f64>         // policy Linear [2·hw, actions]
+  var pHeadB: List<f64>         // [actions]
+  var vConvW: List<f64>         // value 1×1 conv [filters, 1]
+  var vConvB: List<f64>         // [1]
+  var vNG: List<f64>            // value LayerNorm gamma [hw]
+  var vNB: List<f64>            // value LayerNorm beta  [hw]
+  var vHidW: List<f64>          // value hidden Linear [hw, filters]
+  var vHidB: List<f64>          // [filters]
+  var vHeadW: List<f64>         // value Linear [filters, 1]
+  var vHeadB: List<f64>         // [1]
+
+  // Dims only — the parser assigns the weight arrays field-by-field as it reads them (in Parameters() order).
+  init(planes: i32, boardH: i32, boardW: i32, filters: i32, blocks: i32, actions: i32) {
+    this.planes = planes
+    this.boardH = boardH
+    this.boardW = boardW
+    this.filters = filters
+    this.blocks = blocks
+    this.actions = actions
+    this.stemW = List<f64>()
+    this.stemB = List<f64>()
+    this.stemNG = List<f64>()
+    this.stemNB = List<f64>()
+    this.b1W = List<f64>()
+    this.b1B = List<f64>()
+    this.n1G = List<f64>()
+    this.n1B = List<f64>()
+    this.b2W = List<f64>()
+    this.b2B = List<f64>()
+    this.n2G = List<f64>()
+    this.n2B = List<f64>()
+    this.pConvW = List<f64>()
+    this.pConvB = List<f64>()
+    this.pNG = List<f64>()
+    this.pNB = List<f64>()
+    this.pHeadW = List<f64>()
+    this.pHeadB = List<f64>()
+    this.vConvW = List<f64>()
+    this.vConvB = List<f64>()
+    this.vNG = List<f64>()
+    this.vNB = List<f64>()
+    this.vHidW = List<f64>()
+    this.vHidB = List<f64>()
+    this.vHeadW = List<f64>()
+    this.vHeadB = List<f64>()
+  }
+
+  // obs (length planes·hw) → logits (length actions) + scalar value. Matches ConvResidualPolicyValueNet.Forward.
+  fn forward(obs: List<f64>): PgDraughtsNetOut {
+    let hw = this.boardH * this.boardW
+    let f = this.filters
+    var x = relu(layerNorm(conv2d(obs, this.stemW, 0, this.stemB, 0, this.planes, f, 3, 1, this.boardH, this.boardW), this.stemNG, 0, this.stemNB, 0))
+    let wStride = f * 9 * f
+    for i in 0..this.blocks {
+      let wOff = i * wStride
+      let bOff = i * f
+      let nOff = i * (f * hw)
+      var h = relu(layerNorm(conv2d(x, this.b1W, wOff, this.b1B, bOff, f, f, 3, 1, this.boardH, this.boardW), this.n1G, nOff, this.n1B, nOff))
+      h = layerNorm(conv2d(h, this.b2W, wOff, this.b2B, bOff, f, f, 3, 1, this.boardH, this.boardW), this.n2G, nOff, this.n2B, nOff)
+      x = relu(addVec(x, h))
+    }
+    let p = relu(layerNorm(conv2d(x, this.pConvW, 0, this.pConvB, 0, f, 2, 1, 0, this.boardH, this.boardW), this.pNG, 0, this.pNB, 0))
+    let logits = linear(p, this.pHeadW, 0, this.pHeadB, 0, 2 * hw, this.actions)
+    let vc = relu(layerNorm(conv2d(x, this.vConvW, 0, this.vConvB, 0, f, 1, 1, 0, this.boardH, this.boardW), this.vNG, 0, this.vNB, 0))
+    let vh = relu(linear(vc, this.vHidW, 0, this.vHidB, 0, hw, f))
+    let value = linear(vh, this.vHeadW, 0, this.vHeadB, 0, f, 1)
+    return PgDraughtsNetOut(logits, value[0])
+  }
+
+  static fn conv2d(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inC: i32, outC: i32, k: i32, pad: i32, h: i32, w2: i32): List<f64> {
+    let hw = h * w2
+    var out: List<f64> = List<f64>()
+    for oc in 0..outC {
+      let bias = b[bOff + oc]
+      for oh in 0..h {
+        for ow in 0..w2 {
+          var s = bias
+          for c in 0..inC {
+            for kh in 0..k {
+              let ih = oh - pad + kh
+              if ih < 0 { continue }
+              if ih >= h { continue }
+              for kw in 0..k {
+                let iw = ow - pad + kw
+                if iw < 0 { continue }
+                if iw >= w2 { continue }
+                s += x[c * hw + ih * w2 + iw] * w[wOff + ((c * k + kh) * k + kw) * outC + oc]
+              }
+            }
+          }
+          out.add(s)
+        }
+      }
+    }
+    return out
+  }
+
+  static fn layerNorm(x: List<f64>, g: List<f64>, gOff: i32, be: List<f64>, beOff: i32): List<f64> {
+    let n = x.count
+    let nf = n * 1.0
+    var mean = 0.0
+    for v in x { mean += v }
+    mean = mean / nf
+    var vs = 0.0
+    for v in x { let d = v - mean; vs += d * d }
+    let denom = Math.sqrt(vs / nf + 0.00001)
+    var out: List<f64> = List<f64>()
+    for i in 0..n { out.add(g[gOff + i] * (x[i] - mean) / denom + be[beOff + i]) }
+    return out
+  }
+
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+
+  static fn addVec(a: List<f64>, b: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for i in 0..a.count { out.add(a[i] + b[i]) }
+    return out
+  }
+}
+
+// The architecture-agnostic wrapper MCTS types against: an MLP trunk (the flat fields) or a wrapped
+// conv tower (the `conv` field). Mirrors the chess PgPolicyValueNet exactly.
+class PgDraughtsNet {
+  var inputSize: i32
+  var actions: i32
+  var hidden: List<i32>          // trunk hidden widths (from the checkpoint)
+  var trunkWFlat: List<f64>      // trunk weight matrices concatenated in layer order (each row-major [in, out])
+  var trunkBFlat: List<f64>      // trunk biases concatenated in layer order
+  var policyW: List<f64>         // [lastHidden * actions]
+  var policyB: List<f64>         // [actions]
+  var valueW: List<f64>          // [lastHidden * 1]
+  var valueB: List<f64>          // [1]
+  var conv: PgDraughtsConvNet?   // non-null ⇒ conv net; forward delegates to it (the MLP fields are unused)
+
+  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, policyW: List<f64>, policyB: List<f64>, valueW: List<f64>, valueB: List<f64>) {
+    this.inputSize = inputSize
+    this.actions = actions
+    this.hidden = hidden
+    this.trunkWFlat = trunkWFlat
+    this.trunkBFlat = trunkBFlat
+    this.policyW = policyW
+    this.policyB = policyB
+    this.valueW = valueW
+    this.valueB = valueB
+    this.conv = null
+  }
+
+  static fn withConv(conv: PgDraughtsConvNet): PgDraughtsNet {
+    let n = PgDraughtsNet(conv.planes * conv.boardH * conv.boardW, conv.actions, List<i32>(), List<f64>(), List<f64>(), List<f64>(), List<f64>(), List<f64>(), List<f64>())
+    n.conv = conv
+    return n
+  }
+
+  fn forward(obs: List<f64>): PgDraughtsNetOut {
+    if this.conv != null { return this.conv!.forward(obs) }
+    var x = obs
+    var prev = this.inputSize
+    var wOff = 0
+    var bOff = 0
+    for l in 0..this.hidden.count {
+      let h = this.hidden[l]
+      x = relu(linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h))
+      wOff += prev * h
+      bOff += h
+      prev = h
+    }
+    let logits = linear(x, this.policyW, 0, this.policyB, 0, prev, this.actions)
+    let value = linear(x, this.valueW, 0, this.valueB, 0, prev, 1)
+    return PgDraughtsNetOut(logits, value[0])
+  }
+
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+}
+
+// ── Inference MCTS (AlphaZero PUCT, browser/serving path) ─────────────────────────────────────────
+// Single-source port of Core/Planning/Mcts minus the self-play-only Dirichlet root noise. The visit
+// distribution is sized by the root's action space — (N²/2)², 2500 (10×10) / 1024 (8×8) — so one
+// MCTS serves both variants.
+
+record PgDraughtsLeafEval(priors: List<f64>, value: f64)
+
+class PgDraughtsMctsNode {
+  var moves: List<i32>              // legal action indices (empty if terminal)
+  var p: List<f64>                  // prior per move (aligned to moves)
+  var n: List<i32>                  // visit count per move
+  var w: List<f64>                  // summed value per move (this node's mover perspective)
+  var children: List<PgDraughtsMctsNode?>
+  var expanded: bool
+  var terminal: bool
+  var terminalValue: f64            // set when terminal: -1 loss (side to move can't move) / 0 draw, mover-relative
+
+  init(moves: List<i32>, terminal: bool, terminalValue: f64) {
+    this.moves = moves
+    this.terminal = terminal
+    this.terminalValue = terminalValue
+    this.p = List<f64>()
+    this.n = List<i32>()
+    this.w = List<f64>()
+    this.children = List<PgDraughtsMctsNode?>()
+    this.expanded = false
+  }
+}
+
+class PgDraughtsMcts {
+  // Run `sims` PUCT simulations from `root` and return the root visit-count distribution over the
+  // action space (0 for illegal/unvisited). Falls back to raw priors if nothing was visited.
+  static fn search(net: PgDraughtsNet, root: PgDraughtsState, sims: i32, cpuct: f64): List<f64> {
+    let rootNode = newNode(root)
+    if !rootNode.terminal {
+      expandLeaf(rootNode, net, root)
+      for s in 0..sims { simulate(rootNode, net, root, cpuct) }
+    }
+
+    let space = root.actionSpace()
+    var pi: List<f64> = List<f64>()
+    for i in 0..space { pi.add(0.0) }
+    var total = 0
+    for i in 0..rootNode.moves.count { total += rootNode.n[i] }
+    if total == 0 {
+      for i in 0..rootNode.moves.count { pi[rootNode.moves[i]] = rootNode.p[i] }
+      return pi
+    }
+    for i in 0..rootNode.moves.count { pi[rootNode.moves[i]] = rootNode.n[i] * 1.0 / total }
+    return pi
+  }
+
+  // Best action index (argmax visit count via the returned distribution).
+  static fn chooseMove(net: PgDraughtsNet, root: PgDraughtsState, sims: i32, cpuct: f64): i32 {
+    let pi = search(net, root, sims, cpuct)
+    var best = -1
+    var bestV = -1.0
+    for i in 0..pi.count { if pi[i] > bestV { bestV = pi[i]; best = i } }
+    return best
+  }
+
+  // Returns the value of `state` from the perspective of its side to move.
+  static fn simulate(node: PgDraughtsMctsNode, net: PgDraughtsNet, state: PgDraughtsState, cpuct: f64): f64 {
+    if node.terminal { return node.terminalValue }
+    if !node.expanded { return expandLeaf(node, net, state) }
+
+    let edge = selectChild(node, cpuct)
+    let childState = state.applyIndex(node.moves[edge])
+    if node.children[edge] == null { node.children[edge] = newNode(childState) }
+    let child = node.children[edge]!
+    let value = -simulate(child, net, childState, cpuct)   // flip: child mover's value
+    node.n[edge] = node.n[edge] + 1
+    node.w[edge] = node.w[edge] + value
+    return value
+  }
+
+  static fn selectChild(node: PgDraughtsMctsNode, cpuct: f64): i32 {
+    var sumN = 0
+    for i in 0..node.n.count { sumN += node.n[i] }
+    let sqrtSum = Math.sqrt(sumN * 1.0)
+    var best = 0
+    var bestScore = -1.0e30
+    for i in 0..node.moves.count {
+      let q = if node.n[i] > 0 { node.w[i] / node.n[i] } else { 0.0 }
+      let u = cpuct * node.p[i] * sqrtSum / (1.0 + node.n[i])
+      let score = q + u
+      if score > bestScore { bestScore = score; best = i }
+    }
+    return best
+  }
+
+  static fn newNode(state: PgDraughtsState): PgDraughtsMctsNode {
+    let r = state.result()   // 0 ongoing, 1 loss (side to move can't move), 2 draw
+    if r != 0 {
+      let tv = if r == 1 { -1.0 } else { 0.0 }
+      return PgDraughtsMctsNode(List<i32>(), true, tv)
+    }
+    return PgDraughtsMctsNode(state.legalMoveIndices(), false, 0.0)
+  }
+
+  // Evaluate the leaf, seed per-move priors (masked-softmax over legal), return the net's value estimate.
+  static fn expandLeaf(node: PgDraughtsMctsNode, net: PgDraughtsNet, state: PgDraughtsState): f64 {
+    let ev = evaluate(net, state, node.moves)
+    let k = node.moves.count
+    node.p = List<f64>()
+    node.n = List<i32>()
+    node.w = List<f64>()
+    node.children = List<PgDraughtsMctsNode?>()
+    for i in 0..k {
+      node.p.add(ev.priors[i])
+      node.n.add(0)
+      node.w.add(0.0)
+      node.children.add(null)
+    }
+    node.expanded = true
+    return ev.value
+  }
+
+  // Masked-softmax priors over `moves` (aligned) + tanh value. Mirrors SelfPlayCampaign.Evaluate.
+  static fn evaluate(net: PgDraughtsNet, state: PgDraughtsState, moves: List<i32>): PgDraughtsLeafEval {
+    let out = net.forward(state.writeObservation())
+    var mx = -1.0e30
+    for m in moves { if out.logits[m] > mx { mx = out.logits[m] } }
+    var pr: List<f64> = List<f64>()
+    var sum = 0.0
+    for m in moves {
+      let e = Math.exp(out.logits[m] - mx)
+      pr.add(e)
+      sum += e
+    }
+    if sum > 0.0 {
+      for i in 0..pr.count { pr[i] = pr[i] / sum }
+    } else {
+      for i in 0..pr.count { pr[i] = 1.0 / pr.count }
+    }
+    return PgDraughtsLeafEval(pr, Math.tanh(out.value))
+  }
 }

@@ -158,8 +158,20 @@ scheme, and rebuilding the M43/M44 GPU-resident forward/trainer whose kernels co
   best-ever config was 40% with 0 wins vs d1 after days of runs. The natural-decisive fraction isn't logged
   as a metric (worth instrumenting for 10×10), but the strength results subsume the concern. **Remaining leg:
   flip to 10×10 (drop `--variant`) for the 3–8 h dammen showcase.**
-- **M47.5 — (stretch, deferred) Browser play.** TS side of the `.pg` + `.ckpt` parser + Angular page, the M40
+- **M47.5 — Browser play.** TS side of the `.pg` + `.ckpt` parser + Angular page, the M40
   chess pattern; pure frontend by construction. Not part of the M47 gate.
+  **✅ 8×8 leg SHIPPED 2026-07-15** (owner pulled it forward to ship the validated checkers8 net): `/draughts`
+  page with **play-vs-AI + AI-vs-AI watch** (the chess page pattern), fully client-side. New over chess: the
+  browser runs the **conv tower** (chess ships an MLP tier) — net + MCTS added to `draughts_solver.pg`
+  (types `PgDraughts*`; the generated C# shares chess's global namespace), TS twin emitted via the bundled
+  polyglot CLI, and `draughts-net.ts` parses kind `selfplay-pv-conv` (dims from the file; byte-level
+  reference = `DraughtsNetParityTests`, which also pin conv-forward parity to f32 tolerance, observation
+  parity, and MCTS legality). Tiers (`wwwroot/models/draughts-difficulties.json`, ckpts Git-LFS): Beginner
+  (d1 ckpt, 1 sim, T=1), Casual (d2, 2 sims, T=0.5), Strong (final, 8 sims, T=0) — sims chosen by
+  measurement: 1 sim = 32.5% vs minimax-d1, **8 sims = 82.5% ≈ the full 64-sim strength**, and the emitted
+  JS conv costs ~161 ms/forward, so Strong "thinks" ~1.2 s/move (node simulation of the exact browser path:
+  real ckpt parsed, full legal game played). The 10×10 dammen net drops in via the manifest + a
+  `PgDraughtsState.international()` start-state switch once its campaign runs.
 
 Effort (repo-fit estimate): 10×10 trainable end-to-end ≈ 2–3 weeks of milestones; M47.4 itself is
 evenings-scale compute (evidence: ceiling in ~10 T4-hours for 8×8).

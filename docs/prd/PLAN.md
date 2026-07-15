@@ -1819,7 +1819,11 @@ locked chess-post-mortem constants (lr 3e-4, material-weight 0.5, arena ≥40, s
   *8×8 leg ✅ (2026-07-15): one 1-hour run, 312 games, zero interventions — vs d1 **26W 13D 1L = 81.2%**
   (+6.55 men), vs d2 already **56.2%**; two ladder tiers promoted. Chess's best was 40%/0 wins vs d1.
   Remaining: the 10×10 dammen run (3–8 h).*
-- **M47.5 — (stretch, deferred) browser play** — TS side of the `.pg` + Angular page (M40 chess pattern).
+- **M47.5 — browser play** — TS side of the `.pg` + Angular page (M40 chess pattern).
+  *8×8 leg ✅ (2026-07-15, owner-pulled-forward): `/draughts` play + AI-vs-AI watch, fully client-side, first
+  CONV net in the browser (net+MCTS in the `.pg` as `PgDraughts*`, `selfplay-pv-conv` TS parser, parity tests);
+  tiers Beginner/Casual/Strong (1/2/8 sims — 8 sims ≈ full 64-sim strength at 82.5% vs d1, ~1.2 s/move JS).
+  10×10 dammen = manifest + start-state swap after its campaign.*
 
 ## Testing strategy (cross-cutting, from research)
 
