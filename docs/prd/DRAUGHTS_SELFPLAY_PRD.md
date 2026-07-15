@@ -110,6 +110,16 @@ GPU; `--leaf-batch` (M42.5 virtual-loss batching) helps, but with 64 sims × bra
 batches are modest — expect a real but unspectacular generation speedup, which matters little since draughts'
 cheap movegen makes CPU generation fast anyway.
 
+### 4.2 Net growth (owner Q 2026-07-15: "does the net auto-widen when saturated?" — no)
+The SDK's Net2Net toolkit (`WidenTo`/`Deepen` on MLP-trunk nets, driven by `DqnGrowth`/`PolicyGrowth`/the
+cube-DAVI width ladder) is wired into the DQN and imitation campaign families only — and it grows on a fixed
+sample cadence (`GrowEvery`, opt-in), not on a saturation signal. The self-play path draughts uses has no
+growth seam at all: the net is built once by its `IPolicyValueNetBuilder`, and `ConvResidualPolicyValueNet`
+doesn't implement `IGrowableTrunkNet` (no conv-tower `WidenTo` exists). If the draughts net saturates, the
+lever is a relaunch with bigger `--filters`/`--blocks` (fresh weights). Auto-growing the conv tower would be
+real feature work: Net2Net across residual blocks + LayerNorm, a growth seam in the builder/checkpoint-kind
+scheme, and rebuilding the M43/M44 GPU-resident forward/trainer whose kernels compile against a fixed shape.
+
 ## 5. Milestones & gates (falsifiable, in order)
 
 - **M47.1 — Engine.** ✅ SHIPPED 2026-07-15. `draughts_solver.pg` parameterized 10×10/8×8, full-sequence movegen, `IZeroSumGame` +
