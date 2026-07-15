@@ -93,11 +93,13 @@ function strawberry(c: CanvasRenderingContext2D): void {
   c.fillStyle = radial(c, CX - R * 0.22, CY - R * 0.3, R * 1.35, lighten(red, 0.4), red, darken(red, 0.32));
   c.fill();
 
+  // Seed pyramid follows the berry's taper: widest row at the shoulder, single seed near the tip.
+  // (The original SkiaSharp art had this inverted — the wide rows sat beside the narrow tip.)
   c.fillStyle = rgb(0xffe082);
   for (let row = 0; row < 4; row++)
     for (let i = 0; i <= row; i++) {
-      const sy = CY - R * 0.1 + row * R * 0.24;
-      const spread = R * (0.12 + row * 0.14);
+      const sy = CY + R * 0.52 - row * R * 0.24;
+      const spread = R * (0.12 + row * 0.1);
       const sx = CX + (i - row / 2) * spread;
       c.save(); c.translate(sx, sy); c.rotate(deg(18));
       ellipse(c, 0, 0, R * 0.05, R * 0.085); c.fill();
