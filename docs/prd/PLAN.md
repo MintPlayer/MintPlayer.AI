@@ -1536,7 +1536,7 @@ bitwise-reproducibility invariant (M25/M26/**M36 SHA-verified**) is preservable 
 campaign; the pattern is generic and matches Core's existing determinism approach, so it should be (and now will be)
 extracted. **Non-goals:** GPU/batched-MCTS (separate, larger effort); parallelizing the DQN campaigns (not the bottleneck).
 
-## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED (merged to master, PR #31) · M42.3 🟡 partial (draw-collapse pathology diagnosed + fixed, commit `282c665`, but strength gains UNPROVEN — tiers don't beat baseline on a fair eval + metrics saturate; needs non-saturating eval + scale) · M42.4 🟡 steps 1+3 done (`c1c7d8e`), browser wiring (2+4) remains · M42.5 🟡 scale-readiness (batched leaf inference + `--gpu` + non-saturating strength eval + `SelfPlayOptions` de-ceiling refactor shipped; resident-conv-forward, distribution, WDL/history deferred). No conv tier shippable yet.
+## M42 — Convolutional residual net for chess (reusable in Core)  *(2026-07-13; see `RESIDUAL_CONV_NET_PRD.md`)* — M42.1 + M42.2 ✅ SHIPPED (merged to master, PR #31) · M42.3 ⛔ CLOSED 2026-07-15 (owner decision after conv8/conv9 exhausted the config levers: every net scores 33–40% with 0–1 wins vs depth-1 minimax — the loop demonstrably learns, strength needs code levers or real scale; journal in `data/chess-conv-autorun-log.md`, candidate levers in the PRD status) · M42.4 🟡 steps 1+3 done (`c1c7d8e`), browser wiring (2+4) MOOT while no conv tier beats the MLP demo — browser stays on the M40 MLP tier · M42.5 🟡 scale-readiness (batched leaf inference + `--gpu` + non-saturating strength eval + `SelfPlayOptions` de-ceiling refactor shipped; resident-conv-forward, distribution, WDL/history deferred).
 
 **Why:** chess self-play has **plateaued at ~random** (M40.4: winRate-vs-random ~50%→35%, material margin flat ~+0.1
 of the +0.75 gate, no tier ever promotes) despite 256 sims + material-shaped targets. The honest bottleneck is the
@@ -1777,6 +1777,36 @@ ladder and logging have test seams, and training stayed bitwise-identical throug
 at every step).
 
 **Hard gate on every step:** training bitwise-identical — checkpoint SHA determinism tests unchanged, full suite green.
+
+## M47 — Draughts (dammen) self-play showcase  *(2026-07-15; see `DRAUGHTS_SELFPLAY_PRD.md`)* 🔜
+
+**Why:** the chess strength thread closed at "loop learns, nets can't get strong at laptop scale" (M42.3 ⛔) —
+branching ~35 × expensive movegen starved the search and weak-net games carried no outcome signal. Draughts
+inverts all of it by rule: forced captures + majority rule make weak-level games decisive (dense natural z),
+branching ~4 gives 64 sims a real search, movegen is orders cheaper (generations become affordable), and a
+uniform piece-move policy shrinks the head to 2500 (10×10) vs chess's 4672. Field evidence says GO: 8×8 checkers
+reached its solved-game ceiling (draws minimax depth-8) in ~10 T4-hours / 12.5k games; casual-bot strength from
+800 games on a 2015 laptop; 10×10 trained AlphaZero-style at hobby scale (galvanise_zero). 4-agent
+investigation 2026-07-15 (repo-fit, game domain, evidence, chess post-mortem) → PRD.
+
+**Variant:** International 10×10 ("dammen" — the NL/BE game) primary; engine parameterized (majority /
+backward-capture / flying-kings flags) so English 8×8 is a config (A/B + the Chinook solved-draw story).
+**Key design locks:** one capture sequence = ONE move index (preserves `IZeroSumGame`'s flip-side contract — no
+Mcts seam change; (from,to) policy 50×50, canonical pick on rare Turkish-strike collisions); `.pg`-first engine
+(`draughts_solver.pg`) so browser play is a pure-frontend milestone later; 5-plane observation incl. a
+no-progress-counter plane; in-engine no-progress draw rule (defines king-shuffle non-games out of existence);
+locked chess-post-mortem constants (lr 3e-4, material-weight 0.5, arena ≥40, sims floored by decisiveness,
+`--vs-minimax` auto-run at every promotion).
+
+- **M47.1 — Engine** (`draughts_solver.pg`, both variants, full-sequence movegen, `IZeroSumGame`+`IMaterialScore`,
+  no-progress rule). **Gate:** perft vs published tables (10×10 d5=27117, 8×8 d5=7361) + capture-dense positions.
+- **M47.2 — Encoding + observation.** **Gate:** encode→decode→apply round-trip over random playouts + collision audit.
+- **M47.3 — Lab + eval + tests** (`--game draughts`, `StrengthEval<TState>` generalization, DI + contract + SHA tests).
+  **Gate:** end-to-end chunk, bitwise DOP-invariance, `--vs-minimax` runs.
+- **M47.4 — Showcase run.** **Gates:** natural-decisive ≥50% by g200; **beat minimax-d1 ≥60% incl. ≥10 wins/40
+  within 500 games**; d2 ≥55% within ~2000; capped-equal ≤30%; no-thrash stop-loss (judge at g160–200, one lever
+  per intervention, two same-gate failures ⇒ stop and write up).
+- **M47.5 — (stretch, deferred) browser play** — TS side of the `.pg` + Angular page (M40 chess pattern).
 
 ## Testing strategy (cross-cutting, from research)
 

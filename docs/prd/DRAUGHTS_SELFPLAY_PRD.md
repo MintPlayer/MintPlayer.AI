@@ -1,0 +1,144 @@
+# Draughts (dammen) self-play showcase — PRD
+
+**Status:** 🔜 planned 2026-07-15 (4-agent investigation: repo-fit, game domain, field evidence, chess post-mortem)
+**Owner:** Pieterjan
+**Milestone:** [PLAN.md](PLAN.md) M47 · **Replaces** chess as the self-play *strength* showcase (chess strength thread closed 2026-07-15, see [RESIDUAL_CONV_NET_PRD.md](RESIDUAL_CONV_NET_PRD.md) status; the chess demo itself stays on the site).
+
+## 1. Problem — why chess failed, why draughts should work
+
+The chess self-play effort produced excellent *infrastructure* (conv net, GPU-resident forward/train, multi-GPU
+generation, ladder, adjudication) but no net that beats even a depth-1 material minimax: at laptop scale, ~35
+branching × expensive movegen starved the 64-sim search, and weak-net games ended as 120-ply shuffle-draws
+carrying no outcome signal (draw-collapse — diagnosed and patched with material adjudication, but the signal
+stayed thin). Final scoreboard: 9 configs, every net 33–40% vs minimax-d1 with 0–1 wins while bleeding 20–30
+pawns (journal: `data/chess-conv-autorun-log.md`).
+
+Draughts inverts every pressure point, *by rule*:
+
+| Failure driver (chess) | Draughts |
+|---|---|
+| Branching ~35 → <2 visits/child at 64 sims | Avg branching ~4 (10×10; forced captures often reduce to 1–3) → 8–20 visits/child, a real search |
+| Expensive movegen (pins, castling, EP) | Trivial movegen (~44M pos/s on 2008 hardware for 8×8) → the research top lever (generations) becomes affordable |
+| Weak-net games = non-decisive shuffle draws (z≈0) | **Forced captures + majority rule ⇒ weak-level games are decided by material blunders within ~10 moves** — dense, natural win/loss signal, no synthetic adjudication needed early |
+| Policy head 4672 (every piece moves differently) | All men move identically (owner's observation): policy 2500 (10×10 from-to) / 1024 (8×8) — each output gets ~5× the training signal |
+
+**Field evidence (GO):** AlphaCheckers-Zero reached 8×8 checkers' game-theoretic ceiling (50/50 draws vs
+minimax **depth-8**) with ~12,500 self-play games at 80 sims in **~10 h on a Colab T4** (converged by ~5,000
+games); AlexMGitHub/Checkers-MCTS beat casual online bots with **800 games on a 2015 laptop**; galvanise_zero
+trained 10×10 international draughts AlphaZero-style at hobby scale. Throughput reference: ~1,250 games/hour at
+80 sims on T4-class hardware (an RTX 3060 is ≥ T4). The chess run's ~300 games ≈ 15 minutes of draughts
+self-play. Honest ceiling: laptop self-play climbs the weak-to-amateur ladder, **not** classical-engine strength
+(a Russian-checkers AZ hobby net lost 0–100 vs a classical engine; Scan/Kingsrow-class is out of scope).
+
+## 2. Variant decision: International 10×10 ("dammen") first, parameterized so 8×8 falls out
+
+Primary showcase = **International draughts, 10×10, 20 men/side** — the variant actually played in NL/BE (KNDB,
+Sijbrands/Wiersma/Boomstra; 8×8 English checkers reads as "toy checkers" to that audience), with the most
+dramatic tactics (majority-rule *coups*, flying kings) and the most decisive weak-level play.
+
+Rules that matter (and their flags): captures forced; **majority rule** (must play a sequence capturing the
+maximum number of pieces); men capture forward AND backward; **flying kings** (slide any distance, land anywhere
+beyond the captured piece); captured pieces removed only at sequence end and cannot be re-jumped (**Turkish
+strike**); promotion only if the move *ends* on the back row. The engine is parameterized (board size +
+rule flags: majority, backward men-capture, flying kings) so **English 8×8 checkers is a config**, kept for
+A/B and for the "draws depth-8 minimax = solved-game ceiling reached" story (Chinook 2007: 8×8 is a draw).
+
+Drawishness (>90% GM draws in 10×10) is a *strong-play* phenomenon — irrelevant at showcase strength, where
+forced captures make blunders immediately fatal. The real draw risk is king-shuffle endgames, handled in §3.5.
+
+## 3. Design
+
+### 3.1 Engine — `draughts_solver.pg`, single-source from day one
+Author the rules in MintPlayer.Polyglot (`draughts_solver.pg`, C# emitted at build, TS committed) with a thin C#
+facade, exactly like chess (`chess_solver.pg`/`ChessBoard.cs`) — but .pg-FIRST this time, so the future browser
+page (§7) is a pure-frontend milestone. Movegen enumerates **complete capture sequences** (recursive DFS with
+majority filter + Turkish-strike constraint + promotion-at-end); Polyglot 0.6.0's multi-`.pg` build fix removes
+the old codegen risk. `CheckersState`/`DraughtsState` is small (three bitboards fit 8×8; 10×10 needs 50-square
+boards — two ulongs per piece kind).
+
+### 3.2 Move encoding — one capture sequence = ONE move (the critical decision)
+`IZeroSumGame.Apply` FLIPS the side to move (`IZeroSumGame.cs:24`) and MCTS/SelfPlayCampaign/negamax all
+sign-flip per ply. A multi-jump is one turn, so: **a full capture sequence is a single move index**. Policy =
+`from × to` over playable squares: **50×50 = 2500** (10×10), **32×32 = 1024** (8×8). Distinct maximum-capture
+sequences sharing (from,to) but capturing different pieces (possible under the Turkish strike) collide — resolve
+by a **deterministic canonical pick** (e.g. lexicographically smallest jumped-square list). This mildly restricts
+the net's move menu on rare forks (always still a legal maximum capture; PDN notation itself is ambiguous here)
+and is the price of NOT touching the MCTS sign-flip contract.
+**Rejected:** micro-move decomposition (each jump segment = one action, mover doesn't flip mid-sequence). It's
+rules-perfect and gives a smaller head (~1800), but requires an `IMoverInfo` capability seam with conditional
+sign-flips through `Mcts`, `SelfPlayCampaign`, and `MaterialMinimaxPlayer` — the highest-risk kind of change
+(silent training corruption; chess post-mortem risk (b)) — and the majority rule needs the full-sequence
+enumerator for legality masking *anyway*, so micro-moves save nothing.
+Internal movegen still enumerates full sequences distinctly: **perft runs on sequences** (matches published
+tables); the policy map dedupes on top.
+
+### 3.3 Observation — 5 planes
+`my-men, my-kings, their-men, their-kings` (side-to-move relative, chess convention) + a normalized
+**no-progress counter** plane (evidence pitfall: nets need to see the draw clock). 5×100 = 500 floats (10×10);
+`ConvNetBuilder(planes: 5, boardH: 10, boardW: 10, filters, blocks)` — confirmed fully generic, policy head =
+`Linear(2·H·W → 2500)` ≈ 500k params, fine.
+
+### 3.4 Material — `IMaterialScore` (existing seam, no campaign changes)
+man = 1, king = 3, side-to-move relative. Powers value-target blending (`MaterialWeight`), capped-game
+adjudication, ladder `PromoteMaterial`, and `MaterialMinimaxPlayer` — all existing.
+
+### 3.5 Draws defined out of existence
+In-engine **no-progress rule**: N reversible moves (no capture, no man advance; N≈40 own-moves, FMJD-style) ⇒
+draw — king-shuffle non-games terminate *by rule* instead of by ply cap. Keep ply cap (~150) + material
+adjudication (±1.5 man-units, kings weighted) as the backstop.
+
+### 3.6 Reused as-is (M46 infrastructure)
+`Mcts` (incl. batched leaves), `SelfPlayCampaign` (adjudication, ladder, arenas, parallel generation, GPU
+forward/trainer wiring), `AddSelfPlayCampaign<TState>` + `[Register]` game registration, `LabHost`. New code:
+the game, its Lab entry (~130 lines cloned from ChessLab), and one generalization — `ChessStrengthEval` →
+`StrengthEval<TState>` (it's chess-specific only in ctor/builder/ckpt defaults; `MaterialMinimaxPlayer<TState>`
+is already generic).
+
+## 4. Locked training constants (chess post-mortem, do not re-derive)
+`lr 3e-4` (1e-3 peak-then-regressed) · `material-weight 0.5` (0.3 broke the gate) · `arena-games ≥ 40` (12 was
+±1-pawn noise) · sims 64 start, **floored by decisiveness, never cut for wall-clock** · parallel eval/arena ·
+ladder on · `--vs-minimax` wired from day one and run automatically at every promotion. Dropped as signals:
+winRate-vs-random (saturates → 100% here) and material-vs-champion (self-referential) — cosmetic only.
+
+## 5. Milestones & gates (falsifiable, in order)
+
+- **M47.1 — Engine.** `draughts_solver.pg` parameterized 10×10/8×8, full-sequence movegen, `IZeroSumGame` +
+  `IMaterialScore`, no-progress rule; C# facade + `[Register]`. **Gate: perft matches published tables for BOTH
+  variants** (10×10 start: 9/81/658/4265/27117…; 8×8: 7/49/302/1469/7361…) **+ capture-dense positions
+  exercising majority, Turkish strike, promotion-mid-sequence.** No training before this gate.
+- **M47.2 — Encoding + observation.** (from,to) policy map + canonical tie-break; 5-plane observation.
+  **Gate: encode→decode→apply round-trip over thousands of random playouts, with a collision audit** (count and
+  log canonical-pick events; zero unmapped legal moves).
+- **M47.3 — Lab + eval + tests.** `--game draughts` (`--variant checkers8` flag), `StrengthEval<TState>`
+  generalization, DI smoke tests, self-play contract + determinism-SHA tests instantiated with the new state.
+  **Gate: one training chunk end-to-end + bitwise DOP-invariance SHA + `--vs-minimax` produces a number.**
+- **M47.4 — The showcase run.** Constants of §4. **Gates:** natural-decisive fraction ≥ 50% by game 200 (else
+  stop-and-diagnose); **beat minimax-d1 with ≥ 60% score INCLUDING ≥ 10 real wins per 40 games, within 500
+  self-play games**; d2 ≥ 55% within ~2,000 games; capped-equal-material games ≤ 30%. **No-thrash stop-loss:**
+  judge each config at g160–200, one lever per intervention, two same-gate failures ⇒ it's a code/design
+  problem — stop and write up. Ladder tiers promoted on the way = the site's future difficulty roster.
+- **M47.5 — (stretch, deferred) Browser play.** TS side of the `.pg` + `.ckpt` parser + Angular page, the M40
+  chess pattern; pure frontend by construction. Not part of the M47 gate.
+
+Effort (repo-fit estimate): 10×10 trainable end-to-end ≈ 2–3 weeks of milestones; M47.4 itself is
+evenings-scale compute (evidence: ceiling in ~10 T4-hours for 8×8).
+
+## 6. Risks
+1. **Multi-jump encoding bug silently corrupting training** — the checkers analogue of a movegen bug, mitigated
+   by the hard M47.1/M47.2 gates *before* any training.
+2. **Draw plateau at the top** — as the net strengthens, draws-with-material-parity vs strong minimax are the
+   *correct* outcome (8×8 is a solved draw). The ladder must count parity-draws as progress at the top; success
+   messaging is "climbs the ladder to its ceiling", not "wins forever".
+3. **10×10 evidence is thinner than 8×8** (galvanise_zero vs two quantified 8×8 repos) — hedged by the
+   parameterized engine: if 10×10 underdelivers, 8×8 is a config switch with the strongest precedent.
+
+## 7. Out of scope
+Browser page (M47.5, deferred) · classical-engine strength (Scan/Kingsrow use ML *pattern* evals + alpha-beta —
+different technology) · killer-draughts / anti-draw variants · 8×8 3-move-ballot opening rules.
+
+## 8. References
+AlphaCheckers-Zero (github.com/MadrasLe/AlphaCheckers-Zero) · Checkers-MCTS (github.com/AlexMGitHub/Checkers-MCTS)
+· galvanise_zero (github.com/alreadydone/galvanise_zero) · alpha-nagibator (github.com/evg-tyurin/alpha-nagibator)
+· Schaeffer et al., *Checkers Is Solved*, Science 2007 · Samuel 1959 (IBM J. R&D — self-play checkers on 1950s
+hardware) · A. Jones, *Scaling Scaling Laws with Board Games* (arXiv:2104.03113) · en.wikipedia.org/wiki/International_draughts
+· en.wikipedia.org/wiki/Game_complexity · chess post-mortem: `data/chess-conv-autorun-log.md`.
