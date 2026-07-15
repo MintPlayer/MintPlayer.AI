@@ -1,0 +1,355 @@
+// draughts_solver.pg — single-source draughts/checkers engine (PLAN M47.1). ONE source, transpiled
+// to C# at build time (obj/, wrapped by the DraughtsState/DraughtsRules/DraughtsGame facades); the
+// committed TypeScript twin arrives with the deferred browser milestone (M47.5).
+//
+// Parameterized over the two variants the SDK ships:
+//   international 10×10 "dammen" — flying kings, men capture backward, majority rule (only
+//     maximum-capture sequences are legal), men promote only when the move ENDS on the crown row
+//     (a man jumping THROUGH it continues as a man);
+//   english 8×8 checkers — one-step kings, men capture forward only, no majority rule. The classic
+//     "a man crowning mid-jump stops there" rule is EMERGENT here: english men capture forward
+//     only, so a man landing on the last row has no further jump and the sequence ends by itself.
+// In both: captures are forced, a multi-jump runs to completion (a sequence is recorded only at a
+// dead end), and captured pieces stay on the board until the sequence ends — they block movement
+// and cannot be re-jumped (the Turkish strike).
+//
+// A complete capture sequence is ONE move (one Apply = one side-to-move flip — the IZeroSumGame
+// contract MCTS/negamax depend on). Moves are identified FMJD-style by (from, to, captured SET):
+// different jump paths over the same pieces dedupe to one move, matching the published perft
+// tables (10×10 start 9/81/658/4265/27117…, 8×8 start 7/49/302/1469/7361…).
+//
+// Board: N×N mailbox List<i32> (0 empty, +1/+2 White man/king, −1/−2 Black), White moving toward
+// higher ranks; play is on the (file+rank)-even squares, so playable index = sq/2 (0..N²/2−1) and
+// the action space is (N²/2)² — 2500 (10×10) / 1024 (8×8). Action indices are MOVER-RELATIVE: for
+// Black the board is rotated 180° (sq → N²−1−sq) before encoding, so "my forward" always points
+// the same way for the net (the observation planes rotate identically, DraughtsGame). Rare
+// maximum-capture forks sharing (from, to) but capturing different pieces collapse to one index;
+// applyIndex resolves them with a deterministic canonical pick. White moves first in both variants
+// (SDK convention; the english red-moves-first convention is a mirror image — same move counts).
+//
+// Draws are defined out of existence in-engine (PRD §3.5): `noProgress` counts plies without a
+// capture or man move, and reaching the limit (80 plies = 40 own-moves) is a draw by rule — king
+// shuffles terminate without a ply cap. No i64; perft returns i32 (fits every depth the tests
+// probe; the C# facade widens to long). Loops are bounded `for`+`continue` (no `while`/`break`) —
+// the subset proven by chess_solver.pg.
+
+import { List } from "std.collections"
+import { Math } from "std.math"
+
+// A complete move: from/to squares plus the captured squares in jump order (empty = quiet move).
+// A capturing king may end where it started (a full loop) — from == to is legal.
+record PgDraughtsMove(from: i32, to: i32, captures: List<i32>)
+
+class PgDraughtsState {
+  // Rule configuration (fixed per game; copied through makeMove).
+  var size: i32                  // board side N; playable squares = N²/2
+  var flyingKings: bool          // kings slide any distance and choose the landing square
+  var menCaptureBackward: bool   // men capture in all four diagonals (vs forward only)
+  var majorityCapture: bool      // only maximum-capture sequences are legal
+  var noProgressLimit: i32       // plies without a capture or man move ⇒ draw (80 = 40 own-moves)
+
+  var squares: List<i32>         // N×N mailbox: 0 empty, +1/+2 White man/king, −1/−2 Black
+  var whiteToMove: bool
+  var noProgress: i32
+
+  init(size: i32, flyingKings: bool, menCaptureBackward: bool, majorityCapture: bool, noProgressLimit: i32, squares: List<i32>, whiteToMove: bool, noProgress: i32) {
+    this.size = size
+    this.flyingKings = flyingKings
+    this.menCaptureBackward = menCaptureBackward
+    this.majorityCapture = majorityCapture
+    this.noProgressLimit = noProgressLimit
+    this.squares = squares
+    this.whiteToMove = whiteToMove
+    this.noProgress = noProgress
+  }
+
+  // ── variant factories ─────────────────────────────────────────────────────────────────────
+  static fn international(): PgDraughtsState => start(10, true, true, true, 80)
+  static fn english(): PgDraughtsState => start(8, false, false, false, 80)
+
+  // The start position: men fill the playable squares of the bottom (White) and top (Black)
+  // size/2−1 rows — 20 a side on 10×10, 12 a side on 8×8.
+  static fn start(size: i32, flyingKings: bool, menCaptureBackward: bool, majorityCapture: bool, noProgressLimit: i32): PgDraughtsState {
+    var b: List<i32> = List<i32>()
+    let cells = size * size
+    for sq in 0..cells { b.add(0) }
+    let rows = size / 2 - 1
+    for sq in 0..cells {
+      let f = sq % size
+      let r = sq / size
+      if (f + r) % 2 != 0 { continue }
+      if r < rows { b[sq] = 1 }
+      if r >= size - rows { b[sq] = -1 }
+    }
+    return PgDraughtsState(size, flyingKings, menCaptureBackward, majorityCapture, noProgressLimit, b, true, 0)
+  }
+
+  // ── small helpers ─────────────────────────────────────────────────────────────────────────
+  fn fileOf(sq: i32): i32 => sq % this.size
+  fn rankOf(sq: i32): i32 => sq / this.size
+  fn onBoard(f: i32, r: i32): bool => f >= 0 && f < this.size && r >= 0 && r < this.size
+  fn crownRank(white: bool): i32 => if white { this.size - 1 } else { 0 }
+  static fn isWhitePiece(p: i32): bool => p > 0
+  static fn pieceKind(p: i32): i32 => Math.abs(p)   // 0 empty, 1 man, 2 king
+  static fn contains(xs: List<i32>, v: i32): bool {
+    for x in xs { if x == v { return true } }
+    return false
+  }
+  static fn diagDirs(): List<(i32, i32)> {
+    var d: List<(i32, i32)> = List<(i32, i32)>()
+    d.add((1, 1)); d.add((-1, 1)); d.add((1, -1)); d.add((-1, -1))
+    return d
+  }
+
+  // ── move generation: complete capture sequences first (forced), else quiet moves ──────────
+  fn legalMoves(): List<PgDraughtsMove> {
+    let caps = this.captureMoves()
+    if caps.count > 0 { return caps }
+    return this.quietMoves()
+  }
+
+  fn captureMoves(): List<PgDraughtsMove> {
+    var found: List<PgDraughtsMove> = List<PgDraughtsMove>()
+    let cells = this.size * this.size
+    var b: List<i32> = List<i32>()
+    for v in this.squares { b.add(v) }
+    for sq in 0..cells {
+      let p = b[sq]
+      if p == 0 || isWhitePiece(p) != this.whiteToMove { continue }
+      b[sq] = 0                    // the mover is "in hand" during its sequence
+      this.captureDfs(b, sq, sq, pieceKind(p) == 2, List<i32>(), found)
+      b[sq] = p
+    }
+    let moves = dedupe(found)
+    if this.majorityCapture && moves.count > 0 {
+      var best = 0
+      for m in moves { best = Math.max(best, m.captures.count) }
+      var top: List<PgDraughtsMove> = List<PgDraughtsMove>()
+      for m in moves { if m.captures.count == best { top.add(m) } }
+      return top
+    }
+    return moves
+  }
+
+  // Depth-first enumeration of complete capture sequences from `sq`. The working board `b` has
+  // the mover lifted off its origin and the `captured` pieces still ON it — they block slides and
+  // landings and cannot be re-jumped (Turkish strike). A sequence is recorded only at a dead end:
+  // capturing continues as long as another jump exists from the landing square. A man passing the
+  // crown row keeps jumping as a man (`king` never changes mid-sequence); promotion is decided by
+  // makeMove from the FINAL square only.
+  fn captureDfs(b: List<i32>, origin: i32, sq: i32, king: bool, captured: List<i32>, out: List<PgDraughtsMove>) {
+    var extended = false
+    let f = this.fileOf(sq)
+    let r = this.rankOf(sq)
+    let fwd = if this.whiteToMove { 1 } else { -1 }
+    let dirs = diagDirs()
+    for (df, dr) in dirs {
+      if !king && !this.menCaptureBackward && dr != fwd { continue }
+      if king && this.flyingKings {
+        // Slide over empties to the first piece; if it is an unjumped enemy, land on any empty
+        // square beyond it (up to the next obstruction) and continue from each landing.
+        var cstep = -1
+        var blocked = false
+        for step in 1..this.size {
+          if blocked || cstep >= 0 { continue }
+          let nf = f + df * step
+          let nr = r + dr * step
+          if !this.onBoard(nf, nr) { blocked = true; continue }
+          let cell = b[nr * this.size + nf]
+          if cell == 0 { continue }
+          if isWhitePiece(cell) == this.whiteToMove || contains(captured, nr * this.size + nf) { blocked = true }
+          else { cstep = step }
+        }
+        if cstep < 0 { continue }
+        let csq = (r + dr * cstep) * this.size + (f + df * cstep)
+        var stop = false
+        for step in 1..this.size {
+          if stop || step <= cstep { continue }
+          let lf = f + df * step
+          let lr = r + dr * step
+          if !this.onBoard(lf, lr) { stop = true; continue }
+          let land = lr * this.size + lf
+          if b[land] != 0 { stop = true; continue }
+          extended = true
+          var c2: List<i32> = List<i32>()
+          for c in captured { c2.add(c) }
+          c2.add(csq)
+          this.captureDfs(b, origin, land, king, c2, out)
+        }
+      } else {
+        // One-step jump: adjacent unjumped enemy with the square directly beyond it empty.
+        let lf = f + df * 2
+        let lr = r + dr * 2
+        if !this.onBoard(lf, lr) { continue }
+        let mid = (r + dr) * this.size + (f + df)
+        let cell = b[mid]
+        if cell == 0 || isWhitePiece(cell) == this.whiteToMove { continue }
+        if contains(captured, mid) { continue }
+        let land = lr * this.size + lf
+        if b[land] != 0 { continue }
+        extended = true
+        var c2: List<i32> = List<i32>()
+        for c in captured { c2.add(c) }
+        c2.add(mid)
+        this.captureDfs(b, origin, land, king, c2, out)
+      }
+    }
+    if !extended && captured.count > 0 { out.add(PgDraughtsMove(origin, sq, captured)) }
+  }
+
+  fn quietMoves(): List<PgDraughtsMove> {
+    var moves: List<PgDraughtsMove> = List<PgDraughtsMove>()
+    let cells = this.size * this.size
+    let fwd = if this.whiteToMove { 1 } else { -1 }
+    for sq in 0..cells {
+      let p = this.squares[sq]
+      if p == 0 || isWhitePiece(p) != this.whiteToMove { continue }
+      let f = this.fileOf(sq)
+      let r = this.rankOf(sq)
+      let king = pieceKind(p) == 2
+      let dirs = diagDirs()
+      for (df, dr) in dirs {
+        if !king && dr != fwd { continue }         // men STEP forward only (in both variants)
+        if king && this.flyingKings {
+          var blocked = false
+          for step in 1..this.size {
+            if blocked { continue }
+            let nf = f + df * step
+            let nr = r + dr * step
+            if !this.onBoard(nf, nr) || this.squares[nr * this.size + nf] != 0 { blocked = true; continue }
+            moves.add(PgDraughtsMove(sq, nr * this.size + nf, List<i32>()))
+          }
+        } else {
+          let nf = f + df
+          let nr = r + dr
+          if !this.onBoard(nf, nr) { continue }
+          let to = nr * this.size + nf
+          if this.squares[to] == 0 { moves.add(PgDraughtsMove(sq, to, List<i32>())) }
+        }
+      }
+    }
+    return moves
+  }
+
+  // FMJD move identity: (from, to, captured set). Different jump paths over the same pieces are
+  // the same move — perft and the published tables count them once.
+  static fn dedupe(moves: List<PgDraughtsMove>): List<PgDraughtsMove> {
+    var out: List<PgDraughtsMove> = List<PgDraughtsMove>()
+    for m in moves {
+      var dup = false
+      for k in out {
+        if k.from == m.from && k.to == m.to && sameSet(k.captures, m.captures) { dup = true }
+      }
+      if !dup { out.add(m) }
+    }
+    return out
+  }
+
+  // Squares within one sequence are distinct, so equal count + containment = set equality.
+  static fn sameSet(a: List<i32>, b: List<i32>): bool {
+    if a.count != b.count { return false }
+    for x in a { if !contains(b, x) { return false } }
+    return true
+  }
+
+  // ── make move ─────────────────────────────────────────────────────────────────────────────
+  // The position after `move` (a fresh state; this one unchanged). Captured pieces come off the
+  // board only now; a man promotes only if the move ENDS on the crown row. The no-progress clock
+  // counts plies without a capture or man move (king shuffles) and resets otherwise.
+  fn makeMove(move: PgDraughtsMove): PgDraughtsState {
+    var b: List<i32> = List<i32>()
+    for v in this.squares { b.add(v) }
+    let piece = b[move.from]
+    b[move.from] = 0
+    for c in move.captures { b[c] = 0 }
+    var placed = piece
+    if pieceKind(piece) == 1 && this.rankOf(move.to) == this.crownRank(this.whiteToMove) {
+      placed = if this.whiteToMove { 2 } else { -2 }
+    }
+    b[move.to] = placed
+    let progress = if move.captures.count > 0 || pieceKind(piece) == 1 { 0 } else { this.noProgress + 1 }
+    return PgDraughtsState(this.size, this.flyingKings, this.menCaptureBackward, this.majorityCapture, this.noProgressLimit, b, !this.whiteToMove, progress)
+  }
+
+  // ── terminal detection ────────────────────────────────────────────────────────────────────
+  // Terminal result FROM THE SIDE TO MOVE's view: 0 = ongoing, 1 = loss (no legal move — wiped
+  // out or blocked), 2 = draw (no-progress rule).
+  fn result(): i32 {
+    if this.noProgress >= this.noProgressLimit { return 2 }
+    if this.legalMoves().count == 0 { return 1 }
+    return 0
+  }
+
+  // Perft: the number of leaf nodes at `depth` over deduped complete moves — the movegen
+  // correctness oracle (M47.1 gate). i32 suffices for every depth the tests probe.
+  fn perft(depth: i32): i32 {
+    if depth == 0 { return 1 }
+    let moves = this.legalMoves()
+    if depth == 1 { return moves.count }
+    var nodes = 0
+    for m in moves { nodes += this.makeMove(m).perft(depth - 1) }
+    return nodes
+  }
+
+  // ── seam helpers: the (from,to) action space the net/MCTS consume ─────────────────────────
+  // playable index = sq/2 (injective on the (file+rank)-even squares for even N); action index =
+  // fromPlayable · N²/2 + toPlayable, in the MOVER's 180°-rotated frame for Black.
+  fn moverSq(sq: i32): i32 => if this.whiteToMove { sq } else { this.size * this.size - 1 - sq }
+
+  fn actionSpace(): i32 => (this.size * this.size / 2) * (this.size * this.size / 2)
+
+  fn moveIndex(move: PgDraughtsMove): i32 {
+    let half = this.size * this.size / 2
+    return (this.moverSq(move.from) / 2) * half + (this.moverSq(move.to) / 2)
+  }
+
+  // Distinct action indices. Maximum-capture forks sharing (from, to) but capturing different
+  // pieces (possible under the Turkish strike) collapse to one index — applyIndex resolves them.
+  fn legalMoveIndices(): List<i32> {
+    var out: List<i32> = List<i32>()
+    let moves = this.legalMoves()
+    for m in moves {
+      let idx = this.moveIndex(m)
+      if !contains(out, idx) { out.add(idx) }
+    }
+    return out
+  }
+
+  // Apply an action index (must be one of legalMoveIndices). When several legal sequences share
+  // the index, the canonical pick is deterministic: most captures first (never wrong in
+  // draughts), then the smallest sorted capture list — identical across platforms.
+  fn applyIndex(index: i32): PgDraughtsState {
+    let moves = this.legalMoves()
+    var chosen = moves[0]
+    var found = false
+    for m in moves {
+      if this.moveIndex(m) != index { continue }
+      if !found { chosen = m; found = true; continue }
+      if canonicalBefore(m, chosen) { chosen = m }
+    }
+    return this.makeMove(chosen)
+  }
+
+  static fn canonicalBefore(a: PgDraughtsMove, b: PgDraughtsMove): bool {
+    if a.captures.count != b.captures.count { return a.captures.count > b.captures.count }
+    let sa = sortedCopy(a.captures)
+    let sb = sortedCopy(b.captures)
+    for i in 0..sa.count {
+      if sa[i] < sb[i] { return true }
+      if sa[i] > sb[i] { return false }
+    }
+    return false
+  }
+
+  static fn sortedCopy(xs: List<i32>): List<i32> {
+    var out: List<i32> = List<i32>()
+    for x in xs { out.add(x) }
+    for i in 0..out.count {
+      for j in 0..out.count {
+        if j <= i { continue }
+        if out[j] < out[i] { let t = out[i]; out[i] = out[j]; out[j] = t }
+      }
+    }
+    return out
+  }
+}
