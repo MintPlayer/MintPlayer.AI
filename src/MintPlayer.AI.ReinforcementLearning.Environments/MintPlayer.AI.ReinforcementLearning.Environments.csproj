@@ -17,7 +17,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="MintPlayer.SourceGenerators.Attributes" Version="10.20.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
   </ItemGroup>
 
   <!-- The generated solver types (PgFruitCakeWorld etc.) are internal; the public FruitCakeWorld facade wraps
