@@ -1,6 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Campaigns;
-using MintPlayer.AI.ReinforcementLearning.Ilgpu;
 
 /// <summary>
 /// `--game cube-davi` entry point: resolves the long-lived campaign config (code defaults → appsettings.json →
@@ -157,7 +155,7 @@ internal static class CubeDaviLab
         // GPU: DAVI's wide value net wins on GPU, so the campaign runs on the AdaptiveBackend (useGpu: true).
         // The campaign owns its two depth-column CSVs, so the console-only eval hook is used (no generic metric CSV).
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: true,
-            sp => new CubeDaviCampaign(sp.GetRequiredService<AdaptiveBackend>(), settings),
+            services => services.AddCubeDaviCampaign(settings),
             CampaignCli.Console());
     }
 }

@@ -1741,8 +1741,20 @@ the SHA256 determinism tests work. The refactor is narrow, and several "violatio
   `DqnScoreCampaignTests` runs the whole resume→train→checkpoint→resume contract against a pure in-memory stub
   `IEnvironment` (the M46.2 seam proof); 11 targeted campaign/contract/SHA tests green; envs/seeds/DqnOptions
   value-identical so training is unchanged.
-- **M46.3 🔜 — `[Register]`/`[Inject]` end-to-end** (games as singletons, per-game `Add<Game>Campaign()`, web model
-  services via `[Inject]`; Lab `build` lambdas shrink to resolve-and-go).
+- **M46.3 ✅ — `[Register]` end-to-end + campaign registration surface.** `ChessGame`/`Connect4Game` carry
+  `[Register(typeof(IZeroSumGame<…>), Singleton, "ReinforcementLearningGames")]` → generated
+  `AddReinforcementLearningGames()`; the Campaigns lib gains hand-written `Add<Game>Campaign(options)` extensions
+  (hand-written because each closes over per-run options — the generator registers types, not configured factories),
+  with `AddSelfPlayCampaign<TState>` **owning the M43–M45 GPU-resident forward/train-step wiring** formerly inlined in
+  ChessLab (the game resolves from the container). `LabHost.Run` now takes `Action<IServiceCollection>` and resolves
+  `ITrainingCampaign` — no hand-`new`ed campaign anywhere; all 8 Labs shrank to parse-flags→register. Web:
+  `[Register(…, "RLDemoWebModelServices")]` on the model services → generated `AddRLDemoWebModelServices()` replaces
+  the hand-list in `Program.cs` (the same-instance `IModelStartupService` forwardings stay hand-written — the
+  generator's `[Register(typeof(IModelStartupService))]` would register *separate* instances). **`[Inject]` finding,
+  stated honestly:** the codebase's C# 12 primary constructors already do what `[Inject]` generates, and `[Inject]`
+  can't feed field initializers (CS0236), so it was adopted nowhere — `[Register]` is the generator win here.
+  **Gate MET:** new `CampaignRegistrationTests` resolve every registration on CPU and GPU (`AddGpuBackend`) paths;
+  24 targeted DI/contract/SHA/web-API tests green.
 - **M46.4 🔜 — Ladder persistence through the store seam + `ILogger`** (no raw `File.*` in campaigns).
 - **M46.5 🔜 — Unit tests on the new seams** (stub-env DQN contract tests, DI smoke tests, in-memory ladder tests).
 

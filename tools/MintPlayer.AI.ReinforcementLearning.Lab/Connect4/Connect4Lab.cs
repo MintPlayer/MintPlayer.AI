@@ -24,10 +24,9 @@ internal static class Connect4Lab
         double opponentRandom = a.Dbl("--opponent-random", 0); // fraction of games vs a random opponent (robustness)
         bool evalOnly = a.Has("--eval-only");
 
-        var game = new Connect4Game();
         var cfg = new Mcts.Config(Simulations: sims);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            _ => new SelfPlayCampaign<Connect4State>(game, "connect4", new SelfPlayOptions
+            services => services.AddSelfPlayCampaign<Connect4State>("connect4", new SelfPlayOptions
             {
                 Seed = seed, LearningRate = learningRate, Hidden = hidden, Search = cfg,
                 GamesPerChunk = gamesPerChunk, EvalGames = evalGames, OpponentRandomFrac = opponentRandom,

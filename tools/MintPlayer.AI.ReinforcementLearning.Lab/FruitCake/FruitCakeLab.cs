@@ -63,7 +63,7 @@ internal static class FruitCakeLab
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             // Shaping lives on the training env (ShapingGamma matches the learner's γ for policy-invariance);
             // the eval env stays a plain game so keep-best/A/B judge real merge points, never the shaped signal.
-            _ => new FruitCakeDqnCampaign(
+            services => services.AddFruitCakeDqnCampaign(
                 trainEnv: new FruitCakeEnv { ShapeRewards = shape, ShapingGamma = gamma },
                 evalEnv: new FruitCakeEnv(),
                 options),

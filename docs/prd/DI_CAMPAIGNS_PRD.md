@@ -140,13 +140,15 @@ breaks the determinism gate.
   (attributes live on the classes in Environments; that project must reference the two generator
   packages — verify no NuGet-consumer friction since Environments ships to nuget.org: the attributes
   package becomes a public dependency, acceptable, it's tiny and Apache-2.0).
-- **`[Inject]` adoption where it pays:** RLDemo.Web model services (`RushHourModelService`,
-  `Game2048ModelService`, `CubeModelService` — currently hand-written ctors taking
-  `IModelStore`/`AdaptiveBackend`/`ILogger<T>`) become `partial` with `[Inject]` members +
-  `[Register]`, replacing the hand-list in `Program.cs:39-47`. Campaign classes adopt `[Inject]` only
-  where the generated ctor matches what we'd write by hand (the options param + seams); if a campaign's
-  ctor needs logic, keep it hand-written — the generator skips generation when a ctor exists, so mixing
-  is safe.
+- **`[Inject]` adoption where it pays** — *resolved at M46.3, stated honestly: it pays nowhere in this
+  repo.* Every DI consumer here already uses C# 12 primary constructors, which express exactly what
+  `[Inject]` generates — and `[Inject]` is strictly weaker for this codebase because injected fields
+  cannot feed field initializers (CS0236), which is how the model services build their
+  `StartupCheckpoint`s from `store`+`logger`. `[Inject]` earns its keep on pre-C#12 codebases or deep
+  base-ctor chains; neither exists here. `[Register]` is the generator win: the web model services carry
+  `[Register(…, "RLDemoWebModelServices")]` and `Program.cs` calls the generated
+  `AddRLDemoWebModelServices()` (the same-instance `IModelStartupService` forwardings stay hand-written,
+  since `[Register(typeof(IModelStartupService))]` would register *separate* instances).
 - **Ladder persistence behind a seam:** route `PromoteTier`/`WriteManifest`/`LoadLadderState`
   (`SelfPlayCampaign.cs:538-671`) through `IModelStore` — extending it with the few missing operations
   (enumerate/delete/move by key) rather than adding a parallel `ILadderStore`, unless the extension

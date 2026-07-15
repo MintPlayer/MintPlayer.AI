@@ -20,7 +20,7 @@ internal static class CubeLab
         int growEvery = a.Int("--grow-every", 4096); // samples between growth steps (with --grow)
 
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            _ => new CubeImitationCampaign(new CubeImitationOptions
+            services => services.AddCubeImitationCampaign(new CubeImitationOptions
             {
                 Seed = seed, LearningRate = learningRate, Width = width, Grow = grow, GrowEvery = growEvery,
             }),

@@ -1,9 +1,6 @@
-using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Campaigns;
-using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 using MintPlayer.AI.ReinforcementLearning.Environments.Chess;
-using MintPlayer.AI.ReinforcementLearning.Ilgpu;
 
 /// <summary>
 /// `--game chess` entry point (PLAN M39.2): AlphaZero-style self-play on chess — the second consumer of the reusable
@@ -110,52 +107,20 @@ internal static class ChessLab
         double? firstEval = a.Has("--first-eval") ? a.Dbl("--first-eval", 2) : null;
         double? evalEvery = a.Has("--eval-every") ? a.Dbl("--eval-every", 10) : null;
 
-        var game = new ChessGame();
         var cfg = new Mcts.Config(Simulations: sims, Cpuct: a.Flt("--cpuct", 1.25f),
             DirichletAlpha: a.Flt("--dirichlet-alpha", 0.3f), RootNoiseFrac: a.Flt("--root-noise", 0.25f));
+        // The GPU-resident forward/train-step wiring (M43–M45) lives inside AddSelfPlayCampaign — this entry is
+        // purely flag parsing + registration.
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: useGpu,
-            sp =>
+            services => services.AddSelfPlayCampaign<ChessState>("chess", new SelfPlayOptions
             {
-                var adaptive = useGpu ? sp.GetRequiredService<AdaptiveBackend>() : null;
-                // The GPUs to shard generation across (M45): all detected, or the --gpus override; empty on CPU-only.
-                var gpus = SelectGpus(adaptive?.Gpus, gpusSpec);
-                // GPU-resident conv forwards for batched self-play — ONE per selected GPU (M43/M45), so generation
-                // shards across devices; else a single autograd forward. All Ilgpu knowledge stays here.
-                Func<IPolicyValueNet, IReadOnlyList<IPolicyValueForward>>? forwardFactory = adaptive is null ? null
-                    : net => gpus.Count > 0 && net is ConvResidualPolicyValueNet conv
-                        ? [.. gpus.Select(g => (IPolicyValueForward)g.CreateResidentForward(conv))]
-                        : [new AutogradPolicyValueForward(net, game.ObservationSize)];
-                // GPU-resident conv TRAINING step (M44) on the primary selected GPU; else null → the campaign's autograd
-                // default. Only conv+GPU has a resident trainer; the MLP/CPU paths stay autograd. Training is not sharded
-                // (generation is the bottleneck); it runs on gpus[0] and the trained weights fan out to all forwards.
-                Func<IPolicyValueNet, Adam, IPolicyValueTrainStep>? trainStepFactory =
-                    (gpus.Count == 0 || netBuilder is not ConvNetBuilder) ? null
-                    : (net, adam) => gpus[0].CreateResidentTrainer(
-                        (ConvResidualPolicyValueNet)net, batch, learningRate, clip, game.PolicySize, valueWeight);
-                return new SelfPlayCampaign<ChessState>(game, "chess", new SelfPlayOptions
-                {
-                    Seed = seed, LearningRate = learningRate, Hidden = hidden, Search = cfg,
-                    GamesPerChunk = gamesPerChunk, TempMoves = tempMoves, EvalGames = evalGames,
-                    WindowCapacity = window, BatchSize = batch, EpochsPerChunk = epochs, MaxPlies = maxPlies,
-                    OpponentRandomFrac = opponentRandom, Ladder = ladder, MaterialWeight = materialWeight,
-                    ValueWeight = valueWeight, GradClipNorm = clip, Parallel = parallel, MaxDop = dop, LeafBatch = leafBatch,
-                }, netBuilder: netBuilder, backend: adaptive, forwardFactory: forwardFactory, trainStepFactory: trainStepFactory);
-            },
+                Seed = seed, LearningRate = learningRate, Hidden = hidden, Search = cfg,
+                GamesPerChunk = gamesPerChunk, TempMoves = tempMoves, EvalGames = evalGames,
+                WindowCapacity = window, BatchSize = batch, EpochsPerChunk = epochs, MaxPlies = maxPlies,
+                OpponentRandomFrac = opponentRandom, Ladder = ladder, MaterialWeight = materialWeight,
+                ValueWeight = valueWeight, GradClipNorm = clip, Parallel = parallel, MaxDop = dop, LeafBatch = leafBatch,
+            }, netBuilder: netBuilder, gpus: gpusSpec),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
-    }
-
-    // Resolve --gpus (M45): pick which detected GPUs to shard generation across. "all" (default) → every detected GPU;
-    // an integer → the first N; explicit ordinals ("0,2") → those devices. Empty when no GPU is available. A spec that
-    // matches nothing falls back to all, so a typo never silently drops to CPU.
-    private static IReadOnlyList<IlgpuBackend> SelectGpus(IReadOnlyList<IlgpuBackend>? all, string spec)
-    {
-        if (all is null || all.Count == 0) return [];
-        if (spec.Equals("all", StringComparison.OrdinalIgnoreCase)) return all;
-        if (int.TryParse(spec, out int n)) return [.. all.Take(System.Math.Clamp(n, 1, all.Count))];
-        var picked = new List<IlgpuBackend>();
-        foreach (var part in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            if (int.TryParse(part, out int idx) && idx >= 0 && idx < all.Count) picked.Add(all[idx]);
-        return picked.Count > 0 ? picked : all;
     }
 }

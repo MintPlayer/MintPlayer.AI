@@ -19,7 +19,7 @@ internal static class RushHourLab
         int growEvery = a.Int("--grow-every", 2048); // samples between growth steps (with --grow)
 
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            _ => new RushHourImitationCampaign(new RushHourImitationOptions
+            services => services.AddRushHourImitationCampaign(new RushHourImitationOptions
             {
                 Seed = seed, LearningRate = learningRate, Grow = grow, GrowEvery = growEvery,
             }),

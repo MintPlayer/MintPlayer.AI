@@ -539,9 +539,14 @@ so this is testable with a local `curl /models/<net>.ckpt`.)
 | [`…Core/Training/CampaignRunner.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Training/CampaignRunner.cs) | Carries `[Register(...)]` → source-generates `AddReinforcementLearningCore()`. |
 | [`…Hosting/AIHost.cs`](../src/MintPlayer.AI.ReinforcementLearning.Hosting/AIHost.cs) | `AddReinforcementLearning(dataDir)` composes the generated registration + `FileModelStore` + `TimeProvider`; `AIHost.CreateBuilder()` is the factory used by Lab/console. |
 | [`…Ilgpu.Hosting/GpuBackendServiceCollectionExtensions.cs`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting/GpuBackendServiceCollectionExtensions.cs) | Optional `AddGpuBackend()` (AdaptiveBackend). |
+| [`…Environments/Chess/ChessGame.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/Chess/ChessGame.cs) / [`Connect4Game.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/Connect4/Connect4Game.cs) | `[Register(typeof(IZeroSumGame<…>), …, "ReinforcementLearningGames")]` → generated `AddReinforcementLearningGames()` (PLAN M46.3). |
+| [`…Campaigns/Shared/CampaignServiceCollectionExtensions.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/Shared/CampaignServiceCollectionExtensions.cs) | Hand-written `Add<Game>Campaign(options)` per campaign (each closes over per-run options, so not generator-shaped). `AddSelfPlayCampaign<TState>` also owns the GPU-resident forward/train-step wiring (M43–M45) so campaigns and Labs stay Ilgpu-free. |
+| [`src/RLDemo.Web/Services/*ModelService.cs`](../src/RLDemo.Web/Services/RushHourModelService.cs) | `[Register(…, "RLDemoWebModelServices")]` → generated `AddRLDemoWebModelServices()` called in `Program.cs` (the same-instance `IModelStartupService` forwardings stay hand-written). |
 
 DI is **dogfooded via `MintPlayer.SourceGenerators`**: a `[Register(...)]` attribute on a class generates the
-`Add…Core()` extension, so Core carries no DI-framework dependency while Hosting / web / Lab compose it.
+`Add…()` extension in that assembly, so the libraries carry no DI-framework dependency beyond the abstractions
+while Hosting / web / Lab compose them. A Lab registers its campaign via an `Add<Game>Campaign(options)` extension
+and `LabHost` resolves `ITrainingCampaign` from the container (no hand-`new`ed campaigns anywhere).
 
 ```csharp
 [Register(ServiceLifetime.Singleton, "ReinforcementLearningCore")]   // → generated AddReinforcementLearningCore()
@@ -549,7 +554,8 @@ public sealed class CampaignRunner(TimeProvider? timeProvider = null) { … }
 ```
 
 *Change it:* add a console section to `knownSections`; bench targets in the Bench harness; a new DI service → add
-`[Register(...)]` to the class (the extension regenerates).
+`[Register(...)]` to the class (the extension regenerates); a new campaign → an options record + an
+`Add<Game>Campaign()` extension + a `CampaignRegistrationTests` smoke case.
 
 ---
 

@@ -64,7 +64,7 @@ internal static class SnakeLab
             Grow = grow, GrowEvery = growEvery,
         };
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            _ => new SnakeDqnCampaign(
+            services => services.AddSnakeDqnCampaign(
                 trainEnv: new SnakeEnv(trainGrid, stepPenalty, safeMask),
                 evalEnv: new SnakeEnv(evalGrid, stepPenalty, safeMask),
                 options),
