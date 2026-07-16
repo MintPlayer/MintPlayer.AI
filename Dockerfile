@@ -13,7 +13,7 @@ ARG POLYGLOT_VERSION=0.8.1
 ADD https://api.nuget.org/v3-flatcontainer/mintplayer.polyglot.msbuild/${POLYGLOT_VERSION}/mintplayer.polyglot.msbuild.${POLYGLOT_VERSION}.nupkg /tmp/polyglot.nupkg
 RUN apt-get update && apt-get install -y --no-install-recommends unzip \
  && rm -rf /var/lib/apt/lists/* \
- && unzip -q /tmp/polyglot.nupkg 'tools/linux-x64/*' -d /opt/polyglot \
+ && unzip -q /tmp/polyglot.nupkg -d /opt/polyglot \
  && chmod +x /opt/polyglot/tools/linux-x64/polyglot
 WORKDIR /repo/src/RLDemo.Web/ClientApp
 COPY src/RLDemo.Web/ClientApp/package*.json ./
