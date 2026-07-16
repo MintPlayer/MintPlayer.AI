@@ -19,5 +19,12 @@
     "sims": 8,
     "temperature": 0,
     "cpuct": 1.5
+  },
+  {
+    "label": "Master",
+    "ckpt": "/models/checkers8.az.master.ckpt",
+    "sims": 8,
+    "temperature": 0,
+    "cpuct": 1.5
   }
 ]

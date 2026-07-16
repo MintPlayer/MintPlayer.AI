@@ -158,6 +158,12 @@ scheme, and rebuilding the M43/M44 GPU-resident forward/trainer whose kernels co
   best-ever config was 40% with 0 wins vs d1 after days of runs. The natural-decisive fraction isn't logged
   as a metric (worth instrumenting for 10×10), but the strength results subsume the concern. **Remaining leg:
   flip to 10×10 (drop `--variant`) for the 3–8 h dammen showcase.**
+  **Extension run 2026-07-16** (4 h resumed, 824 games, ladder → scratch dir): promoted L2–L5 (+1.28/+1.63/
+  +1.05/+0.78 men) then plateaued (3 failed arenas vs L5) — the 8×8 config is near its ceiling. External eval
+  at BROWSER conditions (8 sims, 40 games — n.b. training-time probes run at 64 sims, so the 56.2%-vs-d2 gate
+  number is NOT comparable; always re-measure the control under the same protocol): deployed 87.5%/16.3% vs
+  d1/d2, **L3 90.0%/26.3% — dominant on both, shipped as the 4th tier "Master"** (`checkers8.az.master.ckpt`,
+  8 sims); L5 was stronger in-family but weaker externally (80.0% vs d1) — self-play drift, not shipped.
 - **M47.5 — Browser play.** TS side of the `.pg` + `.ckpt` parser + Angular page, the M40
   chess pattern; pure frontend by construction. Not part of the M47 gate.
   **✅ 8×8 leg SHIPPED 2026-07-15** (owner pulled it forward to ship the validated checkers8 net): `/draughts`
