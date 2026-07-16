@@ -27,7 +27,7 @@ export class Snake {
   private readonly wakeLock = inject(ScreenWakeLock);
 
   protected readonly colors = Color;
-  protected readonly mode = signal<'idle' | 'watch' | 'human'>('idle');
+  protected readonly mode = signal<'idle' | 'watch' | 'watch-cycle' | 'human'>('idle');
   protected readonly foodEaten = signal(0);
   protected readonly status = signal('Watch the self-taught AI play, or play it yourself.');
 
@@ -45,21 +45,35 @@ export class Snake {
     inject(DestroyRef).onDestroy(() => this.stop());
   }
 
-  // --- Watch AI: the whole AI (physics + net + masked-greedy policy) runs in the browser (M33) ---
+  // --- Watch AI: the whole AI (physics + net + search/cycle policy) runs in the browser (M33/M34/M48) ---
   protected watchAi(): void {
+    this.startWatch('watch');
+  }
+
+  protected watchCycle(): void {
+    this.startWatch('watch-cycle');
+  }
+
+  private startWatch(mode: 'watch' | 'watch-cycle'): void {
     this.stop();
-    this.mode.set('watch');
+    this.mode.set(mode);
     void this.wakeLock.acquire(); // keep the phone screen on so an auto-lock doesn't freeze the game
     this.status.set('Loading the AI…');
     this.renderer?.begin(WATCH_TICK_MS);
-    this.director = new SnakeDirector();
+    this.director = new SnakeDirector(mode === 'watch-cycle' ? 'cycle' : 'search');
     this.timer = setInterval(() => {
       const f = this.director?.step();
       if (!f) return; // checkpoint still loading
       this.render(f.body, f.food, f.foodEaten);
-      this.status.set(f.done
-        ? `AI died after eating ${f.foodEaten} (length ${f.length}). Restarting…`
-        : 'Watching the AI play — it all runs in your browser.');
+      if (f.done) {
+        this.status.set(f.length === SIZE * SIZE
+          ? `AI filled the whole board — a perfect game (${f.foodEaten} food). Restarting…`
+          : `AI died after eating ${f.foodEaten} (length ${f.length}). Restarting…`);
+      } else {
+        this.status.set(mode === 'watch-cycle'
+          ? 'Watching the AI — it holds a Hamiltonian cycle it can never die on, shortcutting toward the food.'
+          : 'Watching the AI play — it all runs in your browser.');
+      }
     }, WATCH_TICK_MS);
   }
 

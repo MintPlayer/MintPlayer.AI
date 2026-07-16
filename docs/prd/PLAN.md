@@ -1825,7 +1825,7 @@ locked chess-post-mortem constants (lr 3e-4, material-weight 0.5, arena ≥40, s
   tiers Beginner/Casual/Strong (1/2/8 sims — 8 sims ≈ full 64-sim strength at 82.5% vs d1, ~1.2 s/move JS).
   10×10 dammen = manifest + start-state swap after its campaign.*
 
-## M48 — Snake safety-cycle mode ("never lock yourself in")  *(2026-07-16; branch `m48-snake-hamilton`; see `SNAKE_HAMILTONIAN_PRD.md`)* 🔜
+## M48 — Snake safety-cycle mode ("never lock yourself in")  *(2026-07-16; branch `m48-snake-hamilton`; see `SNAKE_HAMILTONIAN_PRD.md`)* ✅
 
 **Why:** M34's search snake (~81 food@12) still self-traps beyond its 12-ply horizon — the tail-reachability /
 Hamiltonian endgame deferred by `SNAKE_SEARCH_PRD.md` §8. New watch mode **side-by-side** with "Watch AI" (which
@@ -1856,8 +1856,12 @@ previous cycle on any failure. Single-source in `snake_solver.pg`; pure-frontend
   72/24/8 × rebuild on/off, all 100% wins): late-game shortcuts HURT both modes (24: 3,257/3,789; 8: 3,495/4,308)
   — Tapsell's half-board cutoff confirmed optimal and kept as default. Rebuild kept (it is the mode's concept,
   costs nothing, and wins 2–4%).*
-- **M48.3 — Frontend mode** (third button, director strategy param, regenerated TS twin; renderer untouched;
-  optional cycle overlay stretch). **Gate:** side-by-side modes verified live in the browser.
+- **M48.3 — Frontend mode** ✅ (2026-07-16) (third button **"Watch AI (Hamiltonian cycle)"** — owner-picked
+  label; director strategy param, regenerated TS twin; renderer untouched; cycle overlay stretch not built).
+  **Gate:** side-by-side modes verified live in the browser.
+  *Green: verified via Playwright against the running host — mode starts, status shows the cycle text, 41 food
+  eaten in ~30 s of watching; served chunk confirmed to carry the new code. ARCHITECTURE.md §6's stale
+  "Snake uses EpisodeStreamer/SnakeController" claim fixed (snake has been client-side since M33).*
 
 ## Testing strategy (cross-cutting, from research)
 

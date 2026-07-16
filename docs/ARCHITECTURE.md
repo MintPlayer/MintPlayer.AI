@@ -255,14 +255,15 @@ browser is a pure renderer with no game timer (this avoids client/server timer r
 `prd/` web-interaction notes). Endpoints accept both **GET (HTTP/1.1 Upgrade)** and **CONNECT (HTTP/2
 Extended CONNECT, RFC 8441)** so the socket works under HTTP/1.1 and HTTP/2.
 
-- Snake / MountainCar use the **generic `EpisodeStreamer`** (`Reset → policy → Step → JSON frame`, paced by `tickMs`; one frame per env step).
-- **FruitCake no longer uses the server at all (M32).** Its entire AI — physics, observation, net forward pass,
-  and depth-3 search — is single-sourced in `fruitcake_solver.pg` and runs **in the browser** (`FruitCakeDirector`
-  over the generated TS core + the shipped `wwwroot/models/fruitcake-net.ckpt`). There is **no** `FruitCakeController`,
-  no `/api/fruitcake` WebSocket, and no server-side FruitCake net — per-viewer server cost is zero. See §10.
+- **FruitCake (M32) and Snake (M33) no longer use the server at all.** Each game's entire AI — physics,
+  observation, net forward pass, and its planner (FruitCake's depth-3 search; Snake's M34 look-ahead search and
+  the M48 Hamiltonian safety-cycle mode) — is single-sourced in its `.pg` and runs **in the browser** (a
+  `*Director` over the generated TS core + the shipped `wwwroot/models/*.ckpt`). There is **no** controller, no
+  `/api/<game>` WebSocket, and no server-side net for either — per-viewer server cost is zero. See §10.
+- Games that still stream (see the remaining `*Controller`s) follow the pattern below.
 
 ```csharp
-// e.g. SnakeController — 503 until the model is loaded, then stream
+// streaming controller pattern — 503 until the model is loaded, then stream
 [AcceptVerbs("GET", "CONNECT", Route = "live")]
 public async Task Live() {
     if (!HttpContext.WebSockets.IsWebSocketRequest) { Response.StatusCode = 400; return; }
@@ -272,15 +273,14 @@ public async Task Live() {
 }
 ```
 
-Frames are JSON (`JsonSerializerDefaults.Web`), e.g. `SnakeFrameDto(Body, Food, Action, Reward, Done, …)`,
-`FruitCakeFrameDto(Fruit[], HeldTier, NextTier, Score, Danger, Done)`. The client polls
-`GET /api/<game>/status` → `{status, error}` (`loading|ready|failed`) to gate the UI, then opens the socket.
+Frames are JSON (`JsonSerializerDefaults.Web`). The client polls `GET /api/<game>/status` → `{status, error}`
+(`loading|ready|failed`) to gate the UI, then opens the socket.
 
 ```ts
 // *-api.ts — plain fetch + WebSocket; no HttpClient, no environment.ts
 connectLive(onFrame, onClose): WebSocket {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const s = new WebSocket(`${proto}://${location.host}/api/snake/live`);
+  const s = new WebSocket(`${proto}://${location.host}/api/<game>/live`);
   s.onmessage = e => onFrame(JSON.parse(e.data)); s.onclose = onClose; s.onerror = onClose;
   return s;
 }

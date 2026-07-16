@@ -3,7 +3,9 @@
   A masked Double + Dueling DQN <strong>guided by a multi-ply look-ahead search</strong> — <strong>watch it play</strong>
   or <strong>play it yourself</strong>, both running <strong>entirely in your browser</strong> (no server).
   The learned net evaluates moves; a flood-fill survival search plans several steps ahead to avoid boxing itself in,
-  so it fills much more of the board than the net alone.
+  so it fills much more of the board than the net alone. The <strong>Hamiltonian cycle</strong> mode goes further:
+  the snake always keeps a cycle it provably cannot die on and lets the net pick safe shortcuts along it —
+  every game ends with the board completely full.
 </p>
 
 <div class="layout">
@@ -13,6 +15,7 @@
     <h3>Food eaten: {{ foodEaten() }}</h3>
     <div class="actions">
       <button [color]="colors.primary" (click)="watchAi()" [disabled]="mode() === 'watch'">Watch AI</button>
+      <button [color]="colors.primary" (click)="watchCycle()" [disabled]="mode() === 'watch-cycle'">Watch AI (Hamiltonian cycle)</button>
       <button [color]="colors.primary" (click)="playHuman()">Play yourself</button>
       <button [color]="colors.secondary" (click)="stop()" [disabled]="mode() === 'idle'">Stop</button>
     </div>

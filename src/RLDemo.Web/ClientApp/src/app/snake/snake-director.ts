@@ -7,6 +7,10 @@ import { loadSnakeNet } from './snake-net';
 // no WebSocket. The search is the lever that lifts play from the reactive ~50-food plateau to ~75+ (M34): it
 // simulates every legal line and keeps the snake out of boxes it can't escape, with the net scoring the leaves.
 // Discrete-tick (one AI move per tick), so the component drives it on a plain interval, like human play.
+//
+// The 'cycle' strategy (M48) instead drives `chooseActionCycle`: the snake always holds a Hamiltonian cycle it
+// provably cannot die on, rebuilds it per food to route straight at the food, and the net ranks the safe
+// shortcuts — games end board-full (a perfect game), never in a death.
 
 const SIZE = 12;                 // the shipped net was trained on a 12×12 board
 const SAFE_MASK = false;         // the planner's survival scoring supersedes the reactive 1-ply shield (it plans deeper)
@@ -23,7 +27,13 @@ const W_NET = 50;   // small: the net only breaks ties between equally-safe root
 const W_SPACE = 50;
 const W_DIST = 1;
 const W_RATIO = 100_000;   // anti-fragmentation: fraction of free cells still reachable. Biggest lever — ~71 → ~81 food@12 (M34)
-const DEAD_HOLD_TICKS = 8;       // show the dead board briefly before auto-restarting
+
+// Cycle-mode tuning (M48). Mirrors SnakeCycleConfig in C#.
+const W_CYCLE_NET = 50;          // net Q nudge between equally-safe shortcut options
+const W_CYCLE_PROGRESS = 1_000;  // pull per cycle position a shortcut skips
+const CYCLE_MARGIN = 4;          // positions a shortcut must leave before the tail (growth slack)
+const CYCLE_MIN_FREE = SIZE * SIZE / 2; // shortcuts allowed while more than this many cells are free
+const DEAD_HOLD_TICKS = 8;       // show the finished board briefly before auto-restarting
 
 export interface SnakeAiFrame {
   body: number[]; // head first
@@ -39,7 +49,7 @@ export class SnakeDirector {
   private ready = false;
   private deadHold = 0;
 
-  constructor() {
+  constructor(private readonly strategy: 'search' | 'cycle' = 'search') {
     void loadSnakeNet().then(n => {
       this.net = n; // null (missing checkpoint) → the board just sits; the checkpoint is shipped, so this is a safety net
       this.newGame();
@@ -67,7 +77,9 @@ export class SnakeDirector {
     }
     if (this.net === null) return this.frame();
 
-    const action = this.core.chooseActionSearch(this.net, SEARCH_DEPTH, SEARCH_BEAM, W_FOOD, W_TRAP, W_NET, W_SPACE, W_DIST, W_RATIO);
+    const action = this.strategy === 'cycle'
+      ? this.core.chooseActionCycle(this.net, W_CYCLE_NET, W_CYCLE_PROGRESS, CYCLE_MARGIN, true, CYCLE_MIN_FREE)
+      : this.core.chooseActionSearch(this.net, SEARCH_DEPTH, SEARCH_BEAM, W_FOOD, W_TRAP, W_NET, W_SPACE, W_DIST, W_RATIO);
     if (action < 0) { this.deadHold = DEAD_HOLD_TICKS; return this.frame(); } // no legal move (shouldn't happen)
     this.core.step(action);
     if (this.core.needsFood) this.core.spawnFood(this.randFree());
