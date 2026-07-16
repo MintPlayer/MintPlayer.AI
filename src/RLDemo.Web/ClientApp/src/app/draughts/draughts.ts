@@ -231,8 +231,13 @@ export class Draughts {
   protected readonly over = computed(() => { this.tick(); return this.director.outcome() !== 'ongoing'; });
   protected readonly captured = computed(() => { this.tick(); return this.director.captured(); });
 
-  protected readonly locked = computed(() =>
-    !this.director.netReady || this.director.thinking || this.over() || this.mode() === 'watch');
+  // tick() is the dependency that re-reads the director's plain fields (netReady/thinking) — without it
+  // this computed caches the value from the first render, where the checkpoint is still downloading, and
+  // the board stays disabled forever on slow connections.
+  protected readonly locked = computed(() => {
+    this.tick();
+    return !this.director.netReady || this.director.thinking || this.over() || this.mode() === 'watch';
+  });
 
   protected statusText(): string {
     this.tick();
