@@ -485,7 +485,7 @@ logic modules mirroring the C# envs by hand.
 
 | Path (`RLDemo.Web/ClientApp/src/app/`) | Role |
 |---|---|
-| [`fruit-cake/fruitcake_solver.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake_solver.ts) | **Generated (committed) — do not edit.** TS transpilation of `fruitcake_solver.pg`: `PgFruitCakeWorld` physics **plus** the whole inference path — `buildObservation`, `PgDuelingNet.forward`, `chooseColumn` (depth-3 search). Edit the `.pg` + regenerate. |
+| `fruit-cake/fruitcake_solver.ts` | **Generated (gitignored) — do not edit.** Emitted by `dotnet build` from `fruitcake_solver.pg` (repo-root `pgconfig.json` include rules; same for every `*_solver.ts` twin below): `PgFruitCakeWorld` physics **plus** the whole inference path — `buildObservation`, `PgDuelingNet.forward`, `chooseColumn` (depth-3 search). Edit the `.pg` and build. |
 | [`fruit-cake/fruitcake-net.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake-net.ts) | Parses the shipped `.ckpt` binary (mirrors the C# `DuelingQNetCheckpoint` reader) → builds `PgDuelingNet`. The one inference piece that isn't Polyglot (binary I/O). |
 | [`fruit-cake/fruit-cake-director.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-director.ts) | **Client-side "watch AI"** (M32): a real-time state machine that runs the generated physics + `chooseColumn` over the loaded net locally — replaces the retired server WebSocket stream. Emits `FruitCakeFrame`s ([`fruit-cake-frame.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-frame.ts)) for `renderFrame`. |
 | [`fruit-cake/fruit-cake-physics.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-physics.ts) | Thin **`FruitWorld` facade** over the generated core — **not the physics**. Re-adds host-only surface: `onMerged` (exact, from the core's merge list), `onLanded` (host-side approximation), and per-fruit `mergeBorn`/age via a side-table. Edit the `.pg`, not this. |
@@ -493,7 +493,7 @@ logic modules mirroring the C# envs by hand.
 | [`fruit-cake/fruit-cake.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake.ts) (component) | Fixed-timestep rAF loop, pointer aim/drop, `mode` signal (human ↔ watch), fullscreen. |
 | [`snake-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/snake/snake-logic.ts), [`mountaincar-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/mountaincar/mountaincar-logic.ts), [`game-2048-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/game-2048/game-2048-logic.ts), [`rush-hour-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/rush-hour/rush-hour-logic.ts) | Browser-side rules for human play, mirroring the C# envs. |
 | [`cube/cube.ts`](../src/RLDemo.Web/ClientApp/src/app/cube/cube.ts) | Three.js scene + manual turns + Kociemba/AI solver playback. |
-| [`draughts/`](../src/RLDemo.Web/ClientApp/src/app/draughts/) [`draughts_solver.ts`](../src/RLDemo.Web/ClientApp/src/app/draughts/draughts_solver.ts) · [`draughts-net.ts`](../src/RLDemo.Web/ClientApp/src/app/draughts/draughts-net.ts) · [`draughts-director.ts`](../src/RLDemo.Web/ClientApp/src/app/draughts/draughts-director.ts) · [`draughts.ts`](../src/RLDemo.Web/ClientApp/src/app/draughts/draughts.ts) | Draughts/checkers, fully client-side (the chess M40 pattern, PLAN M47.5): generated engine + **conv tower** + MCTS twin (edit `draughts_solver.pg`, regenerate — the first CONV net in the browser); `.ckpt` parser for kind `selfplay-pv-conv` (byte reference: `DraughtsNetParityTests`); director (play + AI-vs-AI watch, tier manifest `wwwroot/models/draughts-difficulties.json`); board component. |
+| [`draughts/`](../src/RLDemo.Web/ClientApp/src/app/draughts/) `draughts_solver.ts` (generated, gitignored) · [`draughts-net.ts`](../src/RLDemo.Web/ClientApp/src/app/draughts/draughts-net.ts) · [`draughts-director.ts`](../src/RLDemo.Web/ClientApp/src/app/draughts/draughts-director.ts) · [`draughts.ts`](../src/RLDemo.Web/ClientApp/src/app/draughts/draughts.ts) | Draughts/checkers, fully client-side (the chess M40 pattern, PLAN M47.5): generated engine + **conv tower** + MCTS twin (edit `draughts_solver.pg` and build — the first CONV net in the browser); `.ckpt` parser for kind `selfplay-pv-conv` (byte reference: `DraughtsNetParityTests`); director (play + AI-vs-AI watch, tier manifest `wwwroot/models/draughts-difficulties.json`); board component. |
 | [`screen-wake-lock.ts`](../src/RLDemo.Web/ClientApp/src/app/screen-wake-lock.ts) | Shared service: holds a screen wake lock during watch-AI; re-acquires on foreground. |
 
 Each component has a `mode` signal: `'human'` (browser timer) vs `'watch'` (server WebSocket stream).
@@ -505,10 +505,15 @@ canvas loops run **outside** Angular's zone.
 **Single-source FruitCake physics (MintPlayer.Polyglot).** The FruitCake solver is written **once** in
 [`…/Environments/FruitCake/polyglot/fruitcake_solver.pg`](../src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/polyglot/fruitcake_solver.pg)
 and transpiled to **C#** (build-time via the `MintPlayer.Polyglot.MSBuild` PackageReference → `obj/`, wrapped by the
-public `FruitCakeWorld` **facade**) and to **TypeScript** (committed `fruitcake_solver.ts` here, wrapped by the
-`FruitWorld` **adapter**). Both targets are byte-identical (f64). **To change the physics, edit the `.pg` and
-regenerate** — never the generated `.cs`/`.ts` or the facades' physics; the facades hold only host glue (events,
-rendering hooks, RNG, state I/O). See `…/FruitCake/polyglot/README.md` and
+public `FruitCakeWorld` **facade**) and to **TypeScript** (`fruitcake_solver.ts` in ClientApp, wrapped by the
+`FruitWorld` **adapter**). Both targets are byte-identical (f64). Since Polyglot **0.8.1** both emissions happen in
+the **same `dotnet build`**: the repo-root `pgconfig.json` declares `targets: [csharp, typescript]` and routes each
+game's TS twin into its ClientApp folder via `include` rules. Neither generated side is committed anymore — the
+`.cs` lives in `obj/`, the `.ts` twins are **gitignored** (`*_solver.ts`) and regenerated by any build of
+RLDemo.Web (it project-references Environments), so they cannot drift from the
+`.pg`. **To change the physics, edit the `.pg` and build** — never the generated `.cs`/`.ts` or the facades'
+physics; the facades hold only host glue (events, rendering hooks, RNG, state I/O). See
+`…/FruitCake/polyglot/README.md` and
 [`prd/POLYGLOT_FRUITCAKE_PRD.md`](prd/POLYGLOT_FRUITCAKE_PRD.md).
 
 **The `.pg` now holds the whole *inference* path too (M32).** Beyond physics, `fruitcake_solver.pg` also contains

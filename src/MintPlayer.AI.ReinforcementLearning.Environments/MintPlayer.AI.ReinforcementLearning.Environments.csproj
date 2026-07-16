@@ -4,14 +4,15 @@
     <ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Core\MintPlayer.AI.ReinforcementLearning.Core.csproj" />
   </ItemGroup>
 
-  <!-- Single-source solvers: every FruitCake/Snake/MountainCar/Chess `polyglot/*.pg` is transpiled to C# at
-       build time (into obj/, before CoreCompile) by MintPlayer.Polyglot.MSBuild. PrivateAssets=all keeps the
-       build-only transpiler OUT of this published package's dependencies. The 0.7.0 CLI is bundled for
-       win-x64/linux-x64/linux-arm64/osx-x64/osx-arm64 (covers Windows/macOS dev + Linux CI/deploy). 0.6.0 fixed the
-       multi-.pg incremental-transpile bug (PR #26); 0.7.0 fixes the TypeScript emitter (PR #28 / issue #27 — typed
-       local List declarations + parenthesized List<T?>), so the regenerated chess_solver.ts is strictly typed. -->
+  <!-- Single-source solvers: every `polyglot/*.pg` is transpiled at build time by MintPlayer.Polyglot.MSBuild.
+       PrivateAssets=all keeps the build-only transpiler OUT of this published package's dependencies. The CLI is
+       bundled for win-x64/linux-x64/linux-arm64/osx-x64/osx-arm64 (covers Windows/macOS dev + Linux CI/deploy).
+       Since 0.8.1 (Polyglot PR #31, issue #30) MSBuild passes no language flag: the repo-root pgconfig.json
+       declares the target set — C# lands in obj/ (compiled, as before) and the TypeScript twins are routed by
+       its `include` rules straight into RLDemo.Web/ClientApp (gitignored build outputs; no more hand-running
+       `polyglot build` with the typescript target flag). -->
   <ItemGroup>
-    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.7.0" PrivateAssets="all" />
+    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.8.1" PrivateAssets="all" />
     <PackageReference Include="MintPlayer.SourceGenerators" Version="10.20.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

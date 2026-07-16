@@ -1,0 +1,30 @@
+{
+  "targets": ["csharp", "typescript"],
+  "include": [
+    {
+      "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/Chess/polyglot/chess_solver.pg",
+      "target": "typescript",
+      "output": "src/RLDemo.Web/ClientApp/src/app/chess/chess_solver"
+    },
+    {
+      "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/Draughts/polyglot/draughts_solver.pg",
+      "target": "typescript",
+      "output": "src/RLDemo.Web/ClientApp/src/app/draughts/draughts_solver"
+    },
+    {
+      "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/polyglot/fruitcake_solver.pg",
+      "target": "typescript",
+      "output": "src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake_solver"
+    },
+    {
+      "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/MountainCar/polyglot/mountaincar_solver.pg",
+      "target": "typescript",
+      "output": "src/RLDemo.Web/ClientApp/src/app/mountaincar/mountaincar_solver"
+    },
+    {
+      "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/Snake/polyglot/snake_solver.pg",
+      "target": "typescript",
+      "output": "src/RLDemo.Web/ClientApp/src/app/snake/snake_solver"
+    }
+  ]
+}
