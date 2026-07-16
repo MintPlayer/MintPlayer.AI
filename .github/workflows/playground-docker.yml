@@ -11,6 +11,7 @@ on:
       - 'models/**'
       - 'Dockerfile'
       - '.dockerignore'
+      - 'pgconfig.json'
       - 'MintPlayer.AI.ReinforcementLearning.sln'
       - 'docker-compose.yml'
       - '.github/workflows/playground-docker.yml'
