@@ -1,0 +1,753 @@
+// draughts_solver.pg — single-source draughts/checkers engine (PLAN M47.1). ONE source, transpiled
+// to C# at build time (obj/, wrapped by the DraughtsState/DraughtsRules/DraughtsGame facades); the
+// committed TypeScript twin arrives with the deferred browser milestone (M47.5).
+//
+// Parameterized over the two variants the SDK ships:
+//   international 10×10 "dammen" — flying kings, men capture backward, majority rule (only
+//     maximum-capture sequences are legal), men promote only when the move ENDS on the crown row
+//     (a man jumping THROUGH it continues as a man);
+//   english 8×8 checkers — one-step kings, men capture forward only, no majority rule. The classic
+//     "a man crowning mid-jump stops there" rule is EMERGENT here: english men capture forward
+//     only, so a man landing on the last row has no further jump and the sequence ends by itself.
+// In both: captures are forced, a multi-jump runs to completion (a sequence is recorded only at a
+// dead end), and captured pieces stay on the board until the sequence ends — they block movement
+// and cannot be re-jumped (the Turkish strike).
+//
+// A complete capture sequence is ONE move (one Apply = one side-to-move flip — the IZeroSumGame
+// contract MCTS/negamax depend on). Moves are identified FMJD-style by (from, to, captured SET):
+// different jump paths over the same pieces dedupe to one move, matching the published perft
+// tables (10×10 start 9/81/658/4265/27117…, 8×8 start 7/49/302/1469/7361…).
+//
+// Board: N×N mailbox List<i32> (0 empty, +1/+2 White man/king, −1/−2 Black), White moving toward
+// higher ranks; play is on the (file+rank)-even squares, so playable index = sq/2 (0..N²/2−1) and
+// the action space is (N²/2)² — 2500 (10×10) / 1024 (8×8). Action indices are MOVER-RELATIVE: for
+// Black the board is rotated 180° (sq → N²−1−sq) before encoding, so "my forward" always points
+// the same way for the net (the observation planes rotate identically, DraughtsGame). Rare
+// maximum-capture forks sharing (from, to) but capturing different pieces collapse to one index;
+// applyIndex resolves them with a deterministic canonical pick. White moves first in both variants
+// (SDK convention; the english red-moves-first convention is a mirror image — same move counts).
+//
+// Draws are defined out of existence in-engine (PRD §3.5): `noProgress` counts plies without a
+// capture or man move, and reaching the limit (80 plies = 40 own-moves) is a draw by rule — king
+// shuffles terminate without a ply cap. No i64; perft returns i32 (fits every depth the tests
+// probe; the C# facade widens to long). Loops are bounded `for`+`continue` (no `while`/`break`) —
+// the subset proven by chess_solver.pg.
+
+import { List } from "std.collections"
+import { Math } from "std.math"
+
+// A complete move: from/to squares plus the captured squares in jump order (empty = quiet move).
+// A capturing king may end where it started (a full loop) — from == to is legal.
+record PgDraughtsMove(from: i32, to: i32, captures: List<i32>)
+
+class PgDraughtsState {
+  // Rule configuration (fixed per game; copied through makeMove).
+  var size: i32                  // board side N; playable squares = N²/2
+  var flyingKings: bool          // kings slide any distance and choose the landing square
+  var menCaptureBackward: bool   // men capture in all four diagonals (vs forward only)
+  var majorityCapture: bool      // only maximum-capture sequences are legal
+  var noProgressLimit: i32       // plies without a capture or man move ⇒ draw (80 = 40 own-moves)
+
+  var squares: List<i32>         // N×N mailbox: 0 empty, +1/+2 White man/king, −1/−2 Black
+  var whiteToMove: bool
+  var noProgress: i32
+
+  init(size: i32, flyingKings: bool, menCaptureBackward: bool, majorityCapture: bool, noProgressLimit: i32, squares: List<i32>, whiteToMove: bool, noProgress: i32) {
+    this.size = size
+    this.flyingKings = flyingKings
+    this.menCaptureBackward = menCaptureBackward
+    this.majorityCapture = majorityCapture
+    this.noProgressLimit = noProgressLimit
+    this.squares = squares
+    this.whiteToMove = whiteToMove
+    this.noProgress = noProgress
+  }
+
+  // ── variant factories ─────────────────────────────────────────────────────────────────────
+  static fn international(): PgDraughtsState => start(10, true, true, true, 80)
+  static fn english(): PgDraughtsState => start(8, false, false, false, 80)
+
+  // The start position: men fill the playable squares of the bottom (White) and top (Black)
+  // size/2−1 rows — 20 a side on 10×10, 12 a side on 8×8.
+  static fn start(size: i32, flyingKings: bool, menCaptureBackward: bool, majorityCapture: bool, noProgressLimit: i32): PgDraughtsState {
+    var b: List<i32> = List<i32>()
+    let cells = size * size
+    for sq in 0..cells { b.add(0) }
+    let rows = size / 2 - 1
+    for sq in 0..cells {
+      let f = sq % size
+      let r = sq / size
+      if (f + r) % 2 != 0 { continue }
+      if r < rows { b[sq] = 1 }
+      if r >= size - rows { b[sq] = -1 }
+    }
+    return PgDraughtsState(size, flyingKings, menCaptureBackward, majorityCapture, noProgressLimit, b, true, 0)
+  }
+
+  // ── small helpers ─────────────────────────────────────────────────────────────────────────
+  fn fileOf(sq: i32): i32 => sq % this.size
+  fn rankOf(sq: i32): i32 => sq / this.size
+  fn onBoard(f: i32, r: i32): bool => f >= 0 && f < this.size && r >= 0 && r < this.size
+  fn crownRank(white: bool): i32 => if white { this.size - 1 } else { 0 }
+  static fn isWhitePiece(p: i32): bool => p > 0
+  static fn pieceKind(p: i32): i32 => Math.abs(p)   // 0 empty, 1 man, 2 king
+  static fn contains(xs: List<i32>, v: i32): bool {
+    for x in xs { if x == v { return true } }
+    return false
+  }
+  static fn diagDirs(): List<(i32, i32)> {
+    var d: List<(i32, i32)> = List<(i32, i32)>()
+    d.add((1, 1)); d.add((-1, 1)); d.add((1, -1)); d.add((-1, -1))
+    return d
+  }
+
+  // ── move generation: complete capture sequences first (forced), else quiet moves ──────────
+  fn legalMoves(): List<PgDraughtsMove> {
+    let caps = this.captureMoves()
+    if caps.count > 0 { return caps }
+    return this.quietMoves()
+  }
+
+  fn captureMoves(): List<PgDraughtsMove> {
+    var found: List<PgDraughtsMove> = List<PgDraughtsMove>()
+    let cells = this.size * this.size
+    var b: List<i32> = List<i32>()
+    for v in this.squares { b.add(v) }
+    for sq in 0..cells {
+      let p = b[sq]
+      if p == 0 || isWhitePiece(p) != this.whiteToMove { continue }
+      b[sq] = 0                    // the mover is "in hand" during its sequence
+      this.captureDfs(b, sq, sq, pieceKind(p) == 2, List<i32>(), found)
+      b[sq] = p
+    }
+    let moves = dedupe(found)
+    if this.majorityCapture && moves.count > 0 {
+      var best = 0
+      for m in moves { best = Math.max(best, m.captures.count) }
+      var top: List<PgDraughtsMove> = List<PgDraughtsMove>()
+      for m in moves { if m.captures.count == best { top.add(m) } }
+      return top
+    }
+    return moves
+  }
+
+  // Depth-first enumeration of complete capture sequences from `sq`. The working board `b` has
+  // the mover lifted off its origin and the `captured` pieces still ON it — they block slides and
+  // landings and cannot be re-jumped (Turkish strike). A sequence is recorded only at a dead end:
+  // capturing continues as long as another jump exists from the landing square. A man passing the
+  // crown row keeps jumping as a man (`king` never changes mid-sequence); promotion is decided by
+  // makeMove from the FINAL square only.
+  fn captureDfs(b: List<i32>, origin: i32, sq: i32, king: bool, captured: List<i32>, out: List<PgDraughtsMove>) {
+    var extended = false
+    let f = this.fileOf(sq)
+    let r = this.rankOf(sq)
+    let fwd = if this.whiteToMove { 1 } else { -1 }
+    let dirs = diagDirs()
+    for (df, dr) in dirs {
+      if !king && !this.menCaptureBackward && dr != fwd { continue }
+      if king && this.flyingKings {
+        // Slide over empties to the first piece; if it is an unjumped enemy, land on any empty
+        // square beyond it (up to the next obstruction) and continue from each landing.
+        var cstep = -1
+        var blocked = false
+        for step in 1..this.size {
+          if blocked || cstep >= 0 { continue }
+          let nf = f + df * step
+          let nr = r + dr * step
+          if !this.onBoard(nf, nr) { blocked = true; continue }
+          let cell = b[nr * this.size + nf]
+          if cell == 0 { continue }
+          if isWhitePiece(cell) == this.whiteToMove || contains(captured, nr * this.size + nf) { blocked = true }
+          else { cstep = step }
+        }
+        if cstep < 0 { continue }
+        let csq = (r + dr * cstep) * this.size + (f + df * cstep)
+        var stop = false
+        for step in 1..this.size {
+          if stop || step <= cstep { continue }
+          let lf = f + df * step
+          let lr = r + dr * step
+          if !this.onBoard(lf, lr) { stop = true; continue }
+          let land = lr * this.size + lf
+          if b[land] != 0 { stop = true; continue }
+          extended = true
+          var c2: List<i32> = List<i32>()
+          for c in captured { c2.add(c) }
+          c2.add(csq)
+          this.captureDfs(b, origin, land, king, c2, out)
+        }
+      } else {
+        // One-step jump: adjacent unjumped enemy with the square directly beyond it empty.
+        let lf = f + df * 2
+        let lr = r + dr * 2
+        if !this.onBoard(lf, lr) { continue }
+        let mid = (r + dr) * this.size + (f + df)
+        let cell = b[mid]
+        if cell == 0 || isWhitePiece(cell) == this.whiteToMove { continue }
+        if contains(captured, mid) { continue }
+        let land = lr * this.size + lf
+        if b[land] != 0 { continue }
+        extended = true
+        var c2: List<i32> = List<i32>()
+        for c in captured { c2.add(c) }
+        c2.add(mid)
+        this.captureDfs(b, origin, land, king, c2, out)
+      }
+    }
+    if !extended && captured.count > 0 { out.add(PgDraughtsMove(origin, sq, captured)) }
+  }
+
+  fn quietMoves(): List<PgDraughtsMove> {
+    var moves: List<PgDraughtsMove> = List<PgDraughtsMove>()
+    let cells = this.size * this.size
+    let fwd = if this.whiteToMove { 1 } else { -1 }
+    for sq in 0..cells {
+      let p = this.squares[sq]
+      if p == 0 || isWhitePiece(p) != this.whiteToMove { continue }
+      let f = this.fileOf(sq)
+      let r = this.rankOf(sq)
+      let king = pieceKind(p) == 2
+      let dirs = diagDirs()
+      for (df, dr) in dirs {
+        if !king && dr != fwd { continue }         // men STEP forward only (in both variants)
+        if king && this.flyingKings {
+          var blocked = false
+          for step in 1..this.size {
+            if blocked { continue }
+            let nf = f + df * step
+            let nr = r + dr * step
+            if !this.onBoard(nf, nr) || this.squares[nr * this.size + nf] != 0 { blocked = true; continue }
+            moves.add(PgDraughtsMove(sq, nr * this.size + nf, List<i32>()))
+          }
+        } else {
+          let nf = f + df
+          let nr = r + dr
+          if !this.onBoard(nf, nr) { continue }
+          let to = nr * this.size + nf
+          if this.squares[to] == 0 { moves.add(PgDraughtsMove(sq, to, List<i32>())) }
+        }
+      }
+    }
+    return moves
+  }
+
+  // FMJD move identity: (from, to, captured set). Different jump paths over the same pieces are
+  // the same move — perft and the published tables count them once.
+  static fn dedupe(moves: List<PgDraughtsMove>): List<PgDraughtsMove> {
+    var out: List<PgDraughtsMove> = List<PgDraughtsMove>()
+    for m in moves {
+      var dup = false
+      for k in out {
+        if k.from == m.from && k.to == m.to && sameSet(k.captures, m.captures) { dup = true }
+      }
+      if !dup { out.add(m) }
+    }
+    return out
+  }
+
+  // Squares within one sequence are distinct, so equal count + containment = set equality.
+  static fn sameSet(a: List<i32>, b: List<i32>): bool {
+    if a.count != b.count { return false }
+    for x in a { if !contains(b, x) { return false } }
+    return true
+  }
+
+  // ── make move ─────────────────────────────────────────────────────────────────────────────
+  // The position after `move` (a fresh state; this one unchanged). Captured pieces come off the
+  // board only now; a man promotes only if the move ENDS on the crown row. The no-progress clock
+  // counts plies without a capture or man move (king shuffles) and resets otherwise.
+  fn makeMove(move: PgDraughtsMove): PgDraughtsState {
+    var b: List<i32> = List<i32>()
+    for v in this.squares { b.add(v) }
+    let piece = b[move.from]
+    b[move.from] = 0
+    for c in move.captures { b[c] = 0 }
+    var placed = piece
+    if pieceKind(piece) == 1 && this.rankOf(move.to) == this.crownRank(this.whiteToMove) {
+      placed = if this.whiteToMove { 2 } else { -2 }
+    }
+    b[move.to] = placed
+    let progress = if move.captures.count > 0 || pieceKind(piece) == 1 { 0 } else { this.noProgress + 1 }
+    return PgDraughtsState(this.size, this.flyingKings, this.menCaptureBackward, this.majorityCapture, this.noProgressLimit, b, !this.whiteToMove, progress)
+  }
+
+  // ── terminal detection ────────────────────────────────────────────────────────────────────
+  // Terminal result FROM THE SIDE TO MOVE's view: 0 = ongoing, 1 = loss (no legal move — wiped
+  // out or blocked), 2 = draw (no-progress rule).
+  fn result(): i32 {
+    if this.noProgress >= this.noProgressLimit { return 2 }
+    if this.legalMoves().count == 0 { return 1 }
+    return 0
+  }
+
+  // Perft: the number of leaf nodes at `depth` over deduped complete moves — the movegen
+  // correctness oracle (M47.1 gate). i32 suffices for every depth the tests probe.
+  fn perft(depth: i32): i32 {
+    if depth == 0 { return 1 }
+    let moves = this.legalMoves()
+    if depth == 1 { return moves.count }
+    var nodes = 0
+    for m in moves { nodes += this.makeMove(m).perft(depth - 1) }
+    return nodes
+  }
+
+  // ── seam helpers: the (from,to) action space the net/MCTS consume ─────────────────────────
+  // playable index = sq/2 (injective on the (file+rank)-even squares for even N); action index =
+  // fromPlayable · N²/2 + toPlayable, in the MOVER's 180°-rotated frame for Black.
+  fn moverSq(sq: i32): i32 => if this.whiteToMove { sq } else { this.size * this.size - 1 - sq }
+
+  fn actionSpace(): i32 => (this.size * this.size / 2) * (this.size * this.size / 2)
+
+  fn moveIndex(move: PgDraughtsMove): i32 {
+    let half = this.size * this.size / 2
+    return (this.moverSq(move.from) / 2) * half + (this.moverSq(move.to) / 2)
+  }
+
+  // Distinct action indices. Maximum-capture forks sharing (from, to) but capturing different
+  // pieces (possible under the Turkish strike) collapse to one index — applyIndex resolves them.
+  fn legalMoveIndices(): List<i32> {
+    var out: List<i32> = List<i32>()
+    let moves = this.legalMoves()
+    for m in moves {
+      let idx = this.moveIndex(m)
+      if !contains(out, idx) { out.add(idx) }
+    }
+    return out
+  }
+
+  // Apply an action index (must be one of legalMoveIndices). When several legal sequences share
+  // the index, the canonical pick is deterministic: most captures first (never wrong in
+  // draughts), then the smallest sorted capture list — identical across platforms.
+  fn applyIndex(index: i32): PgDraughtsState {
+    let moves = this.legalMoves()
+    var chosen = moves[0]
+    var found = false
+    for m in moves {
+      if this.moveIndex(m) != index { continue }
+      if !found { chosen = m; found = true; continue }
+      if canonicalBefore(m, chosen) { chosen = m }
+    }
+    return this.makeMove(chosen)
+  }
+
+  static fn canonicalBefore(a: PgDraughtsMove, b: PgDraughtsMove): bool {
+    if a.captures.count != b.captures.count { return a.captures.count > b.captures.count }
+    let sa = sortedCopy(a.captures)
+    let sb = sortedCopy(b.captures)
+    for i in 0..sa.count {
+      if sa[i] < sb[i] { return true }
+      if sa[i] > sb[i] { return false }
+    }
+    return false
+  }
+
+  static fn sortedCopy(xs: List<i32>): List<i32> {
+    var out: List<i32> = List<i32>()
+    for x in xs { out.add(x) }
+    for i in 0..out.count {
+      for j in 0..out.count {
+        if j <= i { continue }
+        if out[j] < out[i] { let t = out[i]; out[i] = out[j]; out[j] = t }
+      }
+    }
+    return out
+  }
+
+  // The 5-plane observation the net consumes (M47.2), single-sourced for the browser (M47.5): planes
+  // 0/1 = my men/kings, 2/3 = theirs, 4 = the normalized no-progress clock (uniform fill). MOVER-
+  // relative: Black sees the 180°-rotated board (moverSq), matching the action-index rotation. Must
+  // match DraughtsGame.WriteObservation exactly (pinned by a parity test).
+  fn writeObservation(): List<f64> {
+    let cells = this.size * this.size
+    let total = 5 * cells
+    var obs: List<f64> = List<f64>()
+    for i in 0..total { obs.add(0.0) }
+    for sq in 0..cells {
+      let p = this.squares[sq]
+      if p == 0 { continue }
+      let base = if isWhitePiece(p) == this.whiteToMove { 0 } else { 2 }
+      let plane = base + pieceKind(p) - 1
+      obs[plane * cells + this.moverSq(sq)] = 1.0
+    }
+    var clock = this.noProgress * 1.0 / this.noProgressLimit
+    if clock > 1.0 { clock = 1.0 }
+    for sq in 0..cells { obs[4 * cells + sq] = clock }
+    return obs
+  }
+}
+
+// ── Two-headed policy/value net inference (single-source forward pass, M47.5 browser path) ────────
+// Mirrors the chess solver's net section (types renamed PgDraughts* — the generated C# twins share
+// one global namespace with chess's). INFERENCE ONLY — training stays on the SDK autograd/GEMM. The
+// per-platform parser (draughts-net.ts / the C# parity test) loads float32 .ckpt weights into these
+// flat f64 arrays; per-block conv layers are CONCATENATED with per-block offsets.
+
+record PgDraughtsNetOut(logits: List<f64>, value: f64)
+
+// AlphaZero-style conv residual tower over the 5×N×N board — the checkers/draughts showcase net.
+// Direct nested-loop convolution (mathematically identical to the C# im2col→GEMM); NCHW flat tensors
+// (index c*H*W + h*W + w); weight layout matches C# Conv `[inC·k·k, outC]` row-major; LayerNorm is
+// over the ENTIRE flattened feature map, eps 1e-5.
+class PgDraughtsConvNet {
+  var planes: i32
+  var boardH: i32
+  var boardW: i32
+  var filters: i32
+  var blocks: i32
+  var actions: i32
+  var stemW: List<f64>          // [planes·9, filters]
+  var stemB: List<f64>          // [filters]
+  var stemNG: List<f64>         // stem LayerNorm gamma [filters·hw]
+  var stemNB: List<f64>         // stem LayerNorm beta  [filters·hw]
+  var b1W: List<f64>            // per block: conv1 weight [filters·9, filters], concatenated
+  var b1B: List<f64>            // per block: conv1 bias   [filters]
+  var n1G: List<f64>            // per block: norm1 gamma  [filters·hw]
+  var n1B: List<f64>            // per block: norm1 beta   [filters·hw]
+  var b2W: List<f64>            // per block: conv2 weight [filters·9, filters]
+  var b2B: List<f64>            // per block: conv2 bias   [filters]
+  var n2G: List<f64>            // per block: norm2 gamma  [filters·hw]
+  var n2B: List<f64>            // per block: norm2 beta   [filters·hw]
+  var pConvW: List<f64>         // policy 1×1 conv [filters, 2]
+  var pConvB: List<f64>         // [2]
+  var pNG: List<f64>            // policy LayerNorm gamma [2·hw]
+  var pNB: List<f64>            // policy LayerNorm beta  [2·hw]
+  var pHeadW: List<f64>         // policy Linear [2·hw, actions]
+  var pHeadB: List<f64>         // [actions]
+  var vConvW: List<f64>         // value 1×1 conv [filters, 1]
+  var vConvB: List<f64>         // [1]
+  var vNG: List<f64>            // value LayerNorm gamma [hw]
+  var vNB: List<f64>            // value LayerNorm beta  [hw]
+  var vHidW: List<f64>          // value hidden Linear [hw, filters]
+  var vHidB: List<f64>          // [filters]
+  var vHeadW: List<f64>         // value Linear [filters, 1]
+  var vHeadB: List<f64>         // [1]
+
+  // Dims only — the parser assigns the weight arrays field-by-field as it reads them (in Parameters() order).
+  init(planes: i32, boardH: i32, boardW: i32, filters: i32, blocks: i32, actions: i32) {
+    this.planes = planes
+    this.boardH = boardH
+    this.boardW = boardW
+    this.filters = filters
+    this.blocks = blocks
+    this.actions = actions
+    this.stemW = List<f64>()
+    this.stemB = List<f64>()
+    this.stemNG = List<f64>()
+    this.stemNB = List<f64>()
+    this.b1W = List<f64>()
+    this.b1B = List<f64>()
+    this.n1G = List<f64>()
+    this.n1B = List<f64>()
+    this.b2W = List<f64>()
+    this.b2B = List<f64>()
+    this.n2G = List<f64>()
+    this.n2B = List<f64>()
+    this.pConvW = List<f64>()
+    this.pConvB = List<f64>()
+    this.pNG = List<f64>()
+    this.pNB = List<f64>()
+    this.pHeadW = List<f64>()
+    this.pHeadB = List<f64>()
+    this.vConvW = List<f64>()
+    this.vConvB = List<f64>()
+    this.vNG = List<f64>()
+    this.vNB = List<f64>()
+    this.vHidW = List<f64>()
+    this.vHidB = List<f64>()
+    this.vHeadW = List<f64>()
+    this.vHeadB = List<f64>()
+  }
+
+  // obs (length planes·hw) → logits (length actions) + scalar value. Matches ConvResidualPolicyValueNet.Forward.
+  fn forward(obs: List<f64>): PgDraughtsNetOut {
+    let hw = this.boardH * this.boardW
+    let f = this.filters
+    var x = relu(layerNorm(conv2d(obs, this.stemW, 0, this.stemB, 0, this.planes, f, 3, 1, this.boardH, this.boardW), this.stemNG, 0, this.stemNB, 0))
+    let wStride = f * 9 * f
+    for i in 0..this.blocks {
+      let wOff = i * wStride
+      let bOff = i * f
+      let nOff = i * (f * hw)
+      var h = relu(layerNorm(conv2d(x, this.b1W, wOff, this.b1B, bOff, f, f, 3, 1, this.boardH, this.boardW), this.n1G, nOff, this.n1B, nOff))
+      h = layerNorm(conv2d(h, this.b2W, wOff, this.b2B, bOff, f, f, 3, 1, this.boardH, this.boardW), this.n2G, nOff, this.n2B, nOff)
+      x = relu(addVec(x, h))
+    }
+    let p = relu(layerNorm(conv2d(x, this.pConvW, 0, this.pConvB, 0, f, 2, 1, 0, this.boardH, this.boardW), this.pNG, 0, this.pNB, 0))
+    let logits = linear(p, this.pHeadW, 0, this.pHeadB, 0, 2 * hw, this.actions)
+    let vc = relu(layerNorm(conv2d(x, this.vConvW, 0, this.vConvB, 0, f, 1, 1, 0, this.boardH, this.boardW), this.vNG, 0, this.vNB, 0))
+    let vh = relu(linear(vc, this.vHidW, 0, this.vHidB, 0, hw, f))
+    let value = linear(vh, this.vHeadW, 0, this.vHeadB, 0, f, 1)
+    return PgDraughtsNetOut(logits, value[0])
+  }
+
+  static fn conv2d(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inC: i32, outC: i32, k: i32, pad: i32, h: i32, w2: i32): List<f64> {
+    let hw = h * w2
+    var out: List<f64> = List<f64>()
+    for oc in 0..outC {
+      let bias = b[bOff + oc]
+      for oh in 0..h {
+        for ow in 0..w2 {
+          var s = bias
+          for c in 0..inC {
+            for kh in 0..k {
+              let ih = oh - pad + kh
+              if ih < 0 { continue }
+              if ih >= h { continue }
+              for kw in 0..k {
+                let iw = ow - pad + kw
+                if iw < 0 { continue }
+                if iw >= w2 { continue }
+                s += x[c * hw + ih * w2 + iw] * w[wOff + ((c * k + kh) * k + kw) * outC + oc]
+              }
+            }
+          }
+          out.add(s)
+        }
+      }
+    }
+    return out
+  }
+
+  static fn layerNorm(x: List<f64>, g: List<f64>, gOff: i32, be: List<f64>, beOff: i32): List<f64> {
+    let n = x.count
+    let nf = n * 1.0
+    var mean = 0.0
+    for v in x { mean += v }
+    mean = mean / nf
+    var vs = 0.0
+    for v in x { let d = v - mean; vs += d * d }
+    let denom = Math.sqrt(vs / nf + 0.00001)
+    var out: List<f64> = List<f64>()
+    for i in 0..n { out.add(g[gOff + i] * (x[i] - mean) / denom + be[beOff + i]) }
+    return out
+  }
+
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+
+  static fn addVec(a: List<f64>, b: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for i in 0..a.count { out.add(a[i] + b[i]) }
+    return out
+  }
+}
+
+// The architecture-agnostic wrapper MCTS types against: an MLP trunk (the flat fields) or a wrapped
+// conv tower (the `conv` field). Mirrors the chess PgPolicyValueNet exactly.
+class PgDraughtsNet {
+  var inputSize: i32
+  var actions: i32
+  var hidden: List<i32>          // trunk hidden widths (from the checkpoint)
+  var trunkWFlat: List<f64>      // trunk weight matrices concatenated in layer order (each row-major [in, out])
+  var trunkBFlat: List<f64>      // trunk biases concatenated in layer order
+  var policyW: List<f64>         // [lastHidden * actions]
+  var policyB: List<f64>         // [actions]
+  var valueW: List<f64>          // [lastHidden * 1]
+  var valueB: List<f64>          // [1]
+  var conv: PgDraughtsConvNet?   // non-null ⇒ conv net; forward delegates to it (the MLP fields are unused)
+
+  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, policyW: List<f64>, policyB: List<f64>, valueW: List<f64>, valueB: List<f64>) {
+    this.inputSize = inputSize
+    this.actions = actions
+    this.hidden = hidden
+    this.trunkWFlat = trunkWFlat
+    this.trunkBFlat = trunkBFlat
+    this.policyW = policyW
+    this.policyB = policyB
+    this.valueW = valueW
+    this.valueB = valueB
+    this.conv = null
+  }
+
+  static fn withConv(conv: PgDraughtsConvNet): PgDraughtsNet {
+    let n = PgDraughtsNet(conv.planes * conv.boardH * conv.boardW, conv.actions, List<i32>(), List<f64>(), List<f64>(), List<f64>(), List<f64>(), List<f64>(), List<f64>())
+    n.conv = conv
+    return n
+  }
+
+  fn forward(obs: List<f64>): PgDraughtsNetOut {
+    if this.conv != null { return this.conv!.forward(obs) }
+    var x = obs
+    var prev = this.inputSize
+    var wOff = 0
+    var bOff = 0
+    for l in 0..this.hidden.count {
+      let h = this.hidden[l]
+      x = relu(linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h))
+      wOff += prev * h
+      bOff += h
+      prev = h
+    }
+    let logits = linear(x, this.policyW, 0, this.policyB, 0, prev, this.actions)
+    let value = linear(x, this.valueW, 0, this.valueB, 0, prev, 1)
+    return PgDraughtsNetOut(logits, value[0])
+  }
+
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+}
+
+// ── Inference MCTS (AlphaZero PUCT, browser/serving path) ─────────────────────────────────────────
+// Single-source port of Core/Planning/Mcts minus the self-play-only Dirichlet root noise. The visit
+// distribution is sized by the root's action space — (N²/2)², 2500 (10×10) / 1024 (8×8) — so one
+// MCTS serves both variants.
+
+record PgDraughtsLeafEval(priors: List<f64>, value: f64)
+
+class PgDraughtsMctsNode {
+  var moves: List<i32>              // legal action indices (empty if terminal)
+  var p: List<f64>                  // prior per move (aligned to moves)
+  var n: List<i32>                  // visit count per move
+  var w: List<f64>                  // summed value per move (this node's mover perspective)
+  var children: List<PgDraughtsMctsNode?>
+  var expanded: bool
+  var terminal: bool
+  var terminalValue: f64            // set when terminal: -1 loss (side to move can't move) / 0 draw, mover-relative
+
+  init(moves: List<i32>, terminal: bool, terminalValue: f64) {
+    this.moves = moves
+    this.terminal = terminal
+    this.terminalValue = terminalValue
+    this.p = List<f64>()
+    this.n = List<i32>()
+    this.w = List<f64>()
+    this.children = List<PgDraughtsMctsNode?>()
+    this.expanded = false
+  }
+}
+
+class PgDraughtsMcts {
+  // Run `sims` PUCT simulations from `root` and return the root visit-count distribution over the
+  // action space (0 for illegal/unvisited). Falls back to raw priors if nothing was visited.
+  static fn search(net: PgDraughtsNet, root: PgDraughtsState, sims: i32, cpuct: f64): List<f64> {
+    let rootNode = newNode(root)
+    if !rootNode.terminal {
+      expandLeaf(rootNode, net, root)
+      for s in 0..sims { simulate(rootNode, net, root, cpuct) }
+    }
+
+    let space = root.actionSpace()
+    var pi: List<f64> = List<f64>()
+    for i in 0..space { pi.add(0.0) }
+    var total = 0
+    for i in 0..rootNode.moves.count { total += rootNode.n[i] }
+    if total == 0 {
+      for i in 0..rootNode.moves.count { pi[rootNode.moves[i]] = rootNode.p[i] }
+      return pi
+    }
+    for i in 0..rootNode.moves.count { pi[rootNode.moves[i]] = rootNode.n[i] * 1.0 / total }
+    return pi
+  }
+
+  // Best action index (argmax visit count via the returned distribution).
+  static fn chooseMove(net: PgDraughtsNet, root: PgDraughtsState, sims: i32, cpuct: f64): i32 {
+    let pi = search(net, root, sims, cpuct)
+    var best = -1
+    var bestV = -1.0
+    for i in 0..pi.count { if pi[i] > bestV { bestV = pi[i]; best = i } }
+    return best
+  }
+
+  // Returns the value of `state` from the perspective of its side to move.
+  static fn simulate(node: PgDraughtsMctsNode, net: PgDraughtsNet, state: PgDraughtsState, cpuct: f64): f64 {
+    if node.terminal { return node.terminalValue }
+    if !node.expanded { return expandLeaf(node, net, state) }
+
+    let edge = selectChild(node, cpuct)
+    let childState = state.applyIndex(node.moves[edge])
+    if node.children[edge] == null { node.children[edge] = newNode(childState) }
+    let child = node.children[edge]!
+    let value = -simulate(child, net, childState, cpuct)   // flip: child mover's value
+    node.n[edge] = node.n[edge] + 1
+    node.w[edge] = node.w[edge] + value
+    return value
+  }
+
+  static fn selectChild(node: PgDraughtsMctsNode, cpuct: f64): i32 {
+    var sumN = 0
+    for i in 0..node.n.count { sumN += node.n[i] }
+    let sqrtSum = Math.sqrt(sumN * 1.0)
+    var best = 0
+    var bestScore = -1.0e30
+    for i in 0..node.moves.count {
+      let q = if node.n[i] > 0 { node.w[i] / node.n[i] } else { 0.0 }
+      let u = cpuct * node.p[i] * sqrtSum / (1.0 + node.n[i])
+      let score = q + u
+      if score > bestScore { bestScore = score; best = i }
+    }
+    return best
+  }
+
+  static fn newNode(state: PgDraughtsState): PgDraughtsMctsNode {
+    let r = state.result()   // 0 ongoing, 1 loss (side to move can't move), 2 draw
+    if r != 0 {
+      let tv = if r == 1 { -1.0 } else { 0.0 }
+      return PgDraughtsMctsNode(List<i32>(), true, tv)
+    }
+    return PgDraughtsMctsNode(state.legalMoveIndices(), false, 0.0)
+  }
+
+  // Evaluate the leaf, seed per-move priors (masked-softmax over legal), return the net's value estimate.
+  static fn expandLeaf(node: PgDraughtsMctsNode, net: PgDraughtsNet, state: PgDraughtsState): f64 {
+    let ev = evaluate(net, state, node.moves)
+    let k = node.moves.count
+    node.p = List<f64>()
+    node.n = List<i32>()
+    node.w = List<f64>()
+    node.children = List<PgDraughtsMctsNode?>()
+    for i in 0..k {
+      node.p.add(ev.priors[i])
+      node.n.add(0)
+      node.w.add(0.0)
+      node.children.add(null)
+    }
+    node.expanded = true
+    return ev.value
+  }
+
+  // Masked-softmax priors over `moves` (aligned) + tanh value. Mirrors SelfPlayCampaign.Evaluate.
+  static fn evaluate(net: PgDraughtsNet, state: PgDraughtsState, moves: List<i32>): PgDraughtsLeafEval {
+    let out = net.forward(state.writeObservation())
+    var mx = -1.0e30
+    for m in moves { if out.logits[m] > mx { mx = out.logits[m] } }
+    var pr: List<f64> = List<f64>()
+    var sum = 0.0
+    for m in moves {
+      let e = Math.exp(out.logits[m] - mx)
+      pr.add(e)
+      sum += e
+    }
+    if sum > 0.0 {
+      for i in 0..pr.count { pr[i] = pr[i] / sum }
+    } else {
+      for i in 0..pr.count { pr[i] = 1.0 / pr.count }
+    }
+    return PgDraughtsLeafEval(pr, Math.tanh(out.value))
+  }
+}

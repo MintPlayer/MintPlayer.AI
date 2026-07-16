@@ -35,7 +35,8 @@ internal static class ChessLab
         // --bench-forward: M43 micro-benchmark — resident conv forward vs autograd, on the selected device (+ on-GPU parity).
         if (a.Has("--bench-forward"))
         {
-            ConvForwardBench.Run(a.Int("--filters", 64), a.Int("--blocks", 6), a.Int("--leaf-batch", 256), a.Int("--bench-iters", 30));
+            ConvForwardBench.Run(planes: 18, board: 8, actions: ChessMoveEncoding.Size,
+                a.Int("--filters", 64), a.Int("--blocks", 6), a.Int("--leaf-batch", 256), a.Int("--bench-iters", 30));
             return;
         }
 
@@ -44,11 +45,15 @@ internal static class ChessLab
         // actually improved play: a genuinely stronger net beats a deeper opponent. Raise --minimax-depth as the net grows.
         if (a.Has("--vs-minimax"))
         {
-            ChessStrengthEval.Run(
+            var game = new ChessGame();
+            string strengthArch = a.Str("--arch", "conv");
+            IPolicyValueNetBuilder strengthBuilder = strengthArch.ToLowerInvariant() == "conv"
+                ? new ConvNetBuilder(18, 8, 8, a.Int("--filters", 64), a.Int("--blocks", 6))
+                : new MlpNetBuilder([hidden, hidden]);
+            StrengthCli.Run(game, game, strengthBuilder, strengthArch,
                 ckptPath: a.Str("--ckpt", Path.Combine(dataDir, "chess.az.ckpt")),
-                arch: a.Str("--arch", "conv"), filters: a.Int("--filters", 64), blocks: a.Int("--blocks", 6),
-                hidden: [hidden, hidden], sims: sims, depth: a.Int("--minimax-depth", 2),
-                games: a.Int("--strength-games", 40), maxPlies: maxPlies, openingPlies: a.Int("--opening-plies", 4), seed: seed);
+                sims: sims, depth: a.Int("--minimax-depth", 2), games: a.Int("--strength-games", 40),
+                maxPlies: maxPlies, openingPlies: a.Int("--opening-plies", 4), seed: seed, unit: "pawns");
             return;
         }
 

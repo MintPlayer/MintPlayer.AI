@@ -76,6 +76,15 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
+      <a class="card" routerLink="/draughts">
+        <h2>Draughts</h2>
+        <p>
+          A network that taught itself checkers by self-play — in one hour of training it beats a material
+          minimax it never saw. Play it or watch it play itself, entirely in your browser.
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
       <a class="card" routerLink="/gallery">
         <h2>Gallery</h2>
         <p>

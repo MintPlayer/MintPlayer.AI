@@ -1,0 +1,23 @@
+[
+  {
+    "label": "Beginner",
+    "ckpt": "/models/checkers8.az.d1.ckpt",
+    "sims": 1,
+    "temperature": 1.0,
+    "cpuct": 1.5
+  },
+  {
+    "label": "Casual",
+    "ckpt": "/models/checkers8.az.d2.ckpt",
+    "sims": 2,
+    "temperature": 0.5,
+    "cpuct": 1.5
+  },
+  {
+    "label": "Strong",
+    "ckpt": "/models/checkers8.az.ckpt",
+    "sims": 8,
+    "temperature": 0,
+    "cpuct": 1.5
+  }
+]

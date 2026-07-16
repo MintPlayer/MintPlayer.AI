@@ -44,3 +44,7 @@ cube-20b/
 
 # scratch dir for the EfficientCube (cube-policy) campaign
 cube-policy/
+
+# Polyglot-generated TypeScript twins — emitted by `dotnet build` (pgconfig.json include rules).
+# They must exist on disk for the Angular compile, but are build outputs, not source.
+src/RLDemo.Web/ClientApp/src/app/**/*_solver.ts
