@@ -118,6 +118,10 @@ class PgSnakeEnv {
   // After step(): true if this move ate and the board isn't full → the caller must spawnFood(rng.pick(freeCount)).
   // Food RNG is kept OUT of the single source so the caller owns it (C# Xoshiro for determinism; TS Math.random).
   var needsFood: bool
+  // Safety cycle (M48, cycle mode only): a Hamiltonian cycle over the board with the body as an ordered segment.
+  // Empty until chooseActionCycle first runs; reset() empties it so each episode realigns to the fresh body.
+  var cycle: List<i32>       // cycle position → cell
+  var cycleIndex: List<i32>  // cell → cycle position
 
   init(size: i32, stepPenalty: f64, safeMask: bool) {
     this.size = size
@@ -137,6 +141,8 @@ class PgSnakeEnv {
     this.lastTerminated = false
     this.lastTruncated = false
     this.needsFood = false
+    this.cycle = List<i32>()
+    this.cycleIndex = List<i32>()
   }
 
   // Action deltas: Up(0)=(-1,0) Down(1)=(1,0) Left(2)=(0,-1) Right(3)=(0,1).
@@ -168,6 +174,7 @@ class PgSnakeEnv {
     this.elapsedSteps = 0
     this.stepsSinceFood = 0
     this.done = false
+    this.cycle.clear()
   }
 
   // Place food at the pick'th free cell (pick in [0, freeCount)). Caller supplies the random index.
@@ -513,6 +520,86 @@ class PgSnakeEnv {
       }
     }
     return bestFirst
+  }
+
+  // ── Safety-cycle mode (M48) ───────────────────────────────────────────────────────────────────────────────
+  //
+  // The snake always holds a Hamiltonian cycle over the board whose 1D order contains every body cell between
+  // tail and head (monotonic, within one lap). Following the cycle is then always legal — the next cycle cell is
+  // either free or the vacating tail — so death is impossible by construction. Shortcuts jump ahead along the
+  // cycle when the jump provably preserves that ordering (Tapsell's "perturbed Hamiltonian cycle").
+
+  // Forward distance from cycle position `fromIdx` to `toIdx` (0..count−1).
+  fn cycleRelDist(fromIdx: i32, toIdx: i32): i32 {
+    var d = toIdx - fromIdx
+    if d < 0 { d = d + this.cycle.count }
+    return d
+  }
+
+  // Build the fixed full-board cycle: (0,0), then rows boustrophedon over columns 1..size−1 (even rows
+  // left→right), then column 0 bottom→top as the return seam. Closes only for EVEN size (the last row must end
+  // at column 1); odd×odd boards admit no Hamiltonian cycle at all (checkerboard parity), so the facade rejects
+  // them. The fresh body (3 cells on one row, inside the boustrophedon area) is contiguous on the cycle; if the
+  // start row happens to be traversed head→tail, reverse the whole cycle (a reversed cycle is still a cycle).
+  fn initCycle() {
+    this.cycle.clear()
+    this.cycleIndex.clear()
+    for i in 0..this.cells { this.cycleIndex.add(-1) }
+    this.cycle.add(0)
+    for r in 0..this.size {
+      if r % 2 == 0 {
+        for c in 1..this.size { this.cycle.add(r * this.size + c) }
+      } else {
+        for k in 1..this.size { this.cycle.add(r * this.size + (this.size - k)) }
+      }
+    }
+    for k in 1..this.size { this.cycle.add((this.size - k) * this.size) }
+    for i in 0..this.cycle.count { this.cycleIndex[this.cycle[i]] = i }
+    if this.cycleRelDist(this.cycleIndex[this.neckCell()], this.cycleIndex[this.headCell()]) != 1 {
+      var rev: List<i32> = List<i32>()
+      for k in 0..this.cycle.count { rev.add(this.cycle[this.cycle.count - 1 - k]) }
+      this.cycle = rev
+      for i in 0..this.cycle.count { this.cycleIndex[this.cycle[i]] = i }
+    }
+  }
+
+  // Cycle-safe move choice (M48.1). The plain next-cycle cell (d == 1) always qualifies and is the fallback, so
+  // a move is always returned and it is always legal. A shortcut (d > 1) qualifies only when it lands in the free
+  // arc of the cycle at least `margin` positions before the tail (ordering preserved + slack for the growth an
+  // eaten food adds), never past the food (passing it costs a full extra lap), and only while more than half the
+  // board is free — the late game reverts to pure cycle-following, which finishes the board cleanly. Qualifying
+  // moves are ranked progressWeight·(positions skipped) + netWeight·Q, so the trained net nudges the choice
+  // between safe options (one forward per move, as in chooseActionSearch).
+  fn chooseActionCycle(net: PgSnakeNet, netWeight: f64, progressWeight: f64, margin: i32): i32 {
+    if this.cycle.count == 0 { this.initCycle() }
+    let head = this.headCell()
+    let hr = head / this.size
+    let hc = head % this.size
+    let hIdx = this.cycleIndex[head]
+    let dTail = this.cycleRelDist(hIdx, this.cycleIndex[this.tailCell()])
+    let dFood = this.cycleRelDist(hIdx, this.cycleIndex[this.food])
+    let shortcutsOn = this.freeCount() * 2 > this.cells
+
+    let rootQ = net.forward(this.buildObservation())
+    var best = -1
+    var bestScore = 0.0
+    for a in 0..ActionCount {
+      let r = hr + drOf(a)
+      let c = hc + dcOf(a)
+      if r < 0 || r >= this.size || c < 0 || c >= this.size { continue }
+      let d = this.cycleRelDist(hIdx, this.cycleIndex[r * this.size + c])
+      if d != 1 {
+        if !shortcutsOn { continue }
+        if d > dFood { continue }
+        if d > dTail - margin { continue }
+      }
+      let score = f64(d) * progressWeight + rootQ[a] * netWeight
+      if best < 0 || score > bestScore {
+        best = a
+        bestScore = score
+      }
+    }
+    return best
   }
 
   // Keep the `k` highest-scoring nodes (all of them if ≤ k). Manual top-k scan — a List sort with a comparator

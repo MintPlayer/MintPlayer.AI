@@ -34,6 +34,8 @@ internal static class SnakeLab
         // --search : skip training and evaluate the net-guided look-ahead planner (M34) instead of greedy Q. The net
         // is only a leaf tiebreak, so the config defaults reproduce PR #11's shipped depth-20/beam-32 sweep.
         bool search = a.Has("--search");
+        // --cycle : skip training and evaluate the safety-cycle mode (M48) — win rate / deaths gate the milestone.
+        bool cycle = a.Has("--cycle");
         string netPath = a.Str("--net", Path.Combine("src", "RLDemo.Web", "wwwroot", "models", "snake-net.ckpt"));
         var cfg = new SnakeSearchConfig();
         cfg = cfg with
@@ -57,6 +59,19 @@ internal static class SnakeLab
             return;
         }
 
+        if (cycle)
+        {
+            var cycleCfg = new SnakeCycleConfig();
+            cycleCfg = cycleCfg with
+            {
+                NetWeight = a.Dbl("--w-net", cycleCfg.NetWeight),
+                ProgressWeight = a.Dbl("--w-progress", cycleCfg.ProgressWeight),
+                Margin = a.Int("--margin", cycleCfg.Margin),
+            };
+            RunCycleEval(netPath, evalGrid, evalEpisodes, seed, cycleCfg);
+            return;
+        }
+
         var options = new DqnScoreOptions
         {
             Seed = seed, ChunkSteps = chunkSteps, TargetSteps = targetSteps, EvalEpisodes = evalEpisodes,
@@ -69,6 +84,60 @@ internal static class SnakeLab
                 evalEnv: new SnakeEnv(evalGrid, stepPenalty, safeMask),
                 options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "snake-dqn.csv")));
+    }
+
+    /// <summary>
+    /// Evaluates the safety-cycle mode (M48) over <paramref name="episodes"/> games: the M48.1 gate is
+    /// <b>0 deaths and ≥95% board-full wins</b>. Episodes end by win (board full), death (must never happen), or
+    /// the env's step-ceiling truncation (counted separately — a non-win, not a death).
+    /// </summary>
+    private static void RunCycleEval(string netPath, int grid, int episodes, ulong seed, SnakeCycleConfig cfg)
+    {
+        if (!File.Exists(netPath))
+        {
+            Console.Error.WriteLine($"Checkpoint not found: {Path.GetFullPath(netPath)} (pass --net <path>).");
+            return;
+        }
+
+        var env = new SnakeEnv(grid, safeMask: false);
+        using (var stream = File.OpenRead(netPath))
+            env.LoadSearchNet(stream);
+
+        Console.WriteLine($"Cycle eval: {episodes} episodes on {grid}×{grid}, net {Path.GetFileName(netPath)}");
+        Console.WriteLine($"  config: net={cfg.NetWeight} progress={cfg.ProgressWeight} margin={cfg.Margin}");
+
+        int wins = 0, deaths = 0, truncations = 0, totalFood = 0, minFood = int.MaxValue;
+        long totalMoves = 0, winMoves = 0;
+        var sw = Stopwatch.StartNew();
+        for (int ep = 0; ep < episodes; ep++)
+        {
+            env.Reset(seed + (ulong)ep);
+            long moves = 0;
+            bool terminated = false, truncated = false;
+            while (!terminated && !truncated)
+            {
+                int action = env.ChooseActionCycle(cfg);
+                var step = env.Step(action);
+                terminated = step.Terminated;
+                truncated = step.Truncated;
+                moves++;
+            }
+            totalMoves += moves;
+            bool win = terminated && env.Length == env.Cells;
+            string outcome;
+            if (win) { wins++; winMoves += moves; outcome = "WIN"; }
+            else if (terminated) { deaths++; outcome = "DEATH"; }
+            else { truncations++; outcome = "truncated"; }
+            totalFood += env.FoodEaten;
+            minFood = Math.Min(minFood, env.FoodEaten);
+            Console.WriteLine($"  ep {ep + 1,3}: food {env.FoodEaten,3}  {moves,6} moves  {outcome}");
+        }
+        sw.Stop();
+
+        double msPerMove = totalMoves == 0 ? 0 : sw.Elapsed.TotalMilliseconds / totalMoves;
+        Console.WriteLine($"wins {wins}/{episodes} ({100.0 * wins / episodes:F0}%)  deaths {deaths}  truncations {truncations}");
+        Console.WriteLine($"food@{grid}: mean {(double)totalFood / episodes:F1} (min {minFood})  steps-to-win mean {(wins == 0 ? 0 : (double)winMoves / wins):F0}");
+        Console.WriteLine($"latency: {msPerMove:F2} ms/move  ({totalMoves} moves, {sw.Elapsed.TotalSeconds:F1}s)");
     }
 
     /// <summary>

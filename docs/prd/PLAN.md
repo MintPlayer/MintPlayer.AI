@@ -1839,9 +1839,12 @@ stored cycle; following it is always legal ⇒ no-death by construction) + net/s
 per-food **max-coverage cycle rebuild** (path-to-food + return path + domino extension), falling back to the
 previous cycle on any failure. Single-source in `snake_solver.pg`; pure-frontend mode (snake has no server side).
 
-- **M48.1 — Cycle core + safe shortcuts** (`.pg`: full-board cycle generator, 1D ordering invariant,
+- **M48.1 — Cycle core + safe shortcuts** ✅ (2026-07-16) (`.pg`: full-board cycle generator, 1D ordering invariant,
   `chooseActionCycle` with net-ranked shortcuts, >50%-fill cutoff; facade + Lab `--cycle` eval + invariant tests).
   **Gate:** 12×12, ≥50 eps — **0 deaths, ≥95% board-full wins**; ms/move within the 120 ms tick.
+  *Green: **50/50 wins, 0 deaths, 0 truncations, every game at the maximum 141 food**; steps-to-win mean 2,902;
+  1.47 ms/move. 4 structural tests (Hamiltonian + body-aligned cycle at 6/8/12, ordering invariant held every
+  move of a full game, 3 full games win board-full, odd board rejected).*
 - **M48.2 — Per-food max-coverage rebuild** (the owner's scheme, relaxed: search path to food + BFS return +
   domino absorption; retry-per-tick + livelock cutoff fallbacks). **Gate:** keep 0 deaths / ≥95% wins, mean
   steps-to-win **≥20% below** M48.1's pure-shortcut baseline.

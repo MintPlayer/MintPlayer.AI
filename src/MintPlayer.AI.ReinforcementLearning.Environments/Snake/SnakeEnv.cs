@@ -167,6 +167,23 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
             config.NetWeight, config.SpaceWeight, config.FoodDistWeight, config.SpaceRatioWeight);
     }
 
+    /// <summary>
+    /// Safety-cycle move for the current state (M48): the snake keeps a Hamiltonian cycle it provably cannot die
+    /// on and the trained net picks among the cycle-safe shortcuts toward the food. Must drive the episode from
+    /// <see cref="Reset"/> onward (the cycle aligns to the fresh body and its safety argument needs every move to
+    /// come from this chooser). Requires an even <see cref="Size"/> — odd×odd boards admit no Hamiltonian cycle
+    /// (checkerboard parity) — and a loaded net (<see cref="LoadSearchNet"/>).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">No net loaded, or the board size is odd.</exception>
+    public int ChooseActionCycle(SnakeCycleConfig config)
+    {
+        if (Size % 2 != 0)
+            throw new InvalidOperationException("Cycle mode needs an even board size (an odd×odd grid has no Hamiltonian cycle).");
+        if (_searchNet is null)
+            throw new InvalidOperationException("Call LoadSearchNet(...) before ChooseActionCycle(...).");
+        return _core.chooseActionCycle(_searchNet, config.NetWeight, config.ProgressWeight, config.Margin);
+    }
+
     private float[] Observation()
     {
         var core = _core.buildObservation();
