@@ -181,7 +181,8 @@ public sealed class SnakeEnv : IEnvironment<float[], int>, IActionMaskProvider, 
             throw new InvalidOperationException("Cycle mode needs an even board size (an odd×odd grid has no Hamiltonian cycle).");
         if (_searchNet is null)
             throw new InvalidOperationException("Call LoadSearchNet(...) before ChooseActionCycle(...).");
-        return _core.chooseActionCycle(_searchNet, config.NetWeight, config.ProgressWeight, config.Margin);
+        int minFree = config.ShortcutMinFree < 0 ? Cells / 2 : config.ShortcutMinFree;
+        return _core.chooseActionCycle(_searchNet, config.NetWeight, config.ProgressWeight, config.Margin, config.Rebuild, minFree);
     }
 
     private float[] Observation()

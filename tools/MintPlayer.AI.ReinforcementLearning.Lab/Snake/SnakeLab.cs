@@ -67,6 +67,8 @@ internal static class SnakeLab
                 NetWeight = a.Dbl("--w-net", cycleCfg.NetWeight),
                 ProgressWeight = a.Dbl("--w-progress", cycleCfg.ProgressWeight),
                 Margin = a.Int("--margin", cycleCfg.Margin),
+                Rebuild = !a.Has("--no-rebuild"), // --no-rebuild = the M48.1 fixed-cycle baseline
+                ShortcutMinFree = a.Int("--min-free", -1), // −1 = half the board
             };
             RunCycleEval(netPath, evalGrid, evalEpisodes, seed, cycleCfg);
             return;
@@ -104,7 +106,7 @@ internal static class SnakeLab
             env.LoadSearchNet(stream);
 
         Console.WriteLine($"Cycle eval: {episodes} episodes on {grid}×{grid}, net {Path.GetFileName(netPath)}");
-        Console.WriteLine($"  config: net={cfg.NetWeight} progress={cfg.ProgressWeight} margin={cfg.Margin}");
+        Console.WriteLine($"  config: net={cfg.NetWeight} progress={cfg.ProgressWeight} margin={cfg.Margin} rebuild={cfg.Rebuild}");
 
         int wins = 0, deaths = 0, truncations = 0, totalFood = 0, minFood = int.MaxValue;
         long totalMoves = 0, winMoves = 0;

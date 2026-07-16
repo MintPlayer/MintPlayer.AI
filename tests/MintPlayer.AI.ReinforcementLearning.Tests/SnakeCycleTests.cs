@@ -66,8 +66,10 @@ public class SnakeCycleTests
         }
     }
 
-    [Fact]
-    public void CycleMode_KeepsTheOrderingInvariant_EveryMoveOfAFullGame()
+    [Theory]
+    [InlineData(false)] // M48.1: fixed full-board cycle + shortcuts
+    [InlineData(true)]  // M48.2: per-food max-coverage rebuild
+    public void CycleMode_KeepsTheOrderingInvariant_EveryMoveOfAFullGame(bool rebuild)
     {
         var env = new SnakeEnv(8);
         env.Reset(2);
@@ -77,7 +79,7 @@ public class SnakeCycleTests
         bool done = false;
         while (!done)
         {
-            int action = core.chooseActionCycle(net, 0, 1_000, 4);
+            int action = core.chooseActionCycle(net, 0, 1_000, 4, rebuild, env.Cells / 2);
             var step = env.Step(action);
             done = step.Terminated || step.Truncated;
             if (!done)
@@ -85,8 +87,10 @@ public class SnakeCycleTests
         }
     }
 
-    [Fact]
-    public void CycleMode_FullGames_EndBoardFull_NeverDead()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CycleMode_FullGames_EndBoardFull_NeverDead(bool rebuild)
     {
         var net = ZeroNet();
         for (ulong seed = 1; seed <= 3; seed++)
@@ -98,7 +102,7 @@ public class SnakeCycleTests
             bool terminated = false, truncated = false;
             while (!terminated && !truncated)
             {
-                var step = env.Step(core.chooseActionCycle(net, 0, 1_000, 4));
+                var step = env.Step(core.chooseActionCycle(net, 0, 1_000, 4, rebuild, env.Cells / 2));
                 terminated = step.Terminated;
                 truncated = step.Truncated;
             }
@@ -106,6 +110,28 @@ public class SnakeCycleTests
             Assert.True(terminated, $"seed {seed}: episode hit the step ceiling instead of winning");
             Assert.Equal(env.Cells, env.Length);
         }
+    }
+
+    [Fact]
+    public void RebuiltCycle_IsAValidCycleThroughTheBody()
+    {
+        var env = new SnakeEnv(12);
+        env.Reset(3);
+        var core = Core(env);
+        Assert.True(core.tryRebuildCycle());
+
+        // Full-board coverage (the commit criterion), distinct cells, orthogonally adjacent steps, closed loop,
+        // body ordered along it.
+        Assert.Equal(env.Cells, core.cycle.Count);
+        Assert.Equal(core.cycle.Count, core.cycle.Distinct().Count());
+        for (int i = 0; i < core.cycle.Count; i++)
+        {
+            int a = core.cycle[i], b = core.cycle[(i + 1) % core.cycle.Count];
+            int manhattan = Math.Abs(a / 12 - b / 12) + Math.Abs(a % 12 - b % 12);
+            Assert.True(manhattan == 1, $"cycle positions {i}→{i + 1} are not adjacent cells ({a}→{b})");
+        }
+        AssertBodyOrderedOnCycle(env);
+        Assert.Contains(env.Food, core.cycle); // the rebuild's whole point: the food is on the new cycle
     }
 
     [Fact]

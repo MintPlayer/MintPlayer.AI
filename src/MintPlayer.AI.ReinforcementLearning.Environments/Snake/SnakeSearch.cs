@@ -40,10 +40,18 @@ public sealed record SnakeSearchConfig(
 /// <param name="ProgressWeight">Weight per cycle position skipped — the greedy pull toward the food along the cycle.</param>
 /// <param name="Margin">Minimum cycle positions a shortcut must leave between its landing cell and the tail — slack
 /// covering the growth an eaten food adds to the occupied arc.</param>
+/// <param name="Rebuild">When true (M48.2, the default), each new food triggers an attempted cycle rebuild that
+/// routes head→food directly and re-covers the rest of the board by domino extension; failures fall back to the
+/// current cycle and retry next tick. False = M48.1's fixed full-board cycle with shortcuts only.</param>
+/// <param name="ShortcutMinFree">Shortcuts are allowed while MORE than this many cells are free; −1 = half the
+/// board (Tapsell's classic cutoff). Safety never depends on it — the ordering invariant + <paramref name="Margin"/>
+/// make every shortcut safe at any fill — it only trades late-game lap-efficiency, so it is a measured knob.</param>
 public sealed record SnakeCycleConfig(
     double NetWeight = 50,
     double ProgressWeight = 1_000,
-    int Margin = 4);
+    int Margin = 4,
+    bool Rebuild = true,
+    int ShortcutMinFree = -1);
 
 /// <summary>
 /// Reads a trained dueling-Q checkpoint (RLNC / kind <c>"dueling-q"</c>) into the single-source transpiled

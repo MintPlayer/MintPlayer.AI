@@ -1845,9 +1845,17 @@ previous cycle on any failure. Single-source in `snake_solver.pg`; pure-frontend
   *Green: **50/50 wins, 0 deaths, 0 truncations, every game at the maximum 141 food**; steps-to-win mean 2,902;
   1.47 ms/move. 4 structural tests (Hamiltonian + body-aligned cycle at 6/8/12, ordering invariant held every
   move of a full game, 3 full games win board-full, odd board rejected).*
-- **M48.2 — Per-food max-coverage rebuild** (the owner's scheme, relaxed: search path to food + BFS return +
-  domino absorption; retry-per-tick + livelock cutoff fallbacks). **Gate:** keep 0 deaths / ≥95% wins, mean
-  steps-to-win **≥20% below** M48.1's pure-shortcut baseline.
+- **M48.2 — Per-food cycle rebuild** ✅ (2026-07-16) (the owner's scheme: BFS path to food + BFS return +
+  domino absorption; commit criterion hardened during implementation to **full-board coverage only** — a partial
+  cycle strands future food off-cycle and livelocks, observed on the first draft's 8×8 test). **Gate:** keep
+  0 deaths / ≥95% wins, mean steps-to-win **≥20% below** M48.1's pure-shortcut baseline.
+  *Result: safety kept (**50/50 wins, 0 deaths**, 1.29 ms/move) but the speed gate MISSED honestly: 2,841 vs
+  2,902 steps-to-win = **−2.1%** (−3.8% at 20 eps). Root cause: with a full-board cycle and unrestricted
+  early-game shortcuts the fixed cycle already approaches food near-directly, and late game (where the steps go)
+  rebuilds rarely succeed under fragmentation — both levers bind on the same phase. Cutoff sweep (min-free
+  72/24/8 × rebuild on/off, all 100% wins): late-game shortcuts HURT both modes (24: 3,257/3,789; 8: 3,495/4,308)
+  — Tapsell's half-board cutoff confirmed optimal and kept as default. Rebuild kept (it is the mode's concept,
+  costs nothing, and wins 2–4%).*
 - **M48.3 — Frontend mode** (third button, director strategy param, regenerated TS twin; renderer untouched;
   optional cycle overlay stretch). **Gate:** side-by-side modes verified live in the browser.
 

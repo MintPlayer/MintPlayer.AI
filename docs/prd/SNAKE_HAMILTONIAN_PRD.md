@@ -1,6 +1,6 @@
 # Snake — safety-cycle mode ("never lock yourself in") — PRD
 
-**Status:** planned · 2026-07-16 · branch `m48-snake-hamilton` (off `master`)
+**Status:** shipped (M48.1–.3) · 2026-07-16 · branch `m48-snake-hamilton` (off `master`)
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M48 · **Depends on:** M34 (net-guided search, `SNAKE_SEARCH_PRD.md`), M35 (renderer)
 
@@ -98,15 +98,18 @@ tick, giving fresh geometry):
 1. **Path to food** `P1: head → food` — the reused model/search (or plain BFS shortest path scored by the net;
    measure both in the Lab).
 2. **Return path** `P2: food → tail-follow cell` through remaining free cells (BFS; prefer space-filling).
-3. `C0 = body ⧺ P1 ⧺ P2` is a cycle containing the body. **Cheap validity checks** (O(cells)): all cells
-   distinct, `|C0| ≥ length + growth + margin`.
-4. **Max-coverage extension:** repeatedly absorb adjacent free-cell *dominoes* — two adjacent free cells lying
-   next to a cycle edge splice in as a detour (`a→b` becomes `a→x→y→b`) — until no domino fits. This is the
-   standard cycle-growing step; on a 144-cell board it drives coverage near-total, and as the snake grows the
-   shrinking free region makes the rebuilt cycle approach full-board (the endgame converges to Hamiltonian on
-   its own).
-5. Commit `C ← C'` and steer with §4.2's shortcut rule on the new cycle. **Any failure at any step ⇒ keep the
-   previous `C` unchanged** (still valid — the body never left it) and keep following it.
+3. `C0 = body ⧺ P1 ⧺ P2` is a cycle containing the body.
+4. **Extension:** repeatedly absorb adjacent free-cell *dominoes* — two adjacent free cells lying next to a
+   cycle edge splice in as a detour (`a→b` becomes `a→x→y→b`) — until no domino fits (O(1) splices on a
+   successor map). Full absorption is always parity-possible: `C0` is a cycle on a bipartite board, so its
+   length is even and so is the leftover free region.
+5. **Commit criterion (hardened during implementation): the new cycle must cover the whole board.** A partial
+   cycle can strand future food off-cycle forever (the livelock this PRD originally only mitigated); requiring
+   full coverage keeps the invariant *the food is always on the cycle*, so the M48.1 no-death argument extends
+   to a no-livelock argument. **Any failure at any step ⇒ keep the previous full-board `C` unchanged** (still
+   valid — the body never left it) and keep following it; that fallback is a plain M48.1 tick. The "as many
+   cells as possible" relaxation lives on in the extension mechanism; "as many as possible" that is *less than
+   all* is exactly the case that must not commit.
 
 All simulation stays RNG-free (M34 rule: RNG lives with the caller), so C#/TS remain byte-identical.
 
@@ -129,26 +132,43 @@ All simulation stays RNG-free (M34 rule: RNG lives with the caller), so C#/TS re
 - A full-board win at `WATCH_TICK_MS=120` takes ~10–20 min — consider a faster tick for this mode (owner call).
 - *(Stretch, optional)* faint overlay drawing the current cycle — great for demoing *why* it never dies.
 
-## 5. Non-goals
+## 5. Results (measured — C#, shipped 177-dim net, 12×12, 50 eps, seed 1)
+
+| config | wins | deaths | truncations | food (min) | steps-to-win | ms/move |
+|---|---|---|---|---|---|---|
+| M48.1 fixed cycle + shortcuts | **50/50** | 0 | 0 | 141.0 (141) | 2,902 | 1.47 |
+| **M48.2 + per-food rebuild (SHIPPED)** | **50/50** | 0 | 0 | 141.0 (141) | **2,841** | 1.29 |
+
+Every game reaches the maximum 141 food (board full). The safety gate passed outright; the **speed gate
+(≥20% fewer steps-to-win) missed honestly at −2.1%**: with a full-board cycle and unrestricted early-game
+shortcuts, the fixed cycle already approaches the food near-directly, and in the late game — where most steps
+are spent — rebuilds rarely succeed under fragmentation, so both levers bind on the same (early) phase.
+
+Shortcut-cutoff sweep (`ShortcutMinFree`, 20 eps; safety is cutoff-independent — all configs 100% wins as the
+ordering-invariant proof predicts): **late-game shortcuts hurt both modes** (half-board 2,805/2,917 rebuild/no;
+24 free 3,257/3,789; 8 free 3,495/4,308) — greedy skipping late in the game wastes laps, so Tapsell's classic
+half-board cutoff is confirmed and kept as the default.
+
+## 6. Non-goals
 
 - Retraining, new observation, new net — out of scope (unchanged from M34).
 - Beating the cell-tree benchmark numbers — the gate is *never dying*, not optimal steps-to-win.
 - Touching the existing "Watch AI" mode, human play (`snake-logic.ts`), or the renderer.
 - Full-Hamiltonian completion per food (rejected, §3).
 
-## 6. Risks
+## 7. Risks
 
-- **Off-cycle food livelock:** if food spawns in a cell the rebuild can't absorb, the snake circles without
-  eating. Mitigations, in order: retry the rebuild each tick (head geometry changes); domino-absorb the food
-  cell directly when adjacent to a cycle edge; after a full lap with no progress, accept the livelock cutoff
-  (episode ends at current score — a non-win, never a death; bounded by the ≤5% gate allowance). Expected rare:
-  post-extension coverage is near-total.
+- **Off-cycle food livelock: designed out** (was this PRD's main risk). The rebuild commits only full-board
+  cycles (§4.3 step 5), so the food always sits on the cycle and plain cycle-following always reaches it; a
+  failed rebuild merely costs speed, never progress. (Implementation note: the first partial-coverage draft
+  livelocked exactly as predicted — an 8×8 full-game test hit the step ceiling — which is what forced the
+  hardened criterion.)
 - **Transpiler pitfalls:** same as M34 §9 — typed records for list elements, no branch-typed locals; the 0.6.0+
   MSBuild package has fixed the incremental-prelude flake.
 - **Rebuild cost:** everything is O(cells)–O(cells²) on 144 cells (µs–ms); the net stays a per-root ranking as
   in M34, so the 120 ms tick budget is comfortable.
 
-## 7. Untouched
+## 8. Untouched
 
 `snake-net.ckpt`, `snake-net.ts`, `snake-logic.ts` (human play), `snake-renderer.ts`, the existing
 `chooseActionSearch` path and "Watch AI" button, all training/campaign code, all server code (there is none for

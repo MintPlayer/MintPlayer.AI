@@ -122,6 +122,7 @@ class PgSnakeEnv {
   // Empty until chooseActionCycle first runs; reset() empties it so each episode realigns to the fresh body.
   var cycle: List<i32>       // cycle position → cell
   var cycleIndex: List<i32>  // cell → cycle position
+  var cycleFoodTarget: i32   // the food cell the current cycle was rebuilt for (−1 = none; M48.2)
 
   init(size: i32, stepPenalty: f64, safeMask: bool) {
     this.size = size
@@ -143,6 +144,7 @@ class PgSnakeEnv {
     this.needsFood = false
     this.cycle = List<i32>()
     this.cycleIndex = List<i32>()
+    this.cycleFoodTarget = 0 - 1
   }
 
   // Action deltas: Up(0)=(-1,0) Down(1)=(1,0) Left(2)=(0,-1) Right(3)=(0,1).
@@ -570,15 +572,29 @@ class PgSnakeEnv {
   // board is free — the late game reverts to pure cycle-following, which finishes the board cleanly. Qualifying
   // moves are ranked progressWeight·(positions skipped) + netWeight·Q, so the trained net nudges the choice
   // between safe options (one forward per move, as in chooseActionSearch).
-  fn chooseActionCycle(net: PgSnakeNet, netWeight: f64, progressWeight: f64, margin: i32): i32 {
-    if this.cycle.count == 0 { this.initCycle() }
+  // With `rebuild` (M48.2), each new food triggers an attempted cycle rebuild that routes head→food directly and
+  // re-covers the rest of the board; a failed attempt keeps the current cycle (always still legal) and retries
+  // next tick, when the head sits somewhere new. `shortcutMinFree` is the fill cutoff: shortcuts allowed while
+  // more than that many cells are free (the ordering invariant + margin is what makes a shortcut SAFE at any
+  // fill; the cutoff only trades lap-efficiency, so it is a measured knob, not a safety one).
+  fn chooseActionCycle(net: PgSnakeNet, netWeight: f64, progressWeight: f64, margin: i32, rebuild: bool, shortcutMinFree: i32): i32 {
+    if this.cycle.count == 0 {
+      this.initCycle()
+      this.cycleFoodTarget = 0 - 1
+    }
+    if rebuild && this.cycleFoodTarget != this.food {
+      if this.tryRebuildCycle() { this.cycleFoodTarget = this.food }
+    }
     let head = this.headCell()
     let hr = head / this.size
     let hc = head % this.size
     let hIdx = this.cycleIndex[head]
     let dTail = this.cycleRelDist(hIdx, this.cycleIndex[this.tailCell()])
-    let dFood = this.cycleRelDist(hIdx, this.cycleIndex[this.food])
-    let shortcutsOn = this.freeCount() * 2 > this.cells
+    // On a rebuilt partial cycle the food can sit OFF the cycle (a failed rebuild is retried while the snake keeps
+    // circling); there is then no meaningful "don't pass the food" cap, so let any safe shortcut through.
+    var dFood = this.cycle.count
+    if this.cycleIndex[this.food] >= 0 { dFood = this.cycleRelDist(hIdx, this.cycleIndex[this.food]) }
+    let shortcutsOn = this.freeCount() > shortcutMinFree
 
     let rootQ = net.forward(this.buildObservation())
     var best = -1
@@ -587,6 +603,8 @@ class PgSnakeEnv {
       let r = hr + drOf(a)
       let c = hc + dcOf(a)
       if r < 0 || r >= this.size || c < 0 || c >= this.size { continue }
+      // A cell off the (partial) cycle has no position in the ordering — never step onto it.
+      if this.cycleIndex[r * this.size + c] < 0 { continue }
       let d = this.cycleRelDist(hIdx, this.cycleIndex[r * this.size + c])
       if d != 1 {
         if !shortcutsOn { continue }
@@ -600,6 +618,190 @@ class PgSnakeEnv {
       }
     }
     return best
+  }
+
+  // ── M48.2: per-food max-coverage cycle rebuild ────────────────────────────────────────────────────────────
+
+  // Shortest-path distances from `start` over cells that are neither occupied nor `used` (start itself is exempt
+  // — it is the occupied head, or the food that the caller already marked used). Same seen-scan relaxation as
+  // reachableFreeSpace (a growing queue trips the transpiled TS's any-inference). −1 = unreachable.
+  fn cycleBfsDist(start: i32, used: List<bool>): List<i32> {
+    var dist: List<i32> = List<i32>()
+    for i in 0..this.cells { dist.add(0 - 1) }
+    dist[start] = 0
+    var changed = true
+    for _pass in 0..this.cells {
+      if !changed { break }
+      changed = false
+      for cell in 0..this.cells {
+        if dist[cell] < 0 { continue }
+        let cr = cell / this.size
+        let cc = cell % this.size
+        for a in 0..ActionCount {
+          let nr = cr + drOf(a)
+          let nc = cc + dcOf(a)
+          if nr < 0 || nr >= this.size || nc < 0 || nc >= this.size { continue }
+          let n = nr * this.size + nc
+          if this.occupied[n] || used[n] { continue }
+          if dist[n] < 0 || dist[n] > dist[cell] + 1 {
+            dist[n] = dist[cell] + 1
+            changed = true
+          }
+        }
+      }
+    }
+    return dist
+  }
+
+  // Walk back from `target` (requires dist[target] ≥ 0) to the start, picking at each step the first neighbor in
+  // action order that is one step closer — deterministic, so C# and TS extract the identical path. Returns the
+  // cells start..target inclusive.
+  fn cycleExtractPath(dist: List<i32>, target: i32): List<i32> {
+    var rev: List<i32> = List<i32>()
+    var cur = target
+    rev.add(cur)
+    for _guard in 0..this.cells {
+      if dist[cur] == 0 { break }
+      let cr = cur / this.size
+      let cc = cur % this.size
+      for a in 0..ActionCount {
+        let nr = cr + drOf(a)
+        let nc = cc + dcOf(a)
+        if nr < 0 || nr >= this.size || nc < 0 || nc >= this.size { continue }
+        let n = nr * this.size + nc
+        if dist[n] == dist[cur] - 1 {
+          cur = n
+          break
+        }
+      }
+      rev.add(cur)
+    }
+    var path: List<i32> = List<i32>()
+    for k in 0..rev.count { path.add(rev[rev.count - 1 - k]) }
+    return path
+  }
+
+  // The owner's per-food scheme: candidate cycle = body ⧺ shortest-path(head→food) ⧺ path(food→a tail neighbor),
+  // then grown by domino extension — an edge a→b with a parallel free pair x,y (x beside a, y beside b) detours
+  // a→x→y→b, repeated until a pass absorbs nothing. Commits (and returns true) ONLY when the result covers the
+  // whole board: a cycle that spans every cell keeps the invariant "the food is always on the cycle", which is
+  // what rules out livelock — a partial cycle can strand future food off-cycle forever. Full absorption is always
+  // parity-possible (the seed loop is a cycle on a bipartite board, so its length is even and so is the leftover),
+  // though fragmentation can still defeat it; any failure returns false with the current full-board cycle
+  // untouched — following it stays legal AND reaches every cell, the fallback that keeps both guarantees.
+  fn tryRebuildCycle(): bool {
+    let head = this.headCell()
+    let tail = this.tailCell()
+
+    var usedNone: List<bool> = List<bool>()
+    for i in 0..this.cells { usedNone.add(false) }
+    let dist1 = this.cycleBfsDist(head, usedNone)
+    if dist1[this.food] < 0 { return false }
+    let p1 = this.cycleExtractPath(dist1, this.food)
+
+    var used: List<bool> = List<bool>()
+    for i in 0..this.cells { used.add(false) }
+    for x in p1 { used[x] = true }
+    let dist2 = this.cycleBfsDist(this.food, used)
+    // The return path's endpoint: the reachable tail neighbor closest to the food (the food itself when they touch).
+    let tr = tail / this.size
+    let tc = tail % this.size
+    var target = 0 - 1
+    var targetDist = 0
+    for a in 0..ActionCount {
+      let nr = tr + drOf(a)
+      let nc = tc + dcOf(a)
+      if nr < 0 || nr >= this.size || nc < 0 || nc >= this.size { continue }
+      let n = nr * this.size + nc
+      if dist2[n] < 0 { continue }
+      if target < 0 || dist2[n] < targetDist {
+        target = n
+        targetDist = dist2[n]
+      }
+    }
+    if target < 0 { return false }
+    let p2 = this.cycleExtractPath(dist2, target)
+
+    // Candidate cycle as a successor map (tail → … → head → p1 → p2 → tail); onCycle marks membership.
+    var succ: List<i32> = List<i32>()
+    var onCycle: List<bool> = List<bool>()
+    for i in 0..this.cells {
+      succ.add(0 - 1)
+      onCycle.add(false)
+    }
+    for i in 0..(this.body.count - 1) { succ[this.body[i]] = this.body[i + 1] }
+    for i in 0..(p1.count - 1) { succ[p1[i]] = p1[i + 1] }
+    for i in 0..(p2.count - 1) { succ[p2[i]] = p2[i + 1] }
+    succ[p2[p2.count - 1]] = tail
+    for x in this.body { onCycle[x] = true }
+    for x in p1 { onCycle[x] = true }
+    for x in p2 { onCycle[x] = true }
+
+    // Domino extension (splicing is O(1) on the successor map, which is why the cycle is built as one).
+    var grew = true
+    for _pass in 0..this.cells {
+      if !grew { break }
+      grew = false
+      for cellA in 0..this.cells {
+        if !onCycle[cellA] { continue }
+        let cellB = succ[cellA]
+        let ar = cellA / this.size
+        let ac = cellA % this.size
+        let br = cellB / this.size
+        let bc = cellB % this.size
+        var pr = 1
+        var pc = 0
+        if ar == br {
+          pr = 1
+          pc = 0
+        } else {
+          pr = 0
+          pc = 1
+        }
+        for side in 0..2 {
+          let sr = if side == 0 { pr } else { 0 - pr }
+          let sc = if side == 0 { pc } else { 0 - pc }
+          let xr = ar + sr
+          let xc = ac + sc
+          let yr = br + sr
+          let yc = bc + sc
+          if xr < 0 || xr >= this.size || xc < 0 || xc >= this.size { continue }
+          if yr < 0 || yr >= this.size || yc < 0 || yc >= this.size { continue }
+          let x = xr * this.size + xc
+          let y = yr * this.size + yc
+          if this.occupied[x] || onCycle[x] || this.occupied[y] || onCycle[y] { continue }
+          succ[cellA] = x
+          succ[x] = y
+          succ[y] = cellB
+          onCycle[x] = true
+          onCycle[y] = true
+          grew = true
+          break
+        }
+      }
+    }
+
+    // Linearize from the tail; commit only if the walk closes into ONE cycle covering EVERY cell.
+    var newCycle: List<i32> = List<i32>()
+    var cur = tail
+    var closed = false
+    for _guard in 0..this.cells {
+      newCycle.add(cur)
+      cur = succ[cur]
+      if cur < 0 { return false }
+      if cur == tail {
+        closed = true
+        break
+      }
+    }
+    if !closed { return false }
+    if newCycle.count != this.cells { return false }
+
+    this.cycle = newCycle
+    this.cycleIndex.clear()
+    for i in 0..this.cells { this.cycleIndex.add(0 - 1) }
+    for i in 0..this.cycle.count { this.cycleIndex[this.cycle[i]] = i }
+    return true
   }
 
   // Keep the `k` highest-scoring nodes (all of them if ≤ k). Manual top-k scan — a List sort with a comparator
