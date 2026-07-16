@@ -1825,6 +1825,44 @@ locked chess-post-mortem constants (lr 3e-4, material-weight 0.5, arena ≥40, s
   tiers Beginner/Casual/Strong (1/2/8 sims — 8 sims ≈ full 64-sim strength at 82.5% vs d1, ~1.2 s/move JS).
   10×10 dammen = manifest + start-state swap after its campaign.*
 
+## M48 — Snake safety-cycle mode ("never lock yourself in")  *(2026-07-16; branch `m48-snake-hamilton`; see `SNAKE_HAMILTONIAN_PRD.md`)* ✅
+
+**Why:** M34's search snake (~81 food@12) still self-traps beyond its 12-ply horizon — the tail-reachability /
+Hamiltonian endgame deferred by `SNAKE_SEARCH_PRD.md` §8. New watch mode **side-by-side** with "Watch AI" (which
+stays untouched); the trained net keeps choosing the path to food, a maintained cycle guarantees it can never die.
+
+**Decision (2-agent investigation 2026-07-16):** the owner's literal scheme — full Hamiltonian *completion*
+through {body + food path} each spawn — is NP-complete with forced subpaths and frequently infeasible (parity);
+the owner's relaxation ("cycle covers as many cells as possible") is tractable and converges with proven designs
+(Tapsell PHC / Haidet DHCR). **Lock:** maintained safety-cycle invariant (body always a contiguous segment of a
+stored cycle; following it is always legal ⇒ no-death by construction) + net/search-scored safe shortcuts; then
+per-food **max-coverage cycle rebuild** (path-to-food + return path + domino extension), falling back to the
+previous cycle on any failure. Single-source in `snake_solver.pg`; pure-frontend mode (snake has no server side).
+
+- **M48.1 — Cycle core + safe shortcuts** ✅ (2026-07-16) (`.pg`: full-board cycle generator, 1D ordering invariant,
+  `chooseActionCycle` with net-ranked shortcuts, >50%-fill cutoff; facade + Lab `--cycle` eval + invariant tests).
+  **Gate:** 12×12, ≥50 eps — **0 deaths, ≥95% board-full wins**; ms/move within the 120 ms tick.
+  *Green: **50/50 wins, 0 deaths, 0 truncations, every game at the maximum 141 food**; steps-to-win mean 2,902;
+  1.47 ms/move. 4 structural tests (Hamiltonian + body-aligned cycle at 6/8/12, ordering invariant held every
+  move of a full game, 3 full games win board-full, odd board rejected).*
+- **M48.2 — Per-food cycle rebuild** ✅ (2026-07-16) (the owner's scheme: BFS path to food + BFS return +
+  domino absorption; commit criterion hardened during implementation to **full-board coverage only** — a partial
+  cycle strands future food off-cycle and livelocks, observed on the first draft's 8×8 test). **Gate:** keep
+  0 deaths / ≥95% wins, mean steps-to-win **≥20% below** M48.1's pure-shortcut baseline.
+  *Result: safety kept (**50/50 wins, 0 deaths**, 1.29 ms/move) but the speed gate MISSED honestly: 2,841 vs
+  2,902 steps-to-win = **−2.1%** (−3.8% at 20 eps). Root cause: with a full-board cycle and unrestricted
+  early-game shortcuts the fixed cycle already approaches food near-directly, and late game (where the steps go)
+  rebuilds rarely succeed under fragmentation — both levers bind on the same phase. Cutoff sweep (min-free
+  72/24/8 × rebuild on/off, all 100% wins): late-game shortcuts HURT both modes (24: 3,257/3,789; 8: 3,495/4,308)
+  — Tapsell's half-board cutoff confirmed optimal and kept as default. Rebuild kept (it is the mode's concept,
+  costs nothing, and wins 2–4%).*
+- **M48.3 — Frontend mode** ✅ (2026-07-16) (third button **"Watch AI (Hamiltonian cycle)"** — owner-picked
+  label; director strategy param, regenerated TS twin; renderer untouched; cycle overlay stretch not built).
+  **Gate:** side-by-side modes verified live in the browser.
+  *Green: verified via Playwright against the running host — mode starts, status shows the cycle text, 41 food
+  eaten in ~30 s of watching; served chunk confirmed to carry the new code. ARCHITECTURE.md §6's stale
+  "Snake uses EpisodeStreamer/SnakeController" claim fixed (snake has been client-side since M33).*
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.

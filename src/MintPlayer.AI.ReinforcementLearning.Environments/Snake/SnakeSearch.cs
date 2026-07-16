@@ -31,6 +31,29 @@ public sealed record SnakeSearchConfig(
     double SpaceRatioWeight = 100_000);
 
 /// <summary>
+/// Tuning for the safety-cycle mode (<see cref="SnakeEnv.ChooseActionCycle"/>, M48): the snake follows a
+/// Hamiltonian cycle it can never die on, taking shortcuts along the cycle order when provably safe. The
+/// <b>algorithm</b> lives once in <c>snake_solver.pg</c> (<c>chooseActionCycle</c>); this record is just the knobs.
+/// </summary>
+/// <param name="NetWeight">Weight on the trained net's Q over the safe candidates (one forward per move) — the model
+/// nudges the choice between equally-safe directions. 0 = ignore the net (pure furthest-safe-shortcut).</param>
+/// <param name="ProgressWeight">Weight per cycle position skipped — the greedy pull toward the food along the cycle.</param>
+/// <param name="Margin">Minimum cycle positions a shortcut must leave between its landing cell and the tail — slack
+/// covering the growth an eaten food adds to the occupied arc.</param>
+/// <param name="Rebuild">When true (M48.2, the default), each new food triggers an attempted cycle rebuild that
+/// routes head→food directly and re-covers the rest of the board by domino extension; failures fall back to the
+/// current cycle and retry next tick. False = M48.1's fixed full-board cycle with shortcuts only.</param>
+/// <param name="ShortcutMinFree">Shortcuts are allowed while MORE than this many cells are free; −1 = half the
+/// board (Tapsell's classic cutoff). Safety never depends on it — the ordering invariant + <paramref name="Margin"/>
+/// make every shortcut safe at any fill — it only trades late-game lap-efficiency, so it is a measured knob.</param>
+public sealed record SnakeCycleConfig(
+    double NetWeight = 50,
+    double ProgressWeight = 1_000,
+    int Margin = 4,
+    bool Rebuild = true,
+    int ShortcutMinFree = -1);
+
+/// <summary>
 /// Reads a trained dueling-Q checkpoint (RLNC / kind <c>"dueling-q"</c>) into the single-source transpiled
 /// <see cref="PgSnakeNet"/> the planner evaluates leaves with. This is the C# twin of the browser's
 /// <c>snake-net.ts</c> <c>parseSnakeNet</c> — same byte layout, so C# eval and the browser score identical positions.
