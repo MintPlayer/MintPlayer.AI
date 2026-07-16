@@ -1825,6 +1825,29 @@ locked chess-post-mortem constants (lr 3e-4, material-weight 0.5, arena ≥40, s
   tiers Beginner/Casual/Strong (1/2/8 sims — 8 sims ≈ full 64-sim strength at 82.5% vs d1, ~1.2 s/move JS).
   10×10 dammen = manifest + start-state swap after its campaign.*
 
+## M48 — Snake safety-cycle mode ("never lock yourself in")  *(2026-07-16; branch `m48-snake-hamilton`; see `SNAKE_HAMILTONIAN_PRD.md`)* 🔜
+
+**Why:** M34's search snake (~81 food@12) still self-traps beyond its 12-ply horizon — the tail-reachability /
+Hamiltonian endgame deferred by `SNAKE_SEARCH_PRD.md` §8. New watch mode **side-by-side** with "Watch AI" (which
+stays untouched); the trained net keeps choosing the path to food, a maintained cycle guarantees it can never die.
+
+**Decision (2-agent investigation 2026-07-16):** the owner's literal scheme — full Hamiltonian *completion*
+through {body + food path} each spawn — is NP-complete with forced subpaths and frequently infeasible (parity);
+the owner's relaxation ("cycle covers as many cells as possible") is tractable and converges with proven designs
+(Tapsell PHC / Haidet DHCR). **Lock:** maintained safety-cycle invariant (body always a contiguous segment of a
+stored cycle; following it is always legal ⇒ no-death by construction) + net/search-scored safe shortcuts; then
+per-food **max-coverage cycle rebuild** (path-to-food + return path + domino extension), falling back to the
+previous cycle on any failure. Single-source in `snake_solver.pg`; pure-frontend mode (snake has no server side).
+
+- **M48.1 — Cycle core + safe shortcuts** (`.pg`: full-board cycle generator, 1D ordering invariant,
+  `chooseActionCycle` with net-ranked shortcuts, >50%-fill cutoff; facade + Lab `--cycle` eval + invariant tests).
+  **Gate:** 12×12, ≥50 eps — **0 deaths, ≥95% board-full wins**; ms/move within the 120 ms tick.
+- **M48.2 — Per-food max-coverage rebuild** (the owner's scheme, relaxed: search path to food + BFS return +
+  domino absorption; retry-per-tick + livelock cutoff fallbacks). **Gate:** keep 0 deaths / ≥95% wins, mean
+  steps-to-win **≥20% below** M48.1's pure-shortcut baseline.
+- **M48.3 — Frontend mode** (third button, director strategy param, regenerated TS twin; renderer untouched;
+  optional cycle overlay stretch). **Gate:** side-by-side modes verified live in the browser.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
