@@ -1915,6 +1915,44 @@ mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none
   generated net) plays all four tiers legally, ordering reproduced (net 3393 vs random 2379); LIVE watch mode
   caught mid-cascade at move 7/30 (score 330, "+30" pop), all four tiers exercised on desktop AND mobile.*
 
+## M50 — Crazy Fruits specials: striped / wrapped / sugar bomb  *(2026-07-24; branch `m50-crazyfruits-specials`; see `CRAZY_FRUITS_SPECIALS_PRD.md`)* 🔜
+
+**Why:** owner wants Candy-Crush special pieces on the shipped M49 match-3 — striped (match-4 → row/column
+blast), wrapped (L/T match → 3×3 double explosion), sugar bomb (match-5 → swap clears a fruit type), with all
+combo swaps — in the single-source engine so human play, the scripted tiers, and a retrained net all get
+them. 3-agent investigation 2026-07-24 (canonical mechanics with the striped-orientation conflict resolved:
+blast ∥ match, the "perpendicular" wiki wording is sprite paint; line-referenced engine impact; AI impact —
+CANDYRL used γ=0.5 on real Candy Crush; PBRS at γ=0 is a mathematical no-op).
+
+**Key design locks:** rules 100% deterministic (zero RNG: passive bomb → most-frequent type; bomb+striped
+orientations `(r+c)%2`; cascade spawn → lowest run cell) so planning + C#↔TS parity survive; packed base-16
+cell encoding (plain fruit keep 1..6 — every mutation/serialization/test site survives); activation =
+bounded worklist, wrapped's double explosion rides the grid as an internal "armed" kind (stepwise animation
+API unchanged by construction); `swapIsLegal` supersedes swap-must-match (bomb/special+special always legal;
+action space stays 112); observation 672→928 (+4 kind planes) ⇒ from-scratch retrain; **v1 keeps γ=0** — the
+extended per-action deterministic-value feature prices create+fire+combos (the exact lever that gated M49);
+ONE pre-registered escalation (γ=0.5 + 3-step + PBRS) triggered only if the new expectimax-2 baseline proves
+hold-for-combo value the net isn't capturing; human play → **30-move rounds** (deadlock reshuffles — measured
+zero deadlocks ever; game-over-on-deadlock would never fire).
+
+- **M50.0 — Rules lock.** The PRD §2 semantics table. **Gate:** every rule deterministic, zero RNG draws.
+- **M50.1 — Engine** (packed encoding, scanRuns + creation resolver, activation worklist + armed wrapped,
+  stageSwap/swapIsLegal, combos, lastClearedBy/lastCreated, extended immediateScore/deterministicValue).
+  **Gate:** directed tests for every creation/activation/combo/chain + invariant sweep + deterministicValue
+  rng-snapshot + parity checksum re-pinned (node harness committed as `tools/cf_parity.mjs`). No training
+  before this gate.
+- **M50.2 — Env/obs + baselines** (928 floats, ÷300 planes, reward/K recalibration, expectimax-2 +
+  specials-greedy tiers). **Gate:** tier ordering CI-separated; greedy provably takes a directed bomb swap;
+  **pre-training env validation: random < 0.70 × expectimax-2** (else specials are too self-firing — fix
+  scoring before training).
+- **M50.3 — Retrain** (from scratch, γ=0, 300–500k moves, same architecture). **Gates:** ≥ +30% over
+  random-with-specials (500 eps, CI-separated); ≥ 64% of the random→expectimax-1 gap captured (M49's ratio —
+  the no-regression bar); specials created+fired/ep ≥ 2× random. *Combo gate = escalation trigger, once;
+  then stop-loss.*
+- **M50.4 — Web** (overlay art, enriched pop step with beams/ring/zap/sparkle, 30-move round-over screen
+  with the measured tier bars). **Gate:** live Playwright desktop + touch showing a striped creation, a row
+  blast, a wrapped double explosion, a bomb swap, and the round-over screen; NetParity on the new ckpt.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.

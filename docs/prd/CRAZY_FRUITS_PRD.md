@@ -231,7 +231,8 @@ measured bars: random **2259.7±49.9** · greedy **2387.0±49.3** · expectimax-
 
 ## 7. Out of scope
 Serious/long training and strength tuning (future milestone — the campaign resumes from the shipped ckpt) ·
-special pieces (striped/bomb/color-clear) · levels, goals, timers, move-limited modes · sound · gallery
+special pieces (striped/wrapped/sugar bomb) — **now planned as M50, see
+[CRAZY_FRUITS_SPECIALS_PRD.md](CRAZY_FRUITS_SPECIALS_PRD.md)** · levels, goals, timers · sound · gallery
 submissions · server-side serving (Pattern A) · decompiling the original SWF.
 
 ## 8. References
