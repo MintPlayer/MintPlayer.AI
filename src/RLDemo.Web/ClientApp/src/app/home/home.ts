@@ -67,6 +67,15 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
+      <a class="card" routerLink="/crazyfruits">
+        <h2>Crazy Fruits</h2>
+        <p>
+          A match-3 in the spirit of the Flash-era KidCity classic — swap adjacent fruits, line up three or
+          more, chain the cascades. Works with mouse or touch, entirely in your browser.
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
       <a class="card" routerLink="/chess">
         <h2>Chess</h2>
         <p>

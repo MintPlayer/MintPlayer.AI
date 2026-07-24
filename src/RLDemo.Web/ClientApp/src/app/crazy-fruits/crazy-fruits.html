@@ -1,0 +1,40 @@
+<h1>Crazy Fruits</h1>
+<p class="subtitle">
+  A match-3 in the spirit of the Flash-era KidCity classic — <strong>swap two adjacent fruits</strong> to line up
+  3 or more of the same kind. Matches clear, fruit tumbles down, and chain reactions multiply the points.
+  Drag a fruit toward its neighbour, or tap one and then tap where it should go. Runs entirely in your browser.
+</p>
+
+<div class="modes">
+  <button type="button" [color]="mode() === 'human' ? colors.primary : colors.secondary" (click)="setMode('human')">Play yourself</button>
+  <button type="button" [color]="mode() === 'watch' ? colors.primary : colors.secondary" (click)="setMode('watch')">Watch AI</button>
+  @if (mode() === 'human') {
+    <button type="button" [color]="colors.secondary" (click)="newGame()">New game</button>
+  } @else {
+    <span class="tier-label">Player:</span>
+    <button type="button" [color]="tier() === 'random' ? colors.primary : colors.secondary" (click)="setTier('random')">Random</button>
+    <button type="button" [color]="tier() === 'greedy' ? colors.primary : colors.secondary" (click)="setTier('greedy')">Greedy</button>
+    <button type="button" [color]="tier() === 'expectimax' ? colors.primary : colors.secondary" (click)="setTier('expectimax')">Expectimax</button>
+    <button type="button" [color]="tier() === 'net' ? colors.primary : colors.secondary" (click)="setTier('net')">Trained net</button>
+  }
+</div>
+
+<div class="cf-stage">
+  <canvas #board
+          (pointerdown)="onPointerDown($event)"
+          (pointermove)="onPointerMove($event)"
+          (pointerup)="onPointerUp($event)"
+          (pointercancel)="onPointerUp($event)"></canvas>
+</div>
+
+@if (mode() === 'human') {
+  <p class="hint">
+    Only swaps that make a line of 3+ count — anything else swings back. When no swap is possible, the board
+    reshuffles itself. Chains score double, triple, and beyond.
+  </p>
+} @else {
+  <p class="hint">
+    The AI plays 30-move rounds — the same episode framing it trains on — then deals a fresh board. All four
+    players (and the game itself) run right here in your browser; the "Trained net" is the masked dueling DQN.
+  </p>
+}

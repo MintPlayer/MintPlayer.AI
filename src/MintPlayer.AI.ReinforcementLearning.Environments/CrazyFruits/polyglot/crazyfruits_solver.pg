@@ -229,23 +229,43 @@ class PgCrazyFruits {
   // line bonuses (PRD §3.5 — proportional, no exponential jackpots). With refill=false the refilled cells
   // stay EMPTY instead: that is the deterministic part of the cascade — used by the expectimax baseline,
   // and it consumes no RNG, so planning never desyncs the refill stream.
+
+  // One clearing pass at cascade step k: mark the 3+ runs, score them, blank the cells (no gravity).
+  // Returns the step's points; 0 = the board is stable. An ANIMATING host (the web page) drives a move as
+  // swapCells → loop { clearStep → collapseColumns(true) } → finishMove, pausing to animate between calls;
+  // applySwap drains the same loop in one go, so both paths are the same rules by construction.
+  fn clearStep(k: i32, marked: List<bool>): i32 {
+    let bonus = this.scanMatches(marked)
+    var cleared = 0
+    for i in 0..Cells { if marked[i] { cleared += 1 } }
+    if cleared == 0 { return 0 }
+    for i in 0..Cells { if marked[i] { this.grid[i] = 0 } }
+    return cleared * BaseFruitScore * (k + 1) + bonus
+  }
+
   fn resolveCascades(refill: bool): i32 {
     var total = 0
     var steps = 0
     for k in 0..1000 {
       var marked: List<bool> = List<bool>()
       for i in 0..Cells { marked.add(false) }
-      let bonus = this.scanMatches(marked)
-      var cleared = 0
-      for i in 0..Cells { if marked[i] { cleared += 1 } }
-      if cleared == 0 { break }
-      total += cleared * BaseFruitScore * (k + 1) + bonus
+      let pts = this.clearStep(k, marked)
+      if pts == 0 { break }
+      total += pts
       steps = k + 1
-      for i in 0..Cells { if marked[i] { this.grid[i] = 0 } }
       this.collapseColumns(refill)
     }
     this.lastCascadeSteps = steps
     return total
+  }
+
+  // Book-keep a completed move (stepwise hosts call this after their clear/collapse loop): score, move
+  // count, and the reshuffle-if-dead rule. The host detects a reshuffle by watching `reshuffles` change.
+  fn finishMove(points: i32) {
+    this.score += points
+    this.movesMade += 1
+    this.lastMoveScore = points
+    if !this.hasLegalSwap() { this.reshuffleBoard() }
   }
 
   // Gravity per column (survivors keep order, slide to the bottom), then refill the vacated top cells
@@ -276,10 +296,7 @@ class PgCrazyFruits {
     if !this.swapProducesMatch(action) { return -1 }
     this.swapCells(this.cellA(action), this.cellB(action))
     let points = this.resolveCascades(true)
-    this.score += points
-    this.movesMade += 1
-    this.lastMoveScore = points
-    if !this.hasLegalSwap() { this.reshuffleBoard() }
+    this.finishMove(points)
     return points
   }
 
