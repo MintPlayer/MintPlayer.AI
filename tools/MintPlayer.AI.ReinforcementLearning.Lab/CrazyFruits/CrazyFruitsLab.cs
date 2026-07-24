@@ -89,18 +89,22 @@ internal static class CrazyFruitsLab
             var agent = new GreedyQAgent(net, CrazyFruitsEnv.ActionCount);
             var env = new CrazyFruitsEnv(moveBudget);
             double sum = 0, sumSq = 0;
+            long created = 0, fired = 0;
             for (int e = 0; e < episodes; e++)
             {
                 var (obs, _) = env.Reset((ulong)(5_000 + e));
                 while (true)
                 {
                     var step = env.Step(agent.Act(obs, env.CurrentActionMask(), greedy: true));
+                    created += env.Board.MoveCreatedStriped + env.Board.MoveCreatedWrapped + env.Board.MoveCreatedBombs;
+                    fired += env.Board.MoveSpecialsFired;
                     obs = step.Observation;
                     if (step.Done) break;
                 }
                 sum += env.Score;
                 sumSq += (double)env.Score * env.Score;
             }
+            Console.WriteLine($"  net                          specials/episode: created {(double)created / episodes:F2}, fired {(double)fired / episodes:F2}");
             results.Add(Summarize($"net ({Path.GetFileName(netPath)})", episodes, sum, sumSq));
         }
         else if (!File.Exists(netPath))

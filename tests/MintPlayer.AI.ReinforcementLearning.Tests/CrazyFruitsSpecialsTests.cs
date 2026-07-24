@@ -245,7 +245,7 @@ public class CrazyFruitsSpecialsTests
     }
 
     [Fact]
-    public void PassiveBomb_ZapsTheMostFrequentType()
+    public void PassiveBomb_ZapsTheMostFrequentType_AndTheTriggeringStripedIsRemoved()
     {
         // The row-striped's blast hits the bomb at (5,7): the bomb zaps the board's most frequent fruit type
         // (deterministic stand-in for the canonical random color).
@@ -260,6 +260,47 @@ public class CrazyFruitsSpecialsTests
         for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
             if (i / Size != 5 && g[i] % 16 == most && g[i] < 16) outsideRow5++;
         Assert.Equal((8 + outsideRow5) * 10, board.ImmediateScore(VSwap(4, 4)));
+
+        // Owner scenario: the striped that set the bomb off — and the bomb — must be OFF the board afterward.
+        board.ApplySwap(VSwap(4, 4));
+        Assert.True(board.MoveSpecialsFired >= 2, "striped AND bomb must both fire");
+        for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
+        {
+            Assert.False(board.Kind(i) == 1 && board.Fruit(i) == 4, "the triggering striped must be removed");
+            Assert.NotEqual(4, board.Kind(i)); // no bomb left (none can re-form: refill never makes specials without a 5-run)
+        }
+    }
+
+    // Owner scenario: a WRAPPED fruit whose explosion triggers a sugar bomb. The wrapped arms (its canonical
+    // second explosion fires after the settle), so by the END of the move both the wrapped and the bomb are
+    // off the board — and no armed shell survives on the stable board.
+    [Fact]
+    public void Wrapped_TriggersBomb_AndBothAreRemovedByMoveEnd()
+    {
+        var board = BoardWith((6, 3, 4), (5, 4, 4), (6, 5, WR4), (7, 6, BOMB));
+        var g = board.GridSnapshot();
+        (g[5 * Size + 4], g[6 * Size + 4]) = (g[6 * Size + 4], g[5 * Size + 4]); // simulate the swap
+        // Step-0 marks: 3-match(row 6, c3..c5) ∪ wrapped 3×3(rows 5-7 × cols 4-6, incl. the bomb) ∪ the
+        // bomb's most-frequent-type zap over the rest of the board.
+        var union = new bool[CrazyFruitsBoard.Cells];
+        for (int c = 3; c <= 5; c++) union[6 * Size + c] = true;
+        for (int r = 5; r <= 7; r++) for (int c = 4; c <= 6; c++) union[r * Size + c] = true;
+        var counts = new int[7];
+        foreach (var v in g) counts[v % 16 <= 6 ? v % 16 : 0]++;
+        int most = 1;
+        for (int t = 2; t <= 6; t++) if (counts[t] > counts[most]) most = t;
+        int marked = 0;
+        for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
+            if (union[i] || (g[i] < 16 && g[i] % 16 == most)) marked++;
+        Assert.Equal(marked * 10, board.ImmediateScore(VSwap(5, 4)));
+
+        board.ApplySwap(VSwap(5, 4));
+        for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
+        {
+            Assert.False(board.Kind(i) == 3 && board.Fruit(i) == 4, "the triggering wrapped must be removed by move end");
+            Assert.NotEqual(5, board.Kind(i));  // no armed shell on a stable board
+            Assert.NotEqual(4, board.Kind(i));  // the bomb is gone
+        }
     }
 
     // A double-match swap: the down-moving 4 completes a horizontal 4-run (fresh stripedV at the swapped
