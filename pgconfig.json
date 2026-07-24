@@ -7,6 +7,11 @@
       "output": "src/RLDemo.Web/ClientApp/src/app/chess/chess_solver"
     },
     {
+      "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/CrazyFruits/polyglot/crazyfruits_solver.pg",
+      "target": "typescript",
+      "output": "src/RLDemo.Web/ClientApp/src/app/crazy-fruits/crazyfruits_solver"
+    },
+    {
       "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/Draughts/polyglot/draughts_solver.pg",
       "target": "typescript",
       "output": "src/RLDemo.Web/ClientApp/src/app/draughts/draughts_solver"

@@ -1,0 +1,42 @@
+namespace MintPlayer.AI.ReinforcementLearning.Tests;
+
+/// <summary>
+/// M49.1 C#↔TS parity gate (docs/prd/CRAZY_FRUITS_PRD.md §5): a seeded 1,000-move random-policy episode,
+/// checksummed over every action, its points, and the full post-move grid. The SAME protocol runs against
+/// the generated TypeScript twin (node, type stripping — the browser's exact code) and must print the SAME
+/// checksum; the verified value is pinned here. All arithmetic in the engine is i32 (Schrage minstd, no
+/// division shortcuts), so the twins are exactly equal, not merely close.
+/// This talks to the generated internal core directly (InternalsVisibleTo) because the node harness does too.
+/// </summary>
+public class CrazyFruitsParityTests
+{
+    // Verified 2026-07-24 against the TS twin: `node tools/cf_parity.mjs` (committed harness).
+    // Pin history: M49 (no specials) 78377593/70990 · first specials cut 533753109/85650 · 801202210/80770
+    // after two owner corrections (striped blast ⊥ the creating match; combo blasts centre on the gesture's
+    // last-selected cell) · 995400597/95550 after the third owner rule (specials FORM before this step's
+    // activations) · 563660409/86340 after the creation-collision fix (a special at the spawn cell fires
+    // instead of being overwritten; the creation relocates to the nearest plain cell) · current
+    // 481681208/95950 after M50.6: the RELOCATED creation is shielded from blasts for the rest of the move,
+    // so the player keeps the promised special.
+    private const long PinnedChecksum = 481_681_208;
+
+    [Fact]
+    public void RandomEpisode_ChecksumMatchesTheTsTwin()
+    {
+        var board = new PgCrazyFruits();
+        board.reset(12345);
+        var policy = new PgCfRng(999);
+
+        const long P = 1_000_000_007;
+        long h = 0;
+        for (int move = 0; move < 1000; move++)
+        {
+            int action = board.randomAction(policy);
+            int points = board.applySwap(action);
+            h = (h * 31 + action) % P;
+            h = (h * 31 + points) % P;
+            for (int i = 0; i < 64; i++) h = (h * 31 + board.grid[i]) % P;
+        }
+        Assert.Equal(PinnedChecksum, h);
+    }
+}

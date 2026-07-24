@@ -8,6 +8,7 @@ export const routes: Routes = [
   { path: 'snake', loadComponent: () => import('./snake/snake').then(m => m.Snake) },
   { path: 'mountaincar', loadComponent: () => import('./mountaincar/mountaincar').then(m => m.MountainCar) },
   { path: 'fruitcake', loadComponent: () => import('./fruit-cake/fruit-cake').then(m => m.FruitCake) },
+  { path: 'crazyfruits', loadComponent: () => import('./crazy-fruits/crazy-fruits').then(m => m.CrazyFruits) },
   { path: 'chess', loadComponent: () => import('./chess/chess').then(m => m.Chess) },
   { path: 'draughts', loadComponent: () => import('./draughts/draughts').then(m => m.Draughts) },
   { path: 'gallery', loadComponent: () => import('./gallery/gallery').then(m => m.Gallery) },

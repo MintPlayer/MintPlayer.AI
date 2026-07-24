@@ -1863,6 +1863,140 @@ previous cycle on any failure. Single-source in `snake_solver.pg`; pure-frontend
   eaten in ~30 s of watching; served chunk confirmed to carry the new code. ARCHITECTURE.md §6's stale
   "Snake uses EpisodeStreamer/SnakeController" claim fixed (snake has been client-side since M33).*
 
+## M49 — Crazy Fruits (match-3) + primitive net  *(2026-07-24; branch `m49-crazy-fruits`; PR #38; see `CRAZY_FRUITS_PRD.md`)* ✅
+
+**Why:** owner wants the KidCity (kidcity.be) Flash-era "Crazy Fruits" as a new playground game — swap 2
+adjacent fruits to line up 3+ — with a **primitively trained net** (serious training is future work), working
+properly on **smartphones (touch) and desktops (mouse)**. 4-agent investigation 2026-07-24: the original SWF is
+unrecoverable (only the portal shell + a menu thumbnail survive in the Wayback Machine), so we ship the
+confirmed **fruit market-stall theme** over assumed-standard Bejeweled rules; match-3 RL prior art warns that
+naive DQN/PPO score *below random* (Kamaldinov, IEEE CoG 2019) — legal-move masking + one-hot planes are the
+difference-makers (King measured ~8× from the mask alone).
+
+**Key design locks:** 8×8, 6 fruits, 112-swap action space, **hard mask = match-producing swaps only**;
+observation 448 floats (6 one-hot planes + would-match plane); **masked dueling DQN on the M46
+`DqnScoreCampaign` spine** (the Snake recipe — MCTS/self-play rejected: stochastic hidden refill, no opponent);
+`.pg`-first engine (`crazyfruits_solver.pg`) with an **f64-exact minstd LCG** for byte-identical C#/TS refill;
+deadlock defined out of existence (in-engine reshuffle — the mask never goes all-false); scripted
+random/greedy/expectimax-1 baselines = sanity gates = difficulty tiers; fully client-side (Pattern C,
+`wwwroot/models/crazyfruits.dqn.ckpt`); input = **unified Pointer Events** (subsume touchstart/move/end +
+mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none`).
+
+- **M49.1 — Engine** ✅ (2026-07-24) (`crazyfruits_solver.pg`: board/match/gravity/refill/cascade/scoring, mask, reshuffle,
+  minstd-via-Schrage RNG, `buildObservation`, baselines; C# facade + pgconfig include; grew a stepwise
+  clearStep/finishMove API for the animating web host). **Gate:** invariant + hand-scored unit
+  tests; mask = brute-force cross-check; **seeded 1,000-move episode byte-identical C#↔TS**.
+  *Green: 16 tests first run; per-move full-grid parity checksum 78377593 identical under node — re-verified
+  unchanged across both later engine amendments.*
+- **M49.2 — Env + campaign + Lab** ✅ (2026-07-24) (`CrazyFruitsEnv` + `AddCrazyFruitsDqnCampaign()` + `--game crazyfruits --baselines N`).
+  **Gate:** baseline ordering greedy > random (and expectimax-1 ≥ greedy) with non-overlapping 95% CIs over
+  500 seeded episodes; campaign resume contract; one end-to-end chunk.
+  *Green: random 2259.7±49.9 · greedy 2387.0±49.3 · expectimax-1 4270.9±98.3 — cascade planning is the skill
+  (+89%), line size nearly irrelevant (+6%).*
+- **M49.3 — Primitive training run.** ✅ (2026-07-24) **Gate:** net ≥ **+30% mean score over random** (500 held-out episodes,
+  30-move budget, non-overlapping CIs); vs-greedy reported, not gated. Ckpt → LFS.
+  *Green on run 3 of 3 (one lever each): γ=0.99 **+1.9% FAIL** (loss exploded — the match-3 bootstrap trap);
+  γ=0 **+7.8% FAIL** (stable but short); γ=0 + the PRD's pre-registered per-action feature planes (obs
+  448→672: immediate score + deterministic cascade value ÷100) → **+57.2% CI-separated PASS** (3552.5±83.3;
+  +48.8% over greedy; expectimax 4270.9 = the future-training headroom). Ships
+  `wwwroot/models/crazyfruits.dqn.ckpt`.*
+- **M49.4 — Web game (human play)** ✅ (2026-07-24) (canvas fruit-stall renderer, both pointer gestures via unified Pointer
+  Events, animations from the engine's stepwise API, route/nav/home card). **Gate:** playable on desktop mouse
+  AND smartphone touch (drag-swap, tap-tap, revert, cascades); no page scroll during play; browser smoke vs
+  the running host.
+  *Green: tsc clean + headless node smoke of the real game layer (reverts free, 60 greedy moves land on
+  engine-exact grids) + LIVE Playwright on desktop (mouse) and an emulated phone (390px, real touch events):
+  select ring on the tapped cell both legs, human tap-tap swap cleared a 3-line (score 30 · move 1), mouse
+  drag + CDP touch-drag fired (illegal picks reverted, move not consumed), window.scrollY unchanged through
+  the touch drag, zero console errors. One screenshot-driven fix: failed swaps now clear the selection.*
+- **M49.5 — Watch AI + tiers** ✅ (2026-07-24) (`crazyfruits-net.ts` + director + Random/Greedy/Expectimax/net tiers).
+  **Gate:** TS↔C# net-forward parity on real ckpt bytes; full watch episode in-browser on every tier.
+  *Green: `CrazyFruitsNetParityTests`; node simulation of the exact browser path (shipped ckpt → TS parser →
+  generated net) plays all four tiers legally, ordering reproduced (net 3393 vs random 2379); LIVE watch mode
+  caught mid-cascade at move 7/30 (score 330, "+30" pop), all four tiers exercised on desktop AND mobile.*
+
+## M50 — Crazy Fruits specials: striped / wrapped / sugar bomb  *(2026-07-24; on the M49 branch `m49-crazy-fruits`, PR #38 — owner: one PR for the arc; see `CRAZY_FRUITS_SPECIALS_PRD.md`)* ✅ (all shipped 2026-07-24; M50.3 closed via stop-loss — best net shipped, gates 2/3 honestly missed)
+
+**Why:** owner wants Candy-Crush special pieces on the shipped M49 match-3 — striped (match-4 → row/column
+blast), wrapped (L/T match → 3×3 double explosion), sugar bomb (match-5 → swap clears a fruit type), with all
+combo swaps — in the single-source engine so human play, the scripted tiers, and a retrained net all get
+them. 3-agent investigation 2026-07-24 (line-referenced engine impact; AI impact — CANDYRL used γ=0.5 on
+real Candy Crush; PBRS at γ=0 is a mathematical no-op). Three owner corrections during the build: striped
+blast is **⊥ the creating match** (the research agent's ∥ resolution was wrong — paint shows the blast);
+combo blasts centre on the **gesture's last-selected cell** (`stageSwap` grew a target-cell parameter;
+AI moves default deterministically to the action's bottom/right cell); and **specials FORM before the
+step's activations**, so a fresh special blasted in its own creation step fires immediately. Plus the
+fire-only scoring rule (creation earns nothing in-game; the training env shapes the reward) and the
+**endless-mode toggle** (bypass/dismiss the round end; such games are exempt from "best").
+
+**Key design locks:** rules 100% deterministic (zero RNG: passive bomb → most-frequent type; bomb+striped
+orientations `(r+c)%2`; cascade spawn → lowest run cell) so planning + C#↔TS parity survive; packed base-16
+cell encoding (plain fruit keep 1..6 — every mutation/serialization/test site survives); activation =
+bounded worklist, wrapped's double explosion rides the grid as an internal "armed" kind (stepwise animation
+API unchanged by construction); `swapIsLegal` supersedes swap-must-match (bomb/special+special always legal;
+action space stays 112); observation 672→928 (+4 kind planes) ⇒ from-scratch retrain; **v1 keeps γ=0** — the
+extended per-action deterministic-value feature prices create+fire+combos (the exact lever that gated M49);
+ONE pre-registered escalation (γ=0.5 + 3-step + PBRS) triggered only if the new expectimax-2 baseline proves
+hold-for-combo value the net isn't capturing; human play → **30-move rounds** (deadlock reshuffles — measured
+zero deadlocks ever; game-over-on-deadlock would never fire).
+
+- **M50.0 — Rules lock.** ✅ (2026-07-24) The PRD §2 semantics table. **Gate:** every rule deterministic, zero RNG draws.
+  *Amended in-flight by three owner corrections (striped ⊥, combo centre = last-selected, form-then-trigger)
+  and the fire-only scoring decision — each re-verified end-to-end before proceeding.*
+- **M50.1 — Engine** ✅ (2026-07-24) (packed encoding, run-recording scan + creation resolver, activation worklist +
+  armed wrapped, stageSwap(action, targetCell)/swapIsLegal, combos, lastClearedBy/lastCreated + per-move
+  creation/fired telemetry, extended immediateScore/deterministicValue). **Gate:** directed tests for every
+  creation/activation/combo/chain + invariant sweep + planning-purity + parity checksum re-pinned (node
+  harness committed as `tools/cf_parity.mjs`). *Green: 49 tests (incl. striped/wrapped→bomb chain-removal
+  and the stepwise-host-protocol ≡ applySwap equivalence; host round/endless/best rules covered by the
+  committed `tools/cf_host_tests.mjs`); every combo hand-scored exactly; the same-step form-then-trigger
+  190-point test; parity pin finally 995400597 (score 95550).*
+- **M50.2 — Env/obs + baselines** ✅ (2026-07-24) (928 floats, ÷300 planes, RewardScale 30→100, expectimax-2 +
+  specials-greedy tiers, ShapeCreationRewards on the train env only). **Gate:** tier ordering CI-separated;
+  greedy provably takes a directed bomb swap; **pre-training env validation: random < 0.70 × expectimax-2**.
+  *Green (final rules): random 2598.7±72.4 · greedy 3497.9±96.2 (+35% — was +6% without specials) ·
+  specials-greedy 3867.1 · expectimax-1 5931.4 (+128%) · expectimax-2 8135.0 (+213%); env validation 32%;
+  e2−e1 gap +37.2% arms the escalation trigger.*
+- **M50.3 — Retrain** ✅ (2026-07-24, stop-loss invoked — best net shipped, misses reported). **Gates (FINAL
+  M50.6 shield rules):** ≥ +30% over random (bar 3392.0, 500 eps, CI-separated); ≥ 64% of the
+  random→expectimax-1 gap (bar 4747.8); created ≥ 7.3 / fired ≥ 5.6 per ep. Final-rules baselines: random
+  2609.2 · greedy 3510.3 · specials-greedy 3903.3 · e1 5950.8 · e2 8097.7; validation 32% ✓.
+  *γ=0 won again: attempt 1 (γ=0 + creation shaping, `cf5train`) on final rules **4040.4±128.9 = +54.9% —
+  gate 1 PASS**, +15.1% over greedy; gap share 43% and created 5.81 MISS gates 2/3 (fired 5.75 passes). The
+  clean final-rules escalation run (γ=0.5 + 3-step + PBRS, `cf8train`; `cf6train`/`cf7train` voided by the
+  rule fixes) scored only **3408.2 = +30.6%, worse on every gate** — bootstrapping loses to γ=0 on refill
+  noise even with PBRS (M49 γ-lesson, n=2). SHIPPED `cf5train` → `wwwroot/models/crazyfruits.dqn.ckpt`
+  (transfers unchanged across the rule fixes: its per-action feature planes come from the live engine at
+  inference). Hold-for-combo (the e2 gap) stays unclaimed by reactive nets — future lever = search-guided
+  play, not another reward schedule. Round-over screen gained the net bar (~4 000).*
+- **M50.4 — Web** ✅ (2026-07-24) (square candy wrapper with folded tabs + gloss — owner-requested — over the visible
+  fruit; thin outlined stripes along the blast axis; sprinkled sugar-bomb sphere; pop step enriched with
+  beams/rings/zaps/creation sparkles; six watch tiers; 30-move round-over screen with the measured bars).
+  **Gate:** live Playwright desktop + touch + zero console errors. *Green: headless smoke (60 greedy moves,
+  engine-exact grids, score 8130 with specials firing); live watch tiers screenshot square-wrapped +
+  striped fruit and two bombs on board; a REAL 164-attempt 30-move human round ended on the round-over
+  screen and tap restarted; NetParity green (net dims come from the ckpt — the retrained net drops in).*
+- **M50.5 — Creation-collision fix** ✅ (2026-07-24, owner bug report: a striped dragged into a line of 4
+  neither fired nor left a new striped in the line). `placeCreation` overwrote-and-unmarked whatever held
+  the spawn cell, on all four creation paths. Fix: the creation relocates to the **nearest plain cell of
+  the shape** (ties → lower flat index; no plain cell → no creation) and the colliding special stays marked
+  and fires through the unchanged form-then-trigger pass. **Gate:** 8 directed tests (reported drag
+  exact-scored 180; wrapped 160 + armed refire; plain-spawn regression guard; all-special run 240 with zero
+  creations; tie-break; bomb relocation 170 with priority intact; wrapped-pivot 110; cascade relocation) —
+  57/57 green; parity re-pinned **563660409** (C# = TS); baselines re-measured (random 2613.9 · greedy
+  3499.2 · e1 5974.6 · e2 8139.1; validation 32% ✓; e2 gap +36.2% keeps the escalation armed).
+- **M50.6 — Shielded relocations** ✅ (2026-07-24, owner report round 2: a wrapped drag never left the new
+  special standing). Two-agent audit: M50.5 was functionally correct, but the wrapped's own 3×3 always
+  covers the relocation cell → the fresh striped chain-fired same-step and the armed refire re-covered it;
+  a striped drag spared it only when the blast axis missed (why striped "worked"). Fix: **relocated
+  creations are blast-shielded for the rest of the move** (`shielded[]` skipped by `markCell`, cleared by
+  `stageSwap`); later-step MATCHES still consume them; in-place creations keep the form-then-trigger chain
+  rule (190-test untouched). **Gate:** collision tests updated to shield semantics (striped drag 100 with
+  the striped SURVIVING; wrapped drag 90 surviving BOTH explosions; wrapped-pivot 80 keeping an unarmed
+  wrapped) — 57/57 green; parity re-pinned **481681208** (score 95950 — shield is score-positive); the
+  void `cf7train` run (no shield) discarded; training restarts from scratch on the final rules
+  (`cf8train`). Plus the owner-requested on-page KidCity.be credit paragraph.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
@@ -1911,6 +2045,7 @@ previous cycle on any failure. Single-source in `snake_solver.pg`; pure-frontend
 | M28 FruitCake NoisyNets empirical (2026-06-26) | match or beat ε-greedy at equal budget (multi-seed) | **matched** — 200-game paired A/B tie (702.1 vs 714.4, Δ −12.3 ± 29.8 SE); single-evals were seed-luck; not shipped |
 | M36.1 network visualizer — watch it train (2026-07-12) | see the net evolve live during training (all games); beginner-readable; zero training impact | **met** — pull-based seam; **all six `--game`s** stream topology + weight frames over a **WebSocket** to a self-contained page with **hover tooltips**; net visibly evolves (heatmaps/edges shift, eval 7.0→13.9); **Development-gated**; viz vs no-viz checkpoints **SHA256-identical**; 314 tests green |
 | M37 progressive net growth (2026-07-12) | grow the net wider+deeper mid-training without a loss spike, everywhere possible | **met** — shared `Net2Net` (WidenTrunk/SetIdentity); `--grow` grows **all** trainable nets live: `DuelingQNet` (Snake, FruitCake) and the refactored variable-depth `PolicyValueNet` (Cube, Cube-policy, Rush Hour), `[16]`→`[128,128,128]`; DAVI `ResidualMlp` already grew width. Policy checkpoint → v2 with v1 back-compat (tested). 320 tests (4 new: widen/deepen forward-equality ×2, v1 load, grown round-trip) |
+| M49 Crazy Fruits primitive net (2026-07-24) | ≥ +30% over random-legal, 500 held-out episodes, CI-separated | **+57.2%** (3552.5±83.3 vs 2259.7±49.9) on run 3/3 — γ=0 + per-action feature planes; γ=0.99 failed at +1.9% (bootstrap-noise trap), γ=0 alone +7.8%; +48.8% over greedy, expectimax-1 (4270.9) = headroom |
 
 ## Shipped (2026-06-11) — release engineering
 

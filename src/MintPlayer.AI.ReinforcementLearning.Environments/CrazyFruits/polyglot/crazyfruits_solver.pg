@@ -1,0 +1,1065 @@
+// crazyfruits_solver.pg — single-source Crazy Fruits (match-3 + specials) engine. ONE source, transpiled to
+// C# and TS (docs/prd/CRAZY_FRUITS_PRD.md §3.1 + CRAZY_FRUITS_SPECIALS_PRD.md). Types are `PgCf`-prefixed:
+// every .pg emits into the same global C# namespace, so names must be unique across solvers.
+//
+// Everything the browser needs — rules, cascades, specials, scoring, legal-move mask, observation, the
+// scripted baselines and the net forward pass — lives here, so C# training/serving and the web page share
+// one engine. All arithmetic is i32 (+ f64 only in the net/observation): exact in both .NET int and JS
+// number, and EVERY rule is deterministic — planning (deterministicValue) and C#↔TS parity depend on it.
+
+import { List } from "std.collections"
+import { Math } from "std.math"
+
+// Non-exact i32 quotients are computed as (a - a%b)/b: the numerator is an exact multiple of b, so the
+// division is exact in f64 too — no reliance on the target language's integer-division semantics.
+fn divExact(a: i32, b: i32): i32 => (a - a % b) / b
+
+// Packed cell encoding (SPECIALS PRD §3.1): value = kind·16 + fruitType. Plain fruit keep their M49 values
+// 1..6 (kind 0); a sugar bomb is colorless (type 0, value 64). Max value 86 — exact everywhere.
+fn cfFruitOf(v: i32): i32 => v % 16
+fn cfKindOf(v: i32): i32 => divExact(v, 16)
+
+// A maximal 3+ run found by the match scan: orientation, start cell (lowest index), length, fruit type.
+// Creation shapes (striped/wrapped/bomb) are resolved from these.
+record PgCfRun(horizontal: bool, start: i32, len: i32, fruit: i32)
+
+// ── Deterministic RNG — minstd Lehmer LCG via Schrage (PRD §3.2) ───────────────────────────────────────────
+// state' = 48271·state mod (2^31−1), computed as Schrage's decomposition so every intermediate stays
+// below 2^31: exact in C# int AND in JS number, hence byte-identical refill streams on both sides.
+class PgCfRng {
+  const M: i32 = 2147483647   // 2^31 − 1 (prime)
+  const A: i32 = 48271        // minstd_rand multiplier
+  const Q: i32 = 44488        // M / A
+  const R: i32 = 3399         // M % A  (R < Q ⇒ Schrage is overflow-free)
+
+  var state: i32
+
+  init(seed: i32) {
+    var s = seed % M
+    if s < 0 { s += M - 1 }
+    if s == 0 { s = 1 }       // state must stay in [1, M−1]
+    this.state = s
+  }
+
+  fn next(): i32 {
+    let r = this.state % Q
+    let q = divExact(this.state, Q)
+    var s = A * r - R * q
+    if s <= 0 { s += M }
+    this.state = s
+    return s
+  }
+
+  // Uniform in [0, n) for small n (modulo bias is negligible at n ≤ 64 and identical on both sides).
+  fn nextInt(n: i32): i32 => this.next() % n
+}
+
+// ── The game ───────────────────────────────────────────────────────────────────────────────────────────────
+// 8×8 grid, 6 fruit types + special kinds. A swap is legal iff it produces a 3+ typewise line, OR either
+// cell is a bomb, OR both cells are specials. Matches clear (creating specials from 4/L-T/5 shapes), blasts
+// chain, fruit falls, refill from the top, cascades resolve; a stable board with no legal swap reshuffles in
+// place — the engine never exposes a zero-legal-move state.
+class PgCrazyFruits {
+  const Size: i32 = 8
+  const FruitTypes: i32 = 6
+  const Cells: i32 = 64              // Size²
+  const HorizontalSwaps: i32 = 56    // (Size−1)·Size — actions 0..55; vertical are 56..111
+  const ActionCount: i32 = 112
+  const BaseFruitScore: i32 = 10     // per cell cleared, ×(k+1) at cascade step k
+  const Line4Bonus: i32 = 20         // flat, per 4-run
+  const Line5Bonus: i32 = 50         // flat, per 5+-run
+
+  // Special kinds (packed as value = kind·16 + type). Armed is internal: a wrapped fruit that has fired its
+  // first 3×3 rides the grid through gravity and fires again on the next cascade step — a stable board
+  // never holds one (tested invariant).
+  const KindNone: i32 = 0
+  const KindStripedH: i32 = 1        // clears its ROW (created by a VERTICAL 4-match — blast ⊥ match)
+  const KindStripedV: i32 = 2        // clears its COLUMN (created by a horizontal 4-match)
+  const KindWrapped: i32 = 3
+  const KindBomb: i32 = 4
+  const KindArmed: i32 = 5
+
+  // NOTE (owner decision 2026-07-24): specials score ONLY when they fire — creating one earns no game
+  // points. The engine counts creations/firings per move so the TRAINING env can add a creation-shaping
+  // reward on top (training-only; eval and all gates measure the pure fire-only game score).
+
+  var grid: List<i32> = List<i32>()
+  var rng: PgCfRng = PgCfRng(1)
+  var score: i32
+  var movesMade: i32
+  var lastMoveScore: i32             // points of the most recent applySwap
+  var lastCascadeSteps: i32          // cascade depth of the most recent applySwap (1 = no chain)
+  var reshuffles: i32                // deadlock reshuffles so far (host can animate on change)
+
+  // Move context: swapped cells (spawn-cell preference at cascade step 0), the gesture's TARGET cell
+  // (combo blasts centre on the last-selected fruit — owner rule 2026-07-24; AI moves default to the
+  // action's bottom/right cell), and whether the swap itself is an activation (bomb or special+special).
+  // Set by stageSwap, consumed by clearStep(0), reset by finishMove.
+  var moveCellA: i32
+  var moveCellB: i32
+  var comboCenter: i32
+  var stagedCombo: bool
+
+  // Per-move specials telemetry (reset by stageSwap, accumulated across the move's clearSteps): what the
+  // training env's creation-shaping and the specials-usage gates read after each move.
+  var moveCreatedStriped: i32
+  var moveCreatedWrapped: i32
+  var moveCreatedBombs: i32
+  var moveSpecialsFired: i32
+
+  // Per-step diagnostics for the animating host — valid ONLY immediately after a clearStep (planning calls
+  // overwrite them). lastClearedBy per cell: 0 untouched · 1 match · 2 striped blast · 3 wrapped/area blast ·
+  // 4 bomb. lastCreated: flattened (cell, packedValue) pairs.
+  var lastClearedBy: List<i32> = List<i32>()
+  var lastCreated: List<i32> = List<i32>()
+
+  // Cells holding a RELOCATED creation (owner rule 2026-07-24): a special displaced off its preferred spawn
+  // cell by a colliding special is shielded from blasts for the REST OF THE MOVE — the fired special must
+  // not consume its own replacement (nor may the armed re-explosion or a combo). Matches in later cascade
+  // steps still consume it normally; stageSwap clears the shield, so it never outlives the move.
+  var shielded: List<bool> = List<bool>()
+
+  init() {
+    this.score = 0
+    this.movesMade = 0
+    this.lastMoveScore = 0
+    this.lastCascadeSteps = 0
+    this.reshuffles = 0
+    this.moveCellA = -1
+    this.moveCellB = -1
+    this.comboCenter = -1
+    this.stagedCombo = false
+    // Assigned directly (not via resetMoveStats) so the generated TS satisfies strict property initialization.
+    this.moveCreatedStriped = 0
+    this.moveCreatedWrapped = 0
+    this.moveCreatedBombs = 0
+    this.moveSpecialsFired = 0
+    for i in 0..Cells { this.lastClearedBy.add(0) }
+    for i2 in 0..Cells { this.shielded.add(false) }
+  }
+
+  fn reset(seed: i32) {
+    this.rng = PgCfRng(seed)
+    this.score = 0
+    this.movesMade = 0
+    this.lastMoveScore = 0
+    this.lastCascadeSteps = 0
+    this.reshuffles = 0
+    this.moveCellA = -1
+    this.moveCellB = -1
+    this.comboCenter = -1
+    this.stagedCombo = false
+    this.resetMoveStats()
+    this.generateBoard()
+  }
+
+  fn resetMoveStats() {
+    this.moveCreatedStriped = 0
+    this.moveCreatedWrapped = 0
+    this.moveCreatedBombs = 0
+    this.moveSpecialsFired = 0
+  }
+
+  // ── Board generation ─────────────────────────────────────────────────────────────────────────────────────
+  // Deal plain fruit row-major; a fruit that would complete an immediate 3-line with the two cells
+  // left/above advances to the next type (≤2 of 6 types are ever forbidden — terminates deterministically).
+  // Re-deal if the result has no legal swap, so reset() always yields a playable board.
+  fn generateBoard() {
+    for _attempt in 0..1000 {
+      this.grid.clear()
+      for i in 0..Cells { this.grid.add(0) }
+      for r in 0..Size {
+        for c in 0..Size {
+          var f = 1 + this.rng.nextInt(FruitTypes)
+          for _try in 0..FruitTypes {
+            if !this.wouldFormRun(r, c, f) { break }
+            f = f % FruitTypes + 1
+          }
+          this.grid[r * Size + c] = f
+        }
+      }
+      if this.hasLegalSwap() { return }
+    }
+  }
+
+  fn wouldFormRun(r: i32, c: i32, f: i32): bool {
+    if c >= 2 && cfFruitOf(this.grid[r * Size + c - 1]) == f && cfFruitOf(this.grid[r * Size + c - 2]) == f { return true }
+    if r >= 2 && cfFruitOf(this.grid[(r - 1) * Size + c]) == f && cfFruitOf(this.grid[(r - 2) * Size + c]) == f { return true }
+    return false
+  }
+
+  // ── Action encoding ──────────────────────────────────────────────────────────────────────────────────────
+  // Horizontal swaps first: action = r·7 + c swaps (r,c)↔(r,c+1), c in 0..6. Then vertical:
+  // action = 56 + r·8 + c swaps (r,c)↔(r+1,c), r in 0..6.
+  fn cellA(action: i32): i32 {
+    if action < HorizontalSwaps {
+      let r = divExact(action, Size - 1)
+      return r * Size + action % (Size - 1)
+    }
+    let v = action - HorizontalSwaps
+    return divExact(v, Size) * Size + v % Size
+  }
+
+  fn cellB(action: i32): i32 =>
+    if action < HorizontalSwaps { this.cellA(action) + 1 } else { this.cellA(action) + Size }
+
+  fn swapCells(a: i32, b: i32) {
+    let tmp = this.grid[a]
+    this.grid[a] = this.grid[b]
+    this.grid[b] = tmp
+  }
+
+  // ── Match detection (typewise — specials of a fruit type join that type's runs; bombs (type 0) never) ────
+  fn cellInMatch(cell: i32): bool {
+    let f = cfFruitOf(this.grid[cell])
+    if f == 0 { return false }
+    let c = cell % Size
+    let r = divExact(cell, Size)
+    var len = 1
+    for k in 1..Size { if c - k >= 0 && cfFruitOf(this.grid[cell - k]) == f { len += 1 } else { break } }
+    for k in 1..Size { if c + k < Size && cfFruitOf(this.grid[cell + k]) == f { len += 1 } else { break } }
+    if len >= 3 { return true }
+    len = 1
+    for k in 1..Size { if r - k >= 0 && cfFruitOf(this.grid[cell - k * Size]) == f { len += 1 } else { break } }
+    for k in 1..Size { if r + k < Size && cfFruitOf(this.grid[cell + k * Size]) == f { len += 1 } else { break } }
+    return len >= 3
+  }
+
+  // True iff swapping `action`'s two cells produces at least one 3+ typewise line through a swapped cell.
+  // Pure: the board is restored before returning, and no RNG is consumed.
+  fn swapProducesMatch(action: i32): bool {
+    let a = this.cellA(action)
+    let b = this.cellB(action)
+    if cfFruitOf(this.grid[a]) == cfFruitOf(this.grid[b]) { return false }
+    this.swapCells(a, b)
+    let hit = this.cellInMatch(a) || this.cellInMatch(b)
+    this.swapCells(a, b)
+    return hit
+  }
+
+  // The legality rule (SPECIALS PRD §2): a match-producing swap, OR either cell is a bomb (the bomb consumes
+  // the swap), OR both cells are specials (the swap is the combo activation). Striped/wrapped + plain with
+  // no line stays illegal. The 112-action space is unchanged — a bomb still only swaps with a neighbour.
+  fn swapIsLegal(action: i32): bool {
+    if action < 0 || action >= ActionCount { return false }
+    let ka = cfKindOf(this.grid[this.cellA(action)])
+    let kb = cfKindOf(this.grid[this.cellB(action)])
+    if ka == KindBomb || kb == KindBomb { return true }
+    if ka != KindNone && kb != KindNone { return true }
+    return this.swapProducesMatch(action)
+  }
+
+  fn legalMask(): List<bool> {
+    var mask: List<bool> = List<bool>()
+    for a in 0..ActionCount { mask.add(this.swapIsLegal(a)) }
+    return mask
+  }
+
+  fn hasLegalSwap(): bool {
+    for a in 0..ActionCount { if this.swapIsLegal(a) { return true } }
+    return false
+  }
+
+  fn anyMatchOnBoard(): bool {
+    for r in 0..Size {
+      for c in 0..(Size - 2) {
+        let f = cfFruitOf(this.grid[r * Size + c])
+        if f != 0 && cfFruitOf(this.grid[r * Size + c + 1]) == f && cfFruitOf(this.grid[r * Size + c + 2]) == f { return true }
+      }
+    }
+    for c in 0..Size {
+      for r in 0..(Size - 2) {
+        let f = cfFruitOf(this.grid[r * Size + c])
+        if f != 0 && cfFruitOf(this.grid[(r + 1) * Size + c]) == f && cfFruitOf(this.grid[(r + 2) * Size + c]) == f { return true }
+      }
+    }
+    return false
+  }
+
+  // Mark every cell in a 3+ typewise run, record the runs (for creation shapes), and return the flat
+  // line-bonus total (+20 per 4-run, +50 per 5+-run). `marked` must arrive as Cells falses.
+  fn scanMatches(marked: List<bool>, runs: List<PgCfRun>): i32 {
+    var bonus = 0
+    for r in 0..Size {
+      var runStart = 0
+      for c in 1..(Size + 1) {
+        if c < Size && cfFruitOf(this.grid[r * Size + c]) == cfFruitOf(this.grid[r * Size + runStart]) { continue }
+        let len = c - runStart
+        let f = cfFruitOf(this.grid[r * Size + runStart])
+        if len >= 3 && f != 0 {
+          for k in runStart..c { marked[r * Size + k] = true }
+          if len == 4 { bonus += Line4Bonus }
+          if len >= 5 { bonus += Line5Bonus }
+          runs.add(PgCfRun(true, r * Size + runStart, len, f))
+        }
+        runStart = c
+      }
+    }
+    for c in 0..Size {
+      var runStart = 0
+      for r in 1..(Size + 1) {
+        if r < Size && cfFruitOf(this.grid[r * Size + c]) == cfFruitOf(this.grid[runStart * Size + c]) { continue }
+        let len = r - runStart
+        let f = cfFruitOf(this.grid[runStart * Size + c])
+        if len >= 3 && f != 0 {
+          for k in runStart..r { marked[k * Size + c] = true }
+          if len == 4 { bonus += Line4Bonus }
+          if len >= 5 { bonus += Line5Bonus }
+          runs.add(PgCfRun(false, runStart * Size + c, len, f))
+        }
+        runStart = r
+      }
+    }
+    return bonus
+  }
+
+  // ── Blast marking (the chain worklist) ───────────────────────────────────────────────────────────────────
+  // markCell is the ONLY way a blast marks: it skips empties, marks once, records the source for the
+  // animating host, and enqueues specials so their own blasts chain (each cell activates at most once).
+  fn markCell(cell: i32, source: i32, marked: List<bool>, pending: List<i32>) {
+    if this.grid[cell] == 0 { return }
+    // Blasts (markCell is never used for match marking) pass over relocated creations for this move.
+    if this.shielded[cell] { return }
+    if marked[cell] { return }
+    marked[cell] = true
+    this.lastClearedBy[cell] = source
+    if cfKindOf(this.grid[cell]) != KindNone { pending.add(cell) }
+  }
+
+  // Mark WITHOUT enqueueing — for combo-consumed pieces whose own directional blast is overridden.
+  // A consumed special still counts as fired (its effect is the combo it powered).
+  fn forceMark(cell: i32, source: i32, marked: List<bool>) {
+    if this.grid[cell] == 0 { return }
+    if marked[cell] { return }
+    marked[cell] = true
+    this.lastClearedBy[cell] = source
+    if cfKindOf(this.grid[cell]) != KindNone { this.moveSpecialsFired += 1 }
+  }
+
+  fn markRow(r: i32, marked: List<bool>, pending: List<i32>) {
+    for c in 0..Size { this.markCell(r * Size + c, 2, marked, pending) }
+  }
+
+  fn markColumn(c: i32, marked: List<bool>, pending: List<i32>) {
+    for r in 0..Size { this.markCell(r * Size + c, 2, marked, pending) }
+  }
+
+  fn markBox(center: i32, radius: i32, marked: List<bool>, pending: List<i32>) {
+    let cr = divExact(center, Size)
+    let cc = center % Size
+    for i in 0..(2 * radius + 1) {
+      for j in 0..(2 * radius + 1) {
+        let r = cr - radius + i
+        let c = cc - radius + j
+        if r >= 0 && r < Size && c >= 0 && c < Size { this.markCell(r * Size + c, 3, marked, pending) }
+      }
+    }
+  }
+
+  // The most frequent fruit type on the board (ties → lowest type) — the deterministic target of a
+  // passively detonated bomb (the canonical game zaps a RANDOM color; RNG is banned here).
+  fn mostFrequentType(): i32 {
+    var best = 1
+    var bestCount = -1
+    for t in 1..(FruitTypes + 1) {
+      var count = 0
+      for i in 0..Cells { if cfFruitOf(this.grid[i]) == t { count += 1 } }
+      if count > bestCount { bestCount = count; best = t }
+    }
+    return best
+  }
+
+  // ── Combo swaps (SPECIALS PRD §2 table) — executed at cascade step 0 from the staged move ────────────────
+  fn executeCombo(marked: List<bool>, pending: List<i32>) {
+    let a = this.moveCellA
+    let b = this.moveCellB
+    let ka = cfKindOf(this.grid[a])
+    let kb = cfKindOf(this.grid[b])
+
+    if ka == KindBomb && kb == KindBomb {
+      for i in 0..Cells { this.markCell(i, 4, marked, pending) }   // clear the whole board
+      return
+    }
+
+    if ka == KindBomb || kb == KindBomb {
+      let bombCell = if ka == KindBomb { a } else { b }
+      let otherCell = if ka == KindBomb { b } else { a }
+      let otherKind = cfKindOf(this.grid[otherCell])
+      let otherType = cfFruitOf(this.grid[otherCell])
+      this.forceMark(bombCell, 4, marked)              // consumed by the swap — no passive detonation on top
+
+      if otherKind == KindNone {
+        // bomb + plain: clear every fruit of that type.
+        for i in 0..Cells { if cfFruitOf(this.grid[i]) == otherType { this.markCell(i, 4, marked, pending) } }
+        return
+      }
+      if otherKind == KindStripedH || otherKind == KindStripedV {
+        // bomb + striped: every fruit of that type becomes striped ((r+c)%2 orientation — deterministic)
+        // and all of them fire, the original included.
+        for i in 0..Cells {
+          if cfFruitOf(this.grid[i]) == otherType && cfKindOf(this.grid[i]) == KindNone {
+            this.grid[i] = (KindStripedH + (divExact(i, Size) + i % Size) % 2) * 16 + otherType
+          }
+        }
+        for i in 0..Cells { if cfFruitOf(this.grid[i]) == otherType { this.markCell(i, 4, marked, pending) } }
+        return
+      }
+      // bomb + wrapped: every fruit of that type detonates as a 3×3 blast (the wrapped piece arms as usual).
+      this.forceMark(otherCell, 3, marked)
+      for i in 0..Cells {
+        if cfFruitOf(this.grid[i]) == otherType { this.markBox(i, 1, marked, pending) }
+      }
+      return
+    }
+
+    // Special + special (no bomb). Geometry centres on the gesture's LAST-SELECTED cell (comboCenter —
+    // owner rule 2026-07-24; AI moves default to the action's bottom/right cell).
+    let center = this.comboCenter
+    let ra = divExact(center, Size)
+    let ca = center % Size
+    let aStriped = ka == KindStripedH || ka == KindStripedV
+    let bStriped = kb == KindStripedH || kb == KindStripedV
+
+    if aStriped && bStriped {
+      // striped + striped: one full row AND one full column through the last-selected cell.
+      this.forceMark(a, 2, marked)
+      this.forceMark(b, 2, marked)
+      this.markRow(ra, marked, pending)
+      this.markColumn(ca, marked, pending)
+      return
+    }
+    if ka == KindWrapped && kb == KindWrapped {
+      // wrapped + wrapped: one 5×5 blast; both pieces (inside it) arm and re-fire after the settle.
+      this.markBox(center, 2, marked, pending)
+      return
+    }
+    // striped + wrapped: 3 full rows AND 3 full columns centred on the last-selected cell. Both pieces sit
+    // inside the band; the wrapped arms as usual (its second explosion still fires after the settle).
+    for i in 0..3 {
+      let r = ra - 1 + i
+      if r >= 0 && r < Size { this.markRow(r, marked, pending) }
+      let c = ca - 1 + i
+      if c >= 0 && c < Size { this.markColumn(c, marked, pending) }
+    }
+  }
+
+  // ── Creation (SPECIALS PRD §2): bomb > wrapped > striped, from the recorded runs ─────────────────────────
+  fn runContains(run: PgCfRun, cell: i32): bool {
+    if cell < 0 { return false }
+    for i in 0..run.len {
+      let c = if run.horizontal { run.start + i } else { run.start + i * Size }
+      if c == cell { return true }
+    }
+    return false
+  }
+
+  // Swap-made shapes (step 0) prefer the swapped cell inside the run; cascade-made ones the run's lowest
+  // cell index. A preferred cell that already holds a special is NOT overwritten (owner bug report
+  // 2026-07-24: a striped dragged into a 4-line must fire, and the new special forms on ANOTHER fruit):
+  // the creation relocates to the nearest plain cell in the run (ties toward the lower index), or -1 when
+  // the whole run is special — then nothing is created and every special in it simply fires.
+  fn preferredCellFor(run: PgCfRun, k: i32): i32 {
+    if k == 0 && this.runContains(run, this.moveCellA) { return this.moveCellA }
+    if k == 0 && this.runContains(run, this.moveCellB) { return this.moveCellB }
+    return run.start
+  }
+
+  fn creationCellInRun(run: PgCfRun, pref: i32): i32 {
+    if cfKindOf(this.grid[pref]) == KindNone { return pref }
+    let stride = if run.horizontal { 1 } else { Size }
+    let p = divExact(pref - run.start, stride)
+    for d in 1..run.len {
+      if p - d >= 0 && cfKindOf(this.grid[run.start + (p - d) * stride]) == KindNone { return run.start + (p - d) * stride }
+      if p + d < run.len && cfKindOf(this.grid[run.start + (p + d) * stride]) == KindNone { return run.start + (p + d) * stride }
+    }
+    return -1
+  }
+
+  // Wrapped variant of the same relocation rule: prefer the intersection; otherwise walk outward along both
+  // arms and take the nearest plain cell (at equal distance the lowest flat index wins — with d < Size the
+  // four distance-d candidates are already in flat-index order: up, left, right, down).
+  fn creationCellForWrapped(h: PgCfRun, v: PgCfRun, cross: i32): i32 {
+    if cfKindOf(this.grid[cross]) == KindNone { return cross }
+    let hpos = cross - h.start
+    let vpos = divExact(cross - v.start, Size)
+    let maxLen = if h.len > v.len { h.len } else { v.len }
+    for d in 1..maxLen {
+      if vpos - d >= 0 && cfKindOf(this.grid[cross - d * Size]) == KindNone { return cross - d * Size }
+      if hpos - d >= 0 && cfKindOf(this.grid[cross - d]) == KindNone { return cross - d }
+      if hpos + d < h.len && cfKindOf(this.grid[cross + d]) == KindNone { return cross + d }
+      if vpos + d < v.len && cfKindOf(this.grid[cross + d * Size]) == KindNone { return cross + d * Size }
+    }
+    return -1
+  }
+
+  fn intersectionOf(h: PgCfRun, v: PgCfRun): i32 {
+    let hr = divExact(h.start, Size)
+    let hc0 = h.start % Size
+    let vc = v.start % Size
+    let vr0 = divExact(v.start, Size)
+    if vc >= hc0 && vc < hc0 + h.len && hr >= vr0 && hr < vr0 + v.len { return hr * Size + vc }
+    return -1
+  }
+
+  // Place one freshly formed special: it replaces the matched fruit at its spawn cell BEFORE any activation
+  // runs (owner rule 2026-07-24: form first, then trigger), so this step's blasts can set it off. The spawn
+  // cell is unmarked — the special only clears if something actually triggers it. The consumed match fruit
+  // still scores: the caller adds the returned creation count to its cleared total.
+  fn placeCreation(cell: i32, packed: i32, marked: List<bool>) {
+    this.grid[cell] = packed
+    marked[cell] = false
+    this.lastClearedBy[cell] = 0
+    this.lastCreated.add(cell)
+    this.lastCreated.add(packed)
+  }
+
+  // Resolve creations from this step's runs (called BEFORE activations — a fresh special can be triggered
+  // by this very step's blasts). Runs consumed by a higher-priority shape don't create again. Creations
+  // score NOTHING themselves (fire-only scoring); returns the number of creations so the consumed match
+  // fruit still counts as cleared.
+  fn resolveCreations(runs: List<PgCfRun>, k: i32, marked: List<bool>): i32 {
+    var created = 0
+    var consumed: List<bool> = List<bool>()
+    for _i in 0..runs.count { consumed.add(false) }
+
+    // 1) Sugar bombs from straight 5+ runs. A -1 spawn cell (run entirely special) creates nothing, but the
+    // run stays consumed — the shape claimed its priority, only the plain host is missing. A RELOCATED
+    // creation (preferred cell held a special) is shielded from this move's blasts (owner rule).
+    for ri in 0..runs.count {
+      if runs[ri].len >= 5 {
+        consumed[ri] = true
+        let pref = this.preferredCellFor(runs[ri], k)
+        let cell = this.creationCellInRun(runs[ri], pref)
+        if cell >= 0 {
+          this.placeCreation(cell, KindBomb * 16, marked)
+          if cell != pref { this.shielded[cell] = true }
+          this.moveCreatedBombs += 1
+          created += 1
+        }
+      }
+    }
+    // 2) Wrapped from an unconsumed horizontal ∩ vertical run pair — spawn at the intersection (relocated
+    // to the nearest plain arm cell when the pivot is special).
+    for hi in 0..runs.count {
+      if consumed[hi] || !runs[hi].horizontal { continue }
+      for vi in 0..runs.count {
+        if consumed[vi] || runs[vi].horizontal { continue }
+        let cross = this.intersectionOf(runs[hi], runs[vi])
+        if cross < 0 { continue }
+        consumed[hi] = true
+        consumed[vi] = true
+        let cell = this.creationCellForWrapped(runs[hi], runs[vi], cross)
+        if cell >= 0 {
+          this.placeCreation(cell, KindWrapped * 16 + runs[hi].fruit, marked)
+          if cell != cross { this.shielded[cell] = true }
+          this.moveCreatedWrapped += 1
+          created += 1
+        }
+        break
+      }
+    }
+    // 3) Striped from unconsumed 4-runs — blast PERPENDICULAR to the match (owner correction 2026-07-24,
+    // the real Candy Crush rule: a horizontal 4-match makes a vertically-striped candy that clears its
+    // COLUMN; stripes are painted along the blast).
+    for ri in 0..runs.count {
+      if consumed[ri] || runs[ri].len != 4 { continue }
+      let kind = if runs[ri].horizontal { KindStripedV } else { KindStripedH }
+      let pref = this.preferredCellFor(runs[ri], k)
+      let cell = this.creationCellInRun(runs[ri], pref)
+      if cell >= 0 {
+        this.placeCreation(cell, kind * 16 + runs[ri].fruit, marked)
+        if cell != pref { this.shielded[cell] = true }
+        this.moveCreatedStriped += 1
+        created += 1
+      }
+    }
+    return created
+  }
+
+  // ── Cascade resolution ───────────────────────────────────────────────────────────────────────────────────
+  // Clear → gravity → refill → repeat until stable. Cascade step k (0-based) scores cleared·10·(k+1) + flat
+  // line/creation bonuses (proportional — no exponential jackpots). With refill=false the vacated cells stay
+  // EMPTY: the deterministic part of the cascade — used by planning, and it consumes no RNG.
+
+  // One clearing pass at cascade step k: matches (+ recorded runs), the staged combo (k=0), armed second
+  // explosions (k>0), the chain worklist, then the clear (a first-fired wrapped ARMS instead of clearing)
+  // and creations. Returns the step's points; 0 ⇔ nothing happened ⇔ the board is untouched and stable.
+  // An ANIMATING host drives a move as stageSwap → loop { clearStep → read lastClearedBy/lastCreated →
+  // collapseColumns(true) } → finishMove; applySwap drains the same loop, so both paths are the same rules.
+  fn clearStep(k: i32, marked: List<bool>): i32 {
+    this.lastCreated.clear()
+    for i in 0..Cells { this.lastClearedBy[i] = 0 }
+
+    var runs: List<PgCfRun> = List<PgCfRun>()
+    let bonus = this.scanMatches(marked, runs)
+    for i in 0..Cells { if marked[i] { this.lastClearedBy[i] = 1 } }
+
+    // FORM specials first (owner rule): fresh specials land on the board before any activation, so this
+    // step's blasts can trigger them immediately (markCell chains them like any other special).
+    let creationConsumed = this.resolveCreations(runs, k, marked)
+
+    var pending: List<i32> = List<i32>()
+
+    // The staged combo swap (bomb / special+special) activates at step 0, on top of any typewise match.
+    if k == 0 && this.stagedCombo {
+      this.stagedCombo = false
+      this.executeCombo(marked, pending)
+    }
+
+    // Armed second explosions (k>0 only: a stable board never holds an armed cell, and combo-armed cells
+    // from step 0 must survive until after the settle).
+    if k > 0 {
+      for i in 0..Cells {
+        if cfKindOf(this.grid[i]) == KindArmed { this.markCell(i, 3, marked, pending) }
+      }
+    }
+
+    // Seed the worklist with match-marked specials (blast/combo-marked ones were enqueued by markCell;
+    // combo-consumed pieces carry a non-match source and stay suppressed).
+    for i in 0..Cells {
+      if marked[i] && this.lastClearedBy[i] == 1 && cfKindOf(this.grid[i]) != KindNone { pending.add(i) }
+    }
+
+    // Chain expansion — each cell enters pending at most once (markCell guards on marked), so the bound holds.
+    var cursor = 0
+    for _guard in 0..(Cells + 1) {
+      if cursor >= pending.count { break }
+      let cell = pending[cursor]
+      cursor += 1
+      this.moveSpecialsFired += 1
+      let kind = cfKindOf(this.grid[cell])
+      if kind == KindStripedH { this.markRow(divExact(cell, Size), marked, pending) }
+      if kind == KindStripedV { this.markColumn(cell % Size, marked, pending) }
+      if kind == KindWrapped || kind == KindArmed { this.markBox(cell, 1, marked, pending) }
+      if kind == KindBomb {
+        // Passively detonated (hit by a blast/match, not swapped): zaps the most frequent type.
+        let t = this.mostFrequentType()
+        for i in 0..Cells { if cfFruitOf(this.grid[i]) == t { this.markCell(i, 4, marked, pending) } }
+      }
+    }
+
+    // The fruit consumed into each fresh special still scores (creationConsumed); a fresh special that got
+    // triggered is marked and scores again as it dies — same rule as every special.
+    var cleared = creationConsumed
+    for i in 0..Cells { if marked[i] { cleared += 1 } }
+    if cleared == 0 { return 0 }
+
+    // Clear: a first-fired wrapped ARMS (rides the fall, fires again next step); everything else blanks.
+    // Untriggered fresh specials are unmarked and survive.
+    for i in 0..Cells {
+      if !marked[i] { continue }
+      if cfKindOf(this.grid[i]) == KindWrapped {
+        this.grid[i] = KindArmed * 16 + cfFruitOf(this.grid[i])
+      } else {
+        this.grid[i] = 0
+      }
+    }
+
+    return cleared * BaseFruitScore * (k + 1) + bonus
+  }
+
+  fn resolveCascades(refill: bool): i32 {
+    var total = 0
+    var steps = 0
+    for k in 0..1000 {
+      var marked: List<bool> = List<bool>()
+      for i in 0..Cells { marked.add(false) }
+      let pts = this.clearStep(k, marked)
+      if pts == 0 { break }
+      total += pts
+      steps = k + 1
+      this.collapseColumns(refill)
+    }
+    this.lastCascadeSteps = steps
+    return total
+  }
+
+  // Book-keep a completed move (stepwise hosts call this after their clear/collapse loop): score, move
+  // count, move-context reset, and the reshuffle-if-dead rule.
+  fn finishMove(points: i32) {
+    this.moveCellA = -1
+    this.moveCellB = -1
+    this.comboCenter = -1
+    this.stagedCombo = false
+    this.score += points
+    this.movesMade += 1
+    this.lastMoveScore = points
+    if !this.hasLegalSwap() { this.reshuffleBoard() }
+  }
+
+  // Gravity per column (survivors — specials included — keep order and slide down), then refill the vacated
+  // top cells from the RNG, or leave them empty for the deterministic (planning) variant.
+  fn collapseColumns(refill: bool) {
+    for c in 0..Size {
+      var write = Size - 1
+      for i in 0..Size {
+        let r = Size - 1 - i
+        let f = this.grid[r * Size + c]
+        if f != 0 {
+          this.grid[write * Size + c] = f
+          write -= 1
+        }
+      }
+      for r2 in 0..(write + 1) {
+        this.grid[r2 * Size + c] = if refill { 1 + this.rng.nextInt(FruitTypes) } else { 0 }
+      }
+    }
+  }
+
+  // ── The move ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Stage + perform a legal swap: sets the move context (spawn-cell preference; staged combo activation;
+  // combo centre = targetCell, the gesture's LAST-SELECTED cell — pass cellB(action) for AI moves).
+  // Returns false and changes NOTHING for an illegal action.
+  fn stageSwap(action: i32, targetCell: i32): bool {
+    if !this.swapIsLegal(action) { return false }
+    let a = this.cellA(action)
+    let b = this.cellB(action)
+    let ka = cfKindOf(this.grid[a])
+    let kb = cfKindOf(this.grid[b])
+    this.swapCells(a, b)
+    this.moveCellA = a
+    this.moveCellB = b
+    this.comboCenter = if targetCell == a || targetCell == b { targetCell } else { b }
+    this.stagedCombo = ka == KindBomb || kb == KindBomb || (ka != KindNone && kb != KindNone)
+    this.resetMoveStats()
+    for i in 0..Cells { this.shielded[i] = false }
+    return true
+  }
+
+  // Apply a legal swap end-to-end. Returns the points gained; −1 for an illegal action (no change).
+  fn applySwap(action: i32): i32 {
+    if !this.stageSwap(action, this.cellB(action)) { return -1 }
+    let points = this.resolveCascades(true)
+    this.finishMove(points)
+    return points
+  }
+
+  // Deadlock defined out of existence: re-deal the existing multiset (specials included, Fisher–Yates)
+  // until no instant match and ≥1 legal swap. (A board holding a bomb can never deadlock.)
+  fn reshuffleBoard() {
+    this.reshuffles += 1
+    for _attempt in 0..1000 {
+      for i2 in 0..(Cells - 1) {
+        let i = Cells - 1 - i2
+        let j = this.rng.nextInt(i + 1)
+        let tmp = this.grid[i]
+        this.grid[i] = this.grid[j]
+        this.grid[j] = tmp
+      }
+      if !this.anyMatchOnBoard() && this.hasLegalSwap() { return }
+    }
+    this.generateBoard()
+  }
+
+  // ── Observation (SPECIALS PRD §3.5) — 928 floats: 6 one-hot fruit planes + 4 kind planes + a would-act
+  // plane + two per-action feature planes (immediate score, deterministic cascade value — both ÷300; they
+  // price creations, activations and combos, the exact lever that gated M49). A colored special sets BOTH
+  // its fruit plane and its kind plane; a bomb only its kind plane. No plane for Armed (never stable).
+  fn buildObservation(): List<f64> {
+    var obs: List<f64> = List<f64>()
+    for f in 1..(FruitTypes + 1) {
+      for i in 0..Cells { obs.add(if cfFruitOf(this.grid[i]) == f { 1.0 } else { 0.0 }) }
+    }
+    for kind in 1..(KindBomb + 1) {
+      for i in 0..Cells { obs.add(if cfKindOf(this.grid[i]) == kind { 1.0 } else { 0.0 }) }
+    }
+    var wm: List<bool> = List<bool>()
+    for i in 0..Cells { wm.add(false) }
+    for a in 0..ActionCount {
+      if this.swapIsLegal(a) {
+        wm[this.cellA(a)] = true
+        wm[this.cellB(a)] = true
+      }
+    }
+    for i in 0..Cells { obs.add(if wm[i] { 1.0 } else { 0.0 }) }
+    for a in 0..ActionCount { obs.add(this.immediateScore(a) / 300.0) }
+    for a in 0..ActionCount {
+      obs.add(if this.swapIsLegal(a) { this.deterministicValue(a) / 300.0 } else { 0.0 })
+    }
+    return obs
+  }
+
+  // ── Scripted baselines — sanity gates, eval bars, and the site's difficulty tiers ────────────────────────
+
+  // Uniform-random legal swap. Takes its OWN rng so policy sampling never touches the refill stream.
+  fn randomAction(policyRng: PgCfRng): i32 {
+    var legal: List<i32> = List<i32>()
+    for a in 0..ActionCount { if this.swapIsLegal(a) { legal.add(a) } }
+    if legal.count == 0 { return -1 }
+    return legal[policyRng.nextInt(legal.count)]
+  }
+
+  // Step-0 points of a swap — creations, combo activations and chained blasts included; no gravity, no
+  // refill, no RNG. 0 for illegal. Restores the board and move context exactly (runs a REAL clearStep on a
+  // saved grid — the same expanded scoring the game uses, by construction).
+  fn immediateScore(action: i32): i32 {
+    if !this.swapIsLegal(action) { return 0 }
+    var saved: List<i32> = List<i32>()
+    for i in 0..Cells { saved.add(this.grid[i]) }
+    let savedA = this.moveCellA
+    let savedB = this.moveCellB
+    let savedCenter = this.comboCenter
+    let savedCombo = this.stagedCombo
+    let savedCS = this.moveCreatedStriped
+    let savedCW = this.moveCreatedWrapped
+    let savedCB = this.moveCreatedBombs
+    let savedSF = this.moveSpecialsFired
+    this.stageSwap(action, this.cellB(action))
+    var marked: List<bool> = List<bool>()
+    for i in 0..Cells { marked.add(false) }
+    let pts = this.clearStep(0, marked)
+    for i in 0..Cells { this.grid[i] = saved[i] }
+    this.moveCellA = savedA
+    this.moveCellB = savedB
+    this.comboCenter = savedCenter
+    this.stagedCombo = savedCombo
+    this.moveCreatedStriped = savedCS
+    this.moveCreatedWrapped = savedCW
+    this.moveCreatedBombs = savedCB
+    this.moveSpecialsFired = savedSF
+    return pts
+  }
+
+  // Legal swap with the highest immediate points (lowest index wins ties). −1 only if no legal swap exists.
+  fn greedyAction(): i32 {
+    var best = -1
+    var bestScore = 0
+    for a in 0..ActionCount {
+      let s = this.immediateScore(a)
+      if s > bestScore { bestScore = s; best = a }
+    }
+    return best
+  }
+
+  // immediateScore plus the creation-shaping weights (+40/+60/+100) — the "specials-greedy" tier's signal:
+  // it values MAKING a special the way the training reward does, where plain greedy only sees fired points.
+  fn immediateScoreShaped(action: i32): i32 {
+    if !this.swapIsLegal(action) { return 0 }
+    var saved: List<i32> = List<i32>()
+    for i in 0..Cells { saved.add(this.grid[i]) }
+    let savedA = this.moveCellA
+    let savedB = this.moveCellB
+    let savedCenter = this.comboCenter
+    let savedCombo = this.stagedCombo
+    let savedCS = this.moveCreatedStriped
+    let savedCW = this.moveCreatedWrapped
+    let savedCB = this.moveCreatedBombs
+    let savedSF = this.moveSpecialsFired
+    this.stageSwap(action, this.cellB(action))
+    var marked: List<bool> = List<bool>()
+    for i in 0..Cells { marked.add(false) }
+    var pts = this.clearStep(0, marked)
+    pts += 40 * this.moveCreatedStriped + 60 * this.moveCreatedWrapped + 100 * this.moveCreatedBombs
+    for i in 0..Cells { this.grid[i] = saved[i] }
+    this.moveCellA = savedA
+    this.moveCellB = savedB
+    this.comboCenter = savedCenter
+    this.stagedCombo = savedCombo
+    this.moveCreatedStriped = savedCS
+    this.moveCreatedWrapped = savedCW
+    this.moveCreatedBombs = savedCB
+    this.moveSpecialsFired = savedSF
+    return pts
+  }
+
+  // "Specials-greedy" tier: greedy over the shaped immediate score — prefers building specials.
+  fn specialsGreedyAction(): i32 {
+    var best = -1
+    var bestScore = 0
+    for a in 0..ActionCount {
+      let s = this.immediateScoreShaped(a)
+      if s > bestScore { bestScore = s; best = a }
+    }
+    return best
+  }
+
+  // Full swap value counting only the deterministic part of the cascade (vacated cells left EMPTY — refill
+  // is unknowable noise). Specials create, fire, chain and re-fire deterministically inside. Restores the
+  // board and move context; consumes no RNG.
+  fn deterministicValue(action: i32): i32 {
+    if !this.swapIsLegal(action) { return 0 }
+    var saved: List<i32> = List<i32>()
+    for i in 0..Cells { saved.add(this.grid[i]) }
+    let savedA = this.moveCellA
+    let savedB = this.moveCellB
+    let savedCenter = this.comboCenter
+    let savedCombo = this.stagedCombo
+    let savedSteps = this.lastCascadeSteps
+    let savedCS = this.moveCreatedStriped
+    let savedCW = this.moveCreatedWrapped
+    let savedCB = this.moveCreatedBombs
+    let savedSF = this.moveSpecialsFired
+    this.stageSwap(action, this.cellB(action))
+    let v = this.resolveCascades(false)
+    for i in 0..Cells { this.grid[i] = saved[i] }
+    this.moveCellA = savedA
+    this.moveCellB = savedB
+    this.comboCenter = savedCenter
+    this.stagedCombo = savedCombo
+    this.lastCascadeSteps = savedSteps
+    this.moveCreatedStriped = savedCS
+    this.moveCreatedWrapped = savedCW
+    this.moveCreatedBombs = savedCB
+    this.moveSpecialsFired = savedSF
+    return v
+  }
+
+  // 1-ply expectimax tier: maximize the deterministic cascade value over legal swaps.
+  fn expectimaxAction(): i32 {
+    var best = -1
+    var bestVal = 0
+    for a in 0..ActionCount {
+      if !this.swapIsLegal(a) { continue }
+      let v = this.deterministicValue(a)
+      if v > bestVal { bestVal = v; best = a }
+    }
+    return best
+  }
+
+  // 2-ply expectimax tier (SPECIALS PRD §3.7): the one baseline that can see create→fire — it quantifies the
+  // hold-a-special option value γ=0 is blind to (its gap over expectimax-1 is the escalation trigger).
+  // Beam-8 over 1-ply values, then the best deterministic follow-up on the settled (refill-free) board.
+  fn expectimax2Action(): i32 {
+    let beamWidth = 8
+
+    var v1: List<i32> = List<i32>()
+    for a in 0..ActionCount { v1.add(this.deterministicValue(a)) }
+
+    // Top-Beam legal actions by 1-ply value (deterministicValue is 0 for illegal, and a legal move always
+    // clears something, so v1 > 0 ⇔ legal).
+    var beam: List<i32> = List<i32>()
+    for _pick in 0..beamWidth {
+      var bestA = -1
+      var bestV = 0
+      for a in 0..ActionCount {
+        var taken = false
+        for j in 0..beam.count { if beam[j] == a { taken = true } }
+        if !taken && v1[a] > bestV { bestV = v1[a]; bestA = a }
+      }
+      if bestA < 0 { break }
+      beam.add(bestA)
+    }
+    if beam.count == 0 { return -1 }
+
+    var best = beam[0]
+    var bestTotal = 0
+    for bi in 0..beam.count {
+      let a = beam[bi]
+      var saved: List<i32> = List<i32>()
+      for i in 0..Cells { saved.add(this.grid[i]) }
+      let savedA = this.moveCellA
+      let savedB = this.moveCellB
+      let savedCenter = this.comboCenter
+      let savedCombo = this.stagedCombo
+      let savedSteps = this.lastCascadeSteps
+      let savedCS = this.moveCreatedStriped
+      let savedCW = this.moveCreatedWrapped
+      let savedCB = this.moveCreatedBombs
+      let savedSF = this.moveSpecialsFired
+
+      this.stageSwap(a, this.cellB(a))
+      let first = this.resolveCascades(false)
+      var follow = 0
+      for a2 in 0..ActionCount {
+        let v2 = this.deterministicValue(a2)
+        if v2 > follow { follow = v2 }
+      }
+
+      for i in 0..Cells { this.grid[i] = saved[i] }
+      this.moveCellA = savedA
+      this.moveCellB = savedB
+      this.comboCenter = savedCenter
+      this.stagedCombo = savedCombo
+      this.lastCascadeSteps = savedSteps
+      this.moveCreatedStriped = savedCS
+      this.moveCreatedWrapped = savedCW
+      this.moveCreatedBombs = savedCB
+      this.moveSpecialsFired = savedSF
+
+      if first + follow > bestTotal { bestTotal = first + follow; best = a }
+    }
+    return best
+  }
+
+  // Trained-net tier: masked greedy argmax over the net's Q-values for the current observation.
+  fn netAction(net: PgCfDuelingNet): i32 {
+    let q = net.forward(this.buildObservation())
+    var best = -1
+    var bestQ = -1.0e18
+    for a in 0..ActionCount {
+      if !this.swapIsLegal(a) { continue }
+      if q[a] > bestQ { bestQ = q[a]; best = a }
+    }
+    return best
+  }
+}
+
+// ── Dueling-Q net inference (single-source forward pass; the fruitcake PgDuelingNet pattern) ───────────────
+// INFERENCE ONLY — training stays on the SDK. Weights are float32 in the checkpoint; the per-platform parser
+// (C# DuelingQNetCheckpoint / crazyfruits-net.ts — binary I/O stays out of Polyglot) loads them into these
+// f64 arrays. Q(s,a) = A(s,a) + (V(s) − mean_a A(s,a)); ReLU trunk; heads have no activation. Trunk tensors
+// are FLAT (layers concatenated) — nested List<List<f64>> parameters are transpiler-unfriendly.
+class PgCfDuelingNet {
+  var inputSize: i32
+  var actions: i32
+  var hidden: List<i32>
+  var trunkWFlat: List<f64>
+  var trunkBFlat: List<f64>
+  var valueW: List<f64>
+  var valueB: List<f64>
+  var advW: List<f64>
+  var advB: List<f64>
+
+  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, valueW: List<f64>, valueB: List<f64>, advW: List<f64>, advB: List<f64>) {
+    this.inputSize = inputSize
+    this.actions = actions
+    this.hidden = hidden
+    this.trunkWFlat = trunkWFlat
+    this.trunkBFlat = trunkBFlat
+    this.valueW = valueW
+    this.valueB = valueB
+    this.advW = advW
+    this.advB = advB
+  }
+
+  fn forward(obs: List<f64>): List<f64> {
+    var x = obs
+    var prev = this.inputSize
+    var wOff = 0
+    var bOff = 0
+    for l in 0..this.hidden.count {
+      let h = this.hidden[l]
+      x = relu(linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h))
+      wOff += prev * h
+      bOff += h
+      prev = h
+    }
+    let value = linear(x, this.valueW, 0, this.valueB, 0, prev, 1)
+    let adv = linear(x, this.advW, 0, this.advB, 0, prev, this.actions)
+
+    var sumA = 0.0
+    for k in 0..this.actions { sumA += adv[k] }
+    let meanA = sumA / this.actions
+    let v = value[0]
+
+    var q: List<f64> = List<f64>()
+    for k in 0..this.actions { q.add(adv[k] + (v - meanA)) }
+    return q
+  }
+
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+}

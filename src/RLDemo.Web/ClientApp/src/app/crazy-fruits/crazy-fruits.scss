@@ -1,0 +1,56 @@
+:host {
+  display: block;
+}
+
+.subtitle {
+  color: #aab2c5;
+  max-width: 46rem;
+}
+
+.hint {
+  color: #8b93a7;
+  font-size: 0.9rem;
+}
+
+.credit {
+  color: #6f7789;
+  font-size: 0.85rem;
+  font-style: italic;
+  max-width: 46rem;
+  border-top: 1px solid #2a3040;
+  padding-top: 0.6rem;
+  margin-top: 1.2rem;
+}
+
+.modes {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+  flex-wrap: wrap;
+
+  .tier-label {
+    color: #aab2c5;
+    margin-left: 0.75rem;
+    font-size: 0.9rem;
+  }
+}
+
+// The stage: a 620:714 box (header band + 8×8 board) the canvas fills.
+.cf-stage {
+  position: relative;
+  width: min(620px, 100%);
+  aspect-ratio: 620 / 714;
+  margin: 0.75rem auto;
+  background: #171022;
+  border-radius: 8px;
+  overflow: hidden;
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none; // we own pointer dragging — don't pan/scroll the page
+    cursor: pointer;
+  }
+}
