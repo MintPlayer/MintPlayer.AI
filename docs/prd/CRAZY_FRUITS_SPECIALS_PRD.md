@@ -2,7 +2,7 @@
 
 **Status:** 🔜 planned 2026-07-24 (3-agent investigation: canonical Candy Crush mechanics, engine impact, AI/training impact)
 **Owner:** Pieterjan
-**Milestone:** [PLAN.md](PLAN.md) M50 · extends [CRAZY_FRUITS_PRD.md](CRAZY_FRUITS_PRD.md) (M49, shipped — specials were its §7 out-of-scope item) · branch `m50-crazyfruits-specials`
+**Milestone:** [PLAN.md](PLAN.md) M50 · extends [CRAZY_FRUITS_PRD.md](CRAZY_FRUITS_PRD.md) (M49, shipped — specials were its §7 out-of-scope item) · branch `m49-crazy-fruits` (owner decision: ONE branch/PR — #38 — for the whole Crazy Fruits arc)
 
 ## 1. Goal
 
@@ -57,8 +57,13 @@ through a swapped cell, OR either cell is a bomb, OR both cells are specials. St
 line stays illegal. **The 112 adjacent-swap action space is unchanged** — a bomb still only swaps with a
 NEIGHBOUR.
 
-**Creation bonuses** (flat, score-side — they also carry the γ=0 training signal, §3.5): **+40 striped ·
-+60 wrapped · +100 bomb**. Combos earn no extra flat bonus — they already clear more cells.
+**Creation scores NOTHING (owner decision 2026-07-24): specials yield points only when they FIRE.** The
+in-game score is therefore pure fire-only; the γ=0 creation signal moves to a TRAINING-ONLY shaping term
+(§3.5): the train env adds **+40 striped · +60 wrapped · +100 bomb** per creation to the *reward*, while the
+eval env and every gate measure the bare game score. Combos earn no extra flat bonus — they already clear
+more cells. Uniform wrapped rule (implementation lock): a wrapped's first detonation ALWAYS arms it — via
+match, chain, or combo — so it always explodes twice; the wrapped fruit scores at first detonation, the
+armed shell's second blast scores its victims plus the shell.
 
 ## 3. Design
 
@@ -96,12 +101,14 @@ exposes per-step fields `lastClearedBy` (match / striped / wrapped / bomb per ce
 - **+4 kind planes** (stripedH, stripedV, wrapped, bomb) = (6+4+1)·64 + 2·112 = **928** floats. A colored
   special sets BOTH its fruit plane and its kind plane (the net can reason about what a bomb swap clears);
   no plane for `wrappedArmed` (never visible on a stable board).
-- **The per-action deterministic-value feature is the v1 specials lever:** it inherits creation + activation
-  + chains through `resolveCascades(false)` automatically (still RNG-free — pinned by a new rng-snapshot
-  test), so a swap that CREATES a special is priced at base match + creation bonus, and firing/combos are
-  priced at their full deterministic clear. **Rejected for v1:** a raw "creates-special" flag plane (strictly
-  less informative than its priced value); potential-based shaping at γ=0 (**mathematical no-op**: the
-  shaping term `γΦ(s′)−Φ(s)` loses its `γΦ(s′)` half at γ=0 and cannot change any argmax).
+- **The per-action deterministic-value feature prices FIRING:** activations, chains and combos flow through
+  `resolveCascades(false)` automatically (still RNG-free — pinned by a purity test). Under the fire-only
+  scoring lock (§2) it deliberately does NOT price creation — that signal is the training env's
+  creation-shaping term (`ShapeCreationRewards`: +40/+60/+100 per creation added to the REWARD only, fed by
+  the engine's per-move creation counters). The net therefore learns creation preference from the shaped
+  reward + the kind planes, and firing value from the feature. **Rejected for v1:** a raw "creates-special"
+  flag plane; potential-based shaping at γ=0 (**mathematical no-op**: the shaping term `γΦ(s′)−Φ(s)` loses
+  its `γΦ(s′)` half at γ=0 and cannot change any argmax).
 - **Normalizer recalibration:** per-action planes ÷100 → **÷300** and reward `points/30` → `points/K` with K
   re-picked in M50.2 so a typical move ≈ O(1) and a bomb+bomb board-clear isn't a 50σ TD target (heavy-tail
   watch: per-move reward histogram).
@@ -147,16 +154,25 @@ cell** · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI**
 
 ## 5. Milestones & gates (falsifiable, in order)
 
-- **M50.0 — Rules lock.** §2 of this PRD reviewed against the M49 proportional-scoring lock. **Gate: every
-  rule stated deterministically with zero RNG draws** (this document). ✅ by construction on merge.
-- **M50.1 — Engine.** Packed encoding + decoders, scanRuns + creation resolver, activation worklist +
-  `wrappedArmed`, `stageSwap`/`swapIsLegal`, all combos, `lastClearedBy`/`lastCreated`, extended
-  `immediateScore`/`deterministicValue`. **Gate: directed tests for every creation shape (incl. priority +
-  cascade spawn), every activation (incl. the two-step wrapped timeline + stable-board-never-armed
-  invariant), every combo, chain reactions; the 20-seed × 30-move invariant sweep (stable, playable,
-  armed-free, packed values valid); a deterministicValue rng-state-snapshot test on a specials-rich board;
-  C#↔TS parity checksum RE-PINNED via the node harness — committed to `tools/cf_parity.mjs` this time.**
-  No training before this gate. (~60% of the milestone; the `.pg` grows ~490 → ~850 lines.)
+- **M50.0 — Rules lock.** ✅ 2026-07-24. §2 of this PRD reviewed against the M49 proportional-scoring lock.
+  **Gate: every rule stated deterministically with zero RNG draws** — plus the owner's fire-only scoring
+  amendment folded in before any engine code depended on the old creation-bonus lock.
+- **M50.1 — Engine.** ✅ SHIPPED 2026-07-24. Packed encoding + decoders, run-recording scan + creation
+  resolver, activation worklist + armed wrapped, `stageSwap`/`swapIsLegal`, all combos,
+  `lastClearedBy`/`lastCreated` + per-move creation/fired telemetry, extended
+  `immediateScore`/`deterministicValue` (run a REAL step-0 clearStep / full deterministic cascade and
+  restore everything). **Gate: directed tests for every creation shape (incl. priority + cascade spawn),
+  every activation (incl. the two-step wrapped timeline + stable-board-never-armed invariant), every combo,
+  chain reactions; the 20-seed × 30-move invariant sweep; a planning-purity test (no RNG, byte-identical
+  state) on a specials-rich board; C#↔TS parity checksum RE-PINNED via the node harness — committed to
+  `tools/cf_parity.mjs`.** No training before this gate.
+  *Gate result: 42 CrazyFruits tests green. Hand-computed exact scores: striped row-fire 80 · chain
+  striped→striped 150 · wrapped first-fire 100 (then >100 with the armed re-fire) · bomb+plain (n+1)·10 ·
+  bomb+bomb 640 · striped+striped 150 · striped+wrapped 390 · wrapped+wrapped 250 · bomb+striped conversion
+  220 · passive bomb = row + most-frequent-type, computed dynamically. Parity re-pin 533753109 (score
+  85650, and the seeded episode exercises creation, chains, combos AND a mid-episode reshuffle — the first
+  ever observed — byte-identically). Random's 1,000-move score rose 70990 → 85650 (+21%): the predicted
+  auto-fire floor-raise, to be re-measured properly in M50.2.*
 - **M50.2 — Env/obs + baselines.** 928-float observation + labels + plane tests; normalizer K and ÷300
   picked from measured per-move histograms; expectimax-2 + specials-greedy tiers; `--baselines 500` table.
   **Gates: (a) ordering expectimax-2 ≥ expectimax-1 ≥ greedy > random, CI-separated where claimed; (b) a
@@ -183,6 +199,11 @@ training wall-clock ≈ 2–3× M49.3. Roughly 2–3 focused sessions + one trai
 Locked constants addendum (§3.8): human play = **30-move rounds** (same framing as the trained episodes;
 round-over screen shows the measured tier bars) · deadlock **reshuffles, never ends the game** (measured:
 zero deadlocks in every seeded run; a bomb makes deadlock impossible).
+
+Locked constants addendum (owner, fire-only scoring): game score has **NO creation bonuses**; the
+**+40/+60/+100** values live in the training env's `ShapeCreationRewards` term (reward-only, train env
+only); per-move engine telemetry `moveCreatedStriped/Wrapped/Bombs` + `moveSpecialsFired` feeds shaping and
+the usage gates.
 
 ## 6. Risks
 1. **Rules under-specification breeding parity bugs** — killed first by M50.0: every ambiguity the sources

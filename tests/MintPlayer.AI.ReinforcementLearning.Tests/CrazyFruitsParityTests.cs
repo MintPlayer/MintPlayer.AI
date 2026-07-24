@@ -10,8 +10,11 @@ namespace MintPlayer.AI.ReinforcementLearning.Tests;
 /// </summary>
 public class CrazyFruitsParityTests
 {
-    // Verified 2026-07-24 against the TS twin: `node cf_parity.mjs` → checksum=78377593, score=70990.
-    private const long PinnedChecksum = 78_377_593;
+    // Verified 2026-07-24 against the TS twin: `node tools/cf_parity.mjs` (committed harness).
+    // M49 (no specials) pinned 78377593/score 70990; M50 specials re-pin: checksum=533753109, score=85650,
+    // reshuffles=1 — random play gains ~21% from auto-firing specials, and the episode exercises creation,
+    // chains, combos AND a mid-episode reshuffle byte-identically on both sides.
+    private const long PinnedChecksum = 533_753_109;
 
     [Fact]
     public void RandomEpisode_ChecksumMatchesTheTsTwin()

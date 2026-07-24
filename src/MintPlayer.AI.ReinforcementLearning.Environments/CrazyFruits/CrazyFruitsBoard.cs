@@ -17,9 +17,10 @@ public sealed class CrazyFruitsBoard
     public const int FruitTypes = 6;
     public const int Cells = Size * Size;
     public const int ActionCount = 2 * Size * (Size - 1); // 112
-    // 672: 6 one-hot planes + would-match plane + 2 per-action feature planes (immediate score,
-    // deterministic cascade value — the exercised Risk-1 mitigation, PRD §3.4/§6).
-    public const int ObservationSize = (FruitTypes + 1) * Cells + 2 * ActionCount;
+    public const int SpecialKinds = 4; // stripedH, stripedV, wrapped, bomb (armed is internal-only)
+    // 928: 6 fruit planes + 4 kind planes + would-act plane + 2 per-action feature planes (immediate score,
+    // deterministic cascade value ÷300 — SPECIALS PRD §3.5).
+    public const int ObservationSize = (FruitTypes + SpecialKinds + 1) * Cells + 2 * ActionCount;
 
     private readonly PgCrazyFruits _core = new();
 
@@ -35,10 +36,22 @@ public sealed class CrazyFruitsBoard
     public int LastCascadeSteps => _core.lastCascadeSteps;
     public int Reshuffles => _core.reshuffles;
 
-    /// <summary>Fruit type (1..6) at row-major <paramref name="cell"/>.</summary>
-    public int Fruit(int cell) => _core.grid[cell];
+    /// <summary>Fruit type (1..6; 0 for the colorless bomb) at row-major <paramref name="cell"/>.</summary>
+    public int Fruit(int cell) => PolyglotProgram.cfFruitOf(_core.grid[cell]);
 
-    /// <summary>Row-major snapshot of the grid (values 1..6).</summary>
+    /// <summary>Special kind at <paramref name="cell"/>: 0 none · 1 stripedH · 2 stripedV · 3 wrapped · 4 bomb.</summary>
+    public int Kind(int cell) => PolyglotProgram.cfKindOf(_core.grid[cell]);
+
+    /// <summary>Raw packed value (kind·16 + type) at <paramref name="cell"/> — for tests/serialization.</summary>
+    public int Packed(int cell) => _core.grid[cell];
+
+    // Per-move specials telemetry (valid after ApplySwap; the specials-usage gates + training shaping read these).
+    public int MoveCreatedStriped => _core.moveCreatedStriped;
+    public int MoveCreatedWrapped => _core.moveCreatedWrapped;
+    public int MoveCreatedBombs => _core.moveCreatedBombs;
+    public int MoveSpecialsFired => _core.moveSpecialsFired;
+
+    /// <summary>Row-major snapshot of the grid (PACKED values — kind·16 + type).</summary>
     public int[] GridSnapshot()
     {
         var grid = new int[Cells];
@@ -58,7 +71,7 @@ public sealed class CrazyFruitsBoard
         return mask;
     }
 
-    public bool IsLegal(int action) => _core.swapProducesMatch(action);
+    public bool IsLegal(int action) => _core.swapIsLegal(action);
     public bool HasLegalSwap() => _core.hasLegalSwap();
     public bool AnyMatchOnBoard() => _core.anyMatchOnBoard();
 

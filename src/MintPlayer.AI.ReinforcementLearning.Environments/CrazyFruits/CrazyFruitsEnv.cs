@@ -30,6 +30,8 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
     /// <summary>Plain-language name per swap action (56 horizontal then 56 vertical).</summary>
     public static readonly IReadOnlyList<string> ActionLabels = BuildActionLabels();
 
+    private static readonly string[] KindNames = ["striped (row blast)", "striped (column blast)", "wrapped", "sugar bomb"];
+
     private static string[] BuildObservationLabels()
     {
         const int size = CrazyFruitsBoard.Size;
@@ -38,13 +40,17 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
             for (int r = 0; r < size; r++)
                 for (int c = 0; c < size; c++)
                     labels.Add($"{FruitNames[f]} at row {r + 1}, column {c + 1} (1/0)");
+        for (int k = 0; k < CrazyFruitsBoard.SpecialKinds; k++)
+            for (int r = 0; r < size; r++)
+                for (int c = 0; c < size; c++)
+                    labels.Add($"{KindNames[k]} at row {r + 1}, column {c + 1} (1/0)");
         for (int r = 0; r < size; r++)
             for (int c = 0; c < size; c++)
-                labels.Add($"Row {r + 1}, column {c + 1} can join a match after one swap (1/0)");
+                labels.Add($"Row {r + 1}, column {c + 1} takes part in some legal move (1/0)");
         // Not ActionLabels: static field initializers run in declaration order, and this builds first.
         var actions = BuildActionLabels();
-        foreach (var label in actions) labels.Add($"Immediate points of \"{label}\" (÷100)");
-        foreach (var label in actions) labels.Add($"Guaranteed cascade points of \"{label}\" (÷100)");
+        foreach (var label in actions) labels.Add($"Immediate points of \"{label}\" (÷300)");
+        foreach (var label in actions) labels.Add($"Guaranteed cascade points of \"{label}\" (÷300)");
         return [.. labels];
     }
 
@@ -78,6 +84,18 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
     public Space<float[]> ObservationSpace { get; }
     public Space<int> ActionSpace { get; }
 
+    // ── Training-only creation shaping (owner decision 2026-07-24: specials score only when they FIRE) ──────
+    // The game score carries no creation reward, so a γ=0 learner is blind to the value of MAKING a special
+    // (the payoff lands on a later move). The TRAINING env re-adds that signal to the reward; the eval env
+    // stays plain, so every gate measures the real fire-only game score.
+
+    /// <summary>Enable the training-only creation-shaping term. Default off — a plain env scores the bare game.</summary>
+    public bool ShapeCreationRewards { get; set; }
+    /// <summary>Shaping bonus (game-score points) per striped/wrapped/bomb created, added to the reward only.</summary>
+    public float StripedShaping { get; set; } = 40f;
+    public float WrappedShaping { get; set; } = 60f;
+    public float BombShaping { get; set; } = 100f;
+
     public int MoveBudget => _moveBudget;
     public int Score => _board.Score;
     public int MovesMade => _moves;
@@ -109,7 +127,12 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
         // budget end is TRUNCATION, so the learner bootstraps from the final observation.
         bool truncated = _moves >= _moveBudget;
         _done = truncated;
-        return new StepResult<float[]>(_board.BuildObservation(), points / RewardScale, false, truncated, EnvInfo.Empty);
+        float reward = points / RewardScale;
+        if (ShapeCreationRewards)
+            reward += (StripedShaping * _board.MoveCreatedStriped
+                     + WrappedShaping * _board.MoveCreatedWrapped
+                     + BombShaping * _board.MoveCreatedBombs) / RewardScale;
+        return new StepResult<float[]>(_board.BuildObservation(), reward, false, truncated, EnvInfo.Empty);
     }
 
     public bool[] CurrentActionMask() => _board.LegalMask();

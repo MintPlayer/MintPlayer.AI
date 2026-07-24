@@ -27,6 +27,16 @@ public class CrazyFruitsEngineTests
 
     // ── Board invariants (PRD §3.3/§3.5) ────────────────────────────────────────────────────────────────────
 
+    private static void AssertPackedValid(CrazyFruitsBoard board)
+    {
+        for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
+        {
+            Assert.InRange(board.Kind(i), 0, 4); // never empty, never armed on a stable board
+            if (board.Kind(i) == 4) Assert.Equal(0, board.Fruit(i));
+            else Assert.InRange(board.Fruit(i), 1, CrazyFruitsBoard.FruitTypes);
+        }
+    }
+
     [Fact]
     public void InitialBoard_HasNoMatches_AndALegalSwap()
     {
@@ -36,7 +46,7 @@ public class CrazyFruitsEngineTests
             board.Reset(seed);
             Assert.False(board.AnyMatchOnBoard());
             Assert.True(board.HasLegalSwap());
-            foreach (int f in board.GridSnapshot()) Assert.InRange(f, 1, CrazyFruitsBoard.FruitTypes);
+            AssertPackedValid(board);
         }
     }
 
@@ -58,7 +68,7 @@ public class CrazyFruitsEngineTests
                 scoreBefore = board.Score;
                 Assert.False(board.AnyMatchOnBoard());         // cascades fully resolved
                 Assert.True(board.HasLegalSwap());             // deadlock defined out of existence
-                foreach (int f in board.GridSnapshot()) Assert.InRange(f, 1, CrazyFruitsBoard.FruitTypes);
+                AssertPackedValid(board);
             }
             Assert.Equal(30, board.MovesMade);
         }
@@ -80,24 +90,28 @@ public class CrazyFruitsEngineTests
 
     // ── Mask == brute force (PRD M49.1 gate) ────────────────────────────────────────────────────────────────
 
-    // Independent re-implementation: decode the documented action layout, swap on a copy, scan the whole
-    // board for any 3+ run. On a stable (match-free) board this is equivalent to the engine's
-    // through-the-swapped-cells test, because any new run must contain a changed cell.
+    // Independent re-implementation of the legality rule over PACKED values: typewise 3+ line after the
+    // swap, OR either cell is a bomb, OR both cells are specials. On a stable board the line check through
+    // the whole board is equivalent to the engine's through-the-swapped-cells test.
     private static bool BruteforceLegal(int[] g, int action)
     {
+        static int F(int v) => v % 16;
+        static int K(int v) => v / 16;
         int a, b;
         if (action < 56) { int r = action / 7, c = action % 7; a = r * Size + c; b = a + 1; }
         else { int v = action - 56; int r = v / Size, c = v % Size; a = r * Size + c; b = a + Size; }
-        if (g[a] == g[b]) return false;
+        if (K(g[a]) == 4 || K(g[b]) == 4) return true;                      // a bomb consumes any swap
+        if (K(g[a]) != 0 && K(g[b]) != 0) return true;                      // special + special = combo
+        if (F(g[a]) == F(g[b])) return false;
         var copy = (int[])g.Clone();
         (copy[a], copy[b]) = (copy[b], copy[a]);
         for (int r = 0; r < Size; r++)
             for (int c = 0; c + 2 < Size; c++)
-                if (copy[r * Size + c] != 0 && copy[r * Size + c] == copy[r * Size + c + 1] && copy[r * Size + c] == copy[r * Size + c + 2])
+                if (F(copy[r * Size + c]) != 0 && F(copy[r * Size + c]) == F(copy[r * Size + c + 1]) && F(copy[r * Size + c]) == F(copy[r * Size + c + 2]))
                     return true;
         for (int c = 0; c < Size; c++)
             for (int r = 0; r + 2 < Size; r++)
-                if (copy[r * Size + c] != 0 && copy[r * Size + c] == copy[(r + 1) * Size + c] && copy[r * Size + c] == copy[(r + 2) * Size + c])
+                if (F(copy[r * Size + c]) != 0 && F(copy[r * Size + c]) == F(copy[(r + 1) * Size + c]) && F(copy[r * Size + c]) == F(copy[(r + 2) * Size + c]))
                     return true;
         return false;
     }
@@ -223,10 +237,13 @@ public class CrazyFruitsEngineTests
         var obs = board.BuildObservation();
         Assert.Equal(CrazyFruitsBoard.ObservationSize, obs.Length);
 
-        var grid = board.GridSnapshot();
         for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
+        {
             for (int f = 1; f <= CrazyFruitsBoard.FruitTypes; f++)
-                Assert.Equal(grid[i] == f ? 1f : 0f, obs[(f - 1) * CrazyFruitsBoard.Cells + i]);
+                Assert.Equal(board.Fruit(i) == f ? 1f : 0f, obs[(f - 1) * CrazyFruitsBoard.Cells + i]);
+            for (int k = 1; k <= CrazyFruitsBoard.SpecialKinds; k++)
+                Assert.Equal(board.Kind(i) == k ? 1f : 0f, obs[(CrazyFruitsBoard.FruitTypes + k - 1) * CrazyFruitsBoard.Cells + i]);
+        }
 
         var expected = new bool[CrazyFruitsBoard.Cells];
         var mask = board.LegalMask();
@@ -237,16 +254,17 @@ public class CrazyFruitsEngineTests
             expected[cellA] = true;
             expected[cellB] = true;
         }
+        int wmOffset = (CrazyFruitsBoard.FruitTypes + CrazyFruitsBoard.SpecialKinds) * CrazyFruitsBoard.Cells;
         for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
-            Assert.Equal(expected[i] ? 1f : 0f, obs[CrazyFruitsBoard.FruitTypes * CrazyFruitsBoard.Cells + i]);
+            Assert.Equal(expected[i] ? 1f : 0f, obs[wmOffset + i]);
 
-        // Per-action feature planes (the exercised Risk-1 mitigation): immediate score and deterministic
-        // cascade value, ÷100, matching the facade's scripted-baseline queries exactly.
-        int baseOffset = (CrazyFruitsBoard.FruitTypes + 1) * CrazyFruitsBoard.Cells;
+        // Per-action feature planes: immediate score and deterministic cascade value, ÷300, matching the
+        // facade's scripted-baseline queries exactly.
+        int baseOffset = (CrazyFruitsBoard.FruitTypes + CrazyFruitsBoard.SpecialKinds + 1) * CrazyFruitsBoard.Cells;
         for (int a = 0; a < CrazyFruitsBoard.ActionCount; a++)
         {
-            Assert.Equal(board.ImmediateScore(a) / 100f, obs[baseOffset + a], 5);
-            float expectedDet = mask[a] ? board.DeterministicValue(a) / 100f : 0f;
+            Assert.Equal(board.ImmediateScore(a) / 300f, obs[baseOffset + a], 5);
+            float expectedDet = mask[a] ? board.DeterministicValue(a) / 300f : 0f;
             Assert.Equal(expectedDet, obs[baseOffset + CrazyFruitsBoard.ActionCount + a], 5);
         }
     }

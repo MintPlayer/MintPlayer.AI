@@ -35,7 +35,7 @@ public class CrazyFruitsEnvTests
             Assert.False(step.Terminated);                  // the board never dies
             Assert.Equal(move == 4, step.Truncated);        // budget end truncates
             Assert.Equal((env.Score - scoreBefore) / CrazyFruitsEnv.RewardScale, step.Reward, 5);
-            Assert.True(step.Reward >= 1f - 1e-6);          // a legal swap clears at least a 3-line
+            Assert.True(step.Reward > 0);                   // every legal move clears something (a bomb swap can be < a 3-line)
         }
         Assert.Throws<InvalidOperationException>(() => env.Step(0));
     }
