@@ -125,7 +125,9 @@ No controller, no server net (the modern default: snake/mountaincar/fruitcake/ch
 - `crazy-fruits-director.ts` — client-side watch-AI state machine (tier: random/greedy/expectimax/net).
 - `crazy-fruits.ts/.html/.scss` + `crazy-fruits-render.ts` — component (signals, `mode` = human/watch) and
   Canvas 2D renderer, rAF outside Angular's zone; fruit-stall theme (bunting, strawberry accent, big readable
-  cartoon fruits — original art, no KidCity/Belgacom branding or logo reuse).
+  cartoon fruits — original art, no KidCity/Belgacom branding or logo reuse). The page carries an on-page
+  credit paragraph (owner request 2026-07-24): a tribute to Crazy Fruits from KidCity.be, the Flash-era
+  Belgian children's portal, both of which no longer exist today.
 Registration: route in `app.routes.ts`, nav link in `app.html`, card in `home/home.ts`.
 
 ### 3.10 Input — one pointer-events path for smartphones AND desktops
