@@ -1,5 +1,6 @@
 using MintPlayer.AI.ReinforcementLearning.Campaigns;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.CrazyFruits;
 
@@ -43,9 +44,12 @@ internal static class CrazyFruitsLab
             LearningRate = learningRate, EpsilonStart = explore, Hidden = hidden, Gamma = gamma,
             Grow = grow, GrowEvery = growEvery,
         };
+        // Creation shaping on the TRAIN env only (SPECIALS PRD §3.5: fire-only game score means γ=0 needs a
+        // reward-side creation signal); the eval env scores the bare game, so gates stay honest.
+        bool shape = !a.Has("--no-shape");
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             services => services.AddCrazyFruitsDqnCampaign(
-                trainEnv: new CrazyFruitsEnv(moveBudget),
+                trainEnv: new CrazyFruitsEnv(moveBudget) { ShapeCreationRewards = shape },
                 evalEnv: new CrazyFruitsEnv(moveBudget),
                 options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "crazyfruits-dqn.csv")));
@@ -64,13 +68,24 @@ internal static class CrazyFruitsLab
         {
             RunPolicy("random", episodes, moveBudget, (board, move) => board.RandomAction(seed ^ 0xC0FFEE, move)),
             RunPolicy("greedy", episodes, moveBudget, (board, _) => board.GreedyAction()),
+            RunPolicy("specials-greedy", episodes, moveBudget, (board, _) => board.SpecialsGreedyAction()),
             RunPolicy("expectimax-1", episodes, moveBudget, (board, _) => board.ExpectimaxAction()),
+            RunPolicy("expectimax-2", episodes, moveBudget, (board, _) => board.Expectimax2Action()),
         };
 
+        DuelingQNet? net = null;
         if (File.Exists(netPath))
         {
             using var stream = File.OpenRead(netPath);
-            var net = DuelingQNetCheckpoint.Load(stream);
+            net = DuelingQNetCheckpoint.Load(stream);
+            if (net.InputSize != CrazyFruitsEnv.ObservationSize)
+            {
+                Console.WriteLine($"  (net at {netPath} has input width {net.InputSize} ≠ {CrazyFruitsEnv.ObservationSize} — stale pre-specials checkpoint, skipped)");
+                net = null;
+            }
+        }
+        if (net is not null)
+        {
             var agent = new GreedyQAgent(net, CrazyFruitsEnv.ActionCount);
             var env = new CrazyFruitsEnv(moveBudget);
             double sum = 0, sumSq = 0;
@@ -88,7 +103,7 @@ internal static class CrazyFruitsLab
             }
             results.Add(Summarize($"net ({Path.GetFileName(netPath)})", episodes, sum, sumSq));
         }
-        else
+        else if (!File.Exists(netPath))
         {
             Console.WriteLine($"  (no net at {netPath} — scripted baselines only)");
         }
@@ -98,20 +113,30 @@ internal static class CrazyFruitsLab
 
         var random = results[0];
         var greedy = results[1];
+        var e1 = results[3];
+        var e2 = results[4];
         Console.WriteLine($"greedy vs random: {(greedy.Mean - greedy.Ci > random.Mean + random.Ci ? "CI-SEPARATED" : "OVERLAPPING")} " +
                           $"(+{100 * (greedy.Mean - random.Mean) / random.Mean:F0}%)");
-        if (results.Count == 4)
+        // SPECIALS PRD M50.2 gates: tier ordering + the pre-training env validation (specials must not be
+        // so self-firing that random flattens the skill landscape) + the M50.3 escalation trigger input.
+        Console.WriteLine($"expectimax-2 vs expectimax-1: {100 * (e2.Mean - e1.Mean) / e1.Mean:+0.0;-0.0}% (escalation trigger fires above +10%)");
+        Console.WriteLine($"env validation: random = {random.Mean / e2.Mean:P0} of expectimax-2 " +
+                          $"({(random.Mean < 0.70 * e2.Mean ? "OK (< 70%)" : "TOO SELF-FIRING (≥ 70%) — fix scoring before training")})");
+        if (results.Count == 6)
         {
-            var net = results[3];
-            Console.WriteLine($"net vs random: +{100 * (net.Mean - random.Mean) / random.Mean:F1}% " +
-                              $"({(net.Mean - net.Ci > random.Mean + random.Ci ? "CI-SEPARATED" : "OVERLAPPING")}; gate ≥ +30%, separated)");
-            Console.WriteLine($"net vs greedy: {100 * (net.Mean - greedy.Mean) / greedy.Mean:+0.0;-0.0}% (reported, not gated)");
+            var netRow = results[5];
+            double gapShare = (netRow.Mean - random.Mean) / (e1.Mean - random.Mean);
+            Console.WriteLine($"net vs random: +{100 * (netRow.Mean - random.Mean) / random.Mean:F1}% " +
+                              $"({(netRow.Mean - netRow.Ci > random.Mean + random.Ci ? "CI-SEPARATED" : "OVERLAPPING")}; gate ≥ +30%, separated)");
+            Console.WriteLine($"net gap share (random→expectimax-1): {gapShare:P0} (gate ≥ 64% — the M49 ratio)");
+            Console.WriteLine($"net vs greedy: {100 * (netRow.Mean - greedy.Mean) / greedy.Mean:+0.0;-0.0}% (reported, not gated)");
         }
     }
 
     private static (string, double, double) RunPolicy(string name, int episodes, int moveBudget, Func<CrazyFruitsBoard, int, int> policy)
     {
         double sum = 0, sumSq = 0;
+        long created = 0, fired = 0;
         for (int e = 0; e < episodes; e++)
         {
             // Reset through the env seed path so every policy sees the same boards as the net eval.
@@ -119,10 +144,15 @@ internal static class CrazyFruitsLab
             env.Reset((ulong)(5_000 + e));
             var b = env.Board;
             for (int move = 0; move < moveBudget; move++)
+            {
                 b.ApplySwap(policy(b, move));
+                created += b.MoveCreatedStriped + b.MoveCreatedWrapped + b.MoveCreatedBombs;
+                fired += b.MoveSpecialsFired;
+            }
             sum += b.Score;
             sumSq += (double)b.Score * b.Score;
         }
+        Console.WriteLine($"  {name,-28} specials/episode: created {(double)created / episodes:F2}, fired {(double)fired / episodes:F2}");
         return Summarize(name, episodes, sum, sumSq);
     }
 

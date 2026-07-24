@@ -112,6 +112,15 @@ public sealed class CrazyFruitsBoard
     /// <summary>Legal swap maximizing the deterministic cascade value (gravity-only, refill left empty).</summary>
     public int ExpectimaxAction() => _core.expectimaxAction();
 
+    /// <summary>2-ply deterministic tier (beam-8): the baseline that can plan create→fire (SPECIALS PRD §3.7).</summary>
+    public int Expectimax2Action() => _core.expectimax2Action();
+
+    /// <summary>Greedy over the creation-shaped immediate score — prefers building specials.</summary>
+    public int SpecialsGreedyAction() => _core.specialsGreedyAction();
+
+    /// <summary>Immediate step-0 points plus the creation-shaping weights (the specials-greedy signal).</summary>
+    public int ImmediateScoreShaped(int action) => _core.immediateScoreShaped(action);
+
     /// <summary>Deterministic cascade value of a swap (consumes no RNG; restores the board).</summary>
     public int DeterministicValue(int action) => _core.deterministicValue(action);
 

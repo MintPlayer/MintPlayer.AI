@@ -744,6 +744,46 @@ class PgCrazyFruits {
     return best
   }
 
+  // immediateScore plus the creation-shaping weights (+40/+60/+100) — the "specials-greedy" tier's signal:
+  // it values MAKING a special the way the training reward does, where plain greedy only sees fired points.
+  fn immediateScoreShaped(action: i32): i32 {
+    if !this.swapIsLegal(action) { return 0 }
+    var saved: List<i32> = List<i32>()
+    for i in 0..Cells { saved.add(this.grid[i]) }
+    let savedA = this.moveCellA
+    let savedB = this.moveCellB
+    let savedCombo = this.stagedCombo
+    let savedCS = this.moveCreatedStriped
+    let savedCW = this.moveCreatedWrapped
+    let savedCB = this.moveCreatedBombs
+    let savedSF = this.moveSpecialsFired
+    this.stageSwap(action)
+    var marked: List<bool> = List<bool>()
+    for i in 0..Cells { marked.add(false) }
+    var pts = this.clearStep(0, marked)
+    pts += 40 * this.moveCreatedStriped + 60 * this.moveCreatedWrapped + 100 * this.moveCreatedBombs
+    for i in 0..Cells { this.grid[i] = saved[i] }
+    this.moveCellA = savedA
+    this.moveCellB = savedB
+    this.stagedCombo = savedCombo
+    this.moveCreatedStriped = savedCS
+    this.moveCreatedWrapped = savedCW
+    this.moveCreatedBombs = savedCB
+    this.moveSpecialsFired = savedSF
+    return pts
+  }
+
+  // "Specials-greedy" tier: greedy over the shaped immediate score — prefers building specials.
+  fn specialsGreedyAction(): i32 {
+    var best = -1
+    var bestScore = 0
+    for a in 0..ActionCount {
+      let s = this.immediateScoreShaped(a)
+      if s > bestScore { bestScore = s; best = a }
+    }
+    return best
+  }
+
   // Full swap value counting only the deterministic part of the cascade (vacated cells left EMPTY — refill
   // is unknowable noise). Specials create, fire, chain and re-fire deterministically inside. Restores the
   // board and move context; consumes no RNG.
@@ -781,6 +821,69 @@ class PgCrazyFruits {
       if !this.swapIsLegal(a) { continue }
       let v = this.deterministicValue(a)
       if v > bestVal { bestVal = v; best = a }
+    }
+    return best
+  }
+
+  // 2-ply expectimax tier (SPECIALS PRD §3.7): the one baseline that can see create→fire — it quantifies the
+  // hold-a-special option value γ=0 is blind to (its gap over expectimax-1 is the escalation trigger).
+  // Beam-8 over 1-ply values, then the best deterministic follow-up on the settled (refill-free) board.
+  fn expectimax2Action(): i32 {
+    let beamWidth = 8
+
+    var v1: List<i32> = List<i32>()
+    for a in 0..ActionCount { v1.add(this.deterministicValue(a)) }
+
+    // Top-Beam legal actions by 1-ply value (deterministicValue is 0 for illegal, and a legal move always
+    // clears something, so v1 > 0 ⇔ legal).
+    var beam: List<i32> = List<i32>()
+    for _pick in 0..beamWidth {
+      var bestA = -1
+      var bestV = 0
+      for a in 0..ActionCount {
+        var taken = false
+        for j in 0..beam.count { if beam[j] == a { taken = true } }
+        if !taken && v1[a] > bestV { bestV = v1[a]; bestA = a }
+      }
+      if bestA < 0 { break }
+      beam.add(bestA)
+    }
+    if beam.count == 0 { return -1 }
+
+    var best = beam[0]
+    var bestTotal = 0
+    for bi in 0..beam.count {
+      let a = beam[bi]
+      var saved: List<i32> = List<i32>()
+      for i in 0..Cells { saved.add(this.grid[i]) }
+      let savedA = this.moveCellA
+      let savedB = this.moveCellB
+      let savedCombo = this.stagedCombo
+      let savedSteps = this.lastCascadeSteps
+      let savedCS = this.moveCreatedStriped
+      let savedCW = this.moveCreatedWrapped
+      let savedCB = this.moveCreatedBombs
+      let savedSF = this.moveSpecialsFired
+
+      this.stageSwap(a)
+      let first = this.resolveCascades(false)
+      var follow = 0
+      for a2 in 0..ActionCount {
+        let v2 = this.deterministicValue(a2)
+        if v2 > follow { follow = v2 }
+      }
+
+      for i in 0..Cells { this.grid[i] = saved[i] }
+      this.moveCellA = savedA
+      this.moveCellB = savedB
+      this.stagedCombo = savedCombo
+      this.lastCascadeSteps = savedSteps
+      this.moveCreatedStriped = savedCS
+      this.moveCreatedWrapped = savedCW
+      this.moveCreatedBombs = savedCB
+      this.moveSpecialsFired = savedSF
+
+      if first + follow > bestTotal { bestTotal = first + follow; best = a }
     }
     return best
   }

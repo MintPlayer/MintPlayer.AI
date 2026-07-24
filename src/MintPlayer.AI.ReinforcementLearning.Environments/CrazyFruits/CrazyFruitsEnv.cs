@@ -18,8 +18,10 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
 {
     public const int ObservationSize = CrazyFruitsBoard.ObservationSize; // 448
     public const int ActionCount = CrazyFruitsBoard.ActionCount;         // 112
-    /// <summary>Reward normalization: points per plain 3-match, so rewards sit near 1 (PRD §3.5).</summary>
-    public const float RewardScale = 30f;
+    /// <summary>Reward normalization. Re-picked for specials (SPECIALS PRD §3.5): random-play means ~86
+    /// points/move with auto-firing specials, so ÷100 keeps a typical move ≈ O(1) and a bomb+bomb board
+    /// clear a manageable (Huber-linear) tail instead of a 50σ TD target.</summary>
+    public const float RewardScale = 100f;
 
     // Matches the web renderer's picks from the FruitCake art catalog (crazy-fruits-render.ts FRUIT_TIER).
     private static readonly string[] FruitNames = ["strawberry", "grape", "orange", "pear", "pineapple", "watermelon"];

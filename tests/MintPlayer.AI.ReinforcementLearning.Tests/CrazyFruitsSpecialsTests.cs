@@ -233,6 +233,43 @@ public class CrazyFruitsSpecialsTests
         Assert.Equal((8 + outsideRow5) * 10, board.ImmediateScore(VSwap(4, 4)));
     }
 
+    // ── Baseline tiers (M50.2 gates) ────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Greedy_ProvablyPicksTheBombSwap()
+    {
+        // A plain 3-match (30 pts) exists, but any bomb+neighbour swap clears ~22 cells (~220 pts).
+        var board = BoardWith((5, 5, BOMB), (7, 0, 4), (7, 1, 4), (6, 2, 4));
+        int action = board.GreedyAction();
+        var (a, b) = board.SwapCells(action);
+        Assert.True(board.Kind(a) == 4 || board.Kind(b) == 4, "greedy must take a bomb swap over the 3-match");
+    }
+
+    [Fact]
+    public void SpecialsGreedy_PrefersBuildingAStriped_WherePlainGreedyTakesTheRowBlast()
+    {
+        // Two options: fire an existing striped via a 3-match (80 pts immediate; shaped 80) vs make a 4-run
+        // (60 pts immediate; shaped 60+40=100). Plain greedy takes the blast, specials-greedy builds.
+        var board = BoardWith(
+            (5, 3, 4), (4, 4, 4), (5, 5, SH4),                  // striped row-fire option (immediate 80)
+            (7, 0, 5), (7, 1, 5), (7, 3, 5), (6, 2, 5));        // 4-run creation option (immediate 60)
+        Assert.Equal(80, board.ImmediateScore(VSwap(4, 4)));
+        Assert.Equal(60, board.ImmediateScore(VSwap(6, 2)));
+        Assert.Equal(100, board.ImmediateScoreShaped(VSwap(6, 2)));
+        Assert.Equal(VSwap(4, 4), board.GreedyAction());
+        Assert.Equal(VSwap(6, 2), board.SpecialsGreedyAction());
+    }
+
+    [Fact]
+    public void Expectimax2_ReturnsALegalAction_AndRestoresTheBoard()
+    {
+        var board = BoardWith((5, 5, BOMB), (5, 6, SH4), (2, 2, WR4));
+        var before = board.GridSnapshot();
+        int action = board.Expectimax2Action();
+        Assert.True(board.IsLegal(action));
+        Assert.Equal(before, board.GridSnapshot());
+    }
+
     // ── Planning purity + invariants ────────────────────────────────────────────────────────────────────────
 
     [Fact]

@@ -173,12 +173,20 @@ cell** · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI**
   85650, and the seeded episode exercises creation, chains, combos AND a mid-episode reshuffle — the first
   ever observed — byte-identically). Random's 1,000-move score rose 70990 → 85650 (+21%): the predicted
   auto-fire floor-raise, to be re-measured properly in M50.2.*
-- **M50.2 — Env/obs + baselines.** 928-float observation + labels + plane tests; normalizer K and ÷300
-  picked from measured per-move histograms; expectimax-2 + specials-greedy tiers; `--baselines 500` table.
+- **M50.2 — Env/obs + baselines.** ✅ SHIPPED 2026-07-24. 928-float observation + labels + plane tests;
+  normalizer K=100 (random means ~86 pts/move) and ÷300 planes; expectimax-2 (beam-8) + specials-greedy
+  tiers, single-sourced in the `.pg`; `--baselines 500` table + per-tier specials usage stats.
   **Gates: (a) ordering expectimax-2 ≥ expectimax-1 ≥ greedy > random, CI-separated where claimed; (b) a
   directed board where greedy provably picks the bomb swap; (c) PRE-TRAINING ENV VALIDATION — if
   random-with-specials ≥ 0.70 × expectimax-2, specials are too self-firing to be skill-differentiating: fix
   scoring before any training** (the flat-landscape guard).
+  *Gate result — ALL PASS, and specials dramatically widened the skill landscape: random 2612.2±67.5
+  (3.6 created / 2.7 fired per ep — the auto-fire floor) · greedy 3446.0±99.6 (**+32%** — was +6% without
+  specials) · specials-greedy 3850.4±113.8 (+47%) · expectimax-1 5841.2±159.8 (+124%) · expectimax-2
+  8368.8±177.8 (**+220%**). Env validation: random = **31%** of expectimax-2 (< 70% ✓). Expectimax-2 gap
+  over expectimax-1 = **+43.3%** (≫ 10%): plan-ahead/hold-for-combo value is real — the M50.3 escalation
+  trigger is ARMED. Directed tier tests: greedy provably takes the bomb swap; specials-greedy provably
+  builds a striped where plain greedy fires the row.*
 - **M50.3 — Retrain (from scratch — input width changed).** γ=0, ~300–500k moves (2–3× M49; same
   architecture — capacity was never the lever). **Gates: (1) ≥ +30% over random-with-specials, 500 episodes,
   CI-separated; (2) no-regression — the net captures ≥ 64% of the random→expectimax-1 gap (M49's ratio);
