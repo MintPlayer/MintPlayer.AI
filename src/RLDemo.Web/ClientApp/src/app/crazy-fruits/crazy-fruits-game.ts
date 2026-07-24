@@ -105,6 +105,8 @@ export class CrazyFruitsGame {
 
     const board = this.board;
     const pre = [...board.grid];
+    // Any attempted swap — legal or reverted — consumes the selection (standard match-3 feel).
+    this.selected = -1;
     if (!board.swapProducesMatch(action)) {
       this.queue.push(
         { kind: 'swap', a: cellA, b: cellB, fruitA: pre[cellA], fruitB: pre[cellB], grid: pre, duration: SWAP_MS },
@@ -145,7 +147,6 @@ export class CrazyFruitsGame {
       this.best = board.score;
       localStorage.setItem('crazyfruits.best', String(this.best));
     }
-    this.selected = -1;
     return true;
   }
 

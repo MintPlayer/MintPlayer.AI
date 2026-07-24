@@ -1,10 +1,9 @@
 # Crazy Fruits (match-3) — PRD
 
-**Status:** 🟢 built 2026-07-24 on `m49-crazy-fruits` — engine/env/campaign/net/web all shipped, every falsifiable
-gate green (net **+57.2%** over random, CI-separated, on the 500-episode protocol); the M49.4/M49.5 live
-in-browser device check is the one pending item (the dev host was down during the build; verified headlessly
-via the node browser-path simulation meanwhile). Planned 2026-07-24 (4-agent investigation: game provenance,
-repo integration map, PRD/input conventions, match-3 RL prior art).
+**Status:** ✅ SHIPPED 2026-07-24 on `m49-crazy-fruits` (PR #38) — engine/env/campaign/net/web all shipped,
+**every falsifiable gate green** incl. the live in-browser device check (net **+57.2%** over random,
+CI-separated, on the 500-episode protocol). Planned same day (4-agent investigation: game provenance, repo
+integration map, PRD/input conventions, match-3 RL prior art).
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M49 · branch `m49-crazy-fruits` · the playground's first **match-3** game (env id `crazyfruits`, type prefix `CrazyFruits`)
 
@@ -193,25 +192,30 @@ measured bars: random **2259.7±49.9** · greedy **2387.0±49.3** · expectimax-
   bar — FAIL. (3) γ=0 + the §6 Risk-1 pre-registered feature mitigation (§3.4 amendment, obs 448→672):
   **3552.5±83.3 = +57.2% over random, CI-SEPARATED — PASS**, +48.8% over greedy; expectimax-1 (4270.9) is
   the scripted ceiling = future-training headroom.*
-- **M49.4 — Web game (human play).** 🟡 built 2026-07-24, live device check pending. Component + canvas
+- **M49.4 — Web game (human play).** ✅ SHIPPED 2026-07-24. Component + canvas
   renderer (fruit-stall theme) + pointer input (both gestures, §3.10) + animations + registration (route,
   nav, home card). Design addition: the engine grew a **stepwise move API** (`clearStep`/`finishMove`;
   `applySwap` drains the same loop) so the animating host and training are the same rules by construction.
   **Gate: playable end-to-end on desktop mouse AND smartphone touch — drag-swap, tap-tap, invalid-swap
   revert, cascade + reshuffle animations all function; no page scroll/zoom during play; browser smoke against
-  the running host** (host is user-run; never start/stop it — see CLAUDE.md).
-  *So far: `tsc --noEmit` clean; headless node smoke of the REAL game layer against the generated engine —
-  reverts consume nothing, 60 straight greedy moves play full swap→pop→fall(→cascade) timelines and land on
-  the engine's exact grids with every invariant held. The live desktop+smartphone pass is the remaining leg
-  (host was down throughout the build).*
-- **M49.5 — Watch AI + difficulty tiers.** 🟡 built 2026-07-24, live browser check pending. `crazyfruits-net.ts`
+  the running host.**
+  *Gate result: `tsc --noEmit` clean; headless node smoke of the REAL game layer (reverts consume nothing,
+  60 greedy moves land on engine-exact grids). LIVE Playwright run against the host, desktop (960px, mouse)
+  AND emulated smartphone (390px, `hasTouch`, real touch events): tap-tap select ring lands on the tapped
+  cell on both; a human tap-tap swap cleared a 3-line (score 30 · move 1, screenshot); mouse drag and CDP
+  touch-drag both fired the gesture (illegal picks reverted correctly, move not consumed); **window.scrollY
+  unchanged through the touch drag** (`touch-action: none` holds); zero console/page errors. Screenshot-
+  driven UX fix during the pass: a failed tap-tap swap now clears the selection like a successful one.*
+- **M49.5 — Watch AI + difficulty tiers.** ✅ SHIPPED 2026-07-24. `crazyfruits-net.ts`
   parser + director + tier picker (Random / Greedy / Expectimax / Trained net). **Gate: TS net forward parity
   with C# (the `*NetParityTests` pattern, real ckpt bytes) + a full 30-move watch episode runs in the browser
   on every tier.**
-  *So far: `CrazyFruitsNetParityTests` green (byte-level parse mirrors the TS parser line-for-line; f64-over-
-  float32 forward matches the SDK net within f32 tolerance; masked netAction legal). Node simulation of the
-  exact browser path (real shipped ckpt → TS parser → generated net): all four tiers play full legal 30-move
-  episodes; ordering reproduces (random 2379 · greedy 2520 · net 3393 · expectimax 4507 over 20 eps).*
+  *Gate result: `CrazyFruitsNetParityTests` green (byte-level parse mirrors the TS parser line-for-line;
+  f64-over-float32 forward matches the SDK net within f32 tolerance; masked netAction legal). Node simulation
+  of the exact browser path (real shipped ckpt → TS parser → generated net): all four tiers play full legal
+  30-move episodes; ordering reproduces (random 2379 · greedy 2520 · net 3393 · expectimax 4507 over 20 eps).
+  LIVE: watch mode caught mid-cascade at move 7/30 with the trained net (score 330, "+30" pop on-screen);
+  all four tier buttons exercised in-browser on desktop and mobile; zero errors.*
 
 ## 6. Risks
 1. **The net barely beats random** — the documented match-3 trap (Kamaldinov: naive DQN/PPO lost to random;

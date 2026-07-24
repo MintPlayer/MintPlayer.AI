@@ -1863,7 +1863,7 @@ previous cycle on any failure. Single-source in `snake_solver.pg`; pure-frontend
   eaten in ~30 s of watching; served chunk confirmed to carry the new code. ARCHITECTURE.md §6's stale
   "Snake uses EpisodeStreamer/SnakeController" claim fixed (snake has been client-side since M33).*
 
-## M49 — Crazy Fruits (match-3) + primitive net  *(2026-07-24; branch `m49-crazy-fruits`; see `CRAZY_FRUITS_PRD.md`)* 🟢 (built same day; live device check pending)
+## M49 — Crazy Fruits (match-3) + primitive net  *(2026-07-24; branch `m49-crazy-fruits`; PR #38; see `CRAZY_FRUITS_PRD.md`)* ✅
 
 **Why:** owner wants the KidCity (kidcity.be) Flash-era "Crazy Fruits" as a new playground game — swap 2
 adjacent fruits to line up 3+ — with a **primitively trained net** (serious training is future work), working
@@ -1900,17 +1900,20 @@ mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none
   448→672: immediate score + deterministic cascade value ÷100) → **+57.2% CI-separated PASS** (3552.5±83.3;
   +48.8% over greedy; expectimax 4270.9 = the future-training headroom). Ships
   `wwwroot/models/crazyfruits.dqn.ckpt`.*
-- **M49.4 — Web game (human play)** 🟡 (canvas fruit-stall renderer, both pointer gestures via unified Pointer
+- **M49.4 — Web game (human play)** ✅ (2026-07-24) (canvas fruit-stall renderer, both pointer gestures via unified Pointer
   Events, animations from the engine's stepwise API, route/nav/home card). **Gate:** playable on desktop mouse
   AND smartphone touch (drag-swap, tap-tap, revert, cascades); no page scroll during play; browser smoke vs
-  the running host. *Code + tsc clean + headless node smoke of the real game layer green (reverts free, 60
-  greedy moves land on engine-exact grids); the LIVE desktop+phone leg pends the user-run host (down
-  throughout the build).*
-- **M49.5 — Watch AI + tiers** 🟡 (`crazyfruits-net.ts` + director + Random/Greedy/Expectimax/net tiers).
+  the running host.
+  *Green: tsc clean + headless node smoke of the real game layer (reverts free, 60 greedy moves land on
+  engine-exact grids) + LIVE Playwright on desktop (mouse) and an emulated phone (390px, real touch events):
+  select ring on the tapped cell both legs, human tap-tap swap cleared a 3-line (score 30 · move 1), mouse
+  drag + CDP touch-drag fired (illegal picks reverted, move not consumed), window.scrollY unchanged through
+  the touch drag, zero console errors. One screenshot-driven fix: failed swaps now clear the selection.*
+- **M49.5 — Watch AI + tiers** ✅ (2026-07-24) (`crazyfruits-net.ts` + director + Random/Greedy/Expectimax/net tiers).
   **Gate:** TS↔C# net-forward parity on real ckpt bytes; full watch episode in-browser on every tier.
-  *`CrazyFruitsNetParityTests` green; node simulation of the exact browser path (shipped ckpt → TS parser →
-  generated net) plays all four tiers legally for full episodes, ordering reproduced (net 3393 vs random
-  2379); the live in-browser leg pends the host.*
+  *Green: `CrazyFruitsNetParityTests`; node simulation of the exact browser path (shipped ckpt → TS parser →
+  generated net) plays all four tiers legally, ordering reproduced (net 3393 vs random 2379); LIVE watch mode
+  caught mid-cascade at move 7/30 (score 330, "+30" pop), all four tiers exercised on desktop AND mobile.*
 
 ## Testing strategy (cross-cutting, from research)
 
