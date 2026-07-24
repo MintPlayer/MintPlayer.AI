@@ -19,8 +19,10 @@ export interface FallMove {
 export type AnimStep =
   /** Two fruits glide into each other's cells (also used for the two legs of a revert). */
   | { kind: 'swap'; a: number; b: number; fruitA: number; fruitB: number; grid: number[]; duration: number }
-  /** Matched cells scale/fade out with a floating score popup. `grid` is the board BEFORE the clear. */
-  | { kind: 'pop'; cells: boolean[]; points: number; grid: number[]; duration: number }
+  /** Matched/blasted cells scale/fade out with a floating score popup. `grid` is the board BEFORE the
+   *  clear; `clearedBy` styles the effect per cell (1 match · 2 striped beam · 3 blast · 4 bomb zap);
+   *  `created` sparkles new specials in as (cell, packedValue) pairs. */
+  | { kind: 'pop'; cells: boolean[]; points: number; grid: number[]; clearedBy: number[]; created: number[]; duration: number }
   /** Survivors + refills slide down. `grid` is the board AFTER the collapse (the landing state). */
   | { kind: 'fall'; moves: FallMove[]; grid: number[]; duration: number }
   /** Deadlock: the re-dealt board fades in. */
@@ -42,6 +44,8 @@ export class CrazyFruitsGame {
   /** Cell index of the tap-tap selection, or -1. */
   selected = -1;
   best = 0;
+  /** Human play is 30-move rounds (SPECIALS PRD §3.8); true once the budget is spent and animations drained. */
+  roundOver = false;
 
   constructor() {
     this.best = Number(localStorage.getItem('crazyfruits.best') ?? 0) || 0;
@@ -53,6 +57,7 @@ export class CrazyFruitsGame {
     this.queue = [];
     this.elapsed = 0;
     this.selected = -1;
+    this.roundOver = false;
   }
 
   get animating(): boolean {
@@ -95,11 +100,13 @@ export class CrazyFruitsGame {
   }
 
   /**
-   * Attempt the swap of two adjacent cells. A match-producing swap plays swap → (pop → fall)* [→ reshuffle]
-   * and returns true; a no-match swap plays the glide-out-and-back revert, costs nothing, and returns false.
+   * Attempt the swap of two adjacent cells. A legal swap (match, bomb swap, or special+special combo) plays
+   * swap → (pop → fall)* [→ reshuffle] and returns true; an illegal swap plays the glide-out-and-back
+   * revert, costs nothing, and returns false. The engine's stepwise API does all the rules — including
+   * specials creation, chained blasts and the wrapped double explosion — this class only records timelines.
    */
   trySwap(cellA: number, cellB: number): boolean {
-    if (this.animating) return false;
+    if (this.animating || this.roundOver) return false;
     const action = CrazyFruitsGame.actionFor(cellA, cellB);
     if (action < 0) return false;
 
@@ -107,7 +114,9 @@ export class CrazyFruitsGame {
     const pre = [...board.grid];
     // Any attempted swap — legal or reverted — consumes the selection (standard match-3 feel).
     this.selected = -1;
-    if (!board.swapProducesMatch(action)) {
+    // cellB is the gesture's LAST-SELECTED cell (tap-tap: the second tap; drag: the dragged-to cell) —
+    // combo blasts centre on it.
+    if (!board.stageSwap(action, cellB)) {
       this.queue.push(
         { kind: 'swap', a: cellA, b: cellB, fruitA: pre[cellA], fruitB: pre[cellB], grid: pre, duration: SWAP_MS },
         { kind: 'swap', a: cellB, b: cellA, fruitA: pre[cellA], fruitB: pre[cellB], grid: pre, duration: SWAP_MS },
@@ -115,7 +124,7 @@ export class CrazyFruitsGame {
       return false;
     }
 
-    board.swapCells(cellA, cellB);
+    // stageSwap performed the swap and staged any combo; clearStep(0) will execute it.
     this.queue.push({ kind: 'swap', a: cellA, b: cellB, fruitA: pre[cellA], fruitB: pre[cellB], grid: pre, duration: SWAP_MS });
 
     let points = 0;
@@ -125,7 +134,11 @@ export class CrazyFruitsGame {
       const stepPoints = board.clearStep(k, marked);
       if (stepPoints === 0) break;
       points += stepPoints;
-      this.queue.push({ kind: 'pop', cells: marked, points: stepPoints, grid: preClear, duration: POP_MS });
+      this.queue.push({
+        kind: 'pop', cells: marked, points: stepPoints, grid: preClear,
+        clearedBy: [...board.lastClearedBy], created: [...board.lastCreated],
+        duration: POP_MS,
+      });
 
       const preCollapse = [...board.grid]; // cleared cells are 0
       board.collapseColumns(true);
@@ -148,6 +161,11 @@ export class CrazyFruitsGame {
       localStorage.setItem('crazyfruits.best', String(this.best));
     }
     return true;
+  }
+
+  /** Called by the component once animations drain: closes the round at the 30-move budget (human mode). */
+  checkRoundOver(movesPerRound: number): void {
+    if (!this.animating && this.board.movesMade >= movesPerRound) this.roundOver = true;
   }
 
   /** Per-column fall moves between the post-clear (holes) and post-collapse boards — view geometry only. */

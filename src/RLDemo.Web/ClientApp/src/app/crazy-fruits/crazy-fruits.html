@@ -1,8 +1,10 @@
 <h1>Crazy Fruits</h1>
 <p class="subtitle">
   A match-3 in the spirit of the Flash-era KidCity classic — <strong>swap two adjacent fruits</strong> to line up
-  3 or more of the same kind. Matches clear, fruit tumbles down, and chain reactions multiply the points.
-  Drag a fruit toward its neighbour, or tap one and then tap where it should go. Runs entirely in your browser.
+  3 or more of the same kind. Match 4 for a <strong>striped fruit</strong> (clears its line), an L or T for a
+  <strong>wrapped fruit</strong> (double explosion), 5 in a row for a <strong>sugar bomb</strong> (swap it with
+  anything to clear that fruit) — and combine specials for the big blasts. Rounds are 30 moves. Runs entirely
+  in your browser.
 </p>
 
 <div class="modes">
@@ -14,7 +16,9 @@
     <span class="tier-label">Player:</span>
     <button type="button" [color]="tier() === 'random' ? colors.primary : colors.secondary" (click)="setTier('random')">Random</button>
     <button type="button" [color]="tier() === 'greedy' ? colors.primary : colors.secondary" (click)="setTier('greedy')">Greedy</button>
+    <button type="button" [color]="tier() === 'specials' ? colors.primary : colors.secondary" (click)="setTier('specials')">Specials-greedy</button>
     <button type="button" [color]="tier() === 'expectimax' ? colors.primary : colors.secondary" (click)="setTier('expectimax')">Expectimax</button>
+    <button type="button" [color]="tier() === 'expectimax2' ? colors.primary : colors.secondary" (click)="setTier('expectimax2')">Expectimax-2</button>
     <button type="button" [color]="tier() === 'net' ? colors.primary : colors.secondary" (click)="setTier('net')">Trained net</button>
   }
 </div>
@@ -29,12 +33,13 @@
 
 @if (mode() === 'human') {
   <p class="hint">
-    Only swaps that make a line of 3+ count — anything else swings back. When no swap is possible, the board
-    reshuffles itself. Chains score double, triple, and beyond.
+    Only swaps that make a line of 3+ count — anything else swings back (a sugar bomb swaps with anything).
+    Specials fire when they're cleared, and their blasts set each other off. When no swap is possible, the
+    board reshuffles itself. Chains score double, triple, and beyond.
   </p>
 } @else {
   <p class="hint">
-    The AI plays 30-move rounds — the same episode framing it trains on — then deals a fresh board. All four
+    The AI plays 30-move rounds — the same episode framing it trains on — then deals a fresh board. All six
     players (and the game itself) run right here in your browser; the "Trained net" is the masked dueling DQN.
   </p>
 }

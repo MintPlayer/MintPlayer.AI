@@ -7,7 +7,7 @@ import { CrazyFruitsGame } from './crazy-fruits-game';
 import { PgCfDuelingNet, PgCfRng } from './crazyfruits_solver';
 import { loadCrazyFruitsNet } from './crazyfruits-net';
 
-export type Tier = 'random' | 'greedy' | 'expectimax' | 'net';
+export type Tier = 'random' | 'greedy' | 'specials' | 'expectimax' | 'expectimax2' | 'net';
 export const MOVES_PER_EPISODE = 30; // the training/eval episode framing (PRD §3.5)
 
 const MOVE_PAUSE_MS = 350;
@@ -60,7 +60,9 @@ export class CrazyFruitsDirector {
     switch (this.effectiveTier) {
       case 'random': action = board.randomAction(this.policyRng); break;
       case 'greedy': action = board.greedyAction(); break;
+      case 'specials': action = board.specialsGreedyAction(); break;
       case 'expectimax': action = board.expectimaxAction(); break;
+      case 'expectimax2': action = board.expectimax2Action(); break;
       case 'net': action = board.netAction(this.net!); break;
     }
     if (action >= 0) this.game.tryAction(action);

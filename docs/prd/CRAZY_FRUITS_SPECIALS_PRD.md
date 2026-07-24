@@ -201,19 +201,29 @@ cell** · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI**
   over expectimax-1 = **+37.2%** (≫ 10%): plan-ahead/hold-for-combo value is real — the M50.3 escalation
   trigger is ARMED. Directed tier tests: greedy provably takes the bomb swap; specials-greedy provably
   builds a striped where plain greedy fires the row.*
-- **M50.3 — Retrain (from scratch — input width changed).** γ=0, ~300–500k moves (2–3× M49; same
-  architecture — capacity was never the lever). **Gates: (1) ≥ +30% over random-with-specials, 500 episodes,
-  CI-separated; (2) no-regression — the net captures ≥ 64% of the random→expectimax-1 gap (M49's ratio);
-  (3) specials-exploitation — specials created/ep AND fired/ep ≥ 2× the random rate (makes "it uses
-  specials" falsifiable, not vibes).** *Combo gate (escalation trigger, not a fail): if net combo-rate ≈
-  random's AND expectimax-2 > 1.10 × expectimax-1 → run the §3.6 escalation ONCE.* Stop-loss: gates still
-  failing after the escalation ⇒ stop and write up. Ships the new `crazyfruits.dqn.ckpt` (LFS).
-- **M50.4 — Web.** Overlay art + enriched pop step (beams/ring/zap/sparkle) + `stageSwap` wiring + the
-  30-move round framing (§3.8: round-over screen with score / best / the measured tier bars as challenge
-  lines; deadlock still reshuffles mid-round). **Gate: tsc clean; headless node smoke incl. a combo swap;
-  live Playwright desktop + emulated touch showing a striped creation, a row blast, a wrapped double
-  explosion, a bomb swap, AND the round-over screen at move 30; zero console errors; NetParity green on the
-  shipped ckpt.**
+- **M50.3 — Retrain (from scratch — input width changed).** 🟡 IN FLIGHT (owner call 2026-07-24: training
+  completes after the rest of the milestone ships; the run is going on the final rules — γ=0 + creation
+  shaping, 400k moves — and its checkpoint + gate table land as a follow-up commit). Until then the site's
+  "Trained net" tier gracefully falls back to expectimax (the width guard rejects the stale 672-input M49
+  ckpt). **Gates: (1) ≥ +30% over random-with-specials (bar 3378.3), 500 episodes, CI-separated; (2)
+  no-regression — the net captures ≥ 64% of the random→expectimax-1 gap (bar 4731.6, the M49 ratio); (3)
+  specials-exploitation — created/ep ≥ 7.3 AND fired/ep ≥ 5.5 (2× the random rate).** *Combo gate
+  (escalation trigger, not a fail): if net combo-rate ≈ random's AND expectimax-2 > 1.10 × expectimax-1
+  (armed: measured +37.2%) → run the §3.6 escalation ONCE.* Stop-loss: gates still failing after the
+  escalation ⇒ stop and write up. Ships the new `crazyfruits.dqn.ckpt` (LFS).
+- **M50.4 — Web.** ✅ SHIPPED 2026-07-24. Overlay art (owner-requested SQUARE candy wrapper with folded
+  corner tabs + gloss, fruit visible inside; outlined stripes along the blast axis; colorless sprinkled
+  sugar-bomb sphere) + enriched pop step (striped beams, blast rings, bomb zap glows, creation sparkles) +
+  `stageSwap` gesture wiring + six watch tiers + the 30-move round framing (§3.8: round-over screen with
+  score / best / the measured tier bars; deadlock still reshuffles mid-round). **Gate: tsc clean; headless
+  node smoke; live Playwright desktop + touch; zero console errors; NetParity green.**
+  *Gate result: tsc clean; headless smoke — 60 greedy moves through the real game layer land on
+  engine-exact grids with specials firing (score 8130 vs ~4360 pre-specials). LIVE: watch tiers
+  specials-greedy + expectimax-2 exercised (screenshots show the square-wrapped pineapple, striped fruit,
+  two sugar bombs on board, expectimax-2 at 6080 by move 20); a REAL 30-move human round (164 pixel-diff
+  probed swaps) ended on the round-over screen — "Round over! 2530 · best 3000 · random ~2 600 ·
+  expectimax-2 ~8 000 · tap to play again" — and tapping started a fresh round; zero console errors
+  throughout. `CrazyFruitsNetParityTests` green (dims come from the ckpt, so the retrained net drops in).*
 
 Effort: engine+tests ≈ 1.5× M49.1 (~25–35 directed tests); env/campaign delta small; frontend ≈ 0.5× M49.4;
 training wall-clock ≈ 2–3× M49.3. Roughly 2–3 focused sessions + one training run.

@@ -76,10 +76,17 @@ export class CrazyFruits implements AfterViewInit {
     });
   }
 
+  /** Measured 500-episode tier means (SPECIALS PRD M50.2) — the round-over screen's challenge lines. */
+  private static readonly ROUND_BARS = [
+    'random plays ~2 600 a round',
+    'expectimax-2 plays ~8 000',
+  ];
+
   private readonly frame = (nowMs: number): void => {
     const dt = this.lastMs ? Math.min(250, nowMs - this.lastMs) : 0;
     this.lastMs = nowMs;
     if (this.mode() === 'watch') this.director?.update(dt);
+    else this.game.checkRoundOver(30);
     this.game.update(dt);
     this.draw();
     this.rafId = requestAnimationFrame(this.frame);
@@ -99,7 +106,7 @@ export class CrazyFruits implements AfterViewInit {
       canvas.height = bh;
     }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    render(this.ctx, this.game, cssW, cssH, this.statusLine());
+    render(this.ctx, this.game, cssW, cssH, this.statusLine(), CrazyFruits.ROUND_BARS);
   }
 
   private statusLine(): string {
@@ -122,6 +129,10 @@ export class CrazyFruits implements AfterViewInit {
   protected onPointerDown(event: PointerEvent): void {
     event.preventDefault();
     if (this.mode() !== 'human') return;
+    if (this.game.roundOver) {
+      this.game.newGame();          // tap to play again
+      return;
+    }
     const { sx, sy, w } = this.toSurface(event);
     const cell = pointToCell(sx, sy, w);
     if (cell < 0 || this.game.animating) {

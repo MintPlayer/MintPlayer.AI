@@ -1915,7 +1915,7 @@ mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none
   generated net) plays all four tiers legally, ordering reproduced (net 3393 vs random 2379); LIVE watch mode
   caught mid-cascade at move 7/30 (score 330, "+30" pop), all four tiers exercised on desktop AND mobile.*
 
-## M50 — Crazy Fruits specials: striped / wrapped / sugar bomb  *(2026-07-24; branch `m50-crazyfruits-specials`; see `CRAZY_FRUITS_SPECIALS_PRD.md`)* 🔜
+## M50 — Crazy Fruits specials: striped / wrapped / sugar bomb  *(2026-07-24; on the M49 branch `m49-crazy-fruits`, PR #38 — owner: one PR for the arc; see `CRAZY_FRUITS_SPECIALS_PRD.md`)* 🟢 (M50.0–.2 + .4 shipped same day; M50.3 training runs as the deferred last step)
 
 **Why:** owner wants Candy-Crush special pieces on the shipped M49 match-3 — striped (match-4 → row/column
 blast), wrapped (L/T match → 3×3 double explosion), sugar bomb (match-5 → swap clears a fruit type), with all
@@ -1937,23 +1937,33 @@ ONE pre-registered escalation (γ=0.5 + 3-step + PBRS) triggered only if the new
 hold-for-combo value the net isn't capturing; human play → **30-move rounds** (deadlock reshuffles — measured
 zero deadlocks ever; game-over-on-deadlock would never fire).
 
-- **M50.0 — Rules lock.** The PRD §2 semantics table. **Gate:** every rule deterministic, zero RNG draws.
-- **M50.1 — Engine** (packed encoding, scanRuns + creation resolver, activation worklist + armed wrapped,
-  stageSwap/swapIsLegal, combos, lastClearedBy/lastCreated, extended immediateScore/deterministicValue).
-  **Gate:** directed tests for every creation/activation/combo/chain + invariant sweep + deterministicValue
-  rng-snapshot + parity checksum re-pinned (node harness committed as `tools/cf_parity.mjs`). No training
-  before this gate.
-- **M50.2 — Env/obs + baselines** (928 floats, ÷300 planes, reward/K recalibration, expectimax-2 +
-  specials-greedy tiers). **Gate:** tier ordering CI-separated; greedy provably takes a directed bomb swap;
-  **pre-training env validation: random < 0.70 × expectimax-2** (else specials are too self-firing — fix
-  scoring before training).
-- **M50.3 — Retrain** (from scratch, γ=0, 300–500k moves, same architecture). **Gates:** ≥ +30% over
-  random-with-specials (500 eps, CI-separated); ≥ 64% of the random→expectimax-1 gap captured (M49's ratio —
-  the no-regression bar); specials created+fired/ep ≥ 2× random. *Combo gate = escalation trigger, once;
-  then stop-loss.*
-- **M50.4 — Web** (overlay art, enriched pop step with beams/ring/zap/sparkle, 30-move round-over screen
-  with the measured tier bars). **Gate:** live Playwright desktop + touch showing a striped creation, a row
-  blast, a wrapped double explosion, a bomb swap, and the round-over screen; NetParity on the new ckpt.
+- **M50.0 — Rules lock.** ✅ (2026-07-24) The PRD §2 semantics table. **Gate:** every rule deterministic, zero RNG draws.
+  *Amended in-flight by three owner corrections (striped ⊥, combo centre = last-selected, form-then-trigger)
+  and the fire-only scoring decision — each re-verified end-to-end before proceeding.*
+- **M50.1 — Engine** ✅ (2026-07-24) (packed encoding, run-recording scan + creation resolver, activation worklist +
+  armed wrapped, stageSwap(action, targetCell)/swapIsLegal, combos, lastClearedBy/lastCreated + per-move
+  creation/fired telemetry, extended immediateScore/deterministicValue). **Gate:** directed tests for every
+  creation/activation/combo/chain + invariant sweep + planning-purity + parity checksum re-pinned (node
+  harness committed as `tools/cf_parity.mjs`). *Green: 47 tests; every combo hand-scored exactly; the
+  same-step form-then-trigger 190-point test; parity pin finally 995400597 (score 95550).*
+- **M50.2 — Env/obs + baselines** ✅ (2026-07-24) (928 floats, ÷300 planes, RewardScale 30→100, expectimax-2 +
+  specials-greedy tiers, ShapeCreationRewards on the train env only). **Gate:** tier ordering CI-separated;
+  greedy provably takes a directed bomb swap; **pre-training env validation: random < 0.70 × expectimax-2**.
+  *Green (final rules): random 2598.7±72.4 · greedy 3497.9±96.2 (+35% — was +6% without specials) ·
+  specials-greedy 3867.1 · expectimax-1 5931.4 (+128%) · expectimax-2 8135.0 (+213%); env validation 32%;
+  e2−e1 gap +37.2% arms the escalation trigger.*
+- **M50.3 — Retrain** 🟡 in flight (owner call: training completes after the rest shipped; the site's net
+  tier falls back to expectimax until the ckpt lands — the width guard rejects the stale 672-input net).
+  **Gates:** ≥ +30% over random-with-specials (bar 3378.3, 500 eps, CI-separated); ≥ 64% of the
+  random→expectimax-1 gap (bar 4731.6 — the M49 ratio); specials created ≥ 7.3 / fired ≥ 5.5 per ep
+  (2× random). *Combo gate = escalation trigger (armed), once; then stop-loss.*
+- **M50.4 — Web** ✅ (2026-07-24) (square candy wrapper with folded tabs + gloss — owner-requested — over the visible
+  fruit; thin outlined stripes along the blast axis; sprinkled sugar-bomb sphere; pop step enriched with
+  beams/rings/zaps/creation sparkles; six watch tiers; 30-move round-over screen with the measured bars).
+  **Gate:** live Playwright desktop + touch + zero console errors. *Green: headless smoke (60 greedy moves,
+  engine-exact grids, score 8130 with specials firing); live watch tiers screenshot square-wrapped +
+  striped fruit and two bombs on board; a REAL 164-attempt 30-move human round ended on the round-over
+  screen and tap restarted; NetParity green (net dims come from the ckpt — the retrained net drops in).*
 
 ## Testing strategy (cross-cutting, from research)
 
