@@ -40,6 +40,10 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
         for (int r = 0; r < size; r++)
             for (int c = 0; c < size; c++)
                 labels.Add($"Row {r + 1}, column {c + 1} can join a match after one swap (1/0)");
+        // Not ActionLabels: static field initializers run in declaration order, and this builds first.
+        var actions = BuildActionLabels();
+        foreach (var label in actions) labels.Add($"Immediate points of \"{label}\" (÷100)");
+        foreach (var label in actions) labels.Add($"Guaranteed cascade points of \"{label}\" (÷100)");
         return [.. labels];
     }
 

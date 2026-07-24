@@ -17,7 +17,9 @@ public sealed class CrazyFruitsBoard
     public const int FruitTypes = 6;
     public const int Cells = Size * Size;
     public const int ActionCount = 2 * Size * (Size - 1); // 112
-    public const int ObservationSize = (FruitTypes + 1) * Cells; // 448: 6 one-hot planes + would-match plane
+    // 672: 6 one-hot planes + would-match plane + 2 per-action feature planes (immediate score,
+    // deterministic cascade value — the exercised Risk-1 mitigation, PRD §3.4/§6).
+    public const int ObservationSize = (FruitTypes + 1) * Cells + 2 * ActionCount;
 
     private readonly PgCrazyFruits _core = new();
 
@@ -67,7 +69,8 @@ public sealed class CrazyFruitsBoard
     /// <summary>Re-deal the current fruit multiset until no instant match and ≥1 legal swap (the deadlock rule).</summary>
     public void Reshuffle() => _core.reshuffleBoard();
 
-    /// <summary>The 448-dim observation: 6 one-hot fruit planes + the would-match plane (f64 core → float32 net).</summary>
+    /// <summary>The 672-dim observation: 6 one-hot fruit planes + the would-match plane + per-action
+    /// immediate-score and deterministic-cascade-value planes (f64 core → float32 net).</summary>
     public float[] BuildObservation()
     {
         var core = _core.buildObservation();

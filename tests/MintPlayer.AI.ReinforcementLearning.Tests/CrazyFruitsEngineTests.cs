@@ -239,6 +239,16 @@ public class CrazyFruitsEngineTests
         }
         for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
             Assert.Equal(expected[i] ? 1f : 0f, obs[CrazyFruitsBoard.FruitTypes * CrazyFruitsBoard.Cells + i]);
+
+        // Per-action feature planes (the exercised Risk-1 mitigation): immediate score and deterministic
+        // cascade value, ÷100, matching the facade's scripted-baseline queries exactly.
+        int baseOffset = (CrazyFruitsBoard.FruitTypes + 1) * CrazyFruitsBoard.Cells;
+        for (int a = 0; a < CrazyFruitsBoard.ActionCount; a++)
+        {
+            Assert.Equal(board.ImmediateScore(a) / 100f, obs[baseOffset + a], 5);
+            float expectedDet = mask[a] ? board.DeterministicValue(a) / 100f : 0f;
+            Assert.Equal(expectedDet, obs[baseOffset + CrazyFruitsBoard.ActionCount + a], 5);
+        }
     }
 
     // ── Determinism + state round-trip ──────────────────────────────────────────────────────────────────────

@@ -318,9 +318,13 @@ class PgCrazyFruits {
     this.generateBoard()
   }
 
-  // ── Observation (PRD §3.4) — 448 floats: 6 one-hot fruit planes + a would-match plane ──────────────────
-  // The would-match plane marks both endpoints of every legal swap: "this cell can take part in a match one
-  // swap from now" — the cheap feature that hands the net the greedy signal.
+  // ── Observation (PRD §3.4) — 672 floats: 6 one-hot fruit planes + a would-match plane + two per-action
+  // feature planes. The would-match plane marks both endpoints of every legal swap. The per-action planes
+  // hand the net the scripted signals it measurably cannot learn from pixels alone (the exercised Risk-1
+  // mitigation, PRD §6: γ=0.99 landed +1.9% and γ=0 +7.8% over random vs the +30% gate): per action, the
+  // immediate step-0 score and the deterministic cascade value (gravity-only, the expectimax tier's signal,
+  // worth +89% scripted), both ÷100. The net's job becomes ranking these against board context and learning
+  // the refill-EV residual on top.
   fn buildObservation(): List<f64> {
     var obs: List<f64> = List<f64>()
     for f in 1..(FruitTypes + 1) {
@@ -335,6 +339,10 @@ class PgCrazyFruits {
       }
     }
     for i in 0..Cells { obs.add(if wm[i] { 1.0 } else { 0.0 }) }
+    for a in 0..ActionCount { obs.add(this.immediateScore(a) / 100.0) }
+    for a in 0..ActionCount {
+      obs.add(if this.swapProducesMatch(a) { this.deterministicValue(a) / 100.0 } else { 0.0 })
+    }
     return obs
   }
 
