@@ -21,7 +21,8 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
     /// <summary>Reward normalization: points per plain 3-match, so rewards sit near 1 (PRD §3.5).</summary>
     public const float RewardScale = 30f;
 
-    private static readonly string[] FruitNames = ["strawberry", "banana", "orange", "grape", "apple", "lemon"];
+    // Matches the web renderer's picks from the FruitCake art catalog (crazy-fruits-render.ts FRUIT_TIER).
+    private static readonly string[] FruitNames = ["strawberry", "grape", "orange", "pear", "pineapple", "watermelon"];
 
     /// <summary>Plain-language name per observation feature, index order of <c>buildObservation</c>.</summary>
     public static readonly IReadOnlyList<string> ObservationLabels = BuildObservationLabels();
