@@ -1863,6 +1863,40 @@ previous cycle on any failure. Single-source in `snake_solver.pg`; pure-frontend
   eaten in ~30 s of watching; served chunk confirmed to carry the new code. ARCHITECTURE.md §6's stale
   "Snake uses EpisodeStreamer/SnakeController" claim fixed (snake has been client-side since M33).*
 
+## M49 — Crazy Fruits (match-3) + primitive net  *(2026-07-24; branch `m49-crazy-fruits`; see `CRAZY_FRUITS_PRD.md`)* 🔜
+
+**Why:** owner wants the KidCity (kidcity.be) Flash-era "Crazy Fruits" as a new playground game — swap 2
+adjacent fruits to line up 3+ — with a **primitively trained net** (serious training is future work), working
+properly on **smartphones (touch) and desktops (mouse)**. 4-agent investigation 2026-07-24: the original SWF is
+unrecoverable (only the portal shell + a menu thumbnail survive in the Wayback Machine), so we ship the
+confirmed **fruit market-stall theme** over assumed-standard Bejeweled rules; match-3 RL prior art warns that
+naive DQN/PPO score *below random* (Kamaldinov, IEEE CoG 2019) — legal-move masking + one-hot planes are the
+difference-makers (King measured ~8× from the mask alone).
+
+**Key design locks:** 8×8, 6 fruits, 112-swap action space, **hard mask = match-producing swaps only**;
+observation 448 floats (6 one-hot planes + would-match plane); **masked dueling DQN on the M46
+`DqnScoreCampaign` spine** (the Snake recipe — MCTS/self-play rejected: stochastic hidden refill, no opponent);
+`.pg`-first engine (`crazyfruits_solver.pg`) with an **f64-exact minstd LCG** for byte-identical C#/TS refill;
+deadlock defined out of existence (in-engine reshuffle — the mask never goes all-false); scripted
+random/greedy/expectimax-1 baselines = sanity gates = difficulty tiers; fully client-side (Pattern C,
+`wwwroot/models/crazyfruits.dqn.ckpt`); input = **unified Pointer Events** (subsume touchstart/move/end +
+mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none`).
+
+- **M49.1 — Engine** (`crazyfruits_solver.pg`: board/match/gravity/refill/cascade/scoring, mask, reshuffle,
+  LCG, `buildObservation`, baselines; C# facade + pgconfig include). **Gate:** invariant + hand-scored unit
+  tests; mask = brute-force cross-check; **seeded 1,000-move episode byte-identical C#↔TS**. No training before
+  this gate.
+- **M49.2 — Env + campaign + Lab** (`CrazyFruitsEnv` + `AddCrazyFruitsCampaign()` + `--game crazyfruits`).
+  **Gate:** baseline ordering greedy > random (and expectimax-1 ≥ greedy) with non-overlapping 95% CIs over
+  500 seeded episodes; campaign resume contract; one end-to-end chunk.
+- **M49.3 — Primitive training run.** **Gate:** net ≥ **+30% mean score over random** (500 held-out episodes,
+  30-move budget, non-overlapping CIs); vs-greedy reported, not gated. Ckpt → LFS.
+- **M49.4 — Web game (human play)** (canvas fruit-stall renderer, both pointer gestures, animations,
+  route/nav/home card). **Gate:** playable on desktop mouse AND smartphone touch (drag-swap, tap-tap, revert,
+  cascades); no page scroll during play; Playwright smoke vs the running host.
+- **M49.5 — Watch AI + tiers** (`crazyfruits-net.ts` + director + Random/Greedy/Expectimax/AI tiers).
+  **Gate:** TS↔C# net-forward parity on the shipped ckpt; full watch episode in-browser on every tier.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
