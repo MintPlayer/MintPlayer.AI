@@ -220,20 +220,27 @@ protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI** · net **928�
   over expectimax-1 = **+37.2%** (≫ 10%): plan-ahead/hold-for-combo value is real — the M50.3 escalation
   trigger is ARMED. Directed tier tests: greedy provably takes the bomb swap; specials-greedy provably
   builds a striped where plain greedy fires the row.*
-- **M50.3 — Retrain (from scratch — input width changed).** 🟡 ESCALATION IN FLIGHT. **Gates (bars
-  re-measured on the M50.5-fixed rules): (1) ≥ +30% over random-with-specials (bar 3398.1), 500 episodes,
-  CI-separated; (2) no-regression — ≥ 64% of the random→expectimax-1 gap (bar 4764.7, the M49 ratio); (3)
-  specials-exploitation — created/ep ≥ 7.4 AND fired/ep ≥ 5.7 (2× random).** Stop-loss: ONE escalation,
-  then ship the best net and write up honestly.
-  *Attempt 1 (γ=0 + creation shaping, 400k moves, data `scratchpad/cf5train`): on the fixed rules the
-  500-episode result is **4051.1 ± 130.9 = +55.0% over random, CI-SEPARATED — gate 1 PASS**; beats greedy
-  (+15.8%) and specials-greedy; but gap share **43% < 64% — gate 2 MISS** and created **5.84/ep < 7.4 —
-  gate 3(created) MISS** (fired 5.79 ≥ 5.66 — pass, barely). Exactly the hold-for-combo blind spot; the
-  armed trigger (e2 gap +36.2% on fixed rules) fired → **the pre-registered escalation is running** (γ=0.5 +
-  3-step + PBRS Φ over on-board specials replacing the creation bonus; `--gamma 0.5 --nstep 3 --pbrs`, 400k
-  moves, data `scratchpad/cf7train`; a first escalation run in `cf6train` was killed at 210k when the M50.5
-  rules fix invalidated its data). Whichever net stands better against the gates ships; a second miss
-  invokes the stop-loss with the miss reported, not retried.* Ships `crazyfruits.dqn.ckpt` (LFS).
+- **M50.3 — Retrain (from scratch — input width changed).** ✅ CLOSED 2026-07-24 (stop-loss invoked;
+  best net shipped, misses reported honestly). **Gates (bars on the FINAL M50.6 shield rules; 500 episodes,
+  seeds 5000+e): (1) ≥ +30% over random-with-specials (bar 3392.0), CI-separated; (2) no-regression — ≥ 64%
+  of the random→expectimax-1 gap (bar 4747.8, the M49 ratio); (3) specials-exploitation — created/ep ≥ 7.3
+  AND fired/ep ≥ 5.6 (2× random 3.67/2.81).** Final-rules baselines: random 2609.2±72.9 · greedy
+  3510.3±96.0 · specials-greedy 3903.3±111.8 · expectimax-1 5950.8±161.1 · expectimax-2 8097.7±169.5; env
+  validation 32% ✓; e2 gap +36.1% armed the escalation.
+  *Verdict — γ=0 won again. Attempt 1 (γ=0 + creation shaping, 400k, `cf5train`) evaluated on the FINAL
+  rules: **4040.4±128.9 = +54.9% over random, CI-SEPARATED — gate 1 PASS**, +15.1% over greedy; gap share
+  **43% — gate 2 MISS**; created **5.81 — gate 3(created) MISS**, fired 5.75 ≥ 5.6 pass. The pre-registered
+  escalation (γ=0.5 + 3-step + PBRS Φ over on-board specials; two runs voided by the in-flight rule fixes —
+  `cf6train` killed at 210k by M50.5, `cf7train` finished without the shield at only +33.4% under final
+  rules) got its clean from-scratch run on the final rules (`cf8train`, 400k): **3408.2±103.4 = +30.6% —
+  gate 1 by a hair, gap share 24%, created 4.66/fired 4.12 — WORSE than γ=0 on every gate.** Bootstrapping
+  loses to γ=0 on match-3 refill noise even with PBRS — the M49 γ-lesson reconfirmed at n=2. Stop-loss:
+  `cf5train` SHIPPED to `wwwroot/models/crazyfruits.dqn.ckpt` (LFS; the per-action feature planes are
+  computed by the live engine at inference, which is why the pre-shield net transfers unchanged — 4051 →
+  4040). Gates 2/3(created) remain honestly missed: the reactive net exploits specials it stumbles into
+  (fired ≈ created ≈ 5.8) but does not hold-for-combo the way expectimax-2 proves is possible; closing that
+  gap likely needs a search-guided policy (the M34 snake lesson), not another reward schedule.* Round-over
+  screen gained the net's bar (~4 000).
 - **M50.4 — Web.** ✅ SHIPPED 2026-07-24. Overlay art (owner-requested SQUARE candy wrapper with folded
   corner tabs + gloss, fruit visible inside; outlined stripes along the blast axis; colorless sprinkled
   sugar-bomb sphere) + enriched pop step (striped beams, blast rings, bomb zap glows, creation sparkles) +

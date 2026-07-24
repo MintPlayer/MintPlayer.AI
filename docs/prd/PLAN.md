@@ -1915,7 +1915,7 @@ mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none
   generated net) plays all four tiers legally, ordering reproduced (net 3393 vs random 2379); LIVE watch mode
   caught mid-cascade at move 7/30 (score 330, "+30" pop), all four tiers exercised on desktop AND mobile.*
 
-## M50 — Crazy Fruits specials: striped / wrapped / sugar bomb  *(2026-07-24; on the M49 branch `m49-crazy-fruits`, PR #38 — owner: one PR for the arc; see `CRAZY_FRUITS_SPECIALS_PRD.md`)* 🟢 (M50.0–.2 + .4–.6 shipped same day; M50.3 training runs as the deferred last step)
+## M50 — Crazy Fruits specials: striped / wrapped / sugar bomb  *(2026-07-24; on the M49 branch `m49-crazy-fruits`, PR #38 — owner: one PR for the arc; see `CRAZY_FRUITS_SPECIALS_PRD.md`)* ✅ (all shipped 2026-07-24; M50.3 closed via stop-loss — best net shipped, gates 2/3 honestly missed)
 
 **Why:** owner wants Candy-Crush special pieces on the shipped M49 match-3 — striped (match-4 → row/column
 blast), wrapped (L/T match → 3×3 double explosion), sugar bomb (match-5 → swap clears a fruit type), with all
@@ -1957,14 +1957,18 @@ zero deadlocks ever; game-over-on-deadlock would never fire).
   *Green (final rules): random 2598.7±72.4 · greedy 3497.9±96.2 (+35% — was +6% without specials) ·
   specials-greedy 3867.1 · expectimax-1 5931.4 (+128%) · expectimax-2 8135.0 (+213%); env validation 32%;
   e2−e1 gap +37.2% arms the escalation trigger.*
-- **M50.3 — Retrain** 🟡 escalation in flight. **Gates (bars re-measured on the M50.5-fixed rules):** ≥ +30%
-  over random-with-specials (bar 3398.1, 500 eps, CI-separated); ≥ 64% of the random→expectimax-1 gap (bar
-  4764.7 — the M49 ratio); specials created ≥ 7.4 / fired ≥ 5.7 per ep (2× random). *Attempt 1 (γ=0 +
-  creation shaping, 400k, on fixed rules): **4051.1±130.9 = +55.0% — gate 1 PASS**, beats greedy +15.8%;
-  gap share 43% and created 5.84/ep MISS gates 2/3 (fired 5.79 passes barely) — the pre-registered
-  escalation (γ=0.5 + 3-step + PBRS, `--pbrs`) is running as the ONE allowed retry (restarted on the fixed
-  rules after the M50.5 fix invalidated its first 210k); then stop-loss. Best net ships either way; the net
-  tier falls back to expectimax until the ckpt lands (width guard rejects the stale 672-input net).*
+- **M50.3 — Retrain** ✅ (2026-07-24, stop-loss invoked — best net shipped, misses reported). **Gates (FINAL
+  M50.6 shield rules):** ≥ +30% over random (bar 3392.0, 500 eps, CI-separated); ≥ 64% of the
+  random→expectimax-1 gap (bar 4747.8); created ≥ 7.3 / fired ≥ 5.6 per ep. Final-rules baselines: random
+  2609.2 · greedy 3510.3 · specials-greedy 3903.3 · e1 5950.8 · e2 8097.7; validation 32% ✓.
+  *γ=0 won again: attempt 1 (γ=0 + creation shaping, `cf5train`) on final rules **4040.4±128.9 = +54.9% —
+  gate 1 PASS**, +15.1% over greedy; gap share 43% and created 5.81 MISS gates 2/3 (fired 5.75 passes). The
+  clean final-rules escalation run (γ=0.5 + 3-step + PBRS, `cf8train`; `cf6train`/`cf7train` voided by the
+  rule fixes) scored only **3408.2 = +30.6%, worse on every gate** — bootstrapping loses to γ=0 on refill
+  noise even with PBRS (M49 γ-lesson, n=2). SHIPPED `cf5train` → `wwwroot/models/crazyfruits.dqn.ckpt`
+  (transfers unchanged across the rule fixes: its per-action feature planes come from the live engine at
+  inference). Hold-for-combo (the e2 gap) stays unclaimed by reactive nets — future lever = search-guided
+  play, not another reward schedule. Round-over screen gained the net bar (~4 000).*
 - **M50.4 — Web** ✅ (2026-07-24) (square candy wrapper with folded tabs + gloss — owner-requested — over the visible
   fruit; thin outlined stripes along the blast axis; sprinkled sugar-bomb sphere; pop step enriched with
   beams/rings/zaps/creation sparkles; six watch tiers; 30-move round-over screen with the measured bars).
