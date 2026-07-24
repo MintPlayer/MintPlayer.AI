@@ -29,6 +29,11 @@ resolved per shape, rows-then-columns ascending as the tiebreak):
 - **Spawn cell:** the swapped cell when the player's swap made the shape (each swapped cell spawns its own
   special if both sides match); cascade-created line matches spawn at the run's **lowest cell index**
   (deterministic convention — the canonical game leaves this undocumented).
+- **Spawn-cell collision (owner bug report 2026-07-24):** a spawn cell that already holds a special is never
+  overwritten — that special stays match-marked and **fires**, and the creation **relocates to the nearest
+  plain cell of the shape** (along the run; outward along both arms from a wrapped pivot; ties toward the
+  lower flat index). A shape with **no plain cell creates nothing** — every special in it simply fires.
+  Matches real Candy Crush: dragging a striped into a 4-line fires it AND paints another fruit in the line.
 - The creation cell is scored like its matched neighbours but receives the special instead of clearing.
 
 **Activation** (specials fire when cleared by anything — matches, blasts, combos; chains are unbounded but
@@ -159,9 +164,10 @@ Director/net-loader/ckpt-parser: zero changes (dims come from the ckpt).
 Encoding **kind·16+type** · kinds **0..5** (5 internal) · actions **112 (unchanged)** · observation **928**
 (6 fruit + 4 kind + would-act planes + 2×112 per-action ÷300) · creation bonuses **+40/+60/+100** · blast
 cells **10·(k+1)** · passive bomb **most-frequent type, ties → lowest** · bomb+striped orientations
-**`(r+c)%2`** · wrapped+wrapped **5×5, double** · striped blast **∥ match** · cascade spawn **lowest run
-cell** · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI** · net **928→256→256→dueling→112,
-γ=0** (v1).
+**`(r+c)%2`** · wrapped+wrapped **5×5, double** · striped blast **⊥ match** (owner-corrected) · cascade
+spawn **lowest run cell** · spawn-cell collision **nearest plain cell, ties → lower index; none → no
+creation** (M50.5) · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI** · net
+**928→256→256→dueling→112, γ=0** (v1).
 
 ## 5. Milestones & gates (falsifiable, in order)
 
@@ -207,18 +213,20 @@ cell** · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI**
   over expectimax-1 = **+37.2%** (≫ 10%): plan-ahead/hold-for-combo value is real — the M50.3 escalation
   trigger is ARMED. Directed tier tests: greedy provably takes the bomb swap; specials-greedy provably
   builds a striped where plain greedy fires the row.*
-- **M50.3 — Retrain (from scratch — input width changed).** 🟡 ESCALATION IN FLIGHT. **Gates: (1) ≥ +30%
-  over random-with-specials (bar 3378.3), 500 episodes, CI-separated; (2) no-regression — ≥ 64% of the
-  random→expectimax-1 gap (bar 4731.6, the M49 ratio); (3) specials-exploitation — created/ep ≥ 7.3 AND
-  fired/ep ≥ 5.5 (2× random).** Stop-loss: ONE escalation, then ship the best net and write up honestly.
-  *Attempt 1 (γ=0 + creation shaping, 400k moves, data `scratchpad/cf5train`, best eval 4098 at the 400k
-  final): 500-episode result **4000.5 ± 128.8 = +53.9% over random, CI-SEPARATED — gate 1 PASS**; beats
-  greedy (+14.4%) and specials-greedy; but gap share **42% < 64% — gate 2 MISS** and created **5.7/ep <
-  7.3 — gate 3(created) MISS** (fired 5.55 ≥ 5.54 — pass, barely). Exactly the hold-for-combo blind spot;
-  the armed trigger (e2 gap +37.2%) fired → **the pre-registered escalation is running** (γ=0.5 + 3-step +
-  PBRS Φ over on-board specials replacing the creation bonus; `--gamma 0.5 --nstep 3 --pbrs`, 400k moves,
-  data `scratchpad/cf6train`). Whichever net stands better against the gates ships; a second miss invokes
-  the stop-loss with the miss reported, not retried.* Ships `crazyfruits.dqn.ckpt` (LFS).
+- **M50.3 — Retrain (from scratch — input width changed).** 🟡 ESCALATION IN FLIGHT. **Gates (bars
+  re-measured on the M50.5-fixed rules): (1) ≥ +30% over random-with-specials (bar 3398.1), 500 episodes,
+  CI-separated; (2) no-regression — ≥ 64% of the random→expectimax-1 gap (bar 4764.7, the M49 ratio); (3)
+  specials-exploitation — created/ep ≥ 7.4 AND fired/ep ≥ 5.7 (2× random).** Stop-loss: ONE escalation,
+  then ship the best net and write up honestly.
+  *Attempt 1 (γ=0 + creation shaping, 400k moves, data `scratchpad/cf5train`): on the fixed rules the
+  500-episode result is **4051.1 ± 130.9 = +55.0% over random, CI-SEPARATED — gate 1 PASS**; beats greedy
+  (+15.8%) and specials-greedy; but gap share **43% < 64% — gate 2 MISS** and created **5.84/ep < 7.4 —
+  gate 3(created) MISS** (fired 5.79 ≥ 5.66 — pass, barely). Exactly the hold-for-combo blind spot; the
+  armed trigger (e2 gap +36.2% on fixed rules) fired → **the pre-registered escalation is running** (γ=0.5 +
+  3-step + PBRS Φ over on-board specials replacing the creation bonus; `--gamma 0.5 --nstep 3 --pbrs`, 400k
+  moves, data `scratchpad/cf7train`; a first escalation run in `cf6train` was killed at 210k when the M50.5
+  rules fix invalidated its data). Whichever net stands better against the gates ships; a second miss
+  invokes the stop-loss with the miss reported, not retried.* Ships `crazyfruits.dqn.ckpt` (LFS).
 - **M50.4 — Web.** ✅ SHIPPED 2026-07-24. Overlay art (owner-requested SQUARE candy wrapper with folded
   corner tabs + gloss, fruit visible inside; outlined stripes along the blast axis; colorless sprinkled
   sugar-bomb sphere) + enriched pop step (striped beams, blast rings, bomb zap glows, creation sparkles) +
@@ -232,6 +240,21 @@ cell** · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI**
   probed swaps) ended on the round-over screen — "Round over! 2530 · best 3000 · random ~2 600 ·
   expectimax-2 ~8 000 · tap to play again" — and tapping started a fresh round; zero console errors
   throughout. `CrazyFruitsNetParityTests` green (dims come from the ckpt, so the retrained net drops in).*
+- **M50.5 — Creation-collision fix (owner bug report 2026-07-24: drag a striped into a line of 4).** ✅
+  SHIPPED 2026-07-24. `placeCreation` used to overwrite-and-unmark whatever sat on the spawn cell, so a
+  special dragged into its own match neither fired nor yielded a relocated creation — on all four creation
+  paths (striped swap-cell, wrapped pivot, bomb match-5, cascade lowest-cell). Fix per the §2 spawn-cell
+  collision lock: `spawnCellFor`/`creationCellForWrapped` return the nearest *plain* cell (ties → lower flat
+  index; −1 = no creation, counters untouched); a colliding special stays match-marked and fires through the
+  unchanged form-then-trigger seed pass. **Gate: 8 directed tests (the reported drag exact-scored at 180 —
+  row + relocated fresh striped chain-fired; wrapped variant 160 + armed refire; regression guard for the
+  plain-spawn path; all-special run → 240, zero creations; equidistant tie → lower index; match-5 bomb
+  relocation 170 with bomb-over-striped priority intact; wrapped-pivot relocation 110; cascade relocation) —
+  all green, full suite 57/57.** Parity re-pinned **563660409** (score 86340; C# = TS verified via
+  `tools/cf_parity.mjs`), host harness green. Baselines re-measured (rules changed → M50.3 bars updated):
+  random 2613.9±72.9 · greedy 3499.2±95.6 · specials-greedy 3906.1±112.8 · expectimax-1 5974.6±161.9 ·
+  expectimax-2 8139.1±169.3; env validation 32% ✓; e2 gap +36.2% (escalation stays armed). The in-flight
+  escalation run was killed at 210k (buggy-rules data) and restarted on the fixed rules (`cf7train`).
 
 Effort: engine+tests ≈ 1.5× M49.1 (~25–35 directed tests); env/campaign delta small; frontend ≈ 0.5× M49.4;
 training wall-clock ≈ 2–3× M49.3. Roughly 2–3 focused sessions + one training run.

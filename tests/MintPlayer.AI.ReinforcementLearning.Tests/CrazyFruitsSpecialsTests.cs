@@ -118,6 +118,130 @@ public class CrazyFruitsSpecialsTests
         Assert.True(found, "expected a cascade-created striped-5 on the board");
     }
 
+    // ── Creation-cell collision (owner bug 2026-07-24) ─────────────────────────────────────────────────────
+    // Dragging a special into its own match must FIRE the special and relocate the new special to the
+    // nearest plain cell of the shape (ties toward the lower index); a shape with no plain cell creates
+    // nothing and everything fires.
+
+    private static PgCrazyFruits CoreWith(params (int R, int C, int Packed)[] cells)
+    {
+        var core = new PgCrazyFruits();
+        core.reset(1);
+        var g = BaseGrid();
+        foreach (var (r, c, v) in cells) g[r * Size + c] = v;
+        for (int i = 0; i < CrazyFruitsBoard.Cells; i++) core.grid[i] = g[i];
+        return core;
+    }
+
+    private static (int Pts, List<bool> Marked) StepZero(PgCrazyFruits core, int action)
+    {
+        Assert.True(core.stageSwap(action, core.cellB(action)));
+        var marked = new List<bool>();
+        for (int i = 0; i < CrazyFruitsBoard.Cells; i++) marked.Add(false);
+        return (core.clearStep(0, marked), marked);
+    }
+
+    [Fact]
+    public void Swap_StripedIntoMatch4_ExistingFires_NewStripedOnNeighbour()
+    {
+        // The reported bug. The dragged stripedH lands at (7,2) completing a horizontal 4-run: it fires its
+        // ROW, the new perpendicular striped relocates to (7,1), and the row blast sets that fresh striped
+        // off too (form-then-trigger): row 7 (8) + column 1 (7) + consumed (1) = 16 → 180 with the 4-bonus.
+        var board = BoardWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (6, 2, SH4));
+        Assert.Equal(180, board.ImmediateScore(VSwap(6, 2)));
+        Assert.True(board.ApplySwap(VSwap(6, 2)) >= 180);
+        Assert.Equal(1, board.MoveCreatedStriped);
+        Assert.True(board.MoveSpecialsFired >= 2);
+    }
+
+    [Fact]
+    public void Swap_WrappedIntoMatch4_FiresAndArms_NewStripedOnNeighbour()
+    {
+        // Same collision with a wrapped: its 3×3 re-marks the relocated fresh striped at (7,1) → column 1
+        // fires too: run (3) + box (4 new) + column 1 (6 new) + consumed (1) = 14 → 160 with the 4-bonus.
+        var board = BoardWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (6, 2, WR4));
+        Assert.Equal(160, board.ImmediateScore(VSwap(6, 2)));
+        Assert.True(board.DeterministicValue(VSwap(6, 2)) > 160);          // the armed shell refires
+        board.ApplySwap(VSwap(6, 2));
+        Assert.True(board.MoveCreatedStriped >= 1);                        // cascades may add more
+        Assert.True(board.MoveSpecialsFired >= 2);
+    }
+
+    [Fact]
+    public void NonSpawnSpecialInLine_StillFires_AndCreationStaysAtTheMovedCell()
+    {
+        // Regression guard: the moved cell is PLAIN, an old striped sits elsewhere in the line — creation
+        // stays at the moved cell exactly as before, and the old striped fires via the normal seed pass.
+        var core = CoreWith((7, 0, SV4), (7, 1, 4), (7, 3, 4), (6, 2, 4));
+        var (pts, marked) = StepZero(core, VSwap(6, 2));
+        Assert.Equal(130, pts);                                            // run (3) + column 0 (7) + consumed (1)
+        Assert.Equal(SV4, core.grid[7 * Size + 2]);                        // fresh striped at the moved cell
+        Assert.False(marked[7 * Size + 2]);                                // untriggered → survives
+    }
+
+    [Fact]
+    public void Run4_AllSpecials_NoCreation_EverythingFires()
+    {
+        // Degenerate: every cell of the 4-run is special → no plain host, no creation, all four fire:
+        // row 7 (×2, dup) + columns 0 and 3 = 8 + 7 + 7 = 22 cells, nothing consumed.
+        var core = CoreWith((7, 0, SV4), (7, 1, SH4), (7, 3, SV4), (6, 2, SH4));
+        var (pts, _) = StepZero(core, VSwap(6, 2));
+        Assert.Equal(240, pts);
+        Assert.Equal(0, core.moveCreatedStriped);
+        Assert.Equal(4, core.moveSpecialsFired);
+    }
+
+    [Fact]
+    public void RelocatedCreation_TieBreaksTowardTheLowerIndex()
+    {
+        // The dragged striped lands at (7,1) with plain run cells at equal distance on BOTH sides — the
+        // new striped must take the lower index (7,0). Its column-1 blast touches neither, so it survives.
+        var core = CoreWith((7, 0, 4), (7, 2, 4), (7, 3, 4), (6, 1, SV4));
+        var (pts, marked) = StepZero(core, VSwap(6, 1));
+        Assert.Equal(130, pts);                                            // run (3) + column 1 (7) + consumed (1)
+        Assert.Equal(SV4, core.grid[7 * Size + 0]);                        // relocated to the LOWER equidistant cell
+        Assert.False(marked[7 * Size + 0]);
+        Assert.Equal(0, core.grid[7 * Size + 2]);                          // the higher candidate just cleared
+        Assert.Equal(1, core.moveCreatedStriped);
+    }
+
+    [Fact]
+    public void Match5_WithSpecialAtTheSpawnCell_BombRelocates_AndTheSpecialFires()
+    {
+        // Bomb priority survives the collision: the dragged stripedV completes a 5-run, fires its column,
+        // and the bomb forms on the nearest plain neighbour instead of overwriting it.
+        var core = CoreWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (7, 4, 4), (6, 2, SV4));
+        var (pts, _) = StepZero(core, VSwap(6, 2));
+        Assert.Equal(170, pts);                                            // run (4) + column 2 (7) + consumed (1) + 50
+        Assert.Equal(BOMB, core.grid[7 * Size + 1]);
+        Assert.Equal(1, core.moveCreatedBombs);
+        Assert.Equal(0, core.moveCreatedStriped);
+    }
+
+    [Fact]
+    public void WrappedPivot_Special_NewWrappedRelocatesToTheNearestArmCell()
+    {
+        // L-shape whose intersection is the dragged wrapped: it fires (and arms), the NEW wrapped forms on
+        // the nearest plain arm cell (6,2), gets caught in the pivot's 3×3 and arms too — both refire later.
+        var board = BoardWith((7, 0, 4), (7, 1, 4), (5, 2, 4), (6, 2, 4), (7, 3, WR4));
+        Assert.Equal(110, board.ImmediateScore(HSwap(7, 2)));              // 10 distinct cells + consumed (1)
+        Assert.True(board.DeterministicValue(HSwap(7, 2)) > 110);
+        board.ApplySwap(HSwap(7, 2));
+        Assert.Equal(1, board.MoveCreatedWrapped);
+        Assert.True(board.MoveSpecialsFired >= 2);
+    }
+
+    [Fact]
+    public void CascadeRun_SpecialAtTheLowestCell_CreationRelocates()
+    {
+        // Gravity drops an old striped-5 into the lowest cell of a cascade-formed 4-run: the striped fires,
+        // the cascade creation relocates to the next plain run cell instead of overwriting it.
+        var board = BoardWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (5, 1, SH5), (5, 2, 5), (6, 3, 5), (6, 4, 5));
+        board.ApplySwap(HSwap(7, 2));
+        Assert.Equal(1, board.MoveCreatedStriped);
+        Assert.True(board.MoveSpecialsFired >= 2);
+    }
+
     // ── Activation ──────────────────────────────────────────────────────────────────────────────────────────
 
     [Fact]

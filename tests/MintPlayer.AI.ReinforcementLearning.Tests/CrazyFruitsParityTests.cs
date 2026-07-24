@@ -13,9 +13,10 @@ public class CrazyFruitsParityTests
     // Verified 2026-07-24 against the TS twin: `node tools/cf_parity.mjs` (committed harness).
     // Pin history: M49 (no specials) 78377593/70990 · first specials cut 533753109/85650 · 801202210/80770
     // after two owner corrections (striped blast ⊥ the creating match; combo blasts centre on the gesture's
-    // last-selected cell) · current 995400597/95550 after the third owner rule: specials FORM before this
-    // step's activations run, so a fresh special blasted in the same step fires immediately.
-    private const long PinnedChecksum = 995_400_597;
+    // last-selected cell) · 995400597/95550 after the third owner rule (specials FORM before this step's
+    // activations) · current 563660409/86340 after the creation-collision fix: a special at the spawn cell
+    // fires instead of being overwritten, and the creation relocates to the nearest plain cell.
+    private const long PinnedChecksum = 563_660_409;
 
     [Fact]
     public void RandomEpisode_ChecksumMatchesTheTsTwin()

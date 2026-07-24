@@ -1915,7 +1915,7 @@ mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none
   generated net) plays all four tiers legally, ordering reproduced (net 3393 vs random 2379); LIVE watch mode
   caught mid-cascade at move 7/30 (score 330, "+30" pop), all four tiers exercised on desktop AND mobile.*
 
-## M50 — Crazy Fruits specials: striped / wrapped / sugar bomb  *(2026-07-24; on the M49 branch `m49-crazy-fruits`, PR #38 — owner: one PR for the arc; see `CRAZY_FRUITS_SPECIALS_PRD.md`)* 🟢 (M50.0–.2 + .4 shipped same day; M50.3 training runs as the deferred last step)
+## M50 — Crazy Fruits specials: striped / wrapped / sugar bomb  *(2026-07-24; on the M49 branch `m49-crazy-fruits`, PR #38 — owner: one PR for the arc; see `CRAZY_FRUITS_SPECIALS_PRD.md`)* 🟢 (M50.0–.2 + .4–.5 shipped same day; M50.3 training runs as the deferred last step)
 
 **Why:** owner wants Candy-Crush special pieces on the shipped M49 match-3 — striped (match-4 → row/column
 blast), wrapped (L/T match → 3×3 double explosion), sugar bomb (match-5 → swap clears a fruit type), with all
@@ -1957,13 +1957,14 @@ zero deadlocks ever; game-over-on-deadlock would never fire).
   *Green (final rules): random 2598.7±72.4 · greedy 3497.9±96.2 (+35% — was +6% without specials) ·
   specials-greedy 3867.1 · expectimax-1 5931.4 (+128%) · expectimax-2 8135.0 (+213%); env validation 32%;
   e2−e1 gap +37.2% arms the escalation trigger.*
-- **M50.3 — Retrain** 🟡 escalation in flight. **Gates:** ≥ +30% over random-with-specials (bar 3378.3, 500
-  eps, CI-separated); ≥ 64% of the random→expectimax-1 gap (bar 4731.6 — the M49 ratio); specials created
-  ≥ 7.3 / fired ≥ 5.5 per ep (2× random). *Attempt 1 (γ=0 + creation shaping, 400k): **4000.5±128.8 =
-  +53.9% — gate 1 PASS**, beats greedy +14.4%; gap share 42% and created 5.7/ep MISS gates 2/3 (fired 5.55
-  passes barely) — the pre-registered escalation (γ=0.5 + 3-step + PBRS, `--pbrs`) is running as the ONE
-  allowed retry; then stop-loss. Best net ships either way; the net tier falls back to expectimax until the
-  ckpt lands (width guard rejects the stale 672-input net).*
+- **M50.3 — Retrain** 🟡 escalation in flight. **Gates (bars re-measured on the M50.5-fixed rules):** ≥ +30%
+  over random-with-specials (bar 3398.1, 500 eps, CI-separated); ≥ 64% of the random→expectimax-1 gap (bar
+  4764.7 — the M49 ratio); specials created ≥ 7.4 / fired ≥ 5.7 per ep (2× random). *Attempt 1 (γ=0 +
+  creation shaping, 400k, on fixed rules): **4051.1±130.9 = +55.0% — gate 1 PASS**, beats greedy +15.8%;
+  gap share 43% and created 5.84/ep MISS gates 2/3 (fired 5.79 passes barely) — the pre-registered
+  escalation (γ=0.5 + 3-step + PBRS, `--pbrs`) is running as the ONE allowed retry (restarted on the fixed
+  rules after the M50.5 fix invalidated its first 210k); then stop-loss. Best net ships either way; the net
+  tier falls back to expectimax until the ckpt lands (width guard rejects the stale 672-input net).*
 - **M50.4 — Web** ✅ (2026-07-24) (square candy wrapper with folded tabs + gloss — owner-requested — over the visible
   fruit; thin outlined stripes along the blast axis; sprinkled sugar-bomb sphere; pop step enriched with
   beams/rings/zaps/creation sparkles; six watch tiers; 30-move round-over screen with the measured bars).
@@ -1971,6 +1972,15 @@ zero deadlocks ever; game-over-on-deadlock would never fire).
   engine-exact grids, score 8130 with specials firing); live watch tiers screenshot square-wrapped +
   striped fruit and two bombs on board; a REAL 164-attempt 30-move human round ended on the round-over
   screen and tap restarted; NetParity green (net dims come from the ckpt — the retrained net drops in).*
+- **M50.5 — Creation-collision fix** ✅ (2026-07-24, owner bug report: a striped dragged into a line of 4
+  neither fired nor left a new striped in the line). `placeCreation` overwrote-and-unmarked whatever held
+  the spawn cell, on all four creation paths. Fix: the creation relocates to the **nearest plain cell of
+  the shape** (ties → lower flat index; no plain cell → no creation) and the colliding special stays marked
+  and fires through the unchanged form-then-trigger pass. **Gate:** 8 directed tests (reported drag
+  exact-scored 180; wrapped 160 + armed refire; plain-spawn regression guard; all-special run 240 with zero
+  creations; tie-break; bomb relocation 170 with priority intact; wrapped-pivot 110; cascade relocation) —
+  57/57 green; parity re-pinned **563660409** (C# = TS); baselines re-measured (random 2613.9 · greedy
+  3499.2 · e1 5974.6 · e2 8139.1; validation 32% ✓; e2 gap +36.2% keeps the escalation armed).
 
 ## Testing strategy (cross-cutting, from research)
 

@@ -444,12 +444,43 @@ class PgCrazyFruits {
     return false
   }
 
-  // Swap-made shapes (step 0) spawn at the swapped cell inside the run; cascade-made ones at the run's
-  // lowest cell index. Wrapped always spawns at the intersection.
+  // Swap-made shapes (step 0) prefer the swapped cell inside the run; cascade-made ones the run's lowest
+  // cell index. A preferred cell that already holds a special is NOT overwritten (owner bug report
+  // 2026-07-24: a striped dragged into a 4-line must fire, and the new special forms on ANOTHER fruit):
+  // the creation relocates to the nearest plain cell in the run (ties toward the lower index), or -1 when
+  // the whole run is special — then nothing is created and every special in it simply fires.
   fn spawnCellFor(run: PgCfRun, k: i32): i32 {
-    if k == 0 && this.runContains(run, this.moveCellA) { return this.moveCellA }
-    if k == 0 && this.runContains(run, this.moveCellB) { return this.moveCellB }
-    return run.start
+    if k == 0 && this.runContains(run, this.moveCellA) { return this.creationCellInRun(run, this.moveCellA) }
+    if k == 0 && this.runContains(run, this.moveCellB) { return this.creationCellInRun(run, this.moveCellB) }
+    return this.creationCellInRun(run, run.start)
+  }
+
+  fn creationCellInRun(run: PgCfRun, pref: i32): i32 {
+    if cfKindOf(this.grid[pref]) == KindNone { return pref }
+    let stride = if run.horizontal { 1 } else { Size }
+    let p = divExact(pref - run.start, stride)
+    for d in 1..run.len {
+      if p - d >= 0 && cfKindOf(this.grid[run.start + (p - d) * stride]) == KindNone { return run.start + (p - d) * stride }
+      if p + d < run.len && cfKindOf(this.grid[run.start + (p + d) * stride]) == KindNone { return run.start + (p + d) * stride }
+    }
+    return -1
+  }
+
+  // Wrapped variant of the same relocation rule: prefer the intersection; otherwise walk outward along both
+  // arms and take the nearest plain cell (at equal distance the lowest flat index wins — with d < Size the
+  // four distance-d candidates are already in flat-index order: up, left, right, down).
+  fn creationCellForWrapped(h: PgCfRun, v: PgCfRun, cross: i32): i32 {
+    if cfKindOf(this.grid[cross]) == KindNone { return cross }
+    let hpos = cross - h.start
+    let vpos = divExact(cross - v.start, Size)
+    let maxLen = if h.len > v.len { h.len } else { v.len }
+    for d in 1..maxLen {
+      if vpos - d >= 0 && cfKindOf(this.grid[cross - d * Size]) == KindNone { return cross - d * Size }
+      if hpos - d >= 0 && cfKindOf(this.grid[cross - d]) == KindNone { return cross - d }
+      if hpos + d < h.len && cfKindOf(this.grid[cross + d]) == KindNone { return cross + d }
+      if vpos + d < v.len && cfKindOf(this.grid[cross + d * Size]) == KindNone { return cross + d * Size }
+    }
+    return -1
   }
 
   fn intersectionOf(h: PgCfRun, v: PgCfRun): i32 {
@@ -482,16 +513,21 @@ class PgCrazyFruits {
     var consumed: List<bool> = List<bool>()
     for _i in 0..runs.count { consumed.add(false) }
 
-    // 1) Sugar bombs from straight 5+ runs.
+    // 1) Sugar bombs from straight 5+ runs. A -1 spawn cell (run entirely special) creates nothing, but the
+    // run stays consumed — the shape claimed its priority, only the plain host is missing.
     for ri in 0..runs.count {
       if runs[ri].len >= 5 {
         consumed[ri] = true
-        this.placeCreation(this.spawnCellFor(runs[ri], k), KindBomb * 16, marked)
-        this.moveCreatedBombs += 1
-        created += 1
+        let cell = this.spawnCellFor(runs[ri], k)
+        if cell >= 0 {
+          this.placeCreation(cell, KindBomb * 16, marked)
+          this.moveCreatedBombs += 1
+          created += 1
+        }
       }
     }
-    // 2) Wrapped from an unconsumed horizontal ∩ vertical run pair — spawn at the intersection.
+    // 2) Wrapped from an unconsumed horizontal ∩ vertical run pair — spawn at the intersection (relocated
+    // to the nearest plain arm cell when the pivot is special).
     for hi in 0..runs.count {
       if consumed[hi] || !runs[hi].horizontal { continue }
       for vi in 0..runs.count {
@@ -500,9 +536,12 @@ class PgCrazyFruits {
         if cross < 0 { continue }
         consumed[hi] = true
         consumed[vi] = true
-        this.placeCreation(cross, KindWrapped * 16 + runs[hi].fruit, marked)
-        this.moveCreatedWrapped += 1
-        created += 1
+        let cell = this.creationCellForWrapped(runs[hi], runs[vi], cross)
+        if cell >= 0 {
+          this.placeCreation(cell, KindWrapped * 16 + runs[hi].fruit, marked)
+          this.moveCreatedWrapped += 1
+          created += 1
+        }
         break
       }
     }
@@ -512,9 +551,12 @@ class PgCrazyFruits {
     for ri in 0..runs.count {
       if consumed[ri] || runs[ri].len != 4 { continue }
       let kind = if runs[ri].horizontal { KindStripedV } else { KindStripedH }
-      this.placeCreation(this.spawnCellFor(runs[ri], k), kind * 16 + runs[ri].fruit, marked)
-      this.moveCreatedStriped += 1
-      created += 1
+      let cell = this.spawnCellFor(runs[ri], k)
+      if cell >= 0 {
+        this.placeCreation(cell, kind * 16 + runs[ri].fruit, marked)
+        this.moveCreatedStriped += 1
+        created += 1
+      }
     }
     return created
   }
