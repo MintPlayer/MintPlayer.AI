@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
+using MintPlayer.AI.ReinforcementLearning.Environments.CrazyFruits;
 using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -66,6 +67,14 @@ public static class CampaignServiceCollectionExtensions
     public static IServiceCollection AddFruitCakeDqnCampaign(this IServiceCollection services,
         FruitCakeEnv trainEnv, FruitCakeEnv evalEnv, FruitCakeDqnOptions options)
         => services.AddSingleton<ITrainingCampaign>(_ => new FruitCakeDqnCampaign(trainEnv, evalEnv, options));
+
+    /// <summary>Score-maximizing Crazy Fruits (match-3) DQN (PLAN M49).</summary>
+    public static IServiceCollection AddCrazyFruitsDqnCampaign(this IServiceCollection services,
+        CrazyFruitsEnv trainEnv, CrazyFruitsEnv evalEnv, DqnScoreOptions options)
+        // Named args: the [Inject]-generated ctor takes the two same-typed envs (own deps first, then the
+        // base's) — never pass them positionally.
+        => services.AddSingleton<ITrainingCampaign>(_ =>
+            new CrazyFruitsDqnCampaign(evalEnv: evalEnv, trainEnv: trainEnv, options: options, logger: null));
 
     /// <summary>Kociemba-imitation cube campaign (PLAN M16).</summary>
     public static IServiceCollection AddCubeImitationCampaign(this IServiceCollection services, CubeImitationOptions options)
