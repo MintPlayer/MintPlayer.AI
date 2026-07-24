@@ -316,6 +316,52 @@ public class CrazyFruitsSpecialsTests
         Assert.Equal(before, board.GridSnapshot());
     }
 
+    // The web page drives moves through the STEPWISE protocol (stageSwap → clearStep/collapse loop →
+    // finishMove) so it can animate between steps; applySwap drains the same loop atomically. This pins the
+    // two paths byte-identical — grid, score, RNG stream, telemetry — over full games with specials and
+    // combos, so the browser's game functionality is the tested engine functionality by construction
+    // (C#↔TS equality is separately pinned by the parity checksum).
+    [Fact]
+    public void StepwiseHostProtocol_IsByteIdenticalTo_ApplySwap()
+    {
+        for (ulong seed = 1; seed <= 10; seed++)
+        {
+            var atomic = new PgCrazyFruits();
+            var stepwise = new PgCrazyFruits();
+            atomic.reset(CrazyFruitsBoard.SeedToInt(seed));
+            stepwise.reset(CrazyFruitsBoard.SeedToInt(seed));
+
+            for (int move = 0; move < 30; move++)
+            {
+                // Alternate policies for coverage; both boards are identical, so the action is valid on both.
+                int action = move % 2 == 0 ? atomic.greedyAction() : atomic.randomAction(new PgCfRng((int)(seed * 100 + (ulong)move)));
+                int expectedPoints = 0;
+
+                // Stepwise (the web host's exact calls, minus animation):
+                Assert.True(stepwise.stageSwap(action, stepwise.cellB(action)));
+                for (int k = 0; ; k++)
+                {
+                    var marked = new List<bool>();
+                    for (int i = 0; i < CrazyFruitsBoard.Cells; i++) marked.Add(false);
+                    int pts = stepwise.clearStep(k, marked);
+                    if (pts == 0) break;
+                    expectedPoints += pts;
+                    stepwise.collapseColumns(true);
+                }
+                stepwise.finishMove(expectedPoints);
+
+                // Atomic:
+                Assert.Equal(expectedPoints, atomic.applySwap(action));
+
+                Assert.Equal(atomic.score, stepwise.score);
+                Assert.Equal(atomic.rng.state, stepwise.rng.state);
+                Assert.Equal(atomic.reshuffles, stepwise.reshuffles);
+                Assert.Equal(atomic.moveSpecialsFired, stepwise.moveSpecialsFired);
+                for (int i = 0; i < CrazyFruitsBoard.Cells; i++) Assert.Equal(atomic.grid[i], stepwise.grid[i]);
+            }
+        }
+    }
+
     // ── Planning purity + invariants ────────────────────────────────────────────────────────────────────────
 
     [Fact]
