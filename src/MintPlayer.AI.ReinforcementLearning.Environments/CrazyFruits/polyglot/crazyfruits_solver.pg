@@ -73,8 +73,8 @@ class PgCrazyFruits {
   // first 3×3 rides the grid through gravity and fires again on the next cascade step — a stable board
   // never holds one (tested invariant).
   const KindNone: i32 = 0
-  const KindStripedH: i32 = 1        // clears its ROW (blast ∥ the creating match — SPECIALS PRD §2)
-  const KindStripedV: i32 = 2        // clears its COLUMN
+  const KindStripedH: i32 = 1        // clears its ROW (created by a VERTICAL 4-match — blast ⊥ match)
+  const KindStripedV: i32 = 2        // clears its COLUMN (created by a horizontal 4-match)
   const KindWrapped: i32 = 3
   const KindBomb: i32 = 4
   const KindArmed: i32 = 5
@@ -91,10 +91,13 @@ class PgCrazyFruits {
   var lastCascadeSteps: i32          // cascade depth of the most recent applySwap (1 = no chain)
   var reshuffles: i32                // deadlock reshuffles so far (host can animate on change)
 
-  // Move context: swapped cells (spawn-cell preference at cascade step 0) and whether the swap itself is an
-  // activation (bomb or special+special). Set by stageSwap, consumed by clearStep(0), reset by finishMove.
+  // Move context: swapped cells (spawn-cell preference at cascade step 0), the gesture's TARGET cell
+  // (combo blasts centre on the last-selected fruit — owner rule 2026-07-24; AI moves default to the
+  // action's bottom/right cell), and whether the swap itself is an activation (bomb or special+special).
+  // Set by stageSwap, consumed by clearStep(0), reset by finishMove.
   var moveCellA: i32
   var moveCellB: i32
+  var comboCenter: i32
   var stagedCombo: bool
 
   // Per-move specials telemetry (reset by stageSwap, accumulated across the move's clearSteps): what the
@@ -118,8 +121,13 @@ class PgCrazyFruits {
     this.reshuffles = 0
     this.moveCellA = -1
     this.moveCellB = -1
+    this.comboCenter = -1
     this.stagedCombo = false
-    this.resetMoveStats()
+    // Assigned directly (not via resetMoveStats) so the generated TS satisfies strict property initialization.
+    this.moveCreatedStriped = 0
+    this.moveCreatedWrapped = 0
+    this.moveCreatedBombs = 0
+    this.moveSpecialsFired = 0
     for i in 0..Cells { this.lastClearedBy.add(0) }
   }
 
@@ -132,6 +140,7 @@ class PgCrazyFruits {
     this.reshuffles = 0
     this.moveCellA = -1
     this.moveCellB = -1
+    this.comboCenter = -1
     this.stagedCombo = false
     this.resetMoveStats()
     this.generateBoard()
@@ -394,14 +403,16 @@ class PgCrazyFruits {
       return
     }
 
-    // Special + special (no bomb). Geometry centres on cellA (deterministic: A is the left/top cell).
-    let ra = divExact(a, Size)
-    let ca = a % Size
+    // Special + special (no bomb). Geometry centres on the gesture's LAST-SELECTED cell (comboCenter —
+    // owner rule 2026-07-24; AI moves default to the action's bottom/right cell).
+    let center = this.comboCenter
+    let ra = divExact(center, Size)
+    let ca = center % Size
     let aStriped = ka == KindStripedH || ka == KindStripedV
     let bStriped = kb == KindStripedH || kb == KindStripedV
 
     if aStriped && bStriped {
-      // striped + striped: one full row AND one full column through the swap point (own directions overridden).
+      // striped + striped: one full row AND one full column through the last-selected cell.
       this.forceMark(a, 2, marked)
       this.forceMark(b, 2, marked)
       this.markRow(ra, marked, pending)
@@ -410,11 +421,11 @@ class PgCrazyFruits {
     }
     if ka == KindWrapped && kb == KindWrapped {
       // wrapped + wrapped: one 5×5 blast; both pieces (inside it) arm and re-fire after the settle.
-      this.markBox(a, 2, marked, pending)
+      this.markBox(center, 2, marked, pending)
       return
     }
-    // striped + wrapped: 3 full rows AND 3 full columns centred on the swap. Both pieces sit inside the
-    // band; the wrapped arms as usual (its second explosion still fires after the settle).
+    // striped + wrapped: 3 full rows AND 3 full columns centred on the last-selected cell. Both pieces sit
+    // inside the band; the wrapped arms as usual (its second explosion still fires after the settle).
     for i in 0..3 {
       let r = ra - 1 + i
       if r >= 0 && r < Size { this.markRow(r, marked, pending) }
@@ -450,11 +461,24 @@ class PgCrazyFruits {
     return -1
   }
 
-  // Resolve creations from this step's runs (called AFTER the clear pass — spawn cells are re-populated
-  // with the new special). Runs consumed by a higher-priority shape don't create again. Creations score
-  // NOTHING (fire-only scoring, owner decision) — they only bump the per-move telemetry the training
-  // env's shaping reads.
-  fn resolveCreations(runs: List<PgCfRun>, k: i32) {
+  // Place one freshly formed special: it replaces the matched fruit at its spawn cell BEFORE any activation
+  // runs (owner rule 2026-07-24: form first, then trigger), so this step's blasts can set it off. The spawn
+  // cell is unmarked — the special only clears if something actually triggers it. The consumed match fruit
+  // still scores: the caller adds the returned creation count to its cleared total.
+  fn placeCreation(cell: i32, packed: i32, marked: List<bool>) {
+    this.grid[cell] = packed
+    marked[cell] = false
+    this.lastClearedBy[cell] = 0
+    this.lastCreated.add(cell)
+    this.lastCreated.add(packed)
+  }
+
+  // Resolve creations from this step's runs (called BEFORE activations — a fresh special can be triggered
+  // by this very step's blasts). Runs consumed by a higher-priority shape don't create again. Creations
+  // score NOTHING themselves (fire-only scoring); returns the number of creations so the consumed match
+  // fruit still counts as cleared.
+  fn resolveCreations(runs: List<PgCfRun>, k: i32, marked: List<bool>): i32 {
+    var created = 0
     var consumed: List<bool> = List<bool>()
     for _i in 0..runs.count { consumed.add(false) }
 
@@ -462,11 +486,9 @@ class PgCrazyFruits {
     for ri in 0..runs.count {
       if runs[ri].len >= 5 {
         consumed[ri] = true
-        let cell = this.spawnCellFor(runs[ri], k)
-        this.grid[cell] = KindBomb * 16
-        this.lastCreated.add(cell)
-        this.lastCreated.add(KindBomb * 16)
+        this.placeCreation(this.spawnCellFor(runs[ri], k), KindBomb * 16, marked)
         this.moveCreatedBombs += 1
+        created += 1
       }
     }
     // 2) Wrapped from an unconsumed horizontal ∩ vertical run pair — spawn at the intersection.
@@ -478,25 +500,23 @@ class PgCrazyFruits {
         if cross < 0 { continue }
         consumed[hi] = true
         consumed[vi] = true
-        let packed = KindWrapped * 16 + runs[hi].fruit
-        this.grid[cross] = packed
-        this.lastCreated.add(cross)
-        this.lastCreated.add(packed)
+        this.placeCreation(cross, KindWrapped * 16 + runs[hi].fruit, marked)
         this.moveCreatedWrapped += 1
+        created += 1
         break
       }
     }
-    // 3) Striped from unconsumed 4-runs — blast PARALLEL to the match (horizontal 4-run → clears its row).
+    // 3) Striped from unconsumed 4-runs — blast PERPENDICULAR to the match (owner correction 2026-07-24,
+    // the real Candy Crush rule: a horizontal 4-match makes a vertically-striped candy that clears its
+    // COLUMN; stripes are painted along the blast).
     for ri in 0..runs.count {
       if consumed[ri] || runs[ri].len != 4 { continue }
-      let kind = if runs[ri].horizontal { KindStripedH } else { KindStripedV }
-      let cell = this.spawnCellFor(runs[ri], k)
-      let packed = kind * 16 + runs[ri].fruit
-      this.grid[cell] = packed
-      this.lastCreated.add(cell)
-      this.lastCreated.add(packed)
+      let kind = if runs[ri].horizontal { KindStripedV } else { KindStripedH }
+      this.placeCreation(this.spawnCellFor(runs[ri], k), kind * 16 + runs[ri].fruit, marked)
       this.moveCreatedStriped += 1
+      created += 1
     }
+    return created
   }
 
   // ── Cascade resolution ───────────────────────────────────────────────────────────────────────────────────
@@ -516,6 +536,10 @@ class PgCrazyFruits {
     var runs: List<PgCfRun> = List<PgCfRun>()
     let bonus = this.scanMatches(marked, runs)
     for i in 0..Cells { if marked[i] { this.lastClearedBy[i] = 1 } }
+
+    // FORM specials first (owner rule): fresh specials land on the board before any activation, so this
+    // step's blasts can trigger them immediately (markCell chains them like any other special).
+    let creationConsumed = this.resolveCreations(runs, k, marked)
 
     var pending: List<i32> = List<i32>()
 
@@ -557,11 +581,14 @@ class PgCrazyFruits {
       }
     }
 
-    var cleared = 0
+    // The fruit consumed into each fresh special still scores (creationConsumed); a fresh special that got
+    // triggered is marked and scores again as it dies — same rule as every special.
+    var cleared = creationConsumed
     for i in 0..Cells { if marked[i] { cleared += 1 } }
     if cleared == 0 { return 0 }
 
     // Clear: a first-fired wrapped ARMS (rides the fall, fires again next step); everything else blanks.
+    // Untriggered fresh specials are unmarked and survive.
     for i in 0..Cells {
       if !marked[i] { continue }
       if cfKindOf(this.grid[i]) == KindWrapped {
@@ -570,9 +597,6 @@ class PgCrazyFruits {
         this.grid[i] = 0
       }
     }
-
-    // Creations overwrite their (just-cleared) spawn cells. They score nothing (fire-only scoring).
-    this.resolveCreations(runs, k)
 
     return cleared * BaseFruitScore * (k + 1) + bonus
   }
@@ -598,6 +622,7 @@ class PgCrazyFruits {
   fn finishMove(points: i32) {
     this.moveCellA = -1
     this.moveCellB = -1
+    this.comboCenter = -1
     this.stagedCombo = false
     this.score += points
     this.movesMade += 1
@@ -625,9 +650,10 @@ class PgCrazyFruits {
   }
 
   // ── The move ─────────────────────────────────────────────────────────────────────────────────────────────
-  // Stage + perform a legal swap: sets the move context (spawn-cell preference; staged combo activation).
+  // Stage + perform a legal swap: sets the move context (spawn-cell preference; staged combo activation;
+  // combo centre = targetCell, the gesture's LAST-SELECTED cell — pass cellB(action) for AI moves).
   // Returns false and changes NOTHING for an illegal action.
-  fn stageSwap(action: i32): bool {
+  fn stageSwap(action: i32, targetCell: i32): bool {
     if !this.swapIsLegal(action) { return false }
     let a = this.cellA(action)
     let b = this.cellB(action)
@@ -636,6 +662,7 @@ class PgCrazyFruits {
     this.swapCells(a, b)
     this.moveCellA = a
     this.moveCellB = b
+    this.comboCenter = if targetCell == a || targetCell == b { targetCell } else { b }
     this.stagedCombo = ka == KindBomb || kb == KindBomb || (ka != KindNone && kb != KindNone)
     this.resetMoveStats()
     return true
@@ -643,7 +670,7 @@ class PgCrazyFruits {
 
   // Apply a legal swap end-to-end. Returns the points gained; −1 for an illegal action (no change).
   fn applySwap(action: i32): i32 {
-    if !this.stageSwap(action) { return -1 }
+    if !this.stageSwap(action, this.cellB(action)) { return -1 }
     let points = this.resolveCascades(true)
     this.finishMove(points)
     return points
@@ -713,18 +740,20 @@ class PgCrazyFruits {
     for i in 0..Cells { saved.add(this.grid[i]) }
     let savedA = this.moveCellA
     let savedB = this.moveCellB
+    let savedCenter = this.comboCenter
     let savedCombo = this.stagedCombo
     let savedCS = this.moveCreatedStriped
     let savedCW = this.moveCreatedWrapped
     let savedCB = this.moveCreatedBombs
     let savedSF = this.moveSpecialsFired
-    this.stageSwap(action)
+    this.stageSwap(action, this.cellB(action))
     var marked: List<bool> = List<bool>()
     for i in 0..Cells { marked.add(false) }
     let pts = this.clearStep(0, marked)
     for i in 0..Cells { this.grid[i] = saved[i] }
     this.moveCellA = savedA
     this.moveCellB = savedB
+    this.comboCenter = savedCenter
     this.stagedCombo = savedCombo
     this.moveCreatedStriped = savedCS
     this.moveCreatedWrapped = savedCW
@@ -752,12 +781,13 @@ class PgCrazyFruits {
     for i in 0..Cells { saved.add(this.grid[i]) }
     let savedA = this.moveCellA
     let savedB = this.moveCellB
+    let savedCenter = this.comboCenter
     let savedCombo = this.stagedCombo
     let savedCS = this.moveCreatedStriped
     let savedCW = this.moveCreatedWrapped
     let savedCB = this.moveCreatedBombs
     let savedSF = this.moveSpecialsFired
-    this.stageSwap(action)
+    this.stageSwap(action, this.cellB(action))
     var marked: List<bool> = List<bool>()
     for i in 0..Cells { marked.add(false) }
     var pts = this.clearStep(0, marked)
@@ -765,6 +795,7 @@ class PgCrazyFruits {
     for i in 0..Cells { this.grid[i] = saved[i] }
     this.moveCellA = savedA
     this.moveCellB = savedB
+    this.comboCenter = savedCenter
     this.stagedCombo = savedCombo
     this.moveCreatedStriped = savedCS
     this.moveCreatedWrapped = savedCW
@@ -793,17 +824,19 @@ class PgCrazyFruits {
     for i in 0..Cells { saved.add(this.grid[i]) }
     let savedA = this.moveCellA
     let savedB = this.moveCellB
+    let savedCenter = this.comboCenter
     let savedCombo = this.stagedCombo
     let savedSteps = this.lastCascadeSteps
     let savedCS = this.moveCreatedStriped
     let savedCW = this.moveCreatedWrapped
     let savedCB = this.moveCreatedBombs
     let savedSF = this.moveSpecialsFired
-    this.stageSwap(action)
+    this.stageSwap(action, this.cellB(action))
     let v = this.resolveCascades(false)
     for i in 0..Cells { this.grid[i] = saved[i] }
     this.moveCellA = savedA
     this.moveCellB = savedB
+    this.comboCenter = savedCenter
     this.stagedCombo = savedCombo
     this.lastCascadeSteps = savedSteps
     this.moveCreatedStriped = savedCS
@@ -858,6 +891,7 @@ class PgCrazyFruits {
       for i in 0..Cells { saved.add(this.grid[i]) }
       let savedA = this.moveCellA
       let savedB = this.moveCellB
+      let savedCenter = this.comboCenter
       let savedCombo = this.stagedCombo
       let savedSteps = this.lastCascadeSteps
       let savedCS = this.moveCreatedStriped
@@ -865,7 +899,7 @@ class PgCrazyFruits {
       let savedCB = this.moveCreatedBombs
       let savedSF = this.moveSpecialsFired
 
-      this.stageSwap(a)
+      this.stageSwap(a, this.cellB(a))
       let first = this.resolveCascades(false)
       var follow = 0
       for a2 in 0..ActionCount {
@@ -876,6 +910,7 @@ class PgCrazyFruits {
       for i in 0..Cells { this.grid[i] = saved[i] }
       this.moveCellA = savedA
       this.moveCellB = savedB
+      this.comboCenter = savedCenter
       this.stagedCombo = savedCombo
       this.lastCascadeSteps = savedSteps
       this.moveCreatedStriped = savedCS

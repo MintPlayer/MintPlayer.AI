@@ -11,10 +11,11 @@ namespace MintPlayer.AI.ReinforcementLearning.Tests;
 public class CrazyFruitsParityTests
 {
     // Verified 2026-07-24 against the TS twin: `node tools/cf_parity.mjs` (committed harness).
-    // M49 (no specials) pinned 78377593/score 70990; M50 specials re-pin: checksum=533753109, score=85650,
-    // reshuffles=1 — random play gains ~21% from auto-firing specials, and the episode exercises creation,
-    // chains, combos AND a mid-episode reshuffle byte-identically on both sides.
-    private const long PinnedChecksum = 533_753_109;
+    // Pin history: M49 (no specials) 78377593/70990 · first specials cut 533753109/85650 · 801202210/80770
+    // after two owner corrections (striped blast ⊥ the creating match; combo blasts centre on the gesture's
+    // last-selected cell) · current 995400597/95550 after the third owner rule: specials FORM before this
+    // step's activations run, so a fresh special blasted in the same step fires immediately.
+    private const long PinnedChecksum = 995_400_597;
 
     [Fact]
     public void RandomEpisode_ChecksumMatchesTheTsTwin()

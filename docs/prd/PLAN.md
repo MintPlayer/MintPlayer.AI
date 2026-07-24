@@ -1920,9 +1920,11 @@ mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none
 **Why:** owner wants Candy-Crush special pieces on the shipped M49 match-3 — striped (match-4 → row/column
 blast), wrapped (L/T match → 3×3 double explosion), sugar bomb (match-5 → swap clears a fruit type), with all
 combo swaps — in the single-source engine so human play, the scripted tiers, and a retrained net all get
-them. 3-agent investigation 2026-07-24 (canonical mechanics with the striped-orientation conflict resolved:
-blast ∥ match, the "perpendicular" wiki wording is sprite paint; line-referenced engine impact; AI impact —
-CANDYRL used γ=0.5 on real Candy Crush; PBRS at γ=0 is a mathematical no-op).
+them. 3-agent investigation 2026-07-24 (line-referenced engine impact; AI impact — CANDYRL used γ=0.5 on
+real Candy Crush; PBRS at γ=0 is a mathematical no-op). Two owner corrections during the build: striped
+blast is **⊥ the creating match** (the research agent's ∥ resolution was wrong — paint shows the blast),
+and combo blasts centre on the **gesture's last-selected cell** (`stageSwap` grew a target-cell parameter;
+AI moves default deterministically to the action's bottom/right cell).
 
 **Key design locks:** rules 100% deterministic (zero RNG: passive bomb → most-frequent type; bomb+striped
 orientations `(r+c)%2`; cascade spawn → lowest run cell) so planning + C#↔TS parity survive; packed base-16

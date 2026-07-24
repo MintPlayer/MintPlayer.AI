@@ -48,24 +48,25 @@ public class CrazyFruitsSpecialsTests
     // ── Creation ────────────────────────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Horizontal4_CreatesRowStriped_AtTheSwappedCell()
+    public void Horizontal4_CreatesColumnStriped_AtTheSwappedCell()
     {
         var board = BoardWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (6, 2, 4));
         Assert.Equal(60, board.ImmediateScore(VSwap(6, 2)));               // 4·10 + 20 — creation scores nothing
         Assert.True(board.ApplySwap(VSwap(6, 2)) >= 60);
         Assert.Equal(1, board.MoveCreatedStriped);
-        Assert.Equal(1, board.Kind(7 * Size + 2));                         // stripedH (blast ∥ the horizontal match)
+        // Blast ⊥ match (the real Candy Crush rule, owner-corrected): horizontal 4-match → column-striped.
+        Assert.Equal(2, board.Kind(7 * Size + 2));
         Assert.Equal(4, board.Fruit(7 * Size + 2));
     }
 
     [Fact]
-    public void Vertical4_CreatesColumnStriped()
+    public void Vertical4_CreatesRowStriped()
     {
         var board = BoardWith((4, 2, 4), (5, 2, 4), (7, 2, 4), (6, 3, 4));
         board.ApplySwap(HSwap(6, 2));                                      // brings the 4 into (6,2)
         Assert.Equal(1, board.MoveCreatedStriped);
-        // The created stripedV falls to the bottom of its column after the collapse.
-        Assert.Equal(2, board.Kind(7 * Size + 2));
+        // The created row-striped (vertical match → row blast) falls to the bottom of its column.
+        Assert.Equal(1, board.Kind(7 * Size + 2));
         Assert.Equal(4, board.Fruit(7 * Size + 2));
     }
 
@@ -199,11 +200,39 @@ public class CrazyFruitsSpecialsTests
     [Fact]
     public void WrappedPlusWrapped_Fires5x5_ThenTheArmedShells()
     {
-        var board = BoardWith((5, 5, WR4), (5, 6, WR5));
-        Assert.Equal(250, board.ImmediateScore(HSwap(5, 5)));              // 5×5 = 25 cells (fully on-board)
-        Assert.True(board.DeterministicValue(HSwap(5, 5)) > 250);          // both shells re-fire after the settle
-        board.ApplySwap(HSwap(5, 5));
+        // AI moves centre on the action's bottom/right cell — (5,5) here — so the 5×5 sits fully on-board.
+        var board = BoardWith((5, 4, WR4), (5, 5, WR5));
+        Assert.Equal(250, board.ImmediateScore(HSwap(5, 4)));              // 5×5 = 25 cells
+        Assert.True(board.DeterministicValue(HSwap(5, 4)) > 250);          // both shells re-fire after the settle
+        board.ApplySwap(HSwap(5, 4));
         for (int i = 0; i < CrazyFruitsBoard.Cells; i++) Assert.NotEqual(5, board.Kind(i));
+    }
+
+    [Fact]
+    public void ComboBlast_CentresOnTheLastSelectedCell()
+    {
+        // The same striped+striped swap, staged toward each end: the cleared COLUMN follows the gesture's
+        // last-selected cell (owner rule), not a fixed corner of the action.
+        var core = new PgCrazyFruits();
+        core.reset(1);
+        var g = BaseGrid();
+        g[5 * Size + 5] = SH4;
+        g[5 * Size + 6] = SV4 + 1;
+        int action = HSwap(5, 5);
+
+        foreach (int target in new[] { 5 * Size + 6, 5 * Size + 5 })
+        {
+            for (int i = 0; i < CrazyFruitsBoard.Cells; i++) core.grid[i] = g[i];
+            Assert.True(core.stageSwap(action, target));
+            var marked = new List<bool>();
+            for (int i = 0; i < CrazyFruitsBoard.Cells; i++) marked.Add(false);
+            core.clearStep(0, marked);
+            int targetCol = target % Size;
+            int otherCol = targetCol == 5 ? 6 : 5;
+            Assert.True(marked[0 * Size + targetCol], "the last-selected cell's column must fire");
+            Assert.False(marked[0 * Size + otherCol], "the other cell's column must NOT fire");
+            core.finishMove(0);
+        }
     }
 
     [Fact]
@@ -231,6 +260,23 @@ public class CrazyFruitsSpecialsTests
         for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
             if (i / Size != 5 && g[i] % 16 == most && g[i] < 16) outsideRow5++;
         Assert.Equal((8 + outsideRow5) * 10, board.ImmediateScore(VSwap(4, 4)));
+    }
+
+    // A double-match swap: the down-moving 4 completes a horizontal 4-run (fresh stripedV at the swapped
+    // cell), while the up-moving 5 completes a 3-run containing a wrapped-5 whose 3×3 blast covers the fresh
+    // striped's cell — the FRESH special must fire in the SAME step (owner rule: form first, then trigger).
+    // Exact count: 4-run(4, one consumed into the creation) ∪ 3-run(3) ∪ wrapped box(9) ∪ fresh striped's
+    // column 2 (8) = 16 distinct marked + 1 consumed = 17 → 170 + 20 line bonus = 190.
+    [Fact]
+    public void FreshSpecial_FiresImmediately_WhenBlastedInTheSameStep()
+    {
+        var board = BoardWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (6, 2, 4), (7, 2, 5), (6, 3, WR5), (6, 4, 5));
+        Assert.Equal(190, board.ImmediateScore(VSwap(6, 2)));
+        board.ApplySwap(VSwap(6, 2));
+        Assert.Equal(1, board.MoveCreatedStriped);
+        Assert.True(board.MoveSpecialsFired >= 2, "the wrapped AND the fresh striped must both fire");
+        for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
+            Assert.False(board.Kind(i) == 2 && board.Fruit(i) == 4, "the fresh striped must not survive the blast");
     }
 
     // ── Baseline tiers (M50.2 gates) ────────────────────────────────────────────────────────────────────────

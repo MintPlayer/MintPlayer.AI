@@ -19,9 +19,10 @@ ambiguity found in the sources is locked here.
 
 **Creation** (from any qualifying match, swap-made or cascade-made; priority **bomb > wrapped > striped**,
 resolved per shape, rows-then-columns ascending as the tiebreak):
-- **Striped** ← 4 in a straight line. **Blast direction = PARALLEL to the creating match** (horizontal
-  4-match → clears its ROW). *Resolution note: wiki texts calling the stripes "perpendicular" describe the
-  sprite paint, not the blast — all sources agree on the directional effect; implement blast ∥ match.*
+- **Striped** ← 4 in a straight line. **Blast direction = PERPENDICULAR to the creating match** (horizontal
+  4-match → a vertically-striped fruit that clears its COLUMN; stripes are painted along the blast).
+  *Owner correction 2026-07-24: the research agent's "blast ∥ match" resolution was wrong — the real Candy
+  Crush rule is blast ⊥ match, with the stripe paint showing the blast direction.*
 - **Wrapped** ← a horizontal ≥3 run and a vertical ≥3 run sharing a cell (L, T, +; any larger intersection).
   Spawns at the intersection cell.
 - **Sugar bomb** ← 5+ in a straight line. Colorless (fruit type 0).
@@ -31,7 +32,9 @@ resolved per shape, rows-then-columns ascending as the tiebreak):
 - The creation cell is scored like its matched neighbours but receives the special instead of clearing.
 
 **Activation** (specials fire when cleared by anything — matches, blasts, combos; chains are unbounded but
-each cell activates at most once per step):
+each cell activates at most once per step). **Ordering (owner rule 2026-07-24): specials FORM before the
+step's activations run** — a fresh special lands on its spawn cell first, and if any blast/combo of that same
+step reaches it, it fires immediately (an untouched fresh special survives the step unmarked):
 - **Striped:** clears its entire row (stripedH) or column (stripedV).
 - **Wrapped:** explodes its 3×3, becomes **armed**, falls with gravity, then explodes its 3×3 AGAIN at its
   landing cell on the next cascade step (the canonical double explosion — the settle gap is observable).
@@ -48,9 +51,13 @@ each cell activates at most once per step):
 | bomb + striped | every fruit of the striped's type becomes striped (orientation `(r+c)%2` — deterministic) and all fire |
 | bomb + wrapped | every fruit of the wrapped's type detonates as a 3×3 blast |
 | bomb + bomb | clear the whole board |
-| striped + striped | one full row AND one full column through the swap point (directions overridden) |
-| striped + wrapped | 3 full rows AND 3 full columns centered on the swap |
-| wrapped + wrapped | one 5×5 blast, then the armed double-explosion fires again after the settle |
+| striped + striped | one full row AND one full column through the combo centre |
+| striped + wrapped | 3 full rows AND 3 full columns around the combo centre |
+| wrapped + wrapped | one 5×5 blast at the combo centre, then the armed double-explosion fires again after the settle |
+
+**Combo centre (owner rule 2026-07-24): the gesture's LAST-SELECTED cell** — the second tap of a tap-tap, the
+dragged-to cell of a drag. The action space can't carry gesture direction, so `stageSwap(action, targetCell)`
+takes it from the host; **AI/baseline moves deterministically default to the action's bottom/right cell.**
 
 **Legality (replaces "swap must produce a match"):** a swap is legal iff it produces a 3+ typewise line
 through a swapped cell, OR either cell is a bomb, OR both cells are specials. Striped/wrapped + plain with no
@@ -166,13 +173,19 @@ cell** · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI**
   chain reactions; the 20-seed × 30-move invariant sweep; a planning-purity test (no RNG, byte-identical
   state) on a specials-rich board; C#↔TS parity checksum RE-PINNED via the node harness — committed to
   `tools/cf_parity.mjs`.** No training before this gate.
-  *Gate result: 42 CrazyFruits tests green. Hand-computed exact scores: striped row-fire 80 · chain
-  striped→striped 150 · wrapped first-fire 100 (then >100 with the armed re-fire) · bomb+plain (n+1)·10 ·
-  bomb+bomb 640 · striped+striped 150 · striped+wrapped 390 · wrapped+wrapped 250 · bomb+striped conversion
-  220 · passive bomb = row + most-frequent-type, computed dynamically. Parity re-pin 533753109 (score
-  85650, and the seeded episode exercises creation, chains, combos AND a mid-episode reshuffle — the first
-  ever observed — byte-identically). Random's 1,000-move score rose 70990 → 85650 (+21%): the predicted
-  auto-fire floor-raise, to be re-measured properly in M50.2.*
+  *Gate result: 46 CrazyFruits tests green (final count after the two owner corrections below).
+  Hand-computed exact scores: striped row-fire 80 · chain striped→striped 150 · wrapped first-fire 100
+  (then >100 with the armed re-fire) · bomb+plain (n+1)·10 · bomb+bomb 640 · striped+striped 150 ·
+  striped+wrapped 390 · wrapped+wrapped 250 · bomb+striped conversion 220 · passive bomb = row +
+  most-frequent-type, computed dynamically. **Three owner corrections landed during the milestone, each
+  re-verified end-to-end:** (1) striped creation flipped to the real blast-⊥-match rule; (2) combo blasts
+  centre on the gesture's last-selected cell (`stageSwap` grew the target-cell parameter; a directed test
+  pins that the same swap staged toward each end fires the matching column); (3) specials FORM before the
+  step's activations, so a fresh special blasted in the same step fires immediately (directed 190-point
+  double-match test: a fresh striped triggered by a wrapped's box within its own creation step). Parity pin
+  history 533753109 → 801202210 → **995400597** (score 95550; the seeded episode exercises creation, chains
+  and combos byte-identically). Random's 1,000-move score ~96k vs 71k pre-specials: the predicted auto-fire
+  floor-raise.*
 - **M50.2 — Env/obs + baselines.** ✅ SHIPPED 2026-07-24. 928-float observation + labels + plane tests;
   normalizer K=100 (random means ~86 pts/move) and ÷300 planes; expectimax-2 (beam-8) + specials-greedy
   tiers, single-sourced in the `.pg`; `--baselines 500` table + per-tier specials usage stats.
@@ -180,11 +193,12 @@ cell** · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI**
   directed board where greedy provably picks the bomb swap; (c) PRE-TRAINING ENV VALIDATION — if
   random-with-specials ≥ 0.70 × expectimax-2, specials are too self-firing to be skill-differentiating: fix
   scoring before any training** (the flat-landscape guard).
-  *Gate result — ALL PASS, and specials dramatically widened the skill landscape: random 2612.2±67.5
-  (3.6 created / 2.7 fired per ep — the auto-fire floor) · greedy 3446.0±99.6 (**+32%** — was +6% without
-  specials) · specials-greedy 3850.4±113.8 (+47%) · expectimax-1 5841.2±159.8 (+124%) · expectimax-2
-  8368.8±177.8 (**+220%**). Env validation: random = **31%** of expectimax-2 (< 70% ✓). Expectimax-2 gap
-  over expectimax-1 = **+43.3%** (≫ 10%): plan-ahead/hold-for-combo value is real — the M50.3 escalation
+  *Gate result — ALL PASS, and specials dramatically widened the skill landscape (final numbers on the
+  fully owner-corrected rules; the two interim tables were within a few % on every row): random 2598.7±72.4
+  (3.7 created / 2.8 fired per ep — the auto-fire floor) · greedy 3497.9±96.2 (**+35%** — was +6% without
+  specials) · specials-greedy 3867.1±112.8 (+49%) · expectimax-1 5931.4±162.4 (+128%) · expectimax-2
+  8135.0±172.0 (**+213%**). Env validation: random = **32%** of expectimax-2 (< 70% ✓). Expectimax-2 gap
+  over expectimax-1 = **+37.2%** (≫ 10%): plan-ahead/hold-for-combo value is real — the M50.3 escalation
   trigger is ARMED. Directed tier tests: greedy provably takes the bomb swap; specials-greedy provably
   builds a striped where plain greedy fires the row.*
 - **M50.3 — Retrain (from scratch — input width changed).** γ=0, ~300–500k moves (2–3× M49; same
