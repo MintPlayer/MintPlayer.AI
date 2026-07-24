@@ -1915,7 +1915,7 @@ mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none
   generated net) plays all four tiers legally, ordering reproduced (net 3393 vs random 2379); LIVE watch mode
   caught mid-cascade at move 7/30 (score 330, "+30" pop), all four tiers exercised on desktop AND mobile.*
 
-## M50 — Crazy Fruits specials: striped / wrapped / sugar bomb  *(2026-07-24; on the M49 branch `m49-crazy-fruits`, PR #38 — owner: one PR for the arc; see `CRAZY_FRUITS_SPECIALS_PRD.md`)* 🟢 (M50.0–.2 + .4–.5 shipped same day; M50.3 training runs as the deferred last step)
+## M50 — Crazy Fruits specials: striped / wrapped / sugar bomb  *(2026-07-24; on the M49 branch `m49-crazy-fruits`, PR #38 — owner: one PR for the arc; see `CRAZY_FRUITS_SPECIALS_PRD.md`)* 🟢 (M50.0–.2 + .4–.6 shipped same day; M50.3 training runs as the deferred last step)
 
 **Why:** owner wants Candy-Crush special pieces on the shipped M49 match-3 — striped (match-4 → row/column
 blast), wrapped (L/T match → 3×3 double explosion), sugar bomb (match-5 → swap clears a fruit type), with all
@@ -1981,6 +1981,17 @@ zero deadlocks ever; game-over-on-deadlock would never fire).
   creations; tie-break; bomb relocation 170 with priority intact; wrapped-pivot 110; cascade relocation) —
   57/57 green; parity re-pinned **563660409** (C# = TS); baselines re-measured (random 2613.9 · greedy
   3499.2 · e1 5974.6 · e2 8139.1; validation 32% ✓; e2 gap +36.2% keeps the escalation armed).
+- **M50.6 — Shielded relocations** ✅ (2026-07-24, owner report round 2: a wrapped drag never left the new
+  special standing). Two-agent audit: M50.5 was functionally correct, but the wrapped's own 3×3 always
+  covers the relocation cell → the fresh striped chain-fired same-step and the armed refire re-covered it;
+  a striped drag spared it only when the blast axis missed (why striped "worked"). Fix: **relocated
+  creations are blast-shielded for the rest of the move** (`shielded[]` skipped by `markCell`, cleared by
+  `stageSwap`); later-step MATCHES still consume them; in-place creations keep the form-then-trigger chain
+  rule (190-test untouched). **Gate:** collision tests updated to shield semantics (striped drag 100 with
+  the striped SURVIVING; wrapped drag 90 surviving BOTH explosions; wrapped-pivot 80 keeping an unarmed
+  wrapped) — 57/57 green; parity re-pinned **481681208** (score 95950 — shield is score-positive); the
+  void `cf7train` run (no shield) discarded; training restarts from scratch on the final rules
+  (`cf8train`). Plus the owner-requested on-page KidCity.be credit paragraph.
 
 ## Testing strategy (cross-cutting, from research)
 

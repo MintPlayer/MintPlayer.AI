@@ -14,9 +14,11 @@ public class CrazyFruitsParityTests
     // Pin history: M49 (no specials) 78377593/70990 · first specials cut 533753109/85650 · 801202210/80770
     // after two owner corrections (striped blast ⊥ the creating match; combo blasts centre on the gesture's
     // last-selected cell) · 995400597/95550 after the third owner rule (specials FORM before this step's
-    // activations) · current 563660409/86340 after the creation-collision fix: a special at the spawn cell
-    // fires instead of being overwritten, and the creation relocates to the nearest plain cell.
-    private const long PinnedChecksum = 563_660_409;
+    // activations) · 563660409/86340 after the creation-collision fix (a special at the spawn cell fires
+    // instead of being overwritten; the creation relocates to the nearest plain cell) · current
+    // 481681208/95950 after M50.6: the RELOCATED creation is shielded from blasts for the rest of the move,
+    // so the player keeps the promised special.
+    private const long PinnedChecksum = 481_681_208;
 
     [Fact]
     public void RandomEpisode_ChecksumMatchesTheTsTwin()

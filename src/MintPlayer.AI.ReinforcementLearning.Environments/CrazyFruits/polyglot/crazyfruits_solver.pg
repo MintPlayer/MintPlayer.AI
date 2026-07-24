@@ -113,6 +113,12 @@ class PgCrazyFruits {
   var lastClearedBy: List<i32> = List<i32>()
   var lastCreated: List<i32> = List<i32>()
 
+  // Cells holding a RELOCATED creation (owner rule 2026-07-24): a special displaced off its preferred spawn
+  // cell by a colliding special is shielded from blasts for the REST OF THE MOVE — the fired special must
+  // not consume its own replacement (nor may the armed re-explosion or a combo). Matches in later cascade
+  // steps still consume it normally; stageSwap clears the shield, so it never outlives the move.
+  var shielded: List<bool> = List<bool>()
+
   init() {
     this.score = 0
     this.movesMade = 0
@@ -129,6 +135,7 @@ class PgCrazyFruits {
     this.moveCreatedBombs = 0
     this.moveSpecialsFired = 0
     for i in 0..Cells { this.lastClearedBy.add(0) }
+    for i2 in 0..Cells { this.shielded.add(false) }
   }
 
   fn reset(seed: i32) {
@@ -311,6 +318,8 @@ class PgCrazyFruits {
   // animating host, and enqueues specials so their own blasts chain (each cell activates at most once).
   fn markCell(cell: i32, source: i32, marked: List<bool>, pending: List<i32>) {
     if this.grid[cell] == 0 { return }
+    // Blasts (markCell is never used for match marking) pass over relocated creations for this move.
+    if this.shielded[cell] { return }
     if marked[cell] { return }
     marked[cell] = true
     this.lastClearedBy[cell] = source
@@ -449,10 +458,10 @@ class PgCrazyFruits {
   // 2026-07-24: a striped dragged into a 4-line must fire, and the new special forms on ANOTHER fruit):
   // the creation relocates to the nearest plain cell in the run (ties toward the lower index), or -1 when
   // the whole run is special — then nothing is created and every special in it simply fires.
-  fn spawnCellFor(run: PgCfRun, k: i32): i32 {
-    if k == 0 && this.runContains(run, this.moveCellA) { return this.creationCellInRun(run, this.moveCellA) }
-    if k == 0 && this.runContains(run, this.moveCellB) { return this.creationCellInRun(run, this.moveCellB) }
-    return this.creationCellInRun(run, run.start)
+  fn preferredCellFor(run: PgCfRun, k: i32): i32 {
+    if k == 0 && this.runContains(run, this.moveCellA) { return this.moveCellA }
+    if k == 0 && this.runContains(run, this.moveCellB) { return this.moveCellB }
+    return run.start
   }
 
   fn creationCellInRun(run: PgCfRun, pref: i32): i32 {
@@ -514,13 +523,16 @@ class PgCrazyFruits {
     for _i in 0..runs.count { consumed.add(false) }
 
     // 1) Sugar bombs from straight 5+ runs. A -1 spawn cell (run entirely special) creates nothing, but the
-    // run stays consumed — the shape claimed its priority, only the plain host is missing.
+    // run stays consumed — the shape claimed its priority, only the plain host is missing. A RELOCATED
+    // creation (preferred cell held a special) is shielded from this move's blasts (owner rule).
     for ri in 0..runs.count {
       if runs[ri].len >= 5 {
         consumed[ri] = true
-        let cell = this.spawnCellFor(runs[ri], k)
+        let pref = this.preferredCellFor(runs[ri], k)
+        let cell = this.creationCellInRun(runs[ri], pref)
         if cell >= 0 {
           this.placeCreation(cell, KindBomb * 16, marked)
+          if cell != pref { this.shielded[cell] = true }
           this.moveCreatedBombs += 1
           created += 1
         }
@@ -539,6 +551,7 @@ class PgCrazyFruits {
         let cell = this.creationCellForWrapped(runs[hi], runs[vi], cross)
         if cell >= 0 {
           this.placeCreation(cell, KindWrapped * 16 + runs[hi].fruit, marked)
+          if cell != cross { this.shielded[cell] = true }
           this.moveCreatedWrapped += 1
           created += 1
         }
@@ -551,9 +564,11 @@ class PgCrazyFruits {
     for ri in 0..runs.count {
       if consumed[ri] || runs[ri].len != 4 { continue }
       let kind = if runs[ri].horizontal { KindStripedV } else { KindStripedH }
-      let cell = this.spawnCellFor(runs[ri], k)
+      let pref = this.preferredCellFor(runs[ri], k)
+      let cell = this.creationCellInRun(runs[ri], pref)
       if cell >= 0 {
         this.placeCreation(cell, kind * 16 + runs[ri].fruit, marked)
+        if cell != pref { this.shielded[cell] = true }
         this.moveCreatedStriped += 1
         created += 1
       }
@@ -707,6 +722,7 @@ class PgCrazyFruits {
     this.comboCenter = if targetCell == a || targetCell == b { targetCell } else { b }
     this.stagedCombo = ka == KindBomb || kb == KindBomb || (ka != KindNone && kb != KindNone)
     this.resetMoveStats()
+    for i in 0..Cells { this.shielded[i] = false }
     return true
   }
 

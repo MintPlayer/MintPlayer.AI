@@ -34,6 +34,13 @@ resolved per shape, rows-then-columns ascending as the tiebreak):
   plain cell of the shape** (along the run; outward along both arms from a wrapped pivot; ties toward the
   lower flat index). A shape with **no plain cell creates nothing** — every special in it simply fires.
   Matches real Candy Crush: dragging a striped into a 4-line fires it AND paints another fruit in the line.
+- **Relocated creations are SHIELDED (owner report round 2, M50.6):** the relocated special is immune to
+  **blasts** (striped beams, wrapped boxes, armed re-explosions, bomb zaps, combo areas) for the **rest of
+  the move** — the fired special must not consume its own replacement (a wrapped's 3×3 always covered the
+  nearest run cell, so the player otherwise never kept the promised special; the armed second explosion
+  covered it again a step later). **Matches** in later cascade steps still consume it normally, and
+  creations placed on their preferred (plain) spawn cell keep the form-then-trigger chain rule below —
+  the shield applies ONLY to relocations. `stageSwap` clears the shield, so it never outlives the move.
 - The creation cell is scored like its matched neighbours but receives the special instead of clearing.
 
 **Activation** (specials fire when cleared by anything — matches, blasts, combos; chains are unbounded but
@@ -166,8 +173,8 @@ Encoding **kind·16+type** · kinds **0..5** (5 internal) · actions **112 (unch
 cells **10·(k+1)** · passive bomb **most-frequent type, ties → lowest** · bomb+striped orientations
 **`(r+c)%2`** · wrapped+wrapped **5×5, double** · striped blast **⊥ match** (owner-corrected) · cascade
 spawn **lowest run cell** · spawn-cell collision **nearest plain cell, ties → lower index; none → no
-creation** (M50.5) · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI** · net
-**928→256→256→dueling→112, γ=0** (v1).
+creation** (M50.5) · relocated creations **blast-shielded for the move, match-consumable** (M50.6) · eval
+protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI** · net **928→256→256→dueling→112, γ=0** (v1).
 
 ## 5. Milestones & gates (falsifiable, in order)
 
@@ -255,6 +262,22 @@ creation** (M50.5) · eval protocol **500 held-out episodes (seeds 5000+e), mean
   random 2613.9±72.9 · greedy 3499.2±95.6 · specials-greedy 3906.1±112.8 · expectimax-1 5974.6±161.9 ·
   expectimax-2 8139.1±169.3; env validation 32% ✓; e2 gap +36.2% (escalation stays armed). The in-flight
   escalation run was killed at 210k (buggy-rules data) and restarted on the fixed rules (`cf7train`).
+- **M50.6 — Shielded relocations (owner bug report round 2, 2026-07-24: wrapped drag never left the new
+  special standing).** ✅ SHIPPED 2026-07-24. Two-agent verdict: engine and web layer were functionally
+  correct after M50.5 (the dragged wrapped fired and the striped was created in all 13 audited geometries) —
+  but the wrapped's own 3×3 always covers the nearest-plain relocation cell, so the relocated striped
+  chain-fired in the same step (form-then-trigger) and the armed refire re-covered it a step later: the
+  player NEVER kept the promised special. A dragged striped only spared it when the blast axis missed —
+  exactly the owner's observation that striped "worked". Fix per the §2 shield lock: `shielded[]` cells
+  (set only for RELOCATED creations, cleared by `stageSwap`) are skipped by `markCell` — all blast/combo
+  marking flows through it, match marking doesn't, so later-step matches still consume the special and
+  in-place creations keep the 190-point chain rule. **Gate: collision tests updated to shield semantics
+  (reported striped drag now exact-scores 100 with the fresh striped SURVIVING on the grid; wrapped drag 90
+  surviving BOTH explosions with `moveSpecialsFired == 2`; wrapped-pivot 80 keeping an unarmed wrapped;
+  FreshSpecial_FiresImmediately untouched) — 57/57 green.** Parity re-pinned **481681208** (score 95950 —
+  up from 86340: surviving specials fire later, the shield is score-positive even under random play); host
+  harness green. The completed-but-void `cf7train` run (trained without the shield) is discarded; training
+  restarts from scratch on the final rules (`cf8train`).
 
 Effort: engine+tests ≈ 1.5× M49.1 (~25–35 directed tests); env/campaign delta small; frontend ≈ 0.5× M49.4;
 training wall-clock ≈ 2–3× M49.3. Roughly 2–3 focused sessions + one training run.

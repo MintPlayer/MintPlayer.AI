@@ -118,10 +118,13 @@ public class CrazyFruitsSpecialsTests
         Assert.True(found, "expected a cascade-created striped-5 on the board");
     }
 
-    // ── Creation-cell collision (owner bug 2026-07-24) ─────────────────────────────────────────────────────
+    // ── Creation-cell collision (owner bug 2026-07-24, two rounds) ─────────────────────────────────────────
     // Dragging a special into its own match must FIRE the special and relocate the new special to the
     // nearest plain cell of the shape (ties toward the lower index); a shape with no plain cell creates
-    // nothing and everything fires.
+    // nothing and everything fires. Round two (M50.6): the RELOCATED creation is SHIELDED from blasts for
+    // the rest of the move — the fired special must not consume its own replacement (the wrapped 3×3 always
+    // covered the nearest run cell, so the player never kept the promised special). Matches in later steps
+    // still consume it; in-place creations keep the form-then-trigger chain rule (the 190-point test).
 
     private static PgCrazyFruits CoreWith(params (int R, int C, int Packed)[] cells)
     {
@@ -142,29 +145,39 @@ public class CrazyFruitsSpecialsTests
     }
 
     [Fact]
-    public void Swap_StripedIntoMatch4_ExistingFires_NewStripedOnNeighbour()
+    public void Swap_StripedIntoMatch4_ExistingFires_ShieldedNewStripedSurvives()
     {
         // The reported bug. The dragged stripedH lands at (7,2) completing a horizontal 4-run: it fires its
-        // ROW, the new perpendicular striped relocates to (7,1), and the row blast sets that fresh striped
-        // off too (form-then-trigger): row 7 (8) + column 1 (7) + consumed (1) = 16 → 180 with the 4-bonus.
-        var board = BoardWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (6, 2, SH4));
-        Assert.Equal(180, board.ImmediateScore(VSwap(6, 2)));
-        Assert.True(board.ApplySwap(VSwap(6, 2)) >= 180);
-        Assert.Equal(1, board.MoveCreatedStriped);
-        Assert.True(board.MoveSpecialsFired >= 2);
+        // ROW, and the relocated fresh striped at (7,1) is SHIELDED from that very blast — the player keeps
+        // it: row 7 minus the shielded cell (7) + consumed (1) = 8 → 100 with the 4-bonus.
+        var core = CoreWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (6, 2, SH4));
+        var (pts, marked) = StepZero(core, VSwap(6, 2));
+        Assert.Equal(100, pts);
+        Assert.Equal(SV4, core.grid[7 * Size + 1]);                        // the promised striped SURVIVES
+        Assert.False(marked[7 * Size + 1]);
+        Assert.Equal(0, core.grid[7 * Size + 2]);                          // the dragged striped fired and died
+        Assert.Equal(1, core.moveCreatedStriped);
+        Assert.Equal(1, core.moveSpecialsFired);
     }
 
     [Fact]
-    public void Swap_WrappedIntoMatch4_FiresAndArms_NewStripedOnNeighbour()
+    public void Swap_WrappedIntoMatch4_FiresAndArms_ShieldedNewStripedSurvivesBothExplosions()
     {
-        // Same collision with a wrapped: its 3×3 re-marks the relocated fresh striped at (7,1) → column 1
-        // fires too: run (3) + box (4 new) + column 1 (6 new) + consumed (1) = 14 → 160 with the 4-bonus.
-        var board = BoardWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (6, 2, WR4));
-        Assert.Equal(160, board.ImmediateScore(VSwap(6, 2)));
-        Assert.True(board.DeterministicValue(VSwap(6, 2)) > 160);          // the armed shell refires
-        board.ApplySwap(VSwap(6, 2));
-        Assert.True(board.MoveCreatedStriped >= 1);                        // cascades may add more
-        Assert.True(board.MoveSpecialsFired >= 2);
+        // Same collision with a wrapped: its 3×3 covers the relocated striped at (7,1), and so does the
+        // armed second explosion a step later — the shield holds for the WHOLE move:
+        // run (3, shielded cell excluded) + box (3 new) + consumed (1) = 7 → 90 with the 4-bonus.
+        var core = CoreWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (6, 2, WR4));
+        var (pts, marked) = StepZero(core, VSwap(6, 2));
+        Assert.Equal(90, pts);
+        Assert.Equal(SV4, core.grid[7 * Size + 1]);
+        Assert.False(marked[7 * Size + 1]);
+        Assert.Equal(80 + 4, core.grid[7 * Size + 2]);                     // the wrapped ARMED in place (kind 5)
+        core.collapseColumns(false);
+        var marked1 = new List<bool>();
+        for (int i = 0; i < CrazyFruitsBoard.Cells; i++) marked1.Add(false);
+        core.clearStep(1, marked1);                                        // the armed second explosion
+        Assert.Equal(SV4, core.grid[7 * Size + 1]);                        // still standing
+        Assert.Equal(2, core.moveSpecialsFired);
     }
 
     [Fact]
@@ -219,27 +232,30 @@ public class CrazyFruitsSpecialsTests
     }
 
     [Fact]
-    public void WrappedPivot_Special_NewWrappedRelocatesToTheNearestArmCell()
+    public void WrappedPivot_Special_NewWrappedRelocatesShielded_AndSurvives()
     {
         // L-shape whose intersection is the dragged wrapped: it fires (and arms), the NEW wrapped forms on
-        // the nearest plain arm cell (6,2), gets caught in the pivot's 3×3 and arms too — both refire later.
-        var board = BoardWith((7, 0, 4), (7, 1, 4), (5, 2, 4), (6, 2, 4), (7, 3, WR4));
-        Assert.Equal(110, board.ImmediateScore(HSwap(7, 2)));              // 10 distinct cells + consumed (1)
-        Assert.True(board.DeterministicValue(HSwap(7, 2)) > 110);
-        board.ApplySwap(HSwap(7, 2));
-        Assert.Equal(1, board.MoveCreatedWrapped);
-        Assert.True(board.MoveSpecialsFired >= 2);
+        // the nearest plain arm cell (6,2) and is shielded from the pivot's 3×3 — the player keeps a
+        // wrapped: match (4, shielded cell excluded... it was never match-marked) + box (3 new) + consumed
+        // (1) = 8 → 80 (3-runs carry no line bonus).
+        var core = CoreWith((7, 0, 4), (7, 1, 4), (5, 2, 4), (6, 2, 4), (7, 3, WR4));
+        var (pts, marked) = StepZero(core, HSwap(7, 2));
+        Assert.Equal(80, pts);
+        Assert.Equal(WR4, core.grid[6 * Size + 2]);                        // fresh wrapped survives, UNARMED
+        Assert.False(marked[6 * Size + 2]);
+        Assert.Equal(1, core.moveCreatedWrapped);
+        Assert.Equal(1, core.moveSpecialsFired);                           // only the dragged pivot fired
     }
 
     [Fact]
-    public void CascadeRun_SpecialAtTheLowestCell_CreationRelocates()
+    public void CascadeRun_SpecialAtTheLowestCell_CreationRelocatesShielded()
     {
         // Gravity drops an old striped-5 into the lowest cell of a cascade-formed 4-run: the striped fires,
-        // the cascade creation relocates to the next plain run cell instead of overwriting it.
+        // the cascade creation relocates (shielded from the row blast) instead of being overwritten.
         var board = BoardWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (5, 1, SH5), (5, 2, 5), (6, 3, 5), (6, 4, 5));
         board.ApplySwap(HSwap(7, 2));
         Assert.Equal(1, board.MoveCreatedStriped);
-        Assert.True(board.MoveSpecialsFired >= 2);
+        Assert.True(board.MoveSpecialsFired >= 1);
     }
 
     // ── Activation ──────────────────────────────────────────────────────────────────────────────────────────
