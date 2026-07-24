@@ -68,9 +68,9 @@ public static class CampaignServiceCollectionExtensions
         FruitCakeEnv trainEnv, FruitCakeEnv evalEnv, FruitCakeDqnOptions options)
         => services.AddSingleton<ITrainingCampaign>(_ => new FruitCakeDqnCampaign(trainEnv, evalEnv, options));
 
-    /// <summary>Score-maximizing Crazy Fruits (match-3) DQN (PLAN M49).</summary>
+    /// <summary>Score-maximizing Crazy Fruits (match-3 + specials) DQN (PLAN M49/M50).</summary>
     public static IServiceCollection AddCrazyFruitsDqnCampaign(this IServiceCollection services,
-        CrazyFruitsEnv trainEnv, CrazyFruitsEnv evalEnv, DqnScoreOptions options)
+        CrazyFruitsEnv trainEnv, CrazyFruitsEnv evalEnv, CrazyFruitsDqnOptions options)
         // Named args: the [Inject]-generated ctor takes the two same-typed envs (own deps first, then the
         // base's) — never pass them positionally.
         => services.AddSingleton<ITrainingCampaign>(_ =>

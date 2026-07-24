@@ -28,6 +28,16 @@ public record DqnScoreOptions
 }
 
 /// <summary>
+/// <see cref="CrazyFruitsDqnCampaign"/> knobs on top of the shared spine's — the SPECIALS PRD §3.6
+/// escalation adds n-step returns (γ=0.5 + 3-step; the shaping lives on the injected train env).
+/// </summary>
+public sealed record CrazyFruitsDqnOptions : DqnScoreOptions
+{
+    /// <summary>n-step return horizon (1 = single-step DQN; the escalation uses 3).</summary>
+    public int NStep { get; init; } = 1;
+}
+
+/// <summary>
 /// <see cref="FruitCakeDqnCampaign"/> knobs on top of the shared spine's. Reward shaping is NOT here — it lives
 /// on the injected training env (<c>FruitCakeEnv.ShapeRewards</c>/<c>ShapingGamma</c>), because it changes what
 /// the env emits, not how the campaign trains.

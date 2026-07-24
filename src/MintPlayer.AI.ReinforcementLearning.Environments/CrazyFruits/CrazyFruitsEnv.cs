@@ -98,6 +98,21 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
     public float WrappedShaping { get; set; } = 60f;
     public float BombShaping { get; set; } = 100f;
 
+    /// <summary>The §3.6 escalation's shaping (use INSTEAD of <see cref="ShapeCreationRewards"/>, with γ&gt;0):
+    /// potential-based, Φ(s) = Σ option value of on-board specials (same 40/60/100 weights), reward +=
+    /// γ·Φ(s′) − Φ(s). Policy-invariant when <see cref="PotentialGamma"/> matches the learner's γ — it prices
+    /// holding a special without rewarding hoarding (a no-op at γ=0, so only meaningful on the escalation).</summary>
+    public bool ShapeSpecialsPotential { get; set; }
+    public double PotentialGamma { get; set; } = 0.5;
+
+    private float Potential()
+    {
+        float sum = 0f;
+        for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
+            sum += _board.Kind(i) switch { 1 or 2 => StripedShaping, 3 => WrappedShaping, 4 => BombShaping, _ => 0f };
+        return sum;
+    }
+
     public int MoveBudget => _moveBudget;
     public int Score => _board.Score;
     public int MovesMade => _moves;
@@ -120,6 +135,7 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
     {
         if (_done)
             throw new InvalidOperationException("Episode is done; call Reset() before stepping.");
+        float potentialBefore = ShapeSpecialsPotential ? Potential() : 0f;
         int points = _board.ApplySwap(action);
         if (points < 0)
             throw new ArgumentOutOfRangeException(nameof(action), action,
@@ -134,6 +150,8 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
             reward += (StripedShaping * _board.MoveCreatedStriped
                      + WrappedShaping * _board.MoveCreatedWrapped
                      + BombShaping * _board.MoveCreatedBombs) / RewardScale;
+        if (ShapeSpecialsPotential)
+            reward += (float)(PotentialGamma * Potential() - potentialBefore) / RewardScale;
         return new StepResult<float[]>(_board.BuildObservation(), reward, false, truncated, EnvInfo.Empty);
     }
 

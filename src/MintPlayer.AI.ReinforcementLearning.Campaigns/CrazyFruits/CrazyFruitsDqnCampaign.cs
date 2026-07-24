@@ -19,6 +19,9 @@ public sealed partial class CrazyFruitsDqnCampaign : DqnScoreCampaign
 {
     [Inject] private readonly CrazyFruitsEnv evalEnv;
 
+    /// <summary>The typed options (n-step, SPECIALS PRD §3.6 escalation); plain <see cref="DqnScoreOptions"/> = defaults.</summary>
+    private CrazyFruitsDqnOptions Typed => Options as CrazyFruitsDqnOptions ?? new CrazyFruitsDqnOptions();
+
     public override string Environment => "crazyfruits";
     protected override string StepNoun => "moves";
     protected override string GateLabel => "mean score";
@@ -35,6 +38,7 @@ public sealed partial class CrazyFruitsDqnCampaign : DqnScoreCampaign
         DoubleDqn = true,
         Hidden = Options.Hidden,
         Gamma = Options.Gamma,
+        NStep = Typed.NStep,
         LearningRate = Options.LearningRate,
         BufferCapacity = 100_000,
         BatchSize = 128,

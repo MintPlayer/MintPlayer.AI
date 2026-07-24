@@ -38,18 +38,26 @@ internal static class CrazyFruitsLab
             return;
         }
 
-        var options = new DqnScoreOptions
+        var options = new CrazyFruitsDqnOptions
         {
             Seed = seed, ChunkSteps = chunkSteps, TargetSteps = targetSteps, EvalEpisodes = evalEpisodes,
             LearningRate = learningRate, EpsilonStart = explore, Hidden = hidden, Gamma = gamma,
             Grow = grow, GrowEvery = growEvery,
+            NStep = a.Int("--nstep", 1),
         };
-        // Creation shaping on the TRAIN env only (SPECIALS PRD §3.5: fire-only game score means γ=0 needs a
-        // reward-side creation signal); the eval env scores the bare game, so gates stay honest.
-        bool shape = !a.Has("--no-shape");
+        // Shaping on the TRAIN env only; the eval env scores the bare game, so gates stay honest.
+        // Default (γ=0 recipe): creation bonuses. --pbrs (the §3.6 escalation, with --gamma 0.5 --nstep 3):
+        // potential-based Φ over on-board specials instead — creation bonuses OFF, PotentialGamma = γ.
+        bool pbrs = a.Has("--pbrs");
+        bool shape = !a.Has("--no-shape") && !pbrs;
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             services => services.AddCrazyFruitsDqnCampaign(
-                trainEnv: new CrazyFruitsEnv(moveBudget) { ShapeCreationRewards = shape },
+                trainEnv: new CrazyFruitsEnv(moveBudget)
+                {
+                    ShapeCreationRewards = shape,
+                    ShapeSpecialsPotential = pbrs,
+                    PotentialGamma = gamma,
+                },
                 evalEnv: new CrazyFruitsEnv(moveBudget),
                 options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "crazyfruits-dqn.csv")));

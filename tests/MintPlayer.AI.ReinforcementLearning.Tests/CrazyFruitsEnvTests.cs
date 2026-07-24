@@ -119,7 +119,7 @@ public class CrazyFruitsEnvTests
     {
         var services = new ServiceCollection();
         services.AddCrazyFruitsDqnCampaign(new CrazyFruitsEnv(), new CrazyFruitsEnv(),
-            new DqnScoreOptions { Hidden = [32, 32] });
+            new CrazyFruitsDqnOptions { Hidden = [32, 32] });
         using (var provider = services.BuildServiceProvider())
             Assert.IsType<CrazyFruitsDqnCampaign>(provider.GetRequiredService<ITrainingCampaign>());
 
@@ -127,7 +127,7 @@ public class CrazyFruitsEnvTests
         try
         {
             var store = new FileModelStore(dir.FullName);
-            var options = new DqnScoreOptions { Seed = 1, ChunkSteps = 60, TargetSteps = 120, Hidden = [32, 32], EvalEpisodes = 2 };
+            var options = new CrazyFruitsDqnOptions { Seed = 1, ChunkSteps = 60, TargetSteps = 120, Hidden = [32, 32], EvalEpisodes = 2 };
 
             var c1 = new CrazyFruitsDqnCampaign(evalEnv: new CrazyFruitsEnv(), trainEnv: new CrazyFruitsEnv(), options: options, logger: null);
             Assert.False(c1.Resume(store));
