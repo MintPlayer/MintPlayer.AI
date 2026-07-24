@@ -1,6 +1,10 @@
 # Crazy Fruits (match-3) — PRD
 
-**Status:** 🔜 planned 2026-07-24 (4-agent investigation: game provenance, repo integration map, PRD/input conventions, match-3 RL prior art)
+**Status:** 🟢 built 2026-07-24 on `m49-crazy-fruits` — engine/env/campaign/net/web all shipped, every falsifiable
+gate green (net **+57.2%** over random, CI-separated, on the 500-episode protocol); the M49.4/M49.5 live
+in-browser device check is the one pending item (the dev host was down during the build; verified headlessly
+via the node browser-path simulation meanwhile). Planned 2026-07-24 (4-agent investigation: game provenance,
+repo integration map, PRD/input conventions, match-3 RL prior art).
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M49 · branch `m49-crazy-fruits` · the playground's first **match-3** game (env id `crazyfruits`, type prefix `CrazyFruits`)
 
@@ -63,12 +67,15 @@ surface and the 8×8 flat MLP is still tiny.
   after every step the board is stable and has **≥1 legal swap** (§3.5). The mask therefore never goes all-false
   — the −∞-mask collapse class of bugs is defined out of existence.
 
-### 3.4 Observation — one-hot planes + a would-match plane
-`buildObservation` (static, shared verbatim between training and serving) emits **6 one-hot fruit planes +
-1 "would-match" plane** (cells participating in at least one legal swap's match), flattened for the MLP:
-**448 floats**. **Rejected:** integer-coded grid (imposes a false ordinal relation between fruit types — a
-known killer in match-3 RL). The would-match plane is the cheap, high-value feature that hands the net the
-greedy signal almost for free — acceptable and even desirable for a primitive v1.
+### 3.4 Observation — one-hot planes + a would-match plane + per-action feature planes
+`buildObservation` (shared verbatim between training and serving) emits **6 one-hot fruit planes +
+1 "would-match" plane** (both endpoints of every legal swap). **Rejected:** integer-coded grid (imposes a
+false ordinal relation between fruit types — a known killer in match-3 RL).
+**Amended 2026-07-24 (Risk-1 mitigation exercised, §6):** two **per-action feature planes** were added after
+the plain 448-float observation measurably failed the M49.3 gate twice (+1.9% at γ=0.99, +7.8% at γ=0): per
+action, the **immediate step-0 score** and the **deterministic cascade value** (gravity-only — the expectimax
+tier's signal, worth +89% scripted), both ÷100. Total **672 floats**. The net ranks these against board
+context and learns the refill-EV residual — with them it gates at **+57.2%**.
 
 ### 3.5 Scoring, episodes, reward
 - **Scoring (lock, proportional — no exponential cascade jackpots to reward-hack):** each fruit cleared in
@@ -145,37 +152,66 @@ coordinates via `getBoundingClientRect()` → cell = rect-relative fraction × 8
 Animations (swap glide, invalid-swap shake-and-revert, pop, fall) run on the rAF loop.
 
 ## 4. Locked constants (do not re-derive)
-Board **8×8** · **6** fruit types · actions **112** (8·7 + 7·8) · observation **448** floats (6 one-hot planes +
-would-match plane) · net **448→256→256→dueling→112** · episode **30 moves** · reward **moveScore/30** · scoring
-**10·(k+1)/fruit at cascade step k, +20/+50 line bonuses** · RNG **minstd LCG (48271 / 2^31−1), f64-exact** ·
-ckpt key **`crazyfruits.dqn`** · eval protocol **500 held-out seeded episodes, mean ± 95% CI**.
+Board **8×8** · **6** fruit types · actions **112** (8·7 + 7·8) · observation **672** floats (6 one-hot planes +
+would-match plane + 2×112 per-action features, §3.4 amendment) · net **672→256→256→dueling→112** · **γ = 0**
+(the M49.3 finding: match-3's controllable signal is immediate; γ=0.99 bootstrap noise destabilized training) ·
+episode **30 moves** · reward **moveScore/30** · scoring **10·(k+1)/fruit at cascade step k, +20/+50 line
+bonuses** · RNG **minstd LCG (48271 / 2^31−1) via Schrage, exact in i32 on both sides** · ckpt key
+**`crazyfruits.dqn`** · eval protocol **500 held-out seeded episodes (seeds 5000+e), mean ± 95% CI** ·
+measured bars: random **2259.7±49.9** · greedy **2387.0±49.3** · expectimax-1 **4270.9±98.3** · net **3552.5±83.3**.
 
 ## 5. Milestones & gates (falsifiable, in order)
 
-- **M49.1 — Engine.** `crazyfruits_solver.pg` (board gen, match/swap/gravity/refill/cascade/scoring, legal
+- **M49.1 — Engine.** ✅ SHIPPED 2026-07-24. `crazyfruits_solver.pg` (board gen, match/swap/gravity/refill/cascade/scoring, legal
   mask, reshuffle-on-deadlock, minstd LCG, `buildObservation`, random/greedy/expectimax-1 baselines) + C#
   facade + `pgconfig.json` include. **Gate: engine unit tests** (init board: no matches, ≥1 legal swap; after
   every step: stable board, ≥1 legal swap; mask equals brute-force match-producing set on random boards;
   hand-computed scores on directed 3/4/5-line and 2-step-cascade positions; reshuffle preserves the fruit
   multiset) **+ C#↔TS parity: a seeded 1,000-move random-policy episode produces byte-identical
   board states and scores in C# and the emitted TS.** No training before this gate.
-- **M49.2 — Env + campaign + Lab.** `CrazyFruitsEnv` (+ mask/stateful interfaces), `AddCrazyFruitsCampaign()`
-  over the `DqnScoreCampaign` spine, `--game crazyfruits`. **Gate: baseline ordering over 500 seeded
-  episodes — greedy beats random and expectimax-1 ≥ greedy, non-overlapping 95% CIs** (proves scoring+masking
-  end-to-end before any training) **+ campaign contract test (fresh→TrainChunk→Checkpoint→Resume) + one
-  end-to-end training chunk.**
-- **M49.3 — Primitive training run.** Short dev-machine run (minutes-to-an-hour scale, CPU is fine at this net
-  size). **Gate: mean episode score ≥ +30% over random-legal on the 500-episode held-out eval, non-overlapping
-  95% CIs.** The vs-greedy number is *reported* honestly but not gated — matching greedy is the future-training
-  goal, not v1's. Checkpoint committed to `wwwroot/models/crazyfruits.dqn.ckpt` (LFS).
-- **M49.4 — Web game (human play).** Component + canvas renderer (fruit-stall theme) + pointer input (both
-  gestures, §3.10) + animations + registration (route, nav, home card). **Gate: playable end-to-end on desktop
-  mouse AND smartphone touch — drag-swap, tap-tap, invalid-swap revert, cascade + reshuffle animations all
-  function; no page scroll/zoom during play; Playwright smoke against the running host** (host is user-run;
-  never start/stop it — see CLAUDE.md).
-- **M49.5 — Watch AI + difficulty tiers.** `crazyfruits-net.ts` parser + director + tier picker
-  (Random / Greedy / Expectimax / AI-net). **Gate: TS net forward parity with C# (the `*NetParityTests`
-  pattern, real shipped ckpt) + a full 30-move watch episode runs in the browser on every tier.**
+  *Gate result: 16 tests green first run (incl. the minstd 10,000th-draw reference 399268537); parity
+  checksum over every move's action/points/full grid identical C#↔TS (78377593, score 70990) under node
+  type-stripping — and re-verified unchanged after the M49.4 stepwise-API refactor and the §3.4 observation
+  amendment. Design note: Schrage's decomposition (i32-exact both sides) replaced the planned raw-f64 LCG —
+  same minstd generator, stronger exactness argument.*
+- **M49.2 — Env + campaign + Lab.** ✅ SHIPPED 2026-07-24. `CrazyFruitsEnv` (+ mask/stateful interfaces), `AddCrazyFruitsDqnCampaign()`
+  over the `DqnScoreCampaign` spine, `--game crazyfruits` (`--baselines N` prints the gate table). **Gate:
+  baseline ordering over 500 seeded episodes — greedy beats random and expectimax-1 ≥ greedy, non-overlapping
+  95% CIs** (proves scoring+masking end-to-end before any training) **+ campaign contract test
+  (fresh→TrainChunk→Checkpoint→Resume) + one end-to-end training chunk.**
+  *Gate result: random 2259.7±49.9 · greedy 2387.0±49.3 (CI-separated, +6%) · expectimax-1 4270.9±98.3
+  (+89%). Finding that shaped M49.3: cascade PLANNING is where the skill is — line size alone is nearly
+  irrelevant (+6%) while the deterministic-cascade signal is worth +89%. Contract test + 3k-step end-to-end
+  chunk green.*
+- **M49.3 — Primitive training run.** ✅ SHIPPED 2026-07-24. **Gate: mean episode score ≥ +30% over random-legal on the 500-episode
+  held-out eval, non-overlapping 95% CIs.** The vs-greedy number is *reported* honestly but not gated.
+  Checkpoint committed to `wwwroot/models/crazyfruits.dqn.ckpt` (LFS).
+  *Gate result — three runs, one lever each (no-thrash): (1) γ=0.99 Snake-recipe verbatim: loss exploded
+  0.62→8.7, eval dipped below random mid-run, 500-episode result **+1.9% OVERLAPPING — FAIL** (the
+  Kamaldinov trap, exactly as §6 Risk 1 warned). (2) **γ=0** (Q = expected immediate points incl. stochastic
+  cascades — bounded targets): stable loss ~0.18, **+7.8% CI-separated** and above greedy, still under the
+  bar — FAIL. (3) γ=0 + the §6 Risk-1 pre-registered feature mitigation (§3.4 amendment, obs 448→672):
+  **3552.5±83.3 = +57.2% over random, CI-SEPARATED — PASS**, +48.8% over greedy; expectimax-1 (4270.9) is
+  the scripted ceiling = future-training headroom.*
+- **M49.4 — Web game (human play).** 🟡 built 2026-07-24, live device check pending. Component + canvas
+  renderer (fruit-stall theme) + pointer input (both gestures, §3.10) + animations + registration (route,
+  nav, home card). Design addition: the engine grew a **stepwise move API** (`clearStep`/`finishMove`;
+  `applySwap` drains the same loop) so the animating host and training are the same rules by construction.
+  **Gate: playable end-to-end on desktop mouse AND smartphone touch — drag-swap, tap-tap, invalid-swap
+  revert, cascade + reshuffle animations all function; no page scroll/zoom during play; browser smoke against
+  the running host** (host is user-run; never start/stop it — see CLAUDE.md).
+  *So far: `tsc --noEmit` clean; headless node smoke of the REAL game layer against the generated engine —
+  reverts consume nothing, 60 straight greedy moves play full swap→pop→fall(→cascade) timelines and land on
+  the engine's exact grids with every invariant held. The live desktop+smartphone pass is the remaining leg
+  (host was down throughout the build).*
+- **M49.5 — Watch AI + difficulty tiers.** 🟡 built 2026-07-24, live browser check pending. `crazyfruits-net.ts`
+  parser + director + tier picker (Random / Greedy / Expectimax / Trained net). **Gate: TS net forward parity
+  with C# (the `*NetParityTests` pattern, real ckpt bytes) + a full 30-move watch episode runs in the browser
+  on every tier.**
+  *So far: `CrazyFruitsNetParityTests` green (byte-level parse mirrors the TS parser line-for-line; f64-over-
+  float32 forward matches the SDK net within f32 tolerance; masked netAction legal). Node simulation of the
+  exact browser path (real shipped ckpt → TS parser → generated net): all four tiers play full legal 30-move
+  episodes; ordering reproduces (random 2379 · greedy 2520 · net 3393 · expectimax 4507 over 20 eps).*
 
 ## 6. Risks
 1. **The net barely beats random** — the documented match-3 trap (Kamaldinov: naive DQN/PPO lost to random;

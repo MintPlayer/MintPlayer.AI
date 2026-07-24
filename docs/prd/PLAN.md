@@ -1863,7 +1863,7 @@ previous cycle on any failure. Single-source in `snake_solver.pg`; pure-frontend
   eaten in ~30 s of watching; served chunk confirmed to carry the new code. ARCHITECTURE.md §6's stale
   "Snake uses EpisodeStreamer/SnakeController" claim fixed (snake has been client-side since M33).*
 
-## M49 — Crazy Fruits (match-3) + primitive net  *(2026-07-24; branch `m49-crazy-fruits`; see `CRAZY_FRUITS_PRD.md`)* 🔜
+## M49 — Crazy Fruits (match-3) + primitive net  *(2026-07-24; branch `m49-crazy-fruits`; see `CRAZY_FRUITS_PRD.md`)* 🟢 (built same day; live device check pending)
 
 **Why:** owner wants the KidCity (kidcity.be) Flash-era "Crazy Fruits" as a new playground game — swap 2
 adjacent fruits to line up 3+ — with a **primitively trained net** (serious training is future work), working
@@ -1882,20 +1882,35 @@ random/greedy/expectimax-1 baselines = sanity gates = difficulty tiers; fully cl
 `wwwroot/models/crazyfruits.dqn.ckpt`); input = **unified Pointer Events** (subsume touchstart/move/end +
 mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none`).
 
-- **M49.1 — Engine** (`crazyfruits_solver.pg`: board/match/gravity/refill/cascade/scoring, mask, reshuffle,
-  LCG, `buildObservation`, baselines; C# facade + pgconfig include). **Gate:** invariant + hand-scored unit
-  tests; mask = brute-force cross-check; **seeded 1,000-move episode byte-identical C#↔TS**. No training before
-  this gate.
-- **M49.2 — Env + campaign + Lab** (`CrazyFruitsEnv` + `AddCrazyFruitsCampaign()` + `--game crazyfruits`).
+- **M49.1 — Engine** ✅ (2026-07-24) (`crazyfruits_solver.pg`: board/match/gravity/refill/cascade/scoring, mask, reshuffle,
+  minstd-via-Schrage RNG, `buildObservation`, baselines; C# facade + pgconfig include; grew a stepwise
+  clearStep/finishMove API for the animating web host). **Gate:** invariant + hand-scored unit
+  tests; mask = brute-force cross-check; **seeded 1,000-move episode byte-identical C#↔TS**.
+  *Green: 16 tests first run; per-move full-grid parity checksum 78377593 identical under node — re-verified
+  unchanged across both later engine amendments.*
+- **M49.2 — Env + campaign + Lab** ✅ (2026-07-24) (`CrazyFruitsEnv` + `AddCrazyFruitsDqnCampaign()` + `--game crazyfruits --baselines N`).
   **Gate:** baseline ordering greedy > random (and expectimax-1 ≥ greedy) with non-overlapping 95% CIs over
   500 seeded episodes; campaign resume contract; one end-to-end chunk.
-- **M49.3 — Primitive training run.** **Gate:** net ≥ **+30% mean score over random** (500 held-out episodes,
+  *Green: random 2259.7±49.9 · greedy 2387.0±49.3 · expectimax-1 4270.9±98.3 — cascade planning is the skill
+  (+89%), line size nearly irrelevant (+6%).*
+- **M49.3 — Primitive training run.** ✅ (2026-07-24) **Gate:** net ≥ **+30% mean score over random** (500 held-out episodes,
   30-move budget, non-overlapping CIs); vs-greedy reported, not gated. Ckpt → LFS.
-- **M49.4 — Web game (human play)** (canvas fruit-stall renderer, both pointer gestures, animations,
-  route/nav/home card). **Gate:** playable on desktop mouse AND smartphone touch (drag-swap, tap-tap, revert,
-  cascades); no page scroll during play; Playwright smoke vs the running host.
-- **M49.5 — Watch AI + tiers** (`crazyfruits-net.ts` + director + Random/Greedy/Expectimax/AI tiers).
-  **Gate:** TS↔C# net-forward parity on the shipped ckpt; full watch episode in-browser on every tier.
+  *Green on run 3 of 3 (one lever each): γ=0.99 **+1.9% FAIL** (loss exploded — the match-3 bootstrap trap);
+  γ=0 **+7.8% FAIL** (stable but short); γ=0 + the PRD's pre-registered per-action feature planes (obs
+  448→672: immediate score + deterministic cascade value ÷100) → **+57.2% CI-separated PASS** (3552.5±83.3;
+  +48.8% over greedy; expectimax 4270.9 = the future-training headroom). Ships
+  `wwwroot/models/crazyfruits.dqn.ckpt`.*
+- **M49.4 — Web game (human play)** 🟡 (canvas fruit-stall renderer, both pointer gestures via unified Pointer
+  Events, animations from the engine's stepwise API, route/nav/home card). **Gate:** playable on desktop mouse
+  AND smartphone touch (drag-swap, tap-tap, revert, cascades); no page scroll during play; browser smoke vs
+  the running host. *Code + tsc clean + headless node smoke of the real game layer green (reverts free, 60
+  greedy moves land on engine-exact grids); the LIVE desktop+phone leg pends the user-run host (down
+  throughout the build).*
+- **M49.5 — Watch AI + tiers** 🟡 (`crazyfruits-net.ts` + director + Random/Greedy/Expectimax/net tiers).
+  **Gate:** TS↔C# net-forward parity on real ckpt bytes; full watch episode in-browser on every tier.
+  *`CrazyFruitsNetParityTests` green; node simulation of the exact browser path (shipped ckpt → TS parser →
+  generated net) plays all four tiers legally for full episodes, ordering reproduced (net 3393 vs random
+  2379); the live in-browser leg pends the host.*
 
 ## Testing strategy (cross-cutting, from research)
 
@@ -1945,6 +1960,7 @@ mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none
 | M28 FruitCake NoisyNets empirical (2026-06-26) | match or beat ε-greedy at equal budget (multi-seed) | **matched** — 200-game paired A/B tie (702.1 vs 714.4, Δ −12.3 ± 29.8 SE); single-evals were seed-luck; not shipped |
 | M36.1 network visualizer — watch it train (2026-07-12) | see the net evolve live during training (all games); beginner-readable; zero training impact | **met** — pull-based seam; **all six `--game`s** stream topology + weight frames over a **WebSocket** to a self-contained page with **hover tooltips**; net visibly evolves (heatmaps/edges shift, eval 7.0→13.9); **Development-gated**; viz vs no-viz checkpoints **SHA256-identical**; 314 tests green |
 | M37 progressive net growth (2026-07-12) | grow the net wider+deeper mid-training without a loss spike, everywhere possible | **met** — shared `Net2Net` (WidenTrunk/SetIdentity); `--grow` grows **all** trainable nets live: `DuelingQNet` (Snake, FruitCake) and the refactored variable-depth `PolicyValueNet` (Cube, Cube-policy, Rush Hour), `[16]`→`[128,128,128]`; DAVI `ResidualMlp` already grew width. Policy checkpoint → v2 with v1 back-compat (tested). 320 tests (4 new: widen/deepen forward-equality ×2, v1 load, grown round-trip) |
+| M49 Crazy Fruits primitive net (2026-07-24) | ≥ +30% over random-legal, 500 held-out episodes, CI-separated | **+57.2%** (3552.5±83.3 vs 2259.7±49.9) on run 3/3 — γ=0 + per-action feature planes; γ=0.99 failed at +1.9% (bootstrap-noise trap), γ=0 alone +7.8%; +48.8% over greedy, expectimax-1 (4270.9) = headroom |
 
 ## Shipped (2026-06-11) — release engineering
 
