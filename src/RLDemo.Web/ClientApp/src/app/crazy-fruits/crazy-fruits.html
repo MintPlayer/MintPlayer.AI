@@ -12,6 +12,10 @@
   <button type="button" [color]="mode() === 'watch' ? colors.primary : colors.secondary" (click)="setMode('watch')">Watch AI</button>
   @if (mode() === 'human') {
     <button type="button" [color]="colors.secondary" (click)="newGame()">New game</button>
+    <button type="button" [color]="freePlay() ? colors.primary : colors.secondary" (click)="toggleFreePlay()"
+            title="Keep playing past 30 moves — the score won't count for your best">
+      Endless mode{{ freePlay() ? ': on' : '' }}
+    </button>
   } @else {
     <span class="tier-label">Player:</span>
     <button type="button" [color]="tier() === 'random' ? colors.primary : colors.secondary" (click)="setTier('random')">Random</button>

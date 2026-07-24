@@ -46,6 +46,10 @@ export class CrazyFruitsGame {
   best = 0;
   /** Human play is 30-move rounds (SPECIALS PRD §3.8); true once the budget is spent and animations drained. */
   roundOver = false;
+  /** Endless mode (owner request): no round end — and the score stops counting toward "best". */
+  freePlay = false;
+  /** Latched per game the moment endless mode touches it: its score never updates "best". */
+  private bestExempt = false;
 
   constructor() {
     this.best = Number(localStorage.getItem('crazyfruits.best') ?? 0) || 0;
@@ -58,6 +62,17 @@ export class CrazyFruitsGame {
     this.elapsed = 0;
     this.selected = -1;
     this.roundOver = false;
+    this.bestExempt = this.freePlay; // a game started under endless mode is exempt from the start
+  }
+
+  /** Toggle endless mode. Enabling mid-game (or on the round-over screen) resumes play immediately and
+   *  exempts the running game's score from "best"; disabling takes normal effect at the next round check. */
+  setFreePlay(on: boolean): void {
+    this.freePlay = on;
+    if (on) {
+      this.bestExempt = true;
+      this.roundOver = false;
+    }
   }
 
   get animating(): boolean {
@@ -156,15 +171,17 @@ export class CrazyFruitsGame {
     if (board.reshuffles !== reshufflesBefore)
       this.queue.push({ kind: 'reshuffle', grid: [...board.grid], duration: RESHUFFLE_MS });
 
-    if (board.score > this.best) {
+    if (!this.bestExempt && board.score > this.best) {
       this.best = board.score;
       localStorage.setItem('crazyfruits.best', String(this.best));
     }
     return true;
   }
 
-  /** Called by the component once animations drain: closes the round at the 30-move budget (human mode). */
+  /** Called by the component once animations drain: closes the round at the 30-move budget (human mode);
+   *  endless mode never closes it. */
   checkRoundOver(movesPerRound: number): void {
+    if (this.freePlay) return;
     if (!this.animating && this.board.movesMade >= movesPerRound) this.roundOver = true;
   }
 

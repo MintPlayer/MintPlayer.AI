@@ -134,7 +134,7 @@ Random / greedy / expectimax-1 inherit specials through `immediateScore`/`determ
 **specials-greedy** (immediate score + fixed creation preference — the "does the net do more than big
 matches" sanity bar). All five re-measured on the new env; the M49 bars (2259.7/2387.0/4270.9) are obsolete.
 
-### 3.8 Game-over condition — 30-move rounds (owner Q 2026-07-24)
+### 3.8 Game-over condition — 30-move rounds + an endless escape hatch (owner Q 2026-07-24)
 Human play changes from M49's endless mode to **rounds of 30 moves**, ending on a round-over screen (score,
 best, "play again"). Deadlocks still **reshuffle mid-round and never end the game** — "game over when no
 move exists" was considered and rejected on measurement: the engine logged **zero deadlocks across every
@@ -142,6 +142,10 @@ seeded run** (1,000-move parity episode, all training/eval episodes), so that co
 never fire, and a board holding a bomb cannot deadlock at all (a bomb always has a legal swap). **30 moves
 (not 20) because it is the trained episode framing:** the player's round score becomes directly comparable
 to the measured tiers — the round-over screen can honestly say "random averages ~X · the AI ~Y · beat it?".
+**Endless-mode toggle (owner addition):** a button lets the player keep playing past 30 moves — enabling it
+also dismisses an already-shown round-over screen and resumes the same board. The moment endless touches a
+game, that game's score is permanently exempt from the "best" indicator (rounds and best both resume with
+the next normal game), so the 30-move leaderboard framing stays honest.
 
 ### 3.9 Frontend
 Renderer decodes packed values: FruitCake clipart by `fruitOf`, overlays by `kindOf` (stripe lines along the

@@ -31,6 +31,8 @@ export class CrazyFruits implements AfterViewInit {
   /** 'human' = play locally; 'watch' = a selectable tier plays — everything runs in the browser. */
   protected readonly mode = signal<'human' | 'watch'>('human');
   protected readonly tier = signal<Tier>('net');
+  /** Endless mode: keep playing past 30 moves; the score stops counting toward "best". */
+  protected readonly freePlay = signal(false);
   // Created lazily on first watch; the trained net loads itself (falls back to expectimax while absent).
   private director: CrazyFruitsDirector | null = null;
 
@@ -65,6 +67,11 @@ export class CrazyFruits implements AfterViewInit {
   protected setTier(tier: Tier): void {
     this.tier.set(tier);
     if (this.director) this.director.tier = tier;
+  }
+
+  protected toggleFreePlay(): void {
+    this.freePlay.update(v => !v);
+    this.game.setFreePlay(this.freePlay());
   }
 
   ngAfterViewInit(): void {
@@ -110,7 +117,8 @@ export class CrazyFruits implements AfterViewInit {
   }
 
   private statusLine(): string {
-    if (this.mode() === 'human') return 'drag or tap-tap to swap';
+    if (this.mode() === 'human')
+      return this.freePlay() ? 'endless — score won’t count for best' : 'drag or tap-tap to swap';
     const d = this.director;
     if (!d) return '';
     const tier = d.tier === 'net' && d.netStatus !== 'ready'
