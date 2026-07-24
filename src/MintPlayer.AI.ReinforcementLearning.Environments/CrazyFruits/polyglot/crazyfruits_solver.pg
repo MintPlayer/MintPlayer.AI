@@ -1,0 +1,465 @@
+// crazyfruits_solver.pg — single-source Crazy Fruits (match-3) engine. ONE source, transpiled to C# and TS
+// (docs/prd/CRAZY_FRUITS_PRD.md §3.1). Types are `PgCf`/`PgCrazyFruits`-prefixed: every .pg emits into the
+// same global C# namespace, so names must be unique across solvers (the draughts `PgDraughts*` convention).
+//
+// Everything the browser needs — rules, cascades, scoring, legal-move mask, observation, the scripted
+// baselines and the net forward pass — lives here, so C# training/serving and the web page share one engine.
+// All arithmetic is i32 (+ f64 only in the net/observation): exact in both .NET int and JS number.
+
+import { List } from "std.collections"
+import { Math } from "std.math"
+
+// Non-exact i32 quotients are computed as (a - a%b)/b: the numerator is an exact multiple of b, so the
+// division is exact in f64 too — no reliance on the target language's integer-division semantics.
+fn divExact(a: i32, b: i32): i32 => (a - a % b) / b
+
+// ── Deterministic RNG — minstd Lehmer LCG via Schrage (PRD §3.2) ───────────────────────────────────────────
+// state' = 48271·state mod (2^31−1), computed as Schrage's decomposition so every intermediate stays
+// below 2^31: exact in C# int AND in JS number, hence byte-identical refill streams on both sides.
+class PgCfRng {
+  const M: i32 = 2147483647   // 2^31 − 1 (prime)
+  const A: i32 = 48271        // minstd_rand multiplier
+  const Q: i32 = 44488        // M / A
+  const R: i32 = 3399         // M % A  (R < Q ⇒ Schrage is overflow-free)
+
+  var state: i32
+
+  init(seed: i32) {
+    var s = seed % M
+    if s < 0 { s += M - 1 }
+    if s == 0 { s = 1 }       // state must stay in [1, M−1]
+    this.state = s
+  }
+
+  fn next(): i32 {
+    let r = this.state % Q
+    let q = divExact(this.state, Q)
+    var s = A * r - R * q
+    if s <= 0 { s += M }
+    this.state = s
+    return s
+  }
+
+  // Uniform in [0, n) for small n (modulo bias is negligible at n ≤ 64 and identical on both sides).
+  fn nextInt(n: i32): i32 => this.next() % n
+}
+
+// ── The game ───────────────────────────────────────────────────────────────────────────────────────────────
+// 8×8 grid of fruit types 1..6 (0 = transient empty during resolution). Swap two orthogonally adjacent
+// fruits; only swaps that produce a 3+ line are legal (the mask). Matches clear, fruit falls, refill from
+// the top, cascades resolve; a stable board with no legal swap reshuffles in place — the engine never
+// exposes a zero-legal-move state (PRD §3.5).
+class PgCrazyFruits {
+  const Size: i32 = 8
+  const FruitTypes: i32 = 6
+  const Cells: i32 = 64              // Size²
+  const HorizontalSwaps: i32 = 56    // (Size−1)·Size — actions 0..55; vertical are 56..111
+  const ActionCount: i32 = 112
+  const BaseFruitScore: i32 = 10     // per fruit cleared, ×(k+1) at cascade step k
+  const Line4Bonus: i32 = 20         // flat, per 4-run
+  const Line5Bonus: i32 = 50         // flat, per 5+-run
+
+  var grid: List<i32> = List<i32>()
+  var rng: PgCfRng = PgCfRng(1)
+  var score: i32
+  var movesMade: i32
+  var lastMoveScore: i32             // points of the most recent applySwap
+  var lastCascadeSteps: i32          // cascade depth of the most recent applySwap (1 = no chain)
+  var reshuffles: i32                // deadlock reshuffles so far (host can animate on change)
+
+  init() {
+    this.score = 0
+    this.movesMade = 0
+    this.lastMoveScore = 0
+    this.lastCascadeSteps = 0
+    this.reshuffles = 0
+  }
+
+  fn reset(seed: i32) {
+    this.rng = PgCfRng(seed)
+    this.score = 0
+    this.movesMade = 0
+    this.lastMoveScore = 0
+    this.lastCascadeSteps = 0
+    this.reshuffles = 0
+    this.generateBoard()
+  }
+
+  // ── Board generation ─────────────────────────────────────────────────────────────────────────────────────
+  // Deal row-major, and when a fruit would complete an immediate 3-line with the two cells left/above,
+  // advance to the next type (≤2 of 6 types are ever forbidden, so this terminates in ≤3 deterministic
+  // steps). Re-deal if the result happens to have no legal swap, so reset() always yields a playable board.
+  fn generateBoard() {
+    for _attempt in 0..1000 {
+      this.grid.clear()
+      for i in 0..Cells { this.grid.add(0) }
+      for r in 0..Size {
+        for c in 0..Size {
+          var f = 1 + this.rng.nextInt(FruitTypes)
+          for _try in 0..FruitTypes {
+            if !this.wouldFormRun(r, c, f) { break }
+            f = f % FruitTypes + 1
+          }
+          this.grid[r * Size + c] = f
+        }
+      }
+      if this.hasLegalSwap() { return }
+    }
+  }
+
+  fn wouldFormRun(r: i32, c: i32, f: i32): bool {
+    if c >= 2 && this.grid[r * Size + c - 1] == f && this.grid[r * Size + c - 2] == f { return true }
+    if r >= 2 && this.grid[(r - 1) * Size + c] == f && this.grid[(r - 2) * Size + c] == f { return true }
+    return false
+  }
+
+  // ── Action encoding ──────────────────────────────────────────────────────────────────────────────────────
+  // Horizontal swaps first: action = r·7 + c swaps (r,c)↔(r,c+1), c in 0..6. Then vertical:
+  // action = 56 + r·8 + c swaps (r,c)↔(r+1,c), r in 0..6.
+  fn cellA(action: i32): i32 {
+    if action < HorizontalSwaps {
+      let r = divExact(action, Size - 1)
+      return r * Size + action % (Size - 1)
+    }
+    let v = action - HorizontalSwaps
+    return divExact(v, Size) * Size + v % Size
+  }
+
+  fn cellB(action: i32): i32 =>
+    if action < HorizontalSwaps { this.cellA(action) + 1 } else { this.cellA(action) + Size }
+
+  fn swapCells(a: i32, b: i32) {
+    let tmp = this.grid[a]
+    this.grid[a] = this.grid[b]
+    this.grid[b] = tmp
+  }
+
+  // ── Match detection ──────────────────────────────────────────────────────────────────────────────────────
+  // Length of the run of equal fruit through `cell`, per orientation; a swap is legal iff it makes a 3+ run
+  // through one of its two cells.
+  fn cellInMatch(cell: i32): bool {
+    let f = this.grid[cell]
+    if f == 0 { return false }
+    let c = cell % Size
+    let r = divExact(cell, Size)
+    var len = 1
+    for k in 1..Size { if c - k >= 0 && this.grid[cell - k] == f { len += 1 } else { break } }
+    for k in 1..Size { if c + k < Size && this.grid[cell + k] == f { len += 1 } else { break } }
+    if len >= 3 { return true }
+    len = 1
+    for k in 1..Size { if r - k >= 0 && this.grid[cell - k * Size] == f { len += 1 } else { break } }
+    for k in 1..Size { if r + k < Size && this.grid[cell + k * Size] == f { len += 1 } else { break } }
+    return len >= 3
+  }
+
+  // True iff swapping `action`'s two cells produces at least one 3+ line (the legality test, PRD §3.3).
+  // Pure: the board is restored before returning, and no RNG is consumed.
+  fn swapProducesMatch(action: i32): bool {
+    let a = this.cellA(action)
+    let b = this.cellB(action)
+    if this.grid[a] == this.grid[b] { return false }
+    this.swapCells(a, b)
+    let hit = this.cellInMatch(a) || this.cellInMatch(b)
+    this.swapCells(a, b)
+    return hit
+  }
+
+  fn legalMask(): List<bool> {
+    var mask: List<bool> = List<bool>()
+    for a in 0..ActionCount { mask.add(this.swapProducesMatch(a)) }
+    return mask
+  }
+
+  fn hasLegalSwap(): bool {
+    for a in 0..ActionCount { if this.swapProducesMatch(a) { return true } }
+    return false
+  }
+
+  fn anyMatchOnBoard(): bool {
+    for r in 0..Size {
+      for c in 0..(Size - 2) {
+        let f = this.grid[r * Size + c]
+        if f != 0 && this.grid[r * Size + c + 1] == f && this.grid[r * Size + c + 2] == f { return true }
+      }
+    }
+    for c in 0..Size {
+      for r in 0..(Size - 2) {
+        let f = this.grid[r * Size + c]
+        if f != 0 && this.grid[(r + 1) * Size + c] == f && this.grid[(r + 2) * Size + c] == f { return true }
+      }
+    }
+    return false
+  }
+
+  // Mark every cell in a 3+ run (row and column runs; a cell in both is marked once) and return the flat
+  // line-bonus total (+20 per 4-run, +50 per 5+-run). `marked` must arrive as Cells falses.
+  fn scanMatches(marked: List<bool>): i32 {
+    var bonus = 0
+    for r in 0..Size {
+      var runStart = 0
+      for c in 1..(Size + 1) {
+        if c < Size && this.grid[r * Size + c] == this.grid[r * Size + runStart] { continue }
+        let len = c - runStart
+        if len >= 3 && this.grid[r * Size + runStart] != 0 {
+          for k in runStart..c { marked[r * Size + k] = true }
+          if len == 4 { bonus += Line4Bonus }
+          if len >= 5 { bonus += Line5Bonus }
+        }
+        runStart = c
+      }
+    }
+    for c in 0..Size {
+      var runStart = 0
+      for r in 1..(Size + 1) {
+        if r < Size && this.grid[r * Size + c] == this.grid[runStart * Size + c] { continue }
+        let len = r - runStart
+        if len >= 3 && this.grid[runStart * Size + c] != 0 {
+          for k in runStart..r { marked[k * Size + c] = true }
+          if len == 4 { bonus += Line4Bonus }
+          if len >= 5 { bonus += Line5Bonus }
+        }
+        runStart = r
+      }
+    }
+    return bonus
+  }
+
+  // ── Cascade resolution ───────────────────────────────────────────────────────────────────────────────────
+  // Clear → gravity → refill → repeat until stable. Cascade step k (0-based) scores cleared·10·(k+1) + flat
+  // line bonuses (PRD §3.5 — proportional, no exponential jackpots). With refill=false the refilled cells
+  // stay EMPTY instead: that is the deterministic part of the cascade — used by the expectimax baseline,
+  // and it consumes no RNG, so planning never desyncs the refill stream.
+  fn resolveCascades(refill: bool): i32 {
+    var total = 0
+    var steps = 0
+    for k in 0..1000 {
+      var marked: List<bool> = List<bool>()
+      for i in 0..Cells { marked.add(false) }
+      let bonus = this.scanMatches(marked)
+      var cleared = 0
+      for i in 0..Cells { if marked[i] { cleared += 1 } }
+      if cleared == 0 { break }
+      total += cleared * BaseFruitScore * (k + 1) + bonus
+      steps = k + 1
+      for i in 0..Cells { if marked[i] { this.grid[i] = 0 } }
+      this.collapseColumns(refill)
+    }
+    this.lastCascadeSteps = steps
+    return total
+  }
+
+  // Gravity per column (survivors keep order, slide to the bottom), then refill the vacated top cells
+  // top-down from the RNG — or leave them empty for the deterministic (planning) variant.
+  fn collapseColumns(refill: bool) {
+    for c in 0..Size {
+      var write = Size - 1
+      for i in 0..Size {
+        let r = Size - 1 - i
+        let f = this.grid[r * Size + c]
+        if f != 0 {
+          this.grid[write * Size + c] = f
+          write -= 1
+        }
+      }
+      for r2 in 0..(write + 1) {
+        this.grid[r2 * Size + c] = if refill { 1 + this.rng.nextInt(FruitTypes) } else { 0 }
+      }
+    }
+  }
+
+  // ── The move ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Apply a legal swap: resolve cascades (with refill), update score/moves, and reshuffle if the resulting
+  // stable board is dead. Returns the points gained. An illegal action returns −1 and changes NOTHING
+  // (the human UI animates a revert; the RL side never sends one — the mask forbids it).
+  fn applySwap(action: i32): i32 {
+    if action < 0 || action >= ActionCount { return -1 }
+    if !this.swapProducesMatch(action) { return -1 }
+    this.swapCells(this.cellA(action), this.cellB(action))
+    let points = this.resolveCascades(true)
+    this.score += points
+    this.movesMade += 1
+    this.lastMoveScore = points
+    if !this.hasLegalSwap() { this.reshuffleBoard() }
+    return points
+  }
+
+  // Deadlock defined out of existence (PRD §3.5): re-deal the existing fruit multiset (Fisher–Yates) until
+  // the board has no instant match and at least one legal swap. A multiset that can't satisfy that within
+  // the attempt budget (not observed in practice) falls back to a fresh deal.
+  fn reshuffleBoard() {
+    this.reshuffles += 1
+    for _attempt in 0..1000 {
+      for i2 in 0..(Cells - 1) {
+        let i = Cells - 1 - i2
+        let j = this.rng.nextInt(i + 1)
+        let tmp = this.grid[i]
+        this.grid[i] = this.grid[j]
+        this.grid[j] = tmp
+      }
+      if !this.anyMatchOnBoard() && this.hasLegalSwap() { return }
+    }
+    this.generateBoard()
+  }
+
+  // ── Observation (PRD §3.4) — 448 floats: 6 one-hot fruit planes + a would-match plane ──────────────────
+  // The would-match plane marks both endpoints of every legal swap: "this cell can take part in a match one
+  // swap from now" — the cheap feature that hands the net the greedy signal.
+  fn buildObservation(): List<f64> {
+    var obs: List<f64> = List<f64>()
+    for f in 1..(FruitTypes + 1) {
+      for i in 0..Cells { obs.add(if this.grid[i] == f { 1.0 } else { 0.0 }) }
+    }
+    var wm: List<bool> = List<bool>()
+    for i in 0..Cells { wm.add(false) }
+    for a in 0..ActionCount {
+      if this.swapProducesMatch(a) {
+        wm[this.cellA(a)] = true
+        wm[this.cellB(a)] = true
+      }
+    }
+    for i in 0..Cells { obs.add(if wm[i] { 1.0 } else { 0.0 }) }
+    return obs
+  }
+
+  // ── Scripted baselines (PRD §3.8) — sanity gates, eval bars, and the site's difficulty tiers ────────────
+
+  // Uniform-random legal swap. Takes its OWN rng so policy sampling never touches the refill stream.
+  fn randomAction(policyRng: PgCfRng): i32 {
+    var legal: List<i32> = List<i32>()
+    for a in 0..ActionCount { if this.swapProducesMatch(a) { legal.add(a) } }
+    if legal.count == 0 { return -1 }
+    return legal[policyRng.nextInt(legal.count)]
+  }
+
+  // Step-0 points of a swap (cleared·10 + line bonuses, no cascade, no refill, no RNG). 0 for illegal.
+  fn immediateScore(action: i32): i32 {
+    let a = this.cellA(action)
+    let b = this.cellB(action)
+    if this.grid[a] == this.grid[b] { return 0 }
+    this.swapCells(a, b)
+    var marked: List<bool> = List<bool>()
+    for i in 0..Cells { marked.add(false) }
+    let bonus = this.scanMatches(marked)
+    var cleared = 0
+    for i in 0..Cells { if marked[i] { cleared += 1 } }
+    this.swapCells(a, b)
+    return if cleared == 0 { 0 } else { cleared * BaseFruitScore + bonus }
+  }
+
+  // Legal swap with the highest immediate points (lowest index wins ties). −1 only if no legal swap exists
+  // — which the reshuffle invariant prevents outside mid-resolution states.
+  fn greedyAction(): i32 {
+    var best = -1
+    var bestScore = 0
+    for a in 0..ActionCount {
+      let s = this.immediateScore(a)
+      if s > bestScore { bestScore = s; best = a }
+    }
+    return best
+  }
+
+  // Full swap value counting only the deterministic part of the cascade: clear → gravity → clear …, with
+  // vacated cells left EMPTY (refill treated as unknowable noise). Restores the board; consumes no RNG.
+  fn deterministicValue(action: i32): i32 {
+    var saved: List<i32> = List<i32>()
+    for i in 0..Cells { saved.add(this.grid[i]) }
+    this.swapCells(this.cellA(action), this.cellB(action))
+    let v = this.resolveCascades(false)
+    for i in 0..Cells { this.grid[i] = saved[i] }
+    return v
+  }
+
+  // 1-ply expectimax tier: maximize the deterministic cascade value over legal swaps.
+  fn expectimaxAction(): i32 {
+    var best = -1
+    var bestVal = 0
+    for a in 0..ActionCount {
+      if !this.swapProducesMatch(a) { continue }
+      let v = this.deterministicValue(a)
+      if v > bestVal { bestVal = v; best = a }
+    }
+    return best
+  }
+
+  // Trained-net tier: masked greedy argmax over the net's Q-values for the current observation.
+  fn netAction(net: PgCfDuelingNet): i32 {
+    let q = net.forward(this.buildObservation())
+    var best = -1
+    var bestQ = -1.0e18
+    for a in 0..ActionCount {
+      if !this.swapProducesMatch(a) { continue }
+      if q[a] > bestQ { bestQ = q[a]; best = a }
+    }
+    return best
+  }
+}
+
+// ── Dueling-Q net inference (single-source forward pass; the fruitcake PgDuelingNet pattern) ───────────────
+// INFERENCE ONLY — training stays on the SDK. Weights are float32 in the checkpoint; the per-platform parser
+// (C# DuelingQNetCheckpoint / crazyfruits-net.ts — binary I/O stays out of Polyglot) loads them into these
+// f64 arrays. Q(s,a) = A(s,a) + (V(s) − mean_a A(s,a)); ReLU trunk; heads have no activation. Trunk tensors
+// are FLAT (layers concatenated) — nested List<List<f64>> parameters are transpiler-unfriendly.
+class PgCfDuelingNet {
+  var inputSize: i32
+  var actions: i32
+  var hidden: List<i32>
+  var trunkWFlat: List<f64>
+  var trunkBFlat: List<f64>
+  var valueW: List<f64>
+  var valueB: List<f64>
+  var advW: List<f64>
+  var advB: List<f64>
+
+  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, valueW: List<f64>, valueB: List<f64>, advW: List<f64>, advB: List<f64>) {
+    this.inputSize = inputSize
+    this.actions = actions
+    this.hidden = hidden
+    this.trunkWFlat = trunkWFlat
+    this.trunkBFlat = trunkBFlat
+    this.valueW = valueW
+    this.valueB = valueB
+    this.advW = advW
+    this.advB = advB
+  }
+
+  fn forward(obs: List<f64>): List<f64> {
+    var x = obs
+    var prev = this.inputSize
+    var wOff = 0
+    var bOff = 0
+    for l in 0..this.hidden.count {
+      let h = this.hidden[l]
+      x = relu(linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h))
+      wOff += prev * h
+      bOff += h
+      prev = h
+    }
+    let value = linear(x, this.valueW, 0, this.valueB, 0, prev, 1)
+    let adv = linear(x, this.advW, 0, this.advB, 0, prev, this.actions)
+
+    var sumA = 0.0
+    for k in 0..this.actions { sumA += adv[k] }
+    let meanA = sumA / this.actions
+    let v = value[0]
+
+    var q: List<f64> = List<f64>()
+    for k in 0..this.actions { q.add(adv[k] + (v - meanA)) }
+    return q
+  }
+
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+}
