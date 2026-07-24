@@ -1921,10 +1921,13 @@ mousedown/move/up in one path; drag-swap + tap-tap gestures, `touch-action: none
 blast), wrapped (L/T match → 3×3 double explosion), sugar bomb (match-5 → swap clears a fruit type), with all
 combo swaps — in the single-source engine so human play, the scripted tiers, and a retrained net all get
 them. 3-agent investigation 2026-07-24 (line-referenced engine impact; AI impact — CANDYRL used γ=0.5 on
-real Candy Crush; PBRS at γ=0 is a mathematical no-op). Two owner corrections during the build: striped
-blast is **⊥ the creating match** (the research agent's ∥ resolution was wrong — paint shows the blast),
-and combo blasts centre on the **gesture's last-selected cell** (`stageSwap` grew a target-cell parameter;
-AI moves default deterministically to the action's bottom/right cell).
+real Candy Crush; PBRS at γ=0 is a mathematical no-op). Three owner corrections during the build: striped
+blast is **⊥ the creating match** (the research agent's ∥ resolution was wrong — paint shows the blast);
+combo blasts centre on the **gesture's last-selected cell** (`stageSwap` grew a target-cell parameter;
+AI moves default deterministically to the action's bottom/right cell); and **specials FORM before the
+step's activations**, so a fresh special blasted in its own creation step fires immediately. Plus the
+fire-only scoring rule (creation earns nothing in-game; the training env shapes the reward) and the
+**endless-mode toggle** (bypass/dismiss the round end; such games are exempt from "best").
 
 **Key design locks:** rules 100% deterministic (zero RNG: passive bomb → most-frequent type; bomb+striped
 orientations `(r+c)%2`; cascade spawn → lowest run cell) so planning + C#↔TS parity survive; packed base-16
@@ -1944,19 +1947,23 @@ zero deadlocks ever; game-over-on-deadlock would never fire).
   armed wrapped, stageSwap(action, targetCell)/swapIsLegal, combos, lastClearedBy/lastCreated + per-move
   creation/fired telemetry, extended immediateScore/deterministicValue). **Gate:** directed tests for every
   creation/activation/combo/chain + invariant sweep + planning-purity + parity checksum re-pinned (node
-  harness committed as `tools/cf_parity.mjs`). *Green: 47 tests; every combo hand-scored exactly; the
-  same-step form-then-trigger 190-point test; parity pin finally 995400597 (score 95550).*
+  harness committed as `tools/cf_parity.mjs`). *Green: 49 tests (incl. striped/wrapped→bomb chain-removal
+  and the stepwise-host-protocol ≡ applySwap equivalence; host round/endless/best rules covered by the
+  committed `tools/cf_host_tests.mjs`); every combo hand-scored exactly; the same-step form-then-trigger
+  190-point test; parity pin finally 995400597 (score 95550).*
 - **M50.2 — Env/obs + baselines** ✅ (2026-07-24) (928 floats, ÷300 planes, RewardScale 30→100, expectimax-2 +
   specials-greedy tiers, ShapeCreationRewards on the train env only). **Gate:** tier ordering CI-separated;
   greedy provably takes a directed bomb swap; **pre-training env validation: random < 0.70 × expectimax-2**.
   *Green (final rules): random 2598.7±72.4 · greedy 3497.9±96.2 (+35% — was +6% without specials) ·
   specials-greedy 3867.1 · expectimax-1 5931.4 (+128%) · expectimax-2 8135.0 (+213%); env validation 32%;
   e2−e1 gap +37.2% arms the escalation trigger.*
-- **M50.3 — Retrain** 🟡 in flight (owner call: training completes after the rest shipped; the site's net
-  tier falls back to expectimax until the ckpt lands — the width guard rejects the stale 672-input net).
-  **Gates:** ≥ +30% over random-with-specials (bar 3378.3, 500 eps, CI-separated); ≥ 64% of the
-  random→expectimax-1 gap (bar 4731.6 — the M49 ratio); specials created ≥ 7.3 / fired ≥ 5.5 per ep
-  (2× random). *Combo gate = escalation trigger (armed), once; then stop-loss.*
+- **M50.3 — Retrain** 🟡 escalation in flight. **Gates:** ≥ +30% over random-with-specials (bar 3378.3, 500
+  eps, CI-separated); ≥ 64% of the random→expectimax-1 gap (bar 4731.6 — the M49 ratio); specials created
+  ≥ 7.3 / fired ≥ 5.5 per ep (2× random). *Attempt 1 (γ=0 + creation shaping, 400k): **4000.5±128.8 =
+  +53.9% — gate 1 PASS**, beats greedy +14.4%; gap share 42% and created 5.7/ep MISS gates 2/3 (fired 5.55
+  passes barely) — the pre-registered escalation (γ=0.5 + 3-step + PBRS, `--pbrs`) is running as the ONE
+  allowed retry; then stop-loss. Best net ships either way; the net tier falls back to expectimax until the
+  ckpt lands (width guard rejects the stale 672-input net).*
 - **M50.4 — Web** ✅ (2026-07-24) (square candy wrapper with folded tabs + gloss — owner-requested — over the visible
   fruit; thin outlined stripes along the blast axis; sprinkled sugar-bomb sphere; pop step enriched with
   beams/rings/zaps/creation sparkles; six watch tiers; 30-move round-over screen with the measured bars).

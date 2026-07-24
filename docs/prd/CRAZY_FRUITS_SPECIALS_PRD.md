@@ -177,7 +177,9 @@ cell** · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI**
   chain reactions; the 20-seed × 30-move invariant sweep; a planning-purity test (no RNG, byte-identical
   state) on a specials-rich board; C#↔TS parity checksum RE-PINNED via the node harness — committed to
   `tools/cf_parity.mjs`.** No training before this gate.
-  *Gate result: 46 CrazyFruits tests green (final count after the two owner corrections below).
+  *Gate result: 49 CrazyFruits tests green (final count — incl. the three owner corrections below, the
+  striped/wrapped→bomb chain-removal scenarios, and the stepwise-host-protocol ≡ applySwap equivalence
+  test; the host layer's round/endless/best rules have their own committed harness `tools/cf_host_tests.mjs`).
   Hand-computed exact scores: striped row-fire 80 · chain striped→striped 150 · wrapped first-fire 100
   (then >100 with the armed re-fire) · bomb+plain (n+1)·10 · bomb+bomb 640 · striped+striped 150 ·
   striped+wrapped 390 · wrapped+wrapped 250 · bomb+striped conversion 220 · passive bomb = row +
@@ -205,16 +207,18 @@ cell** · eval protocol **500 held-out episodes (seeds 5000+e), mean ± 95% CI**
   over expectimax-1 = **+37.2%** (≫ 10%): plan-ahead/hold-for-combo value is real — the M50.3 escalation
   trigger is ARMED. Directed tier tests: greedy provably takes the bomb swap; specials-greedy provably
   builds a striped where plain greedy fires the row.*
-- **M50.3 — Retrain (from scratch — input width changed).** 🟡 IN FLIGHT (owner call 2026-07-24: training
-  completes after the rest of the milestone ships; the run is going on the final rules — γ=0 + creation
-  shaping, 400k moves — and its checkpoint + gate table land as a follow-up commit). Until then the site's
-  "Trained net" tier gracefully falls back to expectimax (the width guard rejects the stale 672-input M49
-  ckpt). **Gates: (1) ≥ +30% over random-with-specials (bar 3378.3), 500 episodes, CI-separated; (2)
-  no-regression — the net captures ≥ 64% of the random→expectimax-1 gap (bar 4731.6, the M49 ratio); (3)
-  specials-exploitation — created/ep ≥ 7.3 AND fired/ep ≥ 5.5 (2× the random rate).** *Combo gate
-  (escalation trigger, not a fail): if net combo-rate ≈ random's AND expectimax-2 > 1.10 × expectimax-1
-  (armed: measured +37.2%) → run the §3.6 escalation ONCE.* Stop-loss: gates still failing after the
-  escalation ⇒ stop and write up. Ships the new `crazyfruits.dqn.ckpt` (LFS).
+- **M50.3 — Retrain (from scratch — input width changed).** 🟡 ESCALATION IN FLIGHT. **Gates: (1) ≥ +30%
+  over random-with-specials (bar 3378.3), 500 episodes, CI-separated; (2) no-regression — ≥ 64% of the
+  random→expectimax-1 gap (bar 4731.6, the M49 ratio); (3) specials-exploitation — created/ep ≥ 7.3 AND
+  fired/ep ≥ 5.5 (2× random).** Stop-loss: ONE escalation, then ship the best net and write up honestly.
+  *Attempt 1 (γ=0 + creation shaping, 400k moves, data `scratchpad/cf5train`, best eval 4098 at the 400k
+  final): 500-episode result **4000.5 ± 128.8 = +53.9% over random, CI-SEPARATED — gate 1 PASS**; beats
+  greedy (+14.4%) and specials-greedy; but gap share **42% < 64% — gate 2 MISS** and created **5.7/ep <
+  7.3 — gate 3(created) MISS** (fired 5.55 ≥ 5.54 — pass, barely). Exactly the hold-for-combo blind spot;
+  the armed trigger (e2 gap +37.2%) fired → **the pre-registered escalation is running** (γ=0.5 + 3-step +
+  PBRS Φ over on-board specials replacing the creation bonus; `--gamma 0.5 --nstep 3 --pbrs`, 400k moves,
+  data `scratchpad/cf6train`). Whichever net stands better against the gates ships; a second miss invokes
+  the stop-loss with the miss reported, not retried.* Ships `crazyfruits.dqn.ckpt` (LFS).
 - **M50.4 — Web.** ✅ SHIPPED 2026-07-24. Overlay art (owner-requested SQUARE candy wrapper with folded
   corner tabs + gloss, fruit visible inside; outlined stripes along the blast axis; colorless sprinkled
   sugar-bomb sphere) + enriched pop step (striped beams, blast rings, bomb zap glows, creation sparkles) +
