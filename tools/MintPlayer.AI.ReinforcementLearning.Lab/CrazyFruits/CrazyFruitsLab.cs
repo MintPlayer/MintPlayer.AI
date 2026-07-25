@@ -67,6 +67,9 @@ internal static class CrazyFruitsLab
                     ShapeCreationRewards = shape,
                     ShapeSpecialsPotential = pbrs,
                     PotentialGamma = gamma,
+                    // Combo curriculum (M52, COMBO_CURRICULUM PRD): train env only — eval stays natural.
+                    SeedSpecialsProb = a.Dbl("--seed-specials", 0),
+                    ComboExploreBias = a.Dbl("--combo-explore", 0),
                 },
                 evalEnv: new CrazyFruitsEnv(moveBudget),
                 options),
@@ -107,14 +110,14 @@ internal static class CrazyFruitsLab
             var agent = new GreedyQAgent(net, CrazyFruitsEnv.ActionCount);
             var env = new CrazyFruitsEnv(moveBudget);
             double sum = 0, sumSq = 0;
-            long created = 0, fired = 0;
+            long cs = 0, cw = 0, cb = 0, fired = 0;
             for (int e = 0; e < episodes; e++)
             {
                 var (obs, _) = env.Reset((ulong)(5_000 + e));
                 while (true)
                 {
                     var step = env.Step(agent.Act(obs, env.CurrentActionMask(), greedy: true));
-                    created += env.Board.MoveCreatedStriped + env.Board.MoveCreatedWrapped + env.Board.MoveCreatedBombs;
+                    cs += env.Board.MoveCreatedStriped; cw += env.Board.MoveCreatedWrapped; cb += env.Board.MoveCreatedBombs;
                     fired += env.Board.MoveSpecialsFired;
                     obs = step.Observation;
                     if (step.Done) break;
@@ -122,7 +125,7 @@ internal static class CrazyFruitsLab
                 sum += env.Score;
                 sumSq += (double)env.Score * env.Score;
             }
-            Console.WriteLine($"  net                          specials/episode: created {(double)created / episodes:F2}, fired {(double)fired / episodes:F2}");
+            PrintSpecialsLine("net", episodes, cs, cw, cb, fired);
             results.Add(Summarize($"net ({Path.GetFileName(netPath)})", episodes, sum, sumSq));
         }
         else if (!File.Exists(netPath))
@@ -198,6 +201,11 @@ internal static class CrazyFruitsLab
         var opportunityTaken = new long[policies.Count];
         var comboTaken = new long[policies.Count];
         var oracleMatch = new long[policies.Count];
+        // Opportune states bucketed by the best action's creation bonus (shaped − plain immediate):
+        // 40 = striped (4-run), 60 = wrapped (L/T), ≥100 = bomb (5-run) or multi-creation. Owner report
+        // 2026-07-25 round 2: a skipped 5-in-a-row — the bomb bucket answers whether that's systemic.
+        var kindStates = new int[3];
+        var kindTaken = new long[3 * policies.Count];
 
         var env = new CrazyFruitsEnv(moveBudget);
         var creating = new bool[CrazyFruitsEnv.ActionCount];
@@ -228,7 +236,14 @@ internal static class CrazyFruitsLab
 
                 statesSeen++;
                 bool opportune = bestAction >= 0 && creating[bestAction];
-                if (opportune) opportuneStates++;
+                int kind = -1;
+                if (opportune)
+                {
+                    opportuneStates++;
+                    int bonus = b.ImmediateScoreShaped(bestAction) - b.ImmediateScore(bestAction);
+                    kind = bonus >= 100 ? 2 : bonus >= 60 ? 1 : 0;
+                    kindStates[kind]++;
+                }
                 if (anyCreating) opportunityStates++;
                 if (anyCombo) comboStates++;
 
@@ -237,7 +252,11 @@ internal static class CrazyFruitsLab
                     int action = policies[p].Act(b, stateIndex);
                     if (action < 0) continue;
                     if (action == bestAction) oracleMatch[p]++;
-                    if (anyCreating && creating[action]) { opportunityTaken[p]++; if (opportune) opportuneTaken[p]++; }
+                    if (anyCreating && creating[action])
+                    {
+                        opportunityTaken[p]++;
+                        if (opportune) { opportuneTaken[p]++; kindTaken[kind * policies.Count + p]++; }
+                    }
                     if (anyCombo)
                     {
                         var (cellA, cellB) = b.SwapCells(action);
@@ -253,21 +272,25 @@ internal static class CrazyFruitsLab
         Console.WriteLine($"Crazy Fruits opportunity probe: {episodes} episodes × {moveBudget} random-walk moves (seeds 9000+e)");
         Console.WriteLine($"  states {statesSeen}: creating swap available {opportunityStates}, creating swap is the " +
                           $"shaped-optimal move {opportuneStates} | special+special legal {comboStates}");
-        Console.WriteLine($"  {"policy",-18} {"opportune take",16} {"raw take",10} {"oracle match",14} {"combo take",12}");
+        Console.WriteLine($"  opportune states by best-action creation: striped {kindStates[0]} · wrapped {kindStates[1]} · bomb/multi {kindStates[2]}");
+        Console.WriteLine($"  {"policy",-18} {"opportune take",16} {"striped",9} {"wrapped",9} {"bomb",9} {"raw take",10} {"oracle match",14} {"combo take",12}");
         for (int p = 0; p < policies.Count; p++)
         {
             string Rate(long taken, int total) => total == 0 ? "n/a" : $"{(double)taken / total:P1}";
             Console.WriteLine($"  {policies[p].Name,-18} {Rate(opportuneTaken[p], opportuneStates),16} " +
+                              $"{Rate(kindTaken[0 * policies.Count + p], kindStates[0]),9} " +
+                              $"{Rate(kindTaken[1 * policies.Count + p], kindStates[1]),9} " +
+                              $"{Rate(kindTaken[2 * policies.Count + p], kindStates[2]),9} " +
                               $"{Rate(opportunityTaken[p], opportunityStates),10} {Rate(oracleMatch[p], statesSeen),14} " +
                               $"{Rate(comboTaken[p], comboStates),12}");
         }
-        Console.WriteLine("  gate (RANKING PRD M51.2): net opportune take-rate ≥ 90% (oracle = 100% by construction).");
+        Console.WriteLine("  gate (RANKING PRD M51.2, final form): net opportune take-rate ≥ expectimax-1 − 5 pts.");
     }
 
     private static (string, double, double) RunPolicy(string name, int episodes, int moveBudget, Func<CrazyFruitsBoard, int, int> policy)
     {
         double sum = 0, sumSq = 0;
-        long created = 0, fired = 0;
+        long cs = 0, cw = 0, cb = 0, fired = 0;
         for (int e = 0; e < episodes; e++)
         {
             // Reset through the env seed path so every policy sees the same boards as the net eval.
@@ -277,15 +300,22 @@ internal static class CrazyFruitsLab
             for (int move = 0; move < moveBudget; move++)
             {
                 b.ApplySwap(policy(b, move));
-                created += b.MoveCreatedStriped + b.MoveCreatedWrapped + b.MoveCreatedBombs;
+                cs += b.MoveCreatedStriped; cw += b.MoveCreatedWrapped; cb += b.MoveCreatedBombs;
                 fired += b.MoveSpecialsFired;
             }
             sum += b.Score;
             sumSq += (double)b.Score * b.Score;
         }
-        Console.WriteLine($"  {name,-28} specials/episode: created {(double)created / episodes:F2}, fired {(double)fired / episodes:F2}");
+        PrintSpecialsLine(name, episodes, cs, cw, cb, fired);
         return Summarize(name, episodes, sum, sumSq);
     }
+
+    // Per-kind created counts (M52 gate: kind-mix must not regress, ESPECIALLY bomb-created — seeded boards
+    // hand the net free specials, exactly the pressure to under-create the rarest kind).
+    private static void PrintSpecialsLine(string name, int episodes, long cs, long cw, long cb, long fired)
+        => Console.WriteLine($"  {name,-28} specials/episode: created {(double)(cs + cw + cb) / episodes:F2} " +
+                             $"(striped {(double)cs / episodes:F2} · wrapped {(double)cw / episodes:F2} · bomb {(double)cb / episodes:F2}), " +
+                             $"fired {(double)fired / episodes:F2}");
 
     private static (string, double, double) Summarize(string name, int n, double sum, double sumSq)
     {
