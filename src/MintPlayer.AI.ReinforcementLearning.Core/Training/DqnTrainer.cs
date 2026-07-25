@@ -63,6 +63,12 @@ public sealed record DqnOptions
     /// reward's refill-expectation signal 30:1.</summary>
     public float DenseTargetWeight { get; init; } = 1.0f;
 
+    /// <summary>Optional exploration bias, consulted only when an ε-exploration step fires: return a LEGAL
+    /// action to play it, −1 to fall back to the uniform-random legal pick. Null (default) draws nothing
+    /// extra from the policy RNG, so existing runs stay bitwise-identical. Crazy Fruits routes rare
+    /// combo swaps through this (COMBO_CURRICULUM PRD, M52).</summary>
+    public Func<Xoshiro256StarStar, int>? ExploreBias { get; init; }
+
     public int EvalEvery { get; init; } = 5_000;
     public int EvalEpisodes { get; init; } = 20;
 
@@ -76,8 +82,11 @@ public readonly record struct DqnProgress(int Step, int MaxSteps, double EvalMea
 
 public sealed record DqnResult(GreedyQAgent Agent, IValueNet Network, int StepsTrained, double FinalEvalReturn, DqnTrainingState State);
 
-/// <summary>Acts greedily from a Q-network (evaluation/playback); epsilon-greedy when given an RNG.</summary>
-public sealed class GreedyQAgent(IValueNet network, int actionCount, Xoshiro256StarStar? rng = null) : IAgent<float[], int>
+/// <summary>Acts greedily from a Q-network (evaluation/playback); epsilon-greedy when given an RNG. An
+/// optional <paramref name="exploreBias"/> (see <see cref="DqnOptions.ExploreBias"/>) can redirect an
+/// exploration step to a targeted legal action.</summary>
+public sealed class GreedyQAgent(IValueNet network, int actionCount, Xoshiro256StarStar? rng = null,
+    Func<Xoshiro256StarStar, int>? exploreBias = null) : IAgent<float[], int>
 {
     public double Epsilon { get; set; }
 
@@ -95,6 +104,8 @@ public sealed class GreedyQAgent(IValueNet network, int actionCount, Xoshiro256S
     {
         if (!greedy && rng is not null && rng.NextDouble() < Epsilon)
         {
+            int biased = exploreBias?.Invoke(rng) ?? -1;
+            if (biased >= 0) return biased;
             if (mask is null) return rng.NextInt(actionCount);
             int legal = mask.Count(m => m);
             int pick = rng.NextInt(legal);
@@ -201,7 +212,7 @@ public static class DqnTrainer
             }
         }
 
-        var agent = new GreedyQAgent(state.Online, actionCount, state.PolicyRng);
+        var agent = new GreedyQAgent(state.Online, actionCount, state.PolicyRng, options.ExploreBias);
         var accumulator = state.Accumulator!; // set above for both fresh and resumed runs
         var maskProvider = env as IActionMaskProvider;
         float lastLoss = state.LastLoss;

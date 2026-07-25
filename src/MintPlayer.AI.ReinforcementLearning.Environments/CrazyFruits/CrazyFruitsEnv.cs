@@ -100,6 +100,20 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
     public float WrappedShaping { get; set; } = 60f;
     public float BombShaping { get; set; } = 100f;
 
+    // ── Combo curriculum (COMBO_CURRICULUM PRD, M52 — train env only; both default OFF) ─────────────────────
+
+    /// <summary>Probability that a fresh episode's board is dealt combo-ready: one ADJACENT special pair plus
+    /// up to two singles, injected by overwriting plain cells' kinds (fruit types unchanged, so the deal's
+    /// no-instant-match and has-legal-swap guarantees survive; a bomb never joins runs and its swaps are
+    /// always legal). Draws come from the env RNG stream, never the board's refill stream — seeded runs stay
+    /// deterministic, and the default 0 leaves every draw count untouched.</summary>
+    public double SeedSpecialsProb { get; set; }
+
+    /// <summary>Probability that an ε-exploration step with a legal special+special swap available picks
+    /// uniformly among the combo swaps (the <c>DqnOptions.ExploreBias</c> hook,
+    /// <see cref="SuggestComboExploration"/>) — realized combo experience on natural boards.</summary>
+    public double ComboExploreBias { get; set; }
+
     /// <summary>The §3.6 escalation's shaping (use INSTEAD of <see cref="ShapeCreationRewards"/>, with γ&gt;0):
     /// potential-based, Φ(s) = Σ option value of on-board specials (same 40/60/100 weights), reward +=
     /// γ·Φ(s′) − Φ(s). Policy-invariant when <see cref="PotentialGamma"/> matches the learner's γ — it prices
@@ -128,9 +142,56 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
         // Each episode's board deals from the env RNG stream: reproducible under an explicit seed, fresh
         // boards across unseeded resets.
         _board.Reset(_rng.NextUInt64());
+        if (SeedSpecialsProb > 0 && _rng.NextDouble() < SeedSpecialsProb)
+            SeedSpecials();
         _moves = 0;
         _done = false;
         return (_board.BuildObservation(), EnvInfo.Empty);
+    }
+
+    /// <summary>Deal the fresh board combo-ready (see <see cref="SeedSpecialsProb"/>): an adjacent special
+    /// pair plus up to two singles, all on plain cells with their fruit type kept.</summary>
+    private void SeedSpecials()
+    {
+        var grid = _board.GridSnapshot();
+        bool horizontal = _rng.NextDouble() < 0.5;
+        int r = _rng.NextInt(horizontal ? CrazyFruitsBoard.Size : CrazyFruitsBoard.Size - 1);
+        int c = _rng.NextInt(horizontal ? CrazyFruitsBoard.Size - 1 : CrazyFruitsBoard.Size);
+        int pairA = r * CrazyFruitsBoard.Size + c;
+        int pairB = horizontal ? pairA + 1 : pairA + CrazyFruitsBoard.Size;
+        grid[pairA] = Seeded(grid[pairA]);
+        grid[pairB] = Seeded(grid[pairB]);
+        int extras = _rng.NextInt(3);
+        for (int i = 0; i < extras; i++)
+        {
+            int cell = _rng.NextInt(CrazyFruitsBoard.Cells);
+            if (grid[cell] < 16) grid[cell] = Seeded(grid[cell]); // plain cells only
+        }
+        _board.LoadGrid(grid);
+    }
+
+    // Kinds 1..4 uniform (stripedH · stripedV · wrapped · bomb); striped/wrapped keep the cell's fruit type
+    // (typewise match structure unchanged), the bomb is colorless.
+    private int Seeded(int packedPlain)
+    {
+        int kind = 1 + _rng.NextInt(4);
+        return kind == 4 ? 4 * 16 : kind * 16 + packedPlain % 16;
+    }
+
+    /// <summary>The <c>DqnOptions.ExploreBias</c> hook (see <see cref="ComboExploreBias"/>): −1 when the
+    /// roll passes or no special+special swap is legal, else a uniform pick among the legal combo swaps.</summary>
+    public int SuggestComboExploration(Xoshiro256StarStar rng)
+    {
+        if (rng.NextDouble() >= ComboExploreBias) return -1;
+        var mask = _board.LegalMask();
+        var combos = new List<int>();
+        for (int a = 0; a < ActionCount; a++)
+        {
+            if (!mask[a]) continue;
+            var (cellA, cellB) = _board.SwapCells(a);
+            if (_board.Kind(cellA) > 0 && _board.Kind(cellB) > 0) combos.Add(a);
+        }
+        return combos.Count == 0 ? -1 : combos[rng.NextInt(combos.Count)];
     }
 
     public StepResult<float[]> Step(int action)

@@ -2035,6 +2035,37 @@ reward and the input plane; combo shaping would double-count (shape what pays la
 - **M51.4 — Ship.** ✅ `cf9train` → `wwwroot/models/crazyfruits.dqn.ckpt`; round-over bar ~4 000 → ~5 650;
   parity pin 481681208 unchanged; docs synced.
 
+## M52 — Crazy Fruits combo curriculum  *(2026-07-25; see `CRAZY_FRUITS_COMBO_CURRICULUM_PRD.md`; branch `m52-crazyfruits-combo-curriculum`)* 🔄
+
+**Why:** owner's post-M51 question — the net has plausibly never *experienced* wrapped+wrapped or bomb+bomb.
+Half-true: the deterministic combo payoff is in its input planes AND its dense targets (combo take already
+63% vs random's 10% with zero engineering); what's missing is frequency (combo-legal states ≈2.8% of natural
+play; adjacent bomb+bomb ≈ never) and the realized post-combo refill continuation, which only playing them
+teaches. Deliberately *setting up* combos stays out of scope (γ=0 can't represent it — that's the
+search-distillation lever). 2-agent design verification (code-safety + RL sanity) before build.
+
+- **M52.0 — Design verification.** ✅ Injection invariant-safe (kind overwrite keeps fruit type ⇒ typewise
+  match structure unchanged; bombs never join runs and self-guarantee legality; reshuffle bounded);
+  env-stream RNG keeps determinism; save/restore untouched. RL verdicts: γ=0 has NO bootstrap propagation
+  path, so curriculum risk reduces to benign covariate shift (labels identical on both distributions) —
+  p=0.25; **adjacent pairs only** (a near pair's bring-together swap has a flat γ=0 label — teaches nothing);
+  **combo-biased ε is the PRIMARY lever** (realized combo experience, zero distribution shift); prefer full
+  RESUME of cf9train (keeps Adam moments + the 100k natural replay buffer) over warm-start.
+- **M52.1 — Env + trainer seam + Lab.** ✅ `CrazyFruitsEnv.SeedSpecialsProb` (adjacent pair + ≤2 singles on
+  Reset, env RNG stream, default OFF — eval env stays natural) + `ComboExploreBias` /
+  `SuggestComboExploration`; generic `DqnOptions.ExploreBias` hook consulted only in the ε-branch (null ⇒
+  zero extra draws ⇒ every other game bitwise-identical); Lab `--seed-specials` / `--combo-explore`;
+  per-kind created counts in `--baselines`. **Gate:** 67/67 tests green (4 new: seeded invariants +
+  determinism + combo suggestion + agent bias redirect).
+- **M52.2 — Spike.** ✅ Resume at 400k confirmed, keep-best baseline 6014 armed, 10k curriculum steps, loss
+  normal, no eval collapse.
+- **M52.3 — Train `cf10train`.** 🔄 Resume cf9train → 800k absolute (400k new; owner choice: reuse ckpt +
+  full budget), p=0.25, q=0.5. **Gates (pre-registered):** (1) 500-ep natural score not CI-separated below
+  cf9train's 5666.4; (2) probe combo take ≥75% (from 63%); (3) bomb-bucket opportune ≥85% (from 80%);
+  (4) M50.3 bars stay green; (5) per-kind created non-regression, especially bomb-created. Escalation if
+  (2)/(3) miss: raise q, one run, stop-loss.
+- **M52.4 — Ship + PR.** Best net → wwwroot ckpt (drop-in); docs/memory synced; PR → master.
+
 **Rejected up front:** bigger shaping bonuses (reward-hack trap), combo shaping (double-count), γ>0 schedules
 (n=2 losses: M49 γ=0.99, M50.3 `cf8train`), regret-prioritized replay (subsumed by dense regression).
 

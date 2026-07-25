@@ -149,4 +149,84 @@ public class CrazyFruitsEnvTests
             dir.Delete(recursive: true);
         }
     }
+
+    // ── Combo curriculum (M52, COMBO_CURRICULUM_PRD.md) ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void SeededReset_KeepsInvariants_AndDealsAnAdjacentSpecialPair()
+    {
+        var env = new CrazyFruitsEnv { SeedSpecialsProb = 1.0 };
+        for (ulong seed = 0; seed < 20; seed++)
+        {
+            env.Reset(seed);
+            var b = env.Board;
+            Assert.False(b.AnyMatchOnBoard());               // injection keeps the deal's no-instant-match
+            Assert.True(b.HasLegalSwap());                   // ...and its has-legal-swap guarantee
+
+            int specials = 0;
+            bool adjacentPair = false;
+            for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
+            {
+                if (b.Kind(i) == 0) continue;
+                specials++;
+                int r = i / CrazyFruitsBoard.Size, c = i % CrazyFruitsBoard.Size;
+                if (c < CrazyFruitsBoard.Size - 1 && b.Kind(i + 1) > 0) adjacentPair = true;
+                if (r < CrazyFruitsBoard.Size - 1 && b.Kind(i + CrazyFruitsBoard.Size) > 0) adjacentPair = true;
+            }
+            Assert.True(specials >= 2, $"seed {seed}: expected the seeded pair, saw {specials} specials");
+            Assert.True(adjacentPair, $"seed {seed}: seeded specials are not adjacent");
+
+            // The adjacent pair makes a special+special swap legal — the combo the curriculum manufactures.
+            var mask = b.LegalMask();
+            bool comboLegal = false;
+            for (int a = 0; a < CrazyFruitsBoard.ActionCount && !comboLegal; a++)
+            {
+                if (!mask[a]) continue;
+                var (cellA, cellB) = b.SwapCells(a);
+                comboLegal = b.Kind(cellA) > 0 && b.Kind(cellB) > 0;
+            }
+            Assert.True(comboLegal, $"seed {seed}: no legal special+special swap on a seeded board");
+        }
+    }
+
+    [Fact]
+    public void SeededReset_IsDeterministicPerSeed_AndDefaultEnvStaysPlain()
+    {
+        var a = new CrazyFruitsEnv { SeedSpecialsProb = 1.0 };
+        var b = new CrazyFruitsEnv { SeedSpecialsProb = 1.0 };
+        a.Reset(42);
+        b.Reset(42);
+        Assert.Equal(a.Board.GridSnapshot(), b.Board.GridSnapshot());
+
+        var plain = new CrazyFruitsEnv();
+        plain.Reset(42);
+        for (int i = 0; i < CrazyFruitsBoard.Cells; i++)
+            Assert.Equal(0, plain.Board.Kind(i));
+    }
+
+    [Fact]
+    public void SuggestComboExploration_ReturnsALegalComboSwap_OrMinusOne()
+    {
+        var env = new CrazyFruitsEnv { SeedSpecialsProb = 1.0, ComboExploreBias = 1.0 };
+        env.Reset(5);
+        var rng = new Core.Random.Xoshiro256StarStar(9);
+        int action = env.SuggestComboExploration(rng);
+        Assert.True(action >= 0, "a seeded board has a legal combo swap — the hook must find it");
+        Assert.True(env.CurrentActionMask()[action]);
+        var (cellA, cellB) = env.Board.SwapCells(action);
+        Assert.True(env.Board.Kind(cellA) > 0 && env.Board.Kind(cellB) > 0);
+
+        var never = new CrazyFruitsEnv { ComboExploreBias = 0.0 };
+        never.Reset(5);
+        Assert.Equal(-1, never.SuggestComboExploration(rng)); // roll can never pass at q=0
+    }
+
+    [Fact]
+    public void GreedyQAgent_ExploreBias_RedirectsExplorationSteps()
+    {
+        var net = new MintPlayer.AI.ReinforcementLearning.Core.Nn.Mlp([4, 8, 3], new Core.Random.Xoshiro256StarStar(1), Core.Nn.Activation.Relu);
+        var agent = new GreedyQAgent(net, 3, new Core.Random.Xoshiro256StarStar(2), exploreBias: _ => 2) { Epsilon = 1.0 };
+        for (int i = 0; i < 5; i++)
+            Assert.Equal(2, agent.Act([1f, 0f, 0f, 0f], [true, true, true]));
+    }
 }

@@ -48,6 +48,8 @@ public sealed partial class CrazyFruitsDqnCampaign : DqnScoreCampaign
         EvalEpisodes = 20,
         DenseTargets = Typed.DenseRegression ? DenseTargetsFromObservation : null,
         DenseTargetWeight = Typed.DenseTargetWeight,
+        // Combo-biased ε (M52): the injected TRAIN env carries the knob; wire its suggestion hook through.
+        ExploreBias = TrainEnv is CrazyFruitsEnv { ComboExploreBias: > 0 } cf ? cf.SuggestComboExploration : null,
     };
 
     // The observation's shaped per-action plane (deterministicValueShaped(a)/300, 0 = illegal — a legal swap
