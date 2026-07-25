@@ -266,6 +266,8 @@ public class CrazyFruitsEngineTests
             Assert.Equal(board.ImmediateScore(a) / 300f, obs[baseOffset + a], 5);
             float expectedDet = mask[a] ? board.DeterministicValue(a) / 300f : 0f;
             Assert.Equal(expectedDet, obs[baseOffset + CrazyFruitsBoard.ActionCount + a], 5);
+            float expectedShaped = mask[a] ? board.DeterministicValueShaped(a) / 300f : 0f;
+            Assert.Equal(expectedShaped, obs[baseOffset + 2 * CrazyFruitsBoard.ActionCount + a], 5);
         }
     }
 

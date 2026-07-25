@@ -38,12 +38,22 @@ internal static class CrazyFruitsLab
             return;
         }
 
+        int probe = a.Int("--probe", 0);
+        if (probe > 0)
+        {
+            RunProbe(probe, moveBudget, netPath);
+            return;
+        }
+
         var options = new CrazyFruitsDqnOptions
         {
             Seed = seed, ChunkSteps = chunkSteps, TargetSteps = targetSteps, EvalEpisodes = evalEpisodes,
             LearningRate = learningRate, EpsilonStart = explore, Hidden = hidden, Gamma = gamma,
             Grow = grow, GrowEvery = growEvery,
             NStep = a.Int("--nstep", 1),
+            // RANKING PRD M51.2: dense all-action regression toward the shaped observation plane (γ=0 only).
+            DenseRegression = a.Has("--dense"),
+            DenseTargetWeight = a.Flt("--dense-weight", 1.0f),
         };
         // Shaping on the TRAIN env only; the eval env scores the bare game, so gates stay honest.
         // Default (γ=0 recipe): creation bonuses. --pbrs (the §3.6 escalation, with --gamma 0.5 --nstep 3):
@@ -143,6 +153,115 @@ internal static class CrazyFruitsLab
             Console.WriteLine($"net gap share (random→expectimax-1): {gapShare:P0} (gate ≥ 64% — the M49 ratio)");
             Console.WriteLine($"net vs greedy: {100 * (netRow.Mean - greedy.Mean) / greedy.Mean:+0.0;-0.0}% (reported, not gated)");
         }
+    }
+
+    /// <summary>
+    /// The M51.0 missed-opportunity probe (RANKING PRD §4): every policy is asked what it WOULD play on the
+    /// SAME random-walk states (seeded, never the eval line 5000+e), without applying. A "creating" swap is
+    /// one whose shaped immediate score exceeds its plain immediate score (it makes a special at step 0 —
+    /// the owner's reported scenario). Metrics per policy:
+    /// - opportune take-rate = P(picks a creating swap | a creating swap is the SHAPED-DETERMINISTIC-OPTIMAL
+    ///   move) — the gate metric: an opportunity only counts as "missed" when creating was the best move
+    ///   (the raw any-creating take-rate punished good play: expectimax-2 scores 8098 at a 38% raw rate,
+    ///   while specials-greedy's immediate-only 91% scores 3903);
+    /// - oracle match = P(action == argmax deterministicValueShaped) — plan fidelity, reported not gated;
+    /// - raw take-rate + combo take-rate, kept for continuity with the M51.0 baseline table.
+    /// </summary>
+    private static void RunProbe(int episodes, int moveBudget, string netPath)
+    {
+        DuelingQNet? net = null;
+        if (File.Exists(netPath))
+        {
+            using var stream = File.OpenRead(netPath);
+            net = DuelingQNetCheckpoint.Load(stream);
+            if (net.InputSize != CrazyFruitsEnv.ObservationSize)
+            {
+                Console.WriteLine($"  (net at {netPath} has input width {net.InputSize} ≠ {CrazyFruitsEnv.ObservationSize} — skipped)");
+                net = null;
+            }
+        }
+        var agent = net is null ? null : new GreedyQAgent(net, CrazyFruitsEnv.ActionCount);
+
+        var policies = new List<(string Name, Func<CrazyFruitsBoard, int, int> Act)>
+        {
+            ("random", (b, s) => b.RandomAction(0xABBAUL, s)),
+            ("greedy", (b, _) => b.GreedyAction()),
+            ("specials-greedy", (b, _) => b.SpecialsGreedyAction()),
+            ("expectimax-1", (b, _) => b.ExpectimaxAction()),
+            ("expectimax-2", (b, _) => b.Expectimax2Action()),
+        };
+        if (agent is not null)
+            policies.Add(("net", (b, _) => agent.Act(b.BuildObservation(), b.LegalMask(), greedy: true)));
+
+        int opportuneStates = 0, opportunityStates = 0, comboStates = 0, statesSeen = 0;
+        var opportuneTaken = new long[policies.Count];
+        var opportunityTaken = new long[policies.Count];
+        var comboTaken = new long[policies.Count];
+        var oracleMatch = new long[policies.Count];
+
+        var env = new CrazyFruitsEnv(moveBudget);
+        var creating = new bool[CrazyFruitsEnv.ActionCount];
+        for (int e = 0; e < episodes; e++)
+        {
+            env.Reset((ulong)(9_000 + e));
+            var b = env.Board;
+            for (int move = 0; move < moveBudget; move++)
+            {
+                int stateIndex = e * moveBudget + move;
+                var mask = b.LegalMask();
+                bool anyCreating = false, anyCombo = false;
+                int bestAction = -1, bestShaped = 0;
+                for (int a = 0; a < CrazyFruitsEnv.ActionCount; a++)
+                {
+                    creating[a] = mask[a] && b.ImmediateScoreShaped(a) > b.ImmediateScore(a);
+                    if (creating[a]) anyCreating = true;
+                    if (!mask[a]) continue;
+                    int shaped = b.DeterministicValueShaped(a);
+                    if (shaped > bestShaped) { bestShaped = shaped; bestAction = a; }
+                }
+                for (int a = 0; a < CrazyFruitsEnv.ActionCount && !anyCombo; a++)
+                {
+                    if (!mask[a]) continue;
+                    var (cellA, cellB) = b.SwapCells(a);
+                    anyCombo = b.Kind(cellA) > 0 && b.Kind(cellB) > 0;
+                }
+
+                statesSeen++;
+                bool opportune = bestAction >= 0 && creating[bestAction];
+                if (opportune) opportuneStates++;
+                if (anyCreating) opportunityStates++;
+                if (anyCombo) comboStates++;
+
+                for (int p = 0; p < policies.Count; p++)
+                {
+                    int action = policies[p].Act(b, stateIndex);
+                    if (action < 0) continue;
+                    if (action == bestAction) oracleMatch[p]++;
+                    if (anyCreating && creating[action]) { opportunityTaken[p]++; if (opportune) opportuneTaken[p]++; }
+                    if (anyCombo)
+                    {
+                        var (cellA, cellB) = b.SwapCells(action);
+                        if (b.Kind(cellA) > 0 && b.Kind(cellB) > 0) comboTaken[p]++;
+                    }
+                }
+
+                // The walk itself is uniform-random over legal swaps — policy-neutral state coverage.
+                b.ApplySwap(b.RandomAction(0xCF51UL, stateIndex));
+            }
+        }
+
+        Console.WriteLine($"Crazy Fruits opportunity probe: {episodes} episodes × {moveBudget} random-walk moves (seeds 9000+e)");
+        Console.WriteLine($"  states {statesSeen}: creating swap available {opportunityStates}, creating swap is the " +
+                          $"shaped-optimal move {opportuneStates} | special+special legal {comboStates}");
+        Console.WriteLine($"  {"policy",-18} {"opportune take",16} {"raw take",10} {"oracle match",14} {"combo take",12}");
+        for (int p = 0; p < policies.Count; p++)
+        {
+            string Rate(long taken, int total) => total == 0 ? "n/a" : $"{(double)taken / total:P1}";
+            Console.WriteLine($"  {policies[p].Name,-18} {Rate(opportuneTaken[p], opportuneStates),16} " +
+                              $"{Rate(opportunityTaken[p], opportunityStates),10} {Rate(oracleMatch[p], statesSeen),14} " +
+                              $"{Rate(comboTaken[p], comboStates),12}");
+        }
+        Console.WriteLine("  gate (RANKING PRD M51.2): net opportune take-rate ≥ 90% (oracle = 100% by construction).");
     }
 
     private static (string, double, double) RunPolicy(string name, int episodes, int moveBudget, Func<CrazyFruitsBoard, int, int> policy)

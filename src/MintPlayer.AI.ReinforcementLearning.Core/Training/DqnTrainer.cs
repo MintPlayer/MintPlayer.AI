@@ -48,6 +48,21 @@ public sealed record DqnOptions
     /// </summary>
     public bool NoisyNets { get; init; }
 
+    /// <summary>
+    /// γ=0 dense-regression seam (RANKING PRD lever B): given ONE stored observation, per-action supervised
+    /// targets in reward units — <see cref="float.NaN"/> leaves that action unsupervised. When set, every
+    /// non-NaN action except the sampled one is regressed toward its target in addition to the sampled
+    /// action's realized-reward term. This is the loss that makes a wrong RANKING costly: chosen-action-only
+    /// regression can rank a worse action above a better one at zero loss. Requires <see cref="Gamma"/> == 0
+    /// (only there is a full-return target computable from the observation alone).
+    /// </summary>
+    public Func<float[], float[]>? DenseTargets { get; init; }
+
+    /// <summary>Total gradient mass of the dense term relative to the sampled-action term (default 1.0 —
+    /// equal say). Normalized per supervised entry, so ~30 legal actions/state don't drown the realized
+    /// reward's refill-expectation signal 30:1.</summary>
+    public float DenseTargetWeight { get; init; } = 1.0f;
+
     public int EvalEvery { get; init; } = 5_000;
     public int EvalEpisodes { get; init; } = 20;
 
@@ -127,6 +142,9 @@ public static class DqnTrainer
     {
         int obsDim = ((BoxSpace)env.ObservationSpace).Dimensions;
         int actionCount = ((DiscreteSpace)env.ActionSpace).N;
+
+        if (options.DenseTargets is not null && options.Gamma != 0)
+            throw new ArgumentException("DenseTargets requires Gamma == 0: a dense per-action target is the full return only when nothing is bootstrapped.");
 
         DqnTrainingState state;
         float[] obs;
@@ -288,8 +306,37 @@ public static class DqnTrainer
         }
 
         adam.ZeroGrad();
-        var q = online.Forward(new Tensor(batch.Obs, batch.Size, batch.ObsDim)).Gather(batch.Actions);
+        var qAll = online.Forward(new Tensor(batch.Obs, batch.Size, batch.ObsDim));
+        var q = qAll.Gather(batch.Actions);
         var loss = q.HuberLoss(new Tensor(targets, batch.Size));
+        if (options.DenseTargets is not null)
+        {
+            int actions = qAll.Cols;
+            // Unsupervised entries get target := prediction — zero Huber value AND zero gradient — so one
+            // full-matrix loss supervises exactly the non-NaN, non-sampled actions.
+            var dense = (float[])qAll.Data.Clone();
+            var row = new float[batch.ObsDim];
+            int supervised = 0;
+            for (int i = 0; i < batch.Size; i++)
+            {
+                Array.Copy(batch.Obs, i * batch.ObsDim, row, 0, batch.ObsDim);
+                var t = options.DenseTargets(row);
+                for (int a = 0; a < actions; a++)
+                {
+                    if (a == batch.Actions[i] || float.IsNaN(t[a])) continue; // sampled action keeps its realized target
+                    dense[i * actions + a] = t[a];
+                    supervised++;
+                }
+            }
+            if (supervised > 0)
+            {
+                // HuberLoss means over B·A entries while the gathered loss means over B; rescale so the dense
+                // term's TOTAL gradient mass is DenseTargetWeight × the sampled term's, however many actions
+                // happen to be supervised.
+                float scale = options.DenseTargetWeight * batch.Size * actions / supervised;
+                loss = loss.Add(qAll.HuberLoss(new Tensor(dense, batch.Size, actions)).MulScalar(scale));
+            }
+        }
         loss.Backward();
         adam.ClipGradNorm(options.MaxGradNorm);
         adam.Step();

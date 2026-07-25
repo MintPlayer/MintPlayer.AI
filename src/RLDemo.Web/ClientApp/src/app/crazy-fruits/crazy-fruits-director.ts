@@ -25,6 +25,13 @@ export class CrazyFruitsDirector {
 
   constructor(private readonly game: CrazyFruitsGame) {
     void loadCrazyFruitsNet().then(net => {
+      // Stale-ckpt guard (RANKING PRD M51.1): a net trained on an older observation layout cannot forward
+      // against the current engine — treat it as missing (expectimax fallback) instead of erroring per move.
+      const obsSize = this.game.board.buildObservation().length;
+      if (net && net.inputSize !== obsSize) {
+        console.warn(`crazy-fruits: checkpoint input ${net.inputSize} ≠ observation ${obsSize} — stale checkpoint, falling back to expectimax`);
+        net = null;
+      }
       this.net = net;
       this.netStatus = net ? 'ready' : 'missing';
     });

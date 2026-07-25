@@ -9,14 +9,15 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.CrazyFruits;
 /// one swap: apply the chosen adjacent swap, resolve cascades + refill in pure compute, return the new board.
 ///
 /// <para>Action = one of the 112 adjacent swaps; only match-producing swaps are legal
-/// (<see cref="CurrentActionMask"/> — masking is mandatory here, PRD §3.3). Observation = 448 floats (6
-/// one-hot fruit planes + the would-match plane). Reward = points/30 (a plain 3-match ⇒ 1.0), no step
-/// penalty. Episodes never terminate (a dead board reshuffles inside the engine); they truncate at the move
-/// budget, so the learner bootstraps from the final state — the score-maximizing framing.</para>
+/// (<see cref="CurrentActionMask"/> — masking is mandatory here, PRD §3.3). Observation =
+/// <see cref="ObservationSize"/> floats (fruit/kind/would-match planes + three per-action value planes).
+/// Reward = points/<see cref="RewardScale"/>. Episodes never terminate (a dead board reshuffles inside the
+/// engine); they truncate at the move budget, so the learner bootstraps from the final state — the
+/// score-maximizing framing.</para>
 /// </summary>
 public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProvider, IStatefulEnvironment
 {
-    public const int ObservationSize = CrazyFruitsBoard.ObservationSize; // 448
+    public const int ObservationSize = CrazyFruitsBoard.ObservationSize; // 1040
     public const int ActionCount = CrazyFruitsBoard.ActionCount;         // 112
     /// <summary>Reward normalization. Re-picked for specials (SPECIALS PRD §3.5): random-play means ~86
     /// points/move with auto-firing specials, so ÷100 keeps a typical move ≈ O(1) and a bomb+bomb board
@@ -53,6 +54,7 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
         var actions = BuildActionLabels();
         foreach (var label in actions) labels.Add($"Immediate points of \"{label}\" (÷300)");
         foreach (var label in actions) labels.Add($"Guaranteed cascade points of \"{label}\" (÷300)");
+        foreach (var label in actions) labels.Add($"Guaranteed cascade points + creation bonus of \"{label}\" (÷300)");
         return [.. labels];
     }
 

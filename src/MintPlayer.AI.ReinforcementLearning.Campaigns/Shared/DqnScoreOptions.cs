@@ -35,6 +35,14 @@ public sealed record CrazyFruitsDqnOptions : DqnScoreOptions
 {
     /// <summary>n-step return horizon (1 = single-step DQN; the escalation uses 3).</summary>
     public int NStep { get; init; } = 1;
+
+    /// <summary>Dense all-action regression (RANKING PRD M51.2, γ=0 only): every legal action is also
+    /// regressed toward its creation-shaped deterministic value read from the observation's shaped plane —
+    /// the loss that makes ranking a 3-match above an available 4-match costly.</summary>
+    public bool DenseRegression { get; init; }
+
+    /// <summary>Total gradient mass of the dense term relative to the realized-reward term.</summary>
+    public float DenseTargetWeight { get; init; } = 1.0f;
 }
 
 /// <summary>

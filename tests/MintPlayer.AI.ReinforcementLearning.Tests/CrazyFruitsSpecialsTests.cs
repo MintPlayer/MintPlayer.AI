@@ -608,4 +608,35 @@ public class CrazyFruitsSpecialsTests
         Assert.Equal(1f, obs[(6 + 3) * cells + 5 * Size + 5]);             // bomb plane (kind 4 → plane 9)
         for (int f = 0; f < 6; f++) Assert.Equal(0f, obs[f * cells + 5 * Size + 5]);
     }
+
+    // ── deterministicValueShaped (RANKING PRD lever B) ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void DeterministicValueShaped_AddsCreationWeight_ForAStripedCreatingSwap()
+    {
+        var board = BoardWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (6, 2, 4)); // VSwap(6,2) → horizontal 4 → striped
+        int action = VSwap(6, 2);
+        Assert.True(board.DeterministicValueShaped(action) >= board.DeterministicValue(action) + 40,
+            "a striped-creating swap's shaped deterministic value must carry at least the +40 creation weight");
+    }
+
+    [Fact]
+    public void DeterministicValueShaped_EqualsDeterministicValue_WhenNothingIsCreated()
+    {
+        var board = BoardWith((7, 0, 4), (7, 1, 4), (6, 2, 4));            // VSwap(6,2) → plain 3-match
+        int action = VSwap(6, 2);
+        Assert.Equal(board.DeterministicValue(action), board.DeterministicValueShaped(action));
+    }
+
+    [Fact]
+    public void DeterministicValueShaped_IsPure_AndZeroForIllegal()
+    {
+        var board = BoardWith((7, 0, 4), (7, 1, 4), (7, 3, 4), (6, 2, 4));
+        var before = board.GridSnapshot();
+        int scoreBefore = board.Score;
+        _ = board.DeterministicValueShaped(VSwap(6, 2));
+        Assert.Equal(before, board.GridSnapshot());
+        Assert.Equal(scoreBefore, board.Score);
+        Assert.Equal(0, board.DeterministicValueShaped(HSwap(0, 0)));      // base pattern: no match, illegal
+    }
 }

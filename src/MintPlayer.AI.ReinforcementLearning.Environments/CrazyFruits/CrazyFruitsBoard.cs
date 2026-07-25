@@ -18,9 +18,10 @@ public sealed class CrazyFruitsBoard
     public const int Cells = Size * Size;
     public const int ActionCount = 2 * Size * (Size - 1); // 112
     public const int SpecialKinds = 4; // stripedH, stripedV, wrapped, bomb (armed is internal-only)
-    // 928: 6 fruit planes + 4 kind planes + would-act plane + 2 per-action feature planes (immediate score,
-    // deterministic cascade value ÷300 — SPECIALS PRD §3.5).
-    public const int ObservationSize = (FruitTypes + SpecialKinds + 1) * Cells + 2 * ActionCount;
+    // 1040: 6 fruit planes + 4 kind planes + would-act plane + 3 per-action feature planes (immediate score,
+    // deterministic cascade value, creation-shaped deterministic value — ÷300; SPECIALS PRD §3.5 + RANKING
+    // PRD lever B).
+    public const int ObservationSize = (FruitTypes + SpecialKinds + 1) * Cells + 3 * ActionCount;
 
     private readonly PgCrazyFruits _core = new();
 
@@ -82,8 +83,8 @@ public sealed class CrazyFruitsBoard
     /// <summary>Re-deal the current fruit multiset until no instant match and ≥1 legal swap (the deadlock rule).</summary>
     public void Reshuffle() => _core.reshuffleBoard();
 
-    /// <summary>The 672-dim observation: 6 one-hot fruit planes + the would-match plane + per-action
-    /// immediate-score and deterministic-cascade-value planes (f64 core → float32 net).</summary>
+    /// <summary>The <see cref="ObservationSize"/>-dim observation: fruit/kind/would-match planes + the three
+    /// per-action value planes (f64 core → float32 net).</summary>
     public float[] BuildObservation()
     {
         var core = _core.buildObservation();
@@ -123,6 +124,10 @@ public sealed class CrazyFruitsBoard
 
     /// <summary>Deterministic cascade value of a swap (consumes no RNG; restores the board).</summary>
     public int DeterministicValue(int action) => _core.deterministicValue(action);
+
+    /// <summary>Deterministic cascade value plus the creation-shaping weights over the whole refill-free
+    /// cascade — the shaped observation plane and the dense-regression target (RANKING PRD lever B).</summary>
+    public int DeterministicValueShaped(int action) => _core.deterministicValueShaped(action);
 
     // ── Host-only helpers ────────────────────────────────────────────────────────────────────────────────────
 

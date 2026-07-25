@@ -83,10 +83,10 @@ export class CrazyFruits implements AfterViewInit {
     });
   }
 
-  /** Measured 500-episode tier means (SPECIALS PRD M50.2/.3) — the round-over screen's challenge lines. */
+  /** Measured 500-episode tier means (RANKING PRD M51.2 `cf9train`) — the round-over screen's challenge lines. */
   private static readonly ROUND_BARS = [
     'random plays ~2 600 a round',
-    'the trained net ~4 000',
+    'the trained net ~5 650',
     'expectimax-2 plays ~8 000',
   ];
 
