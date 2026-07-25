@@ -1,6 +1,9 @@
 # Crazy Fruits specials (striped / wrapped / sugar bomb) — PRD
 
-**Status:** 🔜 planned 2026-07-24 (3-agent investigation: canonical Candy Crush mechanics, engine impact, AI/training impact)
+**Status:** ✅ shipped 2026-07-24 (M50.3 closed via stop-loss — gates 2/3 honestly missed). **Superseded on
+the net front by M51 ([CRAZY_FRUITS_RANKING_PRD.md](CRAZY_FRUITS_RANKING_PRD.md), 2026-07-25):** `cf9train`
+(dense all-action regression + shaped obs plane, 928→1040) passes ALL the §5 gates — +117.2% over random,
+gap-share 91%, created 9.57/fired 10.39 — and replaced `cf5train` as the shipped checkpoint.
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M50 · extends [CRAZY_FRUITS_PRD.md](CRAZY_FRUITS_PRD.md) (M49, shipped — specials were its §7 out-of-scope item) · branch `m49-crazy-fruits` (owner decision: ONE branch/PR — #38 — for the whole Crazy Fruits arc)
 

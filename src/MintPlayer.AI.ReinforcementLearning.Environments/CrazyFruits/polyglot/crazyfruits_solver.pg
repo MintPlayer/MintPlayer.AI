@@ -751,10 +751,11 @@ class PgCrazyFruits {
     this.generateBoard()
   }
 
-  // ── Observation (SPECIALS PRD §3.5) — 928 floats: 6 one-hot fruit planes + 4 kind planes + a would-act
-  // plane + two per-action feature planes (immediate score, deterministic cascade value — both ÷300; they
-  // price creations, activations and combos, the exact lever that gated M49). A colored special sets BOTH
-  // its fruit plane and its kind plane; a bomb only its kind plane. No plane for Armed (never stable).
+  // ── Observation (SPECIALS PRD §3.5, RANKING PRD lever B) — 1040 floats: 6 one-hot fruit planes + 4 kind
+  // planes + a would-act plane + three per-action feature planes (immediate score, deterministic cascade
+  // value, creation-SHAPED deterministic value — all ÷300; they price creations, activations and combos,
+  // the exact lever that gated M49; the shaped plane is also the dense-regression target source). A colored
+  // special sets BOTH its fruit plane and its kind plane; a bomb only its kind plane. No Armed plane.
   fn buildObservation(): List<f64> {
     var obs: List<f64> = List<f64>()
     for f in 1..(FruitTypes + 1) {
@@ -775,6 +776,9 @@ class PgCrazyFruits {
     for a in 0..ActionCount { obs.add(this.immediateScore(a) / 300.0) }
     for a in 0..ActionCount {
       obs.add(if this.swapIsLegal(a) { this.deterministicValue(a) / 300.0 } else { 0.0 })
+    }
+    for a in 0..ActionCount {
+      obs.add(if this.swapIsLegal(a) { this.deterministicValueShaped(a) / 300.0 } else { 0.0 })
     }
     return obs
   }
@@ -891,6 +895,40 @@ class PgCrazyFruits {
     let savedSF = this.moveSpecialsFired
     this.stageSwap(action, this.cellB(action))
     let v = this.resolveCascades(false)
+    for i in 0..Cells { this.grid[i] = saved[i] }
+    this.moveCellA = savedA
+    this.moveCellB = savedB
+    this.comboCenter = savedCenter
+    this.stagedCombo = savedCombo
+    this.lastCascadeSteps = savedSteps
+    this.moveCreatedStriped = savedCS
+    this.moveCreatedWrapped = savedCW
+    this.moveCreatedBombs = savedCB
+    this.moveSpecialsFired = savedSF
+    return v
+  }
+
+  // deterministicValue plus the creation-shaping weights (+40/+60/+100) over the WHOLE refill-free cascade
+  // (RANKING PRD lever B) — the shaped observation plane and the dense-regression target. Unlike
+  // immediateScoreShaped it also prices cascade-made creations, so it matches the training reward's shaping
+  // term up to refill noise; an immediate-only shaped target would credit a cascading 3-match's cascade but
+  // not a flat 4-match's striped — the exact bias this milestone removes.
+  fn deterministicValueShaped(action: i32): i32 {
+    if !this.swapIsLegal(action) { return 0 }
+    var saved: List<i32> = List<i32>()
+    for i in 0..Cells { saved.add(this.grid[i]) }
+    let savedA = this.moveCellA
+    let savedB = this.moveCellB
+    let savedCenter = this.comboCenter
+    let savedCombo = this.stagedCombo
+    let savedSteps = this.lastCascadeSteps
+    let savedCS = this.moveCreatedStriped
+    let savedCW = this.moveCreatedWrapped
+    let savedCB = this.moveCreatedBombs
+    let savedSF = this.moveSpecialsFired
+    this.stageSwap(action, this.cellB(action))
+    var v = this.resolveCascades(false)
+    v += 40 * this.moveCreatedStriped + 60 * this.moveCreatedWrapped + 100 * this.moveCreatedBombs
     for i in 0..Cells { this.grid[i] = saved[i] }
     this.moveCellA = savedA
     this.moveCellB = savedB

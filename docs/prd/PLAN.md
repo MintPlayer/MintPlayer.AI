@@ -1997,6 +1997,47 @@ zero deadlocks ever; game-over-on-deadlock would never fire).
   void `cf7train` run (no shield) discarded; training restarts from scratch on the final rules
   (`cf8train`). Plus the owner-requested on-page KidCity.be credit paragraph.
 
+## M51 — Crazy Fruits missed-opportunity ranking  *(2026-07-25; see `CRAZY_FRUITS_RANKING_PRD.md`)* ✅ (shipped same day: `cf9train` = the FIRST Crazy Fruits net to pass ALL gates — +117.2% over random, gap-share 91%, created 9.57/fired 10.39; probe: search-class behavior)
+
+**Why:** owner observes the shipped net taking a 3-match when the same fruit offers a 4-match (forfeiting the
+striped), and asks whether the model can be **punished harder for missing important opportunities**. 4-agent
+investigation 2026-07-25 found the root cause is the **loss, not the reward**: the DQN loss regresses only the
+chosen action's Q, so a wrong ranking costs zero loss; the reward already prices the 4-match 2.6–3.3× above
+the 3-match, but the +40/+60/+100 creation bonus lives only in the training target (no observation feature —
+the per-action planes are fire-only), refill-cascade variance drowns the gap, and the web `net` tier is a pure
+masked argmax (no search — corrects the "expectimax uses the net" memory). Owner follow-up on special+special
+combos **resolved, no change**: combos fire on the swap, so their 1.5–6.4 reward is fully in the immediate
+reward and the input plane; combo shaping would double-count (shape what pays later, never what pays now).
+
+- **M51.0 — Probe + baselines.** ✅ (2026-07-25) Seeded strict 3-vs-4 probe + opportunity/combo take-rates
+  (creating swap = `immediateScoreShaped > immediateScore`), run BEFORE the obs change. *Results (300 eps):
+  net takes a creating swap in only **17.6%** of the 3888 offering states (random 14.2%!) vs specials-greedy
+  **91.4%** — NOT 100%: sometimes firing an existing special honestly beats creating one, so the M51.2 probe
+  gate is RELATIVE (net ≥ specials-greedy − 5 pts), not an absolute 95%. Combo take-rate: net 48%. Fire-only
+  e1/e2 sit at 33/38% — confirms creation is invisible to fire-only value.*
+- **M51.1 — Web stale-ckpt guard** (replaces the λ re-rank, dropped at design time: the obs change breaks
+  the old ckpt in the same working tree, and the immediate retrain makes it redundant). Net input width ≠
+  observation width ⇒ treated as missing, expectimax fallback. **Gate:** old ckpt + new engine = clean fallback.
+- **M51.2 — Retrain with a ranking-aware loss.** NEW shaped-deterministic per-action plane
+  (`deterministicValueShaped` = refill-free cascade + creation weights; obs 928→1040 — immediate-only shaped
+  targets would re-create the cascading-3-beats-flat-4 bias) + **dense all-action regression** (taken action
+  → realized reward; every other legal action → its shaped deterministic value; dense term normalized to
+  carry weight 1.0 × the realized term's total gradient mass; `DqnOptions.DenseTargets` seam, γ=0-guarded) +
+  pre-registered margin hinge only if the probe gate fails. 400k steps for `cf5train` comparability.
+  **Gates:** M50.3 bars (≥+30%/random · created ≥7.3 / fired ≥5.6 · gap-share ≥64%) + probe (final form:
+  opportune take-rate ≥ e1 − 5 pts — the specials-greedy-relative and absolute-90% bars both died on data:
+  creation-chasing is not optimal play, strong policies cluster at 50–56%; post-mortem in PRD §4).
+  ✅ **ALL GATES PASS** (500 eps): net **5666.4 ± 155.2 = +117.2% over random** (cf5train +54.9%) ·
+  **gap-share 91%** (cf5train 43%) · created 9.57 / fired 10.39 · probe opportune take 54.9% vs e1's 55.7%
+  (raw take 17.6%→35.5%, combo 48%→66%) — random-class behavior became search-class. Margin hinge unused.
+- **M51.3 — Escalation.** ❌ Not triggered (gap-share 91% ≥ 64%). Remaining ceiling = the e1→e2
+  hold-for-combo gap, out of scope per the M50.3 close-out.
+- **M51.4 — Ship.** ✅ `cf9train` → `wwwroot/models/crazyfruits.dqn.ckpt`; round-over bar ~4 000 → ~5 650;
+  parity pin 481681208 unchanged; docs synced.
+
+**Rejected up front:** bigger shaping bonuses (reward-hack trap), combo shaping (double-count), γ>0 schedules
+(n=2 losses: M49 γ=0.99, M50.3 `cf8train`), regret-prioritized replay (subsumed by dense regression).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.

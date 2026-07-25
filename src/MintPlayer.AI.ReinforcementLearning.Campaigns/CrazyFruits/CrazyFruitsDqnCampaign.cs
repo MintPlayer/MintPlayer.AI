@@ -46,7 +46,26 @@ public sealed partial class CrazyFruitsDqnCampaign : DqnScoreCampaign
         TargetSyncEvery = 1_000,
         Epsilon = new LinearSchedule(Options.EpsilonStart, 0.05, 30_000),
         EvalEpisodes = 20,
+        DenseTargets = Typed.DenseRegression ? DenseTargetsFromObservation : null,
+        DenseTargetWeight = Typed.DenseTargetWeight,
     };
+
+    // The observation's shaped per-action plane (deterministicValueShaped(a)/300, 0 = illegal — a legal swap
+    // always clears something) IS the dense target, converted from plane units to reward units: ×300 undoes
+    // the plane normalizer, ÷RewardScale matches the env's reward scaling.
+    private static readonly int ShapedPlaneOffset =
+        (CrazyFruitsBoard.FruitTypes + CrazyFruitsBoard.SpecialKinds + 1) * CrazyFruitsBoard.Cells + 2 * CrazyFruitsBoard.ActionCount;
+
+    private static float[] DenseTargetsFromObservation(float[] obs)
+    {
+        var targets = new float[CrazyFruitsBoard.ActionCount];
+        for (int a = 0; a < CrazyFruitsBoard.ActionCount; a++)
+        {
+            float plane = obs[ShapedPlaneOffset + a];
+            targets[a] = plane > 0f ? plane * 300f / CrazyFruitsEnv.RewardScale : float.NaN;
+        }
+        return targets;
+    }
 
     protected override (double Gate, IReadOnlyList<CampaignMetric> Metrics, string Summary) EvaluateNet(IValueNet net)
     {
