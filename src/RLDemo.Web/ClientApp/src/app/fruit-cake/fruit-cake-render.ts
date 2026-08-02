@@ -173,7 +173,9 @@ export function renderFrame(
   ctx.font = `14px ${FONT}`;
   ctx.fillText('AI playing', 16, 56);
 
-  drawNextCorner(ctx, frame.nextTier, surfaceWidth, surfaceHeight);
+  // Tier 0 = "not known yet" (the AI worker hasn't decided the opening drops). Draw no preview rather
+  // than inventing a fruit that isn't coming.
+  if (frame.nextTier >= 1) drawNextCorner(ctx, frame.nextTier, surfaceWidth, surfaceHeight);
 
   if (frame.done) {
     ctx.fillStyle = cssColor(0xff000000, 170);

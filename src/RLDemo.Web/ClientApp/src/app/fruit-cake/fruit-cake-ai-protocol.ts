@@ -2,27 +2,51 @@
 // (fruit-cake-ai.worker.ts). Types only — importing this from either side costs nothing at runtime, so the
 // worker's code never leaks into the main bundle.
 //
-// Why a worker at all: the depth-3 search costs 784 clone+settle rollouts and ~3920 net forward passes per
-// drop, which measured 0.97–5.7 s of *blocked main thread* when it ran inside the rAF callback — the whole
-// tab froze once per drop (M53, `FRUITCAKE_WATCH_AI_STALL_PRD.md`).
+// The worker owns the GAME, not just the search (M53.2, `FRUITCAKE_WATCH_AI_STALL_PRD.md`): it plays ahead
+// with no animation pacing and streams decided drops, while the main thread animates them a few drops
+// behind. The animation delay was only ever a presentation constraint — the AI never needed it. That is why
+// the viewer never waits for a search: by the time a fruit finishes falling, the next one is already decided.
+//
+// The wire format is deliberately tiny. The physics is deterministic single-source code (`fruitcake_solver`,
+// transpiled from the `.pg`), so the main thread reproduces the worker's world by REPLAYING the same drop
+// for the same number of sub-steps — no trajectory is transmitted. `substeps` is what makes the replay
+// exact: the two sides must stop stepping at the same instant, or their worlds diverge from that drop on.
 
-/** One fruit as sent across the wire. Matches what `PgFruitCakeWorld.clone()` actually preserves: the
- *  search discards angle/angularVel (it clones rotation-off), so sending them would be dead weight. */
-export interface AiBody {
+/** A settled body, as sent for the per-drop drift check. */
+export interface AiSnapshotBody {
   tier: number;
   x: number;
   y: number;
+  angle: number;
   vx: number;
   vy: number;
 }
 
+/** One decided drop: what to spawn, where, and exactly how long to animate it. */
+export interface AiDrop {
+  /** Bumped on every reset; the main thread discards drops from a game it has already abandoned. */
+  gen: number;
+  index: number;
+  /** The fruit being dropped, and the one after it (HUD preview). */
+  tier: number;
+  nextTier: number;
+  column: number;
+  /** Sub-steps the authoritative world took to settle. The replay MUST run exactly this many. */
+  substeps: number;
+  /** Authoritative score once this drop has settled — the HUD follows the AI's reality, not the replay's. */
+  scoreAfter: number;
+  /** This drop ended the game. */
+  lost: boolean;
+  /** The settled board, for the drift check (insurance — the replay should already match bit for bit). */
+  snapshot: AiSnapshotBody[];
+}
+
 /** Main thread → worker. */
 export type AiRequest =
-  | { type: 'search'; id: number; bodies: AiBody[]; current: number; next: number };
+  /** Start (or restart) a game. Also the signal that begins production. */
+  | { type: 'reset' }
+  /** The main thread has finished animating this drop — release one slot of look-ahead. */
+  | { type: 'ack'; index: number };
 
 /** Worker → main thread. */
-export type AiResponse =
-  /** The net finished loading (or failed, in which case the worker uses the greedy fallback). */
-  | { type: 'ready'; hasNet: boolean }
-  /** The column to drop in, answering the `search` with the same `id`. */
-  | { type: 'result'; id: number; column: number };
+export type AiResponse = { type: 'drop'; drop: AiDrop };
