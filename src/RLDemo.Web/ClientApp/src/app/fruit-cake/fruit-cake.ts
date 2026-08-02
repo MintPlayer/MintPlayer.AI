@@ -65,6 +65,7 @@ export class FruitCake implements AfterViewInit {
   private teardown(): void {
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
+    this.director?.dispose(); // release the AI worker
     void this.wakeLock.release();
     this.game.saveSnapshot();
     this.audio.dispose();

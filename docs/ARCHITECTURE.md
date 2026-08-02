@@ -263,6 +263,16 @@ Extended CONNECT, RFC 8441)** so the socket works under HTTP/1.1 and HTTP/2.
   the M48 Hamiltonian safety-cycle mode) — is single-sourced in its `.pg` and runs **in the browser** (a
   `*Director` over the generated TS core + the shipped `wwwroot/models/*.ckpt`). There is **no** controller, no
   `/api/<game>` WebSocket, and no server-side net for either — per-viewer server cost is zero. See §10.
+- **FruitCake's AI runs in a Web Worker, and the worker owns the game (M53).** Its depth-3 search costs 784
+  clone+settle rollouts and ~3920 forward passes per drop — 0.97–5.7 s, growing +240 ms per fruit on the
+  board. Run inline in the rAF callback that froze the whole tab once per drop. Now
+  `fruit-cake-ai.worker.ts` is the **authority**: it plays think → settle with no animation pacing and
+  streams decided drops (`fruit-cake-ai-protocol.ts`), staying 4 ahead of the viewer, while
+  `FruitCakeDirector` only *replays* them. The replay is exact because both sides run the same
+  deterministic generated physics — the wire carries `(tier, column, substeps)`, not a trajectory, and
+  `substeps` is what keeps the two worlds in lockstep. This is why the search config stays at the full
+  `depth 3 / topK 5 / topK2 2`: the worker is what makes keeping it affordable. See
+  `prd/FRUITCAKE_WATCH_AI_STALL_PRD.md`.
 - Games that still stream (see the remaining `*Controller`s) follow the pattern below.
 
 ```csharp

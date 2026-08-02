@@ -2038,6 +2038,83 @@ reward and the input plane; combo shaping would double-count (shape what pays la
 **Rejected up front:** bigger shaping bonuses (reward-hack trap), combo shaping (double-count), γ>0 schedules
 (n=2 losses: M49 γ=0.99, M50.3 `cf8train`), regret-prioritized replay (subsumed by dense regression).
 
+## M53 — FruitCake "Watch AI": the per-drop freeze  *(2026-08-02; branch `m53-fruitcake-ai-stall`; PR #41; see `FRUITCAKE_WATCH_AI_STALL_PRD.md`)* ✅ (shipped same day, CI green 500/500: rest→next-spawn is **250 ms median / 255 ms p95** = exactly `BETWEEN_S`, so the search is invisible; 0 long tasks, 0 starvations, 0 replay drift over 19 drops — **search config `3/5/2` unchanged, no strength traded**)
+
+**Why:** owner reports the watch view at `ai.mintplayer.com/fruitcake` freezing ~3 s every time a fruit lands
+or merges; manual play is smooth. 3-agent investigation 2026-08-02 measured it on prod **and** localhost:
+the depth-3 search runs **synchronously inside the rAF callback** (`fruit-cake-director.ts:60-70`), blocking
+the main thread **0.97–5.7 s per drop**. rAF gaps, `PerformanceObserver('longtask')` and a MessageChannel
+starvation probe agree to within 1–2 ms ⇒ blocked thread, not a paused clock; the tab was blocked **37–46 %
+of wall time**. Measured per decision: **784** `dropAndScore`, **3 920** `net.forward`, ~78 k `world.step`,
+~390 k O(n²) `buildContacts` — `chooseColumn` is **82 % of non-idle main-thread work** (rendering 2.1 %).
+Two reframes: the freeze is **once per DROP, not per merge** (it trails the settle by `BETWEEN_S = 0.25`),
+and cost grows **+240 ms per fruit** (R²=0.888), so the owner's ~3 s is simply a 9–12-fruit board. Search
+width is **fixed** at 784 regardless of board state. **Frame-level analysis of the owner's 45 s recording
+independently confirms all of it** — 10 drops / 10 stalls (7 after a plain landing with no merge at all),
+durations monotonic in fruit count (2.78→4.02 s as it fills, dropping to 1.78 s right after a cascade cleared
+the board), and a **total** freeze (max luma delta 1/255 across the whole 1920×1080 frame for 3.1 s). It also
+pins the perceived ~3 s as **`BETWEEN_S` + `think`** (the NEXT-preview repaints once, 233 ms after physics
+stops, then everything dies) and confirms a **second defect**: the `dt` clamp at `fruit-cake.ts:89` discards
+~92 % of the stall and resumes with one 26 px frame against a 3–5 px norm (⇒ dt ≈ 0.23 s at the measured
+g ≈ 1000 px/s²) — the fruit visibly teleports a quarter-second down its fall on every drop. Closes the
+never-measured M32 risk
+(`FRUITCAKE_CLIENT_SIDE_AI_PRD.md:283`). Note the retired C# serving path shipped `2/10/3` = 154 rollouts;
+M32 moved the decision into the browser and kept the **5× more expensive** `3/5/2`.
+
+- **M53.0 — Baseline.** ✅ (2026-08-02) Root cause measured; growth curve, call counts, CPU profile recorded.
+  Worker delivery **spiked and confirmed** against the running dev server: `@angular/build:application` 22.0.6
+  rewrites `new Worker(new URL('./x.worker', import.meta.url))` natively and serves the emitted bundle
+  (HTTP 200, marker present) — **no `tsconfig.worker.json`, no `angular.json` change, no new dependency**
+  (`webWorkerTsConfig` is inert for this builder).
+- **M53.1 — Search off the main thread.** ✅ (2026-08-02: 0 long tasks, largest rAF gap 5 ms/6000 frames, search round-trip median 2409 ms fully off-thread; wire format proved lossless — `clone(false)` of the live world vs a world rebuilt from `tier/x/y/vx/vy` came back byte-identical) New `fruit-cake-ai.worker.ts` owning the net + a world rebuilt from
+  a posted body snapshot; director gains a `thinking` phase with a `pending` guard *(this request/response
+  shape is **superseded by M53.2** — the shipped director has a look-ahead queue and a `waiting` phase, no
+  `thinking`; M53.1's gates still stand as the proof the block was gone before the inversion)*. The generated
+  `fruitcake_solver.ts` is already worker-safe (no imports, zero host globals) so it moves **unmodified** —
+  **`fruitcake_solver.pg` is NOT touched** (bitwise C#↔TS parity, pinned by `PolyglotNetParityTests` at
+  exactly 3/5/2). **Gates:** no search-attributable long task > 50 ms over ≥60 s · zero rAF gaps > 200 ms ·
+  column choice identical to the synchronous path on a fixed board · net-missing fallback still plays.
+- **M53.2 — Remove the visible wait (worker runs the game ahead; UI replays).** ✅ (2026-08-02: p95 gap 255 ms vs a 400 ms budget, starved 0, drifted 0/19, long tasks 0; a measured 2196 ms game-over restart was fixed by requesting the next game the moment a board is lost, so the AI searches *during* the pause) *(owner's steer 2026-08-02 —
+  "the agent can play several games simultaneously without the animation delay … do something similar in the
+  browser side, in the background".)* A worker fixes the *block* but not the *wait* — the board would still
+  stand still 1–5.7 s. So **invert the ownership**: the worker owns the authoritative game and runs it with no
+  rAF pacing (think → settle → think), keeping **3–4 decided drops** queued ahead; the main thread stops owning
+  physics and becomes a replayer. Protocol is one `(tier, column)` per drop (the physics is deterministic
+  single-source code, so the main thread reproduces the world by replaying) plus a settled-board snapshot per
+  drop boundary as anti-drift insurance. **The plain worker has no staleness problem either** — the director
+  only searches while the board is at rest, so nothing changes under it. This **supersedes speculative
+  pipelining**, which searched from a *predicted* board and so needed validate-and-maybe-re-search to cope with
+  the rotation-on/rotation-off divergence (the flag gates only angular *damping*, but `angularVel` is written by
+  `applyImpulse` regardless and feeds back into linear velocity via the friction impulse — so the worlds
+  genuinely diverge). Owning the game removes the prediction, so there is nothing left to validate. **Search
+  strength fully preserved (3/5/2 stays)** — ~2 s of animation per drop × a 3–4 drop buffer absorbs even the
+  5.7 s worst case. **Gates:** rest→next-spawn gap ≤ `BETWEEN_S + 150 ms` at p95 · queue depth never hits 0 on
+  desktop, depth/drain reported on a mid-range phone · replay matches the authoritative snapshot at every drop
+  boundary · **no resume jump** (re-examine the `dt` clamp, which is what turns any hitch into a silent teleport
+  instead of a visible slowdown) · drop sequence identical to the synchronous path on a fixed seed.
+- **M53.3 — Search-config A/B.** ❌ **Not triggered** — the queue never drained (`starved: 0`, depth min 1), so there is no latency left to buy and no reason to spend strength; `3/5/2` ships. *(Trigger stands for a future mid-range-phone measurement.)*
+  *Recipe kept for if it ever fires:* width and latency stay **decoupled** (worker = the stall fix, width = a
+  separate pacing call made *after* the AI plays smoothly; don't bundle a strength regression into a latency
+  fix). Width reduction is **not** a fix on its own — at +240 ms/fruit even a 5× cut leaves ~1.1 s at 24
+  fruit, a floor that still climbs with board fill. Price it
+  with `FruitCakeSearchEval` (`--search-eval --depth/--topk/--topk2`, config is a CLI flag): `3/5/2` vs the
+  shipped C# default `2/10/3` vs `2/5/3`. Traps: **`--ab-episodes`** not `--episodes`; `--seed` ignored
+  (`seedBase` hardcoded 20 000 ⇒ the greedy arm is a free bit-identical control); absolute `--data` path; and
+  the browser ships **`data/fruitcake-bigfruit`** (sha256-matched to `wwwroot/models/fruitcake-net.ckpt`) —
+  `src/RLDemo.Web/data/fruitcake.dqn.ckpt` is a *different* stale net from the retired server path.
+  **Gate:** reduced config only if within 1 SE of `3/5/2`, or the owner accepts the measured cost explicitly.
+- **M53.4 — Ship.** ✅ (2026-08-02) `ARCHITECTURE.md` documents the worker-owns-the-game inversion; stale M32-era
+  "server-streamed" docstrings and the "brief thinking hitch" comment corrected. **`src/RLDemo.Web/data/fruitcake.dqn.ckpt`
+  NOT deleted** — that dir is also the documented training-campaign `--data` store, so it is plausibly a campaign
+  checkpoint, not dead weight; no code references it either way. Left for a deliberate cleanup rather than bundled
+  into a latency fix.
+
+**Rejected up front:** micro-optimizing the generated hot loops (`Float64Array`, contact pooling, spatial
+partitioning) — needs `.pg` edits, alters the C# training path, risks parity; width reduction as the sole fix
+(growth curve refutes it); speculative pipelining from a predicted board (superseded by worker-owns-the-game —
+no prediction left to validate); throttling to ~1 drop/s (the tab would still hang); `webWorkerTsConfig`
+(inert); adding `"webworker"` to the shared `lib` (conflicts with DOM).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
