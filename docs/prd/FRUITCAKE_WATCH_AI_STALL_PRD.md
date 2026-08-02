@@ -190,9 +190,14 @@ speculation is invisible rather than a double stall.
 
 **`fruitcake_solver.pg` stays untouched.** It is single-sourced to C# and TS with a bitwise-parity
 guarantee, and `PolyglotNetParityTests.cs:70-107`
-(`CoreSearch_MatchesCsFruitCakeSearch_SameColumn`) pins TS and C# to the same column **at exactly the
-browser's 3/5/2 config**. Changing the generated hot loops (e.g. `Float64Array` weights, contact pooling)
-would alter the C# training path and risk that parity — high risk, low leverage. **Rejected.**
+(`CoreSearch_MatchesCsFruitCakeSearch_SameColumn`) pins TS and C# to the same column **at the browser's
+3/5/2 config**. Changing the generated hot loops (e.g. `Float64Array` weights, contact pooling) would alter
+the C# training path and risk that parity — high risk, low leverage. **Rejected.**
+
+*Precision:* that test constructs its own `FruitCakeSearch{3,5,2}` independently of the director's
+constants, so lowering `DEPTH`/`TOPK`/`TOPK2` (M53.3) would **not break** it — the shipped width would
+simply no longer be the one with verified C#↔browser equivalence behind it. That is an argument for
+keeping 3/5/2, not a hard constraint.
 
 This is affordable because the generated `fruitcake_solver.ts` is **already worker-safe**: 655 lines, no
 imports, and zero occurrences of `document`/`window`/`globalThis`/`performance`/`navigator`/`fetch` — it
@@ -254,6 +259,11 @@ match rate — it is the number that decides whether this design earns its compl
 - No change to the drop sequence when the prediction matches.
 
 ### M53.3 — Search-config A/B *(tuning; run only if M53.2's match rate is poor or phones still lag)*
+**Default position: keep 3/5/2.** Width and latency are deliberately **decoupled** — the worker is the
+stall fix, width is a separate pacing decision to be made *after* the AI can be seen playing smoothly.
+Bundling a strength regression into a latency fix would pay playing strength for a UX that is merely less
+bad, and would leave the PR arguing two ideas at once.
+
 Price the width cut before spending it. Harness is
 `tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCake/FruitCakeSearchEval.cs` — the search config **is
 a CLI flag**:

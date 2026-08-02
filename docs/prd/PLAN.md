@@ -2072,8 +2072,11 @@ M32 moved the decision into the browser and kept the **5× more expensive** `3/5
   `applyImpulse` regardless and feeds back into linear velocity via the friction impulse — so rotation-on
   (live) and rotation-off (search clones) worlds genuinely diverge. **Gates:** rest→next-spawn gap ≤
   `BETWEEN_S + 150 ms` at p95 · match rate reported (measurement, not a bar) · drop sequence unchanged on match.
-- **M53.3 — Search-config A/B.** *(tuning; only if M53.2's match rate is poor or phones still lag.)* Width
-  reduction is **not** a fix on its own — at +240 ms/fruit even a 5× cut leaves ~1.1 s at 24 fruit. Price it
+- **M53.3 — Search-config A/B.** *(tuning; only if M53.2's match rate is poor or phones still lag.)*
+  **Default position: keep 3/5/2** — width and latency stay **decoupled** (worker = the stall fix, width = a
+  separate pacing call made *after* the AI plays smoothly; don't bundle a strength regression into a latency
+  fix). Width reduction is **not** a fix on its own — at +240 ms/fruit even a 5× cut leaves ~1.1 s at 24
+  fruit, a floor that still climbs with board fill. Price it
   with `FruitCakeSearchEval` (`--search-eval --depth/--topk/--topk2`, config is a CLI flag): `3/5/2` vs the
   shipped C# default `2/10/3` vs `2/5/3`. Traps: **`--ab-episodes`** not `--episodes`; `--seed` ignored
   (`seedBase` hardcoded 20 000 ⇒ the greedy arm is a free bit-identical control); absolute `--data` path; and
