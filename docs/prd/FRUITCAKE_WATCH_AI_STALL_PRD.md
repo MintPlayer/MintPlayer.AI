@@ -6,7 +6,8 @@
 > **synchronously inside the `requestAnimationFrame` callback**, blocking the main thread for
 > **0.97–5.7 s per drop** — and fixes it so the watch view animates continuously.
 
-- **Status:** ✅ **SHIPPED (M53.0–M53.2 + M53.4, 2026-08-02).** The freeze is gone: over a 180 s watch run
+- **Status:** ✅ **SHIPPED (M53.0–M53.2 + M53.4, 2026-08-02; PR #41, CI green — 500/500 tests).** The
+  freeze is gone: over a 180 s watch run
   the pause between a board coming to rest and the next fruit spawning is **250 ms median / 255 ms p95** —
   exactly `BETWEEN_S`, i.e. no search is visible at all — with **0 long tasks**, **0 queue starvations** and
   **0 replay drift** across 19 drops. **The search config is unchanged (`3/5/2`); no playing strength was
@@ -311,6 +312,12 @@ New `fruit-cake-ai.worker.ts` owning its own `PgDuelingNet` (via `loadFruitCakeN
 phase with a `pending` guard so `update()` posts once, not every frame; `onmessage` does the `spawnFruit`
 + `phase = 'settle'`. `fallbackColumn()` (14 blocking rollouts when the net is missing) moves into the
 worker too. Payload is ~40 small objects — microseconds.
+
+> **Superseded by M53.2 — do not expect this shape in the shipped code.** The request/response `thinking`
+> phase described above existed only between the two commits. M53.2 replaced it with a look-ahead queue
+> (`waiting` instead of `thinking`, no request correlation id), because the worker no longer *answers
+> questions* — it *owns the game*. The M53.1 gates and results below still stand: they are what proved the
+> block was gone before the ownership inversion was layered on top.
 
 **Gates:**
 - No main-thread task > **50 ms** attributable to the search, over a ≥60 s watch run (`PerformanceObserver('longtask')`).

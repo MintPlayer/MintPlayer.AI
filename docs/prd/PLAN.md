@@ -2038,7 +2038,7 @@ reward and the input plane; combo shaping would double-count (shape what pays la
 **Rejected up front:** bigger shaping bonuses (reward-hack trap), combo shaping (double-count), γ>0 schedules
 (n=2 losses: M49 γ=0.99, M50.3 `cf8train`), regret-prioritized replay (subsumed by dense regression).
 
-## M53 — FruitCake "Watch AI": the per-drop freeze  *(2026-08-02; branch `m53-fruitcake-ai-stall`; see `FRUITCAKE_WATCH_AI_STALL_PRD.md`)* ✅ (shipped same day: rest→next-spawn is **250 ms median / 255 ms p95** = exactly `BETWEEN_S`, so the search is invisible; 0 long tasks, 0 starvations, 0 replay drift over 19 drops — **search config `3/5/2` unchanged, no strength traded**)
+## M53 — FruitCake "Watch AI": the per-drop freeze  *(2026-08-02; branch `m53-fruitcake-ai-stall`; PR #41; see `FRUITCAKE_WATCH_AI_STALL_PRD.md`)* ✅ (shipped same day, CI green 500/500: rest→next-spawn is **250 ms median / 255 ms p95** = exactly `BETWEEN_S`, so the search is invisible; 0 long tasks, 0 starvations, 0 replay drift over 19 drops — **search config `3/5/2` unchanged, no strength traded**)
 
 **Why:** owner reports the watch view at `ai.mintplayer.com/fruitcake` freezing ~3 s every time a fruit lands
 or merges; manual play is smooth. 3-agent investigation 2026-08-02 measured it on prod **and** localhost:
@@ -2067,7 +2067,9 @@ M32 moved the decision into the browser and kept the **5× more expensive** `3/5
   (HTTP 200, marker present) — **no `tsconfig.worker.json`, no `angular.json` change, no new dependency**
   (`webWorkerTsConfig` is inert for this builder).
 - **M53.1 — Search off the main thread.** ✅ (2026-08-02: 0 long tasks, largest rAF gap 5 ms/6000 frames, search round-trip median 2409 ms fully off-thread; wire format proved lossless — `clone(false)` of the live world vs a world rebuilt from `tier/x/y/vx/vy` came back byte-identical) New `fruit-cake-ai.worker.ts` owning the net + a world rebuilt from
-  a posted body snapshot; director gains a `thinking` phase with a `pending` guard. The generated
+  a posted body snapshot; director gains a `thinking` phase with a `pending` guard *(this request/response
+  shape is **superseded by M53.2** — the shipped director has a look-ahead queue and a `waiting` phase, no
+  `thinking`; M53.1's gates still stand as the proof the block was gone before the inversion)*. The generated
   `fruitcake_solver.ts` is already worker-safe (no imports, zero host globals) so it moves **unmodified** —
   **`fruitcake_solver.pg` is NOT touched** (bitwise C#↔TS parity, pinned by `PolyglotNetParityTests` at
   exactly 3/5/2). **Gates:** no search-attributable long task > 50 ms over ≥60 s · zero rAF gaps > 200 ms ·
