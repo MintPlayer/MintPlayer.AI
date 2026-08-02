@@ -2038,6 +2038,57 @@ reward and the input plane; combo shaping would double-count (shape what pays la
 **Rejected up front:** bigger shaping bonuses (reward-hack trap), combo shaping (double-count), γ>0 schedules
 (n=2 losses: M49 γ=0.99, M50.3 `cf8train`), regret-prioritized replay (subsumed by dense regression).
 
+## M53 — FruitCake "Watch AI": the per-drop freeze  *(2026-08-02; branch `m53-fruitcake-ai-stall`; see `FRUITCAKE_WATCH_AI_STALL_PRD.md`)* 🔍 investigated, implementation not started
+
+**Why:** owner reports the watch view at `ai.mintplayer.com/fruitcake` freezing ~3 s every time a fruit lands
+or merges; manual play is smooth. 3-agent investigation 2026-08-02 measured it on prod **and** localhost:
+the depth-3 search runs **synchronously inside the rAF callback** (`fruit-cake-director.ts:60-70`), blocking
+the main thread **0.97–5.7 s per drop**. rAF gaps, `PerformanceObserver('longtask')` and a MessageChannel
+starvation probe agree to within 1–2 ms ⇒ blocked thread, not a paused clock; the tab was blocked **37–46 %
+of wall time**. Measured per decision: **784** `dropAndScore`, **3 920** `net.forward`, ~78 k `world.step`,
+~390 k O(n²) `buildContacts` — `chooseColumn` is **82 % of non-idle main-thread work** (rendering 2.1 %).
+Two reframes: the freeze is **once per DROP, not per merge** (it trails the settle by `BETWEEN_S = 0.25`),
+and cost grows **+240 ms per fruit** (R²=0.888), so the owner's ~3 s is simply a 9–12-fruit board. Search
+width is **fixed** at 784 regardless of board state. Closes the never-measured M32 risk
+(`FRUITCAKE_CLIENT_SIDE_AI_PRD.md:283`). Note the retired C# serving path shipped `2/10/3` = 154 rollouts;
+M32 moved the decision into the browser and kept the **5× more expensive** `3/5/2`.
+
+- **M53.0 — Baseline.** ✅ (2026-08-02) Root cause measured; growth curve, call counts, CPU profile recorded.
+  Worker delivery **spiked and confirmed** against the running dev server: `@angular/build:application` 22.0.6
+  rewrites `new Worker(new URL('./x.worker', import.meta.url))` natively and serves the emitted bundle
+  (HTTP 200, marker present) — **no `tsconfig.worker.json`, no `angular.json` change, no new dependency**
+  (`webWorkerTsConfig` is inert for this builder).
+- **M53.1 — Search off the main thread.** New `fruit-cake-ai.worker.ts` owning the net + a world rebuilt from
+  a posted body snapshot; director gains a `thinking` phase with a `pending` guard. The generated
+  `fruitcake_solver.ts` is already worker-safe (no imports, zero host globals) so it moves **unmodified** —
+  **`fruitcake_solver.pg` is NOT touched** (bitwise C#↔TS parity, pinned by `PolyglotNetParityTests` at
+  exactly 3/5/2). **Gates:** no search-attributable long task > 50 ms over ≥60 s · zero rAF gaps > 200 ms ·
+  column choice identical to the synchronous path on a fixed board · net-missing fallback still plays.
+- **M53.2 — Remove the visible wait (speculative pipelining).** A worker fixes the *block* but not the
+  *wait* — the board would still stand still 1–5.7 s. Think for drop N+1 from the search's own predicted
+  settled world (`PgPlyResult.world`) during drop N's settle animation, then **validate against the real
+  board on arrival** (match ⇒ instant drop, mismatch ⇒ fresh search). Validation is required because
+  rotation is **not** cosmetic: the flag gates only angular *damping*, while `angularVel` is written by
+  `applyImpulse` regardless and feeds back into linear velocity via the friction impulse — so rotation-on
+  (live) and rotation-off (search clones) worlds genuinely diverge. **Gates:** rest→next-spawn gap ≤
+  `BETWEEN_S + 150 ms` at p95 · match rate reported (measurement, not a bar) · drop sequence unchanged on match.
+- **M53.3 — Search-config A/B.** *(tuning; only if M53.2's match rate is poor or phones still lag.)* Width
+  reduction is **not** a fix on its own — at +240 ms/fruit even a 5× cut leaves ~1.1 s at 24 fruit. Price it
+  with `FruitCakeSearchEval` (`--search-eval --depth/--topk/--topk2`, config is a CLI flag): `3/5/2` vs the
+  shipped C# default `2/10/3` vs `2/5/3`. Traps: **`--ab-episodes`** not `--episodes`; `--seed` ignored
+  (`seedBase` hardcoded 20 000 ⇒ the greedy arm is a free bit-identical control); absolute `--data` path; and
+  the browser ships **`data/fruitcake-bigfruit`** (sha256-matched to `wwwroot/models/fruitcake-net.ckpt`) —
+  `src/RLDemo.Web/data/fruitcake.dqn.ckpt` is a *different* stale net from the retired server path.
+  **Gate:** reduced config only if within 1 SE of `3/5/2`, or the owner accepts the measured cost explicitly.
+- **M53.4 — Ship.** Docs synced; stale "server-streamed" docstrings (`fruit-cake-render.ts:126`,
+  `fruit-cake-frame.ts:1-3`) and the "brief thinking hitch" comment corrected; consider deleting the stale
+  `src/RLDemo.Web/data/fruitcake.dqn.ckpt`.
+
+**Rejected up front:** micro-optimizing the generated hot loops (`Float64Array`, contact pooling, spatial
+partitioning) — needs `.pg` edits, alters the C# training path, risks parity; width reduction as the sole fix
+(growth curve refutes it); throttling to ~1 drop/s (the tab would still hang); `webWorkerTsConfig` (inert);
+adding `"webworker"` to the shared `lib` (conflicts with DOM).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
