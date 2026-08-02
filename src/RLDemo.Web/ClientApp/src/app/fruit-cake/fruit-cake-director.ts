@@ -1,26 +1,29 @@
-import { PgDuelingNet, PgFruitCakeWorld } from './fruitcake_solver';
+import { PgFruitCakeWorld } from './fruitcake_solver';
 import { FruitCakeFrame } from './fruit-cake-frame';
-import { loadFruitCakeNet } from './fruitcake-net';
+import type { AiRequest, AiResponse } from './fruit-cake-ai-protocol';
 
-// Client-side "watch the AI" director — the whole AI now runs in the browser (PRD FRUITCAKE_CLIENT_SIDE_AI, M32).
-// It drives the single-source physics (PgFruitCakeWorld) with the single-source depth-3 search (chooseColumn) over
-// the trained net loaded from the shipped checkpoint — no server, no WebSocket. This replaces the old
-// server-authoritative stream: the browser owns the physics AND the decision, so per-viewer server cost is zero.
+// Client-side "watch the AI" director — the whole AI runs in the browser (PRD FRUITCAKE_CLIENT_SIDE_AI, M32).
+// It drives the single-source physics (PgFruitCakeWorld) and renders it; the depth-3 search over the trained
+// net runs in a Web Worker (M53, FRUITCAKE_WATCH_AI_STALL_PRD.md) — no server, no WebSocket.
 //
-// A small real-time state machine mirrors the old server loop: THINK (run the search, spawn) → SETTLE (step the
-// physics to rest, animating the fall/merges in real time) → BETWEEN (brief pause) → repeat, with GAMEOVER on a
-// lost board. The net loads asynchronously; until it's ready the board stays empty (LOADING).
+// M53 — why the search is not inline any more: it costs 784 clone+settle rollouts and ~3920 net forward
+// passes per drop, which measured 0.97–5.7 s of *blocked main thread* when it ran inside the rAF callback.
+// rAF stopped firing entirely and the tab froze once per drop, growing +240 ms per fruit on the board. The
+// search config (depth 3 / topK 5 / topK2 2) is deliberately unchanged: the worker exists so we can keep it.
+//
+// A small real-time state machine mirrors the old server loop: THINK (ask the worker, spawn on its answer) →
+// SETTLE (step the physics to rest, animating the fall/merges in real time) → BETWEEN (brief pause) → repeat,
+// with GAMEOVER on a lost board. The net loads inside the worker; until it is ready the board stays empty.
 
-type Phase = 'loading' | 'think' | 'settle' | 'between' | 'gameover';
+type Phase = 'loading' | 'think' | 'thinking' | 'settle' | 'between' | 'gameover';
 
-const DEPTH = 3, TOPK = 5, TOPK2 = 2;   // serving search config (matches the retired C# controller)
 const STEP = 1 / 60;                     // physics sub-step (matches the .pg settle loop)
 const BETWEEN_S = 0.25;                  // pause between drops
 const GAMEOVER_S = 1.8;                  // pause on the game-over board before restarting
 
 export class FruitCakeDirector {
   private world = new PgFruitCakeWorld(true); // rotation on so fruit visibly roll (search clones rotation-off)
-  private net: PgDuelingNet | null = null;
+  private readonly worker: Worker;
   private ready = false;
   private phase: Phase = 'loading';
   private current = this.randTier();
@@ -29,16 +32,16 @@ export class FruitCakeDirector {
   private substeps = 0;
   private acc = 0;
   private timer = 0;
+  /** Correlates a worker answer with the request that asked for it, so a reply for a game we have already
+   *  restarted is dropped instead of spawning a fruit into the new board. */
+  private requestId = 0;
 
   constructor() {
-    void loadFruitCakeNet().then(net => {
-      this.net = net; // null => the greedy fallback keeps it playing (as the server did with no net)
-      this.ready = true;
-      if (this.phase === 'loading') this.phase = 'think';
-    });
+    this.worker = new Worker(new URL('./fruit-cake-ai.worker', import.meta.url), { type: 'module' });
+    this.worker.addEventListener('message', (event: MessageEvent<AiResponse>) => this.onMessage(event.data));
   }
 
-  /** Restart a fresh game (keeps the already-loaded net). */
+  /** Restart a fresh game (the worker keeps its already-loaded net). */
   reset(): void {
     this.world.clear();
     this.score = 0;
@@ -47,25 +50,32 @@ export class FruitCakeDirector {
     this.acc = 0;
     this.timer = 0;
     this.substeps = 0;
+    this.requestId++; // invalidate any answer still in flight for the old board
     this.phase = this.ready ? 'think' : 'loading';
+  }
+
+  /** Release the worker. The component calls this on destroy. */
+  dispose(): void {
+    this.worker.terminate();
   }
 
   /** Advance the AI game by real elapsed time (seconds). Called from the RAF loop while in watch mode. */
   update(dt: number): void {
     switch (this.phase) {
       case 'loading':
-        if (this.ready) this.phase = 'think';
-        return;
+      case 'thinking':
+        return; // waiting on the worker; the board is at rest and nothing may change under it
 
       case 'think': {
-        // One synchronous search per drop (a brief "thinking" hitch — acceptable for a watch view).
-        const col = this.net
-          ? this.world.chooseColumn(this.net, this.current, this.next, DEPTH, TOPK, TOPK2)
-          : this.fallbackColumn();
-        this.world.spawnFruit(this.current, PgFruitCakeWorld.columnX(col, this.current), PgFruitCakeWorld.heldY(this.current));
-        this.substeps = 0;
-        this.acc = 0;
-        this.phase = 'settle';
+        const request: AiRequest = {
+          type: 'search',
+          id: this.requestId,
+          bodies: this.world.bodies.map(b => ({ tier: b.tier, x: b.x, y: b.y, vx: b.vx, vy: b.vy })),
+          current: this.current,
+          next: this.next,
+        };
+        this.worker.postMessage(request);
+        this.phase = 'thinking'; // guard: post once, not once per frame
         return;
       }
 
@@ -104,7 +114,22 @@ export class FruitCakeDirector {
     }
   }
 
-  /** A render frame in the same shape the old server stream used, so renderFrame() is unchanged. */
+  private onMessage(msg: AiResponse): void {
+    if (msg.type === 'ready') {
+      this.ready = true;
+      if (this.phase === 'loading') this.phase = 'think';
+      return;
+    }
+    // A stale answer (the game restarted while the worker was searching) must not spawn into the new board.
+    if (msg.id !== this.requestId || this.phase !== 'thinking') return;
+    this.world.spawnFruit(
+      this.current, PgFruitCakeWorld.columnX(msg.column, this.current), PgFruitCakeWorld.heldY(this.current));
+    this.substeps = 0;
+    this.acc = 0;
+    this.phase = 'settle';
+  }
+
+  /** A render frame in the shape renderFrame() consumes. */
   toFrame(): FruitCakeFrame {
     return {
       fruit: this.world.bodies.map(b => ({ x: b.x, y: b.y, angle: b.angle, tier: b.tier })),
@@ -118,23 +143,5 @@ export class FruitCakeDirector {
 
   private randTier(): number {
     return 1 + Math.floor(Math.random() * PgFruitCakeWorld.MaxDroppableTier); // droppable tiers 1..5
-  }
-
-  // Greedy one-drop fallback used only if the checkpoint is missing (net === null): pick the non-losing column
-  // with the most immediate merge points, tie-broken by the lower resulting pile. Mirrors the server's -pileHeight
-  // heuristic intent so the game still plays sensibly without a net.
-  private fallbackColumn(): number {
-    let best = Math.floor(PgFruitCakeWorld.Width / 2 / (PgFruitCakeWorld.Width / PgFruitCakeWorld.ColumnCount));
-    let bestPts = -1;
-    let bestPile = Number.POSITIVE_INFINITY;
-    for (let c = 0; c < PgFruitCakeWorld.ColumnCount; c++) {
-      const sim = this.world.clone(false);
-      sim.spawnFruit(this.current, PgFruitCakeWorld.columnX(c, this.current), PgFruitCakeWorld.heldY(this.current));
-      const pts = sim.settleAfterDrop(PgFruitCakeWorld.SettleSpeedPx, PgFruitCakeWorld.MinSettleSubsteps, PgFruitCakeWorld.MaxSubsteps, STEP);
-      if (sim.anyEjected() || sim.anyRestingAboveDangerLine(PgFruitCakeWorld.RestSpeedPx)) continue;
-      const pile = sim.pileHeight();
-      if (pts > bestPts || (pts === bestPts && pile < bestPile)) { best = c; bestPts = pts; bestPile = pile; }
-    }
-    return best;
   }
 }
