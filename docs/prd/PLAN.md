@@ -2072,17 +2072,25 @@ M32 moved the decision into the browser and kept the **5× more expensive** `3/5
   **`fruitcake_solver.pg` is NOT touched** (bitwise C#↔TS parity, pinned by `PolyglotNetParityTests` at
   exactly 3/5/2). **Gates:** no search-attributable long task > 50 ms over ≥60 s · zero rAF gaps > 200 ms ·
   column choice identical to the synchronous path on a fixed board · net-missing fallback still plays.
-- **M53.2 — Remove the visible wait (speculative pipelining).** A worker fixes the *block* but not the
-  *wait* — the board would still stand still 1–5.7 s. Think for drop N+1 from the search's own predicted
-  settled world (`PgPlyResult.world`) during drop N's settle animation, then **validate against the real
-  board on arrival** (match ⇒ instant drop, mismatch ⇒ fresh search). Validation is required because
-  rotation is **not** cosmetic: the flag gates only angular *damping*, while `angularVel` is written by
-  `applyImpulse` regardless and feeds back into linear velocity via the friction impulse — so rotation-on
-  (live) and rotation-off (search clones) worlds genuinely diverge. **Gates:** rest→next-spawn gap ≤
-  `BETWEEN_S + 150 ms` at p95 · match rate reported (measurement, not a bar) · drop sequence unchanged on match ·
-**no resume jump** (no single oversized integration step; re-examine the `dt` clamp, which is what turns any
-hitch into a silent teleport instead of a visible slowdown).
-- **M53.3 — Search-config A/B.** *(tuning; only if M53.2's match rate is poor or phones still lag.)*
+- **M53.2 — Remove the visible wait (worker runs the game ahead; UI replays).** *(owner's steer 2026-08-02 —
+  "the agent can play several games simultaneously without the animation delay … do something similar in the
+  browser side, in the background".)* A worker fixes the *block* but not the *wait* — the board would still
+  stand still 1–5.7 s. So **invert the ownership**: the worker owns the authoritative game and runs it with no
+  rAF pacing (think → settle → think), keeping **3–4 decided drops** queued ahead; the main thread stops owning
+  physics and becomes a replayer. Protocol is one `(tier, column)` per drop (the physics is deterministic
+  single-source code, so the main thread reproduces the world by replaying) plus a settled-board snapshot per
+  drop boundary as anti-drift insurance. **The plain worker has no staleness problem either** — the director
+  only searches while the board is at rest, so nothing changes under it. This **supersedes speculative
+  pipelining**, which searched from a *predicted* board and so needed validate-and-maybe-re-search to cope with
+  the rotation-on/rotation-off divergence (the flag gates only angular *damping*, but `angularVel` is written by
+  `applyImpulse` regardless and feeds back into linear velocity via the friction impulse — so the worlds
+  genuinely diverge). Owning the game removes the prediction, so there is nothing left to validate. **Search
+  strength fully preserved (3/5/2 stays)** — ~2 s of animation per drop × a 3–4 drop buffer absorbs even the
+  5.7 s worst case. **Gates:** rest→next-spawn gap ≤ `BETWEEN_S + 150 ms` at p95 · queue depth never hits 0 on
+  desktop, depth/drain reported on a mid-range phone · replay matches the authoritative snapshot at every drop
+  boundary · **no resume jump** (re-examine the `dt` clamp, which is what turns any hitch into a silent teleport
+  instead of a visible slowdown) · drop sequence identical to the synchronous path on a fixed seed.
+- **M53.3 — Search-config A/B.** *(tuning; only if M53.2's queue drains on real devices.)*
   **Default position: keep 3/5/2** — width and latency stay **decoupled** (worker = the stall fix, width = a
   separate pacing call made *after* the AI plays smoothly; don't bundle a strength regression into a latency
   fix). Width reduction is **not** a fix on its own — at +240 ms/fruit even a 5× cut leaves ~1.1 s at 24
@@ -2099,8 +2107,9 @@ hitch into a silent teleport instead of a visible slowdown).
 
 **Rejected up front:** micro-optimizing the generated hot loops (`Float64Array`, contact pooling, spatial
 partitioning) — needs `.pg` edits, alters the C# training path, risks parity; width reduction as the sole fix
-(growth curve refutes it); throttling to ~1 drop/s (the tab would still hang); `webWorkerTsConfig` (inert);
-adding `"webworker"` to the shared `lib` (conflicts with DOM).
+(growth curve refutes it); speculative pipelining from a predicted board (superseded by worker-owns-the-game —
+no prediction left to validate); throttling to ~1 drop/s (the tab would still hang); `webWorkerTsConfig`
+(inert); adding `"webworker"` to the shared `lib` (conflicts with DOM).
 
 ## Testing strategy (cross-cutting, from research)
 

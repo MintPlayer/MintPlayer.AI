@@ -202,31 +202,58 @@ before the animations are resumed" would remain true. **Both the block and the w
 
 ### 3.2 Design it twice — how to remove the *wait*
 
+First, a clarification that rules out a natural worry: **the plain worker introduces no stale-state
+problem.** The director only searches when the board is *at rest* — `think` runs, the fruit spawns, and
+only then does `settle` advance physics. While the worker computes, the main thread redraws a static
+board and changes nothing. The state the worker searches is exactly the state that still exists when the
+answer returns. Staleness appears only if we deliberately search *ahead* of the current board.
+
 **Option 1 — reduce the search until it fits the existing 0.25 s `BETWEEN_S` gap.** `DEPTH = 2` is 14
 rollouts (56× cheaper) ⇒ ~17 ms empty, ~100 ms at 24 fruit. Simple, one line. Costs playing strength by an
 unmeasured amount.
 
-**Option 2 — speculative pipelining: think for drop N+1 *during* drop N's settle animation.** The settle
-animation runs ~1–2 s of real time on a nearly idle main thread; overlapping hides most of the think.
-Requires a board to think *from*, and the real one doesn't exist yet — but the search already computed its
-own prediction of it (`PgPlyResult.world`, the settled clone for the chosen column). Starting the next
-search there is no less principled than the search's own internal lookahead, which already trusts those
-worlds.
-
-**The catch, and it is subtle: the prediction is not exact.** Search clones are rotation-off
+**Option 2 — speculative pipelining: think for drop N+1 during drop N's settle animation**, seeded from
+the settled world the search itself predicted (`PgPlyResult.world`). This *does* search ahead, so it
+inherits the staleness problem — and the prediction is **not exact**: search clones are rotation-off
 (`dropAndScore` → `clone(false)`) while the live world is rotation-on (`fruit-cake-director.ts:22`). That
-flag gates only the angular *damping* (`fruitcake_solver.ts:153-156`) — but `angularVel` is written by
-`applyImpulse` **regardless** of the flag, and feeds back into linear velocity through the tangential
-friction impulse (`:476-479`, `:493-495`, `:513-524`). So rotation-on and rotation-off worlds **diverge in
-position**. Rotation is not cosmetic here.
+flag gates only the angular *damping* (`fruitcake_solver.ts:153-156`), but `angularVel` is written by
+`applyImpulse` **regardless** of the flag and feeds back into linear velocity through the tangential
+friction impulse (`:476-479`, `:493-495`, `:513-524`). Rotation-on and rotation-off worlds genuinely
+**diverge in position** — rotation is not cosmetic here. So every speculation would need validating
+against the real board on arrival, with a fresh search on mismatch.
 
-⇒ Speculation must be **validated**, not trusted: when the live board really settles, compare it to the
-prediction; on a match use the precomputed column instantly, on a mismatch fall back to a fresh search.
-Cheap to check, and it degrades to today's behaviour in the worst case.
+**Option 3 — invert the ownership: the worker runs the game ahead, un-animated; the UI replays it.**
+*(owner's steer, 2026-08-02 — "the agent can play several games simultaneously without the animation
+delay … we can do something similar in the browser side, in the background".)*
 
-**Decision: Option 2 built on Lever A, with Option 1 held as the tuning knob and phone fallback.** The
-worker is what makes speculation free — the speculative search costs the main thread nothing, so a wasted
-speculation is invisible rather than a double stall.
+The animation delay is a *presentation* constraint the AI never needed. So let the worker own the
+authoritative game and run it with no pacing at all — think → settle instantly → think → settle —
+maintaining a queue of decided drops several ahead of what the viewer is watching. The main thread stops
+owning physics and becomes a replayer: it animates drop N at 60 fps while the worker is already deciding
+N+2.
+
+This is **strictly better than Option 2** and it dissolves rather than solves the problems above:
+
+- **No prediction, so nothing to validate.** The worker's board is not a guess about the future — it *is*
+  the game. The rotation divergence that forced Option 2's validation step simply never arises: the
+  worker runs one rotation-on world, exactly as the director does today, and the rotation-off clones stay
+  where they belong, inside the search.
+- **No staleness.** The queue is ahead of the viewer by construction; the AI is never reasoning about an
+  outdated board, because the board it reasons about is the one it created.
+- **The protocol is tiny.** Because the physics is deterministic single-source code, the worker need only
+  send `(tier, column)` per drop and the main thread reproduces an identical world by replaying it — not a
+  trajectory. Ship a settled-board snapshot (~25 bodies) at each drop boundary as a cheap resync so
+  nothing can silently drift.
+- **Search strength is fully preserved.** With ~2 s of animation per drop and a 3–4 drop buffer, even the
+  5.7 s worst case is absorbed. `3/5/2` stays.
+
+**Decision: Option 3 on Lever A, with Option 1 demoted to a device-specific fallback.** Option 2 is
+retained here only as the rejected alternative it now is.
+
+**The one honest failure mode:** on a slow device, if search time per drop *persistently* exceeds
+animation time per drop, the queue drains and the wait returns — degrading to Option-1 territory. That is
+the trigger for the width A/B (M53.3), and it makes width a **per-device fallback rather than a global
+downgrade**. Buffer depth and drain rate must therefore be instrumented, not assumed.
 
 ### 3.3 What must NOT change
 
@@ -288,23 +315,32 @@ worker too. Payload is ~40 small objects — microseconds.
   the worker runs the same generated code, so this must hold exactly.
 - Net-missing path still plays (worker-side fallback).
 
-### M53.2 — Remove the visible wait (speculative pipelining)
-Start the search for drop N+1 from the search's own predicted settled world the moment drop N is
-committed, overlapping the fall/settle animation. **Validate on arrival**: compare the live settled board
-to the prediction; match ⇒ use the precomputed column, mismatch ⇒ fresh search. Instrument the
-match rate — it is the number that decides whether this design earns its complexity.
+### M53.2 — Remove the visible wait (worker runs the game ahead; UI replays)
+Promote the worker from *answering questions* to *owning the game* (§3.2 Option 3). It runs the director's
+own state machine with no rAF pacing — think → settle → think — keeping a queue of **3–4 decided drops**
+ahead of the viewer. The main thread animates from that queue and no longer decides anything.
+
+Protocol: worker → main, one `(tier, column)` per drop plus a settled-board snapshot at each drop boundary
+as a resync (the main thread replays the same deterministic code, so the snapshot is insurance against
+drift, not the transport). Main → worker: only lifecycle (start / reset / stop).
+
+Instrument **queue depth** and **drain events** — they are what tell us whether the buffer is doing its job
+on real devices, and they are the trigger for M53.3.
 
 **Gates:**
 - Visible gap between a board coming to rest and the next fruit spawning ≤ **BETWEEN_S + 150 ms** at the
   95th percentile over a ≥60 s run.
-- Speculation **match rate reported** (not gated — it is a measurement; a low rate sends us to M53.3).
-- No change to the drop sequence when the prediction matches.
-- **No resume jump.** Per-frame displacement after a decision must stay within normal fall speed — no
-  single oversized integration step (§2.4 measured a 26 px frame against a 3–5 px norm). Removing the block
-  removes its *cause*, but the `dt` clamp at `fruit-cake.ts:89` should be re-examined regardless: it is what
-  converts any future hitch into a silent teleport rather than a visible slowdown.
+- Queue depth **never reaches 0** on a desktop run; depth/drain distribution **reported** for a mid-range
+  phone (measurement, not a bar — a draining queue there sends us to M53.3).
+- Replayed board matches the worker's authoritative snapshot at every drop boundary (drift check).
+- **No resume jump.** Per-frame displacement must stay within normal fall speed — no single oversized
+  integration step (§2.4 measured a 26 px frame against a 3–5 px norm). Removing the block removes its
+  *cause*, but the `dt` clamp at `fruit-cake.ts:89` should be re-examined regardless: it is what converts
+  any future hitch into a silent teleport rather than a visible slowdown.
+- Playing strength unchanged — `3/5/2` preserved, drop sequence identical to the synchronous path for a
+  fixed seed.
 
-### M53.3 — Search-config A/B *(tuning; run only if M53.2's match rate is poor or phones still lag)*
+### M53.3 — Search-config A/B *(tuning; run only if M53.2's queue drains on real devices)*
 **Default position: keep 3/5/2.** Width and latency are deliberately **decoupled** — the worker is the
 stall fix, width is a separate pacing decision to be made *after* the AI can be seen playing smoothly.
 Bundling a strength regression into a latency fix would pay playing strength for a UX that is merely less
@@ -349,6 +385,10 @@ the real numbers. Consider deleting the stale `src/RLDemo.Web/data/fruitcake.dqn
   parity. The O(n²) contact build at ~390 k calls/decision is the hottest *structural* cost and is the
   right long-term optimization, but it is optimization, not the fix.
 - **Width reduction as the sole fix** — the growth curve refutes it (§3.1).
+- **Speculative pipelining with validation** (§3.2 Option 2) — superseded by Option 3. It searches ahead
+  from a *predicted* board, so it inherits both a staleness question and the rotation-on/rotation-off
+  divergence, and needs a validate-and-maybe-re-search step to stay correct. Letting the worker own the
+  game removes the prediction entirely, so there is nothing left to validate.
 - **Throttling to ~1 drop/s** (the original M32 suggestion) — treats the symptom as a pacing choice; the
   tab would still hang.
 - **`webWorkerTsConfig` in `angular.json`** — inert for this builder.
