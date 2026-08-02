@@ -6,7 +6,11 @@
 > **synchronously inside the `requestAnimationFrame` callback**, blocking the main thread for
 > **0.97–5.7 s per drop** — and fixes it so the watch view animates continuously.
 
-- **Status:** 🔍 **INVESTIGATED (root cause measured, 2026-08-02).** Implementation not started.
+- **Status:** ✅ **SHIPPED (M53.0–M53.2 + M53.4, 2026-08-02).** The freeze is gone: over a 180 s watch run
+  the pause between a board coming to rest and the next fruit spawning is **250 ms median / 255 ms p95** —
+  exactly `BETWEEN_S`, i.e. no search is visible at all — with **0 long tasks**, **0 queue starvations** and
+  **0 replay drift** across 19 drops. **The search config is unchanged (`3/5/2`); no playing strength was
+  traded.** M53.3 was **not triggered** (the look-ahead queue never drained).
 - **Author:** Pieterjan (with Claude Code)
 - **Branch:** `m53-fruitcake-ai-stall` (off `master`)
 - **Supersedes the open risk in** `FRUITCAKE_CLIENT_SIDE_AI_PRD.md:283` — *"Search cost too slow
@@ -300,7 +304,7 @@ Spiked end-to-end against the running dev server on 2026-08-02:
 Root cause measured on prod **and** localhost; call counts, growth curve, CPU profile, and the
 blocked-main-thread verdict all recorded above. Worker delivery spiked and confirmed.
 
-### M53.1 — Move the search off the main thread
+### M53.1 — Move the search off the main thread ✅ *(2026-08-02)*
 New `fruit-cake-ai.worker.ts` owning its own `PgDuelingNet` (via `loadFruitCakeNet`) and reconstructing a
 `PgFruitCakeWorld` from a posted body snapshot (`tier, x, y, vx, vy` — exactly `clone()`'s semantics,
 `fruitcake_solver.ts:184-194`). `fruit-cake-director.ts` becomes the only changed file: a new `thinking`
@@ -315,7 +319,16 @@ worker too. Payload is ~40 small objects — microseconds.
   the worker runs the same generated code, so this must hold exactly.
 - Net-missing path still plays (worker-side fallback).
 
-### M53.2 — Remove the visible wait (worker runs the game ahead; UI replays)
+**Result ✅ — all four pass.** 60 s run on localhost: **0** long tasks (was one 1–3 s task per drop), **0**
+rAF gaps > 200 ms with a largest gap of **5 ms** across 6000 frames, exactly 1 worker constructed, 0 console
+errors. Search round-trip median 2409 ms / max 3084 ms — unchanged in cost, entirely off-thread.
+
+The wire format (`tier/x/y/vx/vy`) was **proved** lossless rather than assumed: `chooseColumn` reads `this`
+only through `dropAndScore → clone(false)`, so a browser check comparing `clone(false)` of the live world
+against `clone(false)` of a world rebuilt from the wire returned **byte-identical** bodies (all 11 fields,
+all 11 bodies). Orientation cannot reach the search, so omitting it cannot change a decision.
+
+### M53.2 — Remove the visible wait (worker runs the game ahead; UI replays) ✅ *(2026-08-02)*
 Promote the worker from *answering questions* to *owning the game* (§3.2 Option 3). It runs the director's
 own state machine with no rAF pacing — think → settle → think — keeping a queue of **3–4 decided drops**
 ahead of the viewer. The main thread animates from that queue and no longer decides anything.
@@ -339,6 +352,25 @@ on real devices, and they are the trigger for M53.3.
   any future hitch into a silent teleport rather than a visible slowdown.
 - Playing strength unchanged — `3/5/2` preserved, drop sequence identical to the synchronous path for a
   fixed seed.
+
+**Result ✅ — all bars pass.** 180 s run on localhost, 19 drops:
+
+| gate | budget | measured |
+|---|---|---|
+| rest → next-spawn gap (p95) | ≤ 400 ms | **255 ms** (median 250, max 255) |
+| queue starvations mid-game | 0 on desktop | **0** (depth min 1, avg 2.24) |
+| replay drift vs authority | 0 | **0 / 19 drops** |
+| long tasks | none | **0** |
+
+Every gap is *exactly* `BETWEEN_S` — the search has vanished from the viewer's timeline entirely, rather
+than merely shrinking. Deterministic replay held bit-for-bit on every drop, so the snapshot never had to
+snap.
+
+**One fix found by measuring:** the first run showed a **2196 ms** outlier — the restart after a game over,
+where the worker had to search a fresh board *after* the pause. Requesting the next game the moment a board
+is lost lets the AI search *during* the 1.8 s game-over pause instead. The lost-board path was then
+exercised directly (no game over occurred naturally in 3 minutes): generation bumps on loss, score and
+board stay on screen through the pause, board clears after it, and the new game resumes and plays.
 
 ### M53.3 — Search-config A/B *(tuning; run only if M53.2's queue drains on real devices)*
 **Default position: keep 3/5/2.** Width and latency are deliberately **decoupled** — the worker is the
@@ -371,10 +403,21 @@ harness's own docs note a 10-episode eval bounced 750–971 on the *same* net).
 **Gate:** ship a reduced config only if mean score is within **1 SE** of `3/5/2`, or if the owner accepts
 the measured strength cost explicitly.
 
-### M53.4 — Ship
-Docs synced; stale "server-streamed" docstrings at `fruit-cake-render.ts:126` and `fruit-cake-frame.ts:1-3`
-corrected (M32 leftovers); the "brief thinking hitch" comment at `fruit-cake-director.ts:61` replaced with
-the real numbers. Consider deleting the stale `src/RLDemo.Web/data/fruitcake.dqn.ckpt`.
+### M53.3 — Search-config A/B ❌ *not triggered*
+The look-ahead queue never drained on desktop (`starved: 0`, depth min 1), so there is no latency left to
+buy and no reason to spend playing strength. `3/5/2` ships unchanged. The trigger stands for a future
+mid-range-phone measurement.
+
+### M53.4 — Ship ✅ *(2026-08-02)*
+`ARCHITECTURE.md` §"Watch AI" documents the worker-owns-the-game inversion; the stale M32-era
+"server-streamed" docstrings in `fruit-cake-render.ts` and `fruit-cake-frame.ts` are corrected; the "brief
+thinking hitch" comment is gone with the code it described.
+
+**`src/RLDemo.Web/data/fruitcake.dqn.ckpt` was NOT deleted.** The investigation flagged it as a stale
+leftover of the retired server path, but `src/RLDemo.Web/data` is also the documented training-campaign
+`--data` store (`PLAN.md`), so the file is plausibly a campaign checkpoint rather than dead weight. No code
+references it. Deleting a binary on a "probably unused" reading is not worth bundling into a latency fix —
+left for a deliberate cleanup.
 
 ---
 

@@ -123,7 +123,8 @@ export function render(ctx: CanvasRenderingContext2D, game: FruitCakeGame, surfa
 }
 
 /**
- * Draws one server-streamed AI frame (PRD §4.6) — the browser is a pure renderer in "Watch AI" mode. A
+ * Draws one AI frame — the canvas is a pure renderer in "Watch AI" mode (the frames come from the
+ * client-side FruitCakeDirector replaying the AI worker's decisions; the server path was retired in M32). A
  * trimmed version of {@link render}: background, danger line, the streamed fruit (with their orientation),
  * the wall, the NEXT preview, the score, and a game-over overlay. No toolbar / held fruit / effects.
  */
