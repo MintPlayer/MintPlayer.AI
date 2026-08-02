@@ -119,13 +119,55 @@ Linear fit: **+240 ms per fruit**, intercept 586 ms, R² = 0.888 — a **5.8× s
 Mechanism confirmed: `world.step` **count fell** as fruit accumulated (79 619 → 75 789) while wall time
 doubled. Same number of substeps, each costing more ⇒ **O(n²) `buildContacts`**, not longer simulations.
 
-### 2.4 The browser runs the most expensive config in the repo
+### 2.4 Independent confirmation from the owner's screen recording
+
+Frame-level analysis of the owner's 45.3 s / 60 fps capture (2716 frames) agrees on every point and adds
+two findings the live profiling could not reach.
+
+**Ten drops, ten stalls — 100 %, no exceptions.** Durations 0.57–4.02 s, inside the profiled 0.97–5.7 s
+range. Seven of the ten follow a plain landing with **no merge at all**, settling the "per drop, not per
+merge" reframe visually. Durations climb 2.78 → 4.02 s as the board fills, then fall hard to 2.03 / 1.95 /
+1.78 s immediately after a merge cascade cleared the board (score 349 → 439) — **monotonic in fruit count,
+not in elapsed time**, exactly as the +240 ms/fruit fit predicts.
+
+**The freeze is total.** During one stall the maximum per-pixel luma delta is **1/255 across the entire
+1920×1080 frame for 3.1 s** — pure codec noise. Score, canvas, HUD, NEXT preview: nothing moves.
+
+**Refinement — the perceived stall is `BETWEEN_S` + `think`, and that is why it reads as "3 seconds".**
+The NEXT-fruit preview repaints in exactly one frame **233 ms** after physics stops, then everything dies.
+That 233 ms is `BETWEEN_S = 0.25 s`: the settle ends, the board sits visibly static through the `between`
+phase, the tier swap (`current = next`) renders at its end, and *then* `think` blocks for 2.77 s. The
+viewer experiences the sum — ~3.0 s of a motionless board — which is precisely the owner's report. The
+probes and the recording agree; they were bracketing the same interval from different ends.
+
+**The 0.25 s clamp jump is real and visible** (`fruit-cake.ts:89`). Tracking a merged fruit frozen in
+mid-fall across the resume:
+
+```
+13.100 .. 13.183   top = 75 px   (6 frames byte-identical; same y as 3.0 s earlier)
+13.200             top = 101     (+26 px)   ← resume, ONE oversized frame
+13.217             top = 105     (+4)
+13.233             top = 109     (+4)
+13.250             top = 112     (+3)
+```
+
+One frame moves 26 px, every frame after moves 3–5 px. Fitting the post-resume trajectory gives
+g ≈ 1000 px/s², so a 26 px step from rest implies **dt ≈ 0.23 s** — the 0.25 s clamp, to within
+measurement error — and that step's exit velocity (228 px/s ≈ 3.8 px/frame) matches the observed next step
+(+4 px) exactly. Both alternatives are ruled out numerically: a paused clock would resume at dt = 16.7 ms
+(+0.14 px), and an unclamped 2.77 s catch-up would move ~3800 px (the fruit would reappear already landed).
+
+⇒ **~92 % of elapsed time is silently discarded**, and the fruit visibly teleports a quarter-second down
+its fall on every single drop. This is a second, independent defect riding on the first: fixing the block
+removes its cause, but M53.2 must gate on the jump being gone, not merely on the freeze being gone.
+
+### 2.5 The browser runs the most expensive config in the repo
 
 The retired C# serving path shipped `MaxDepth = 2, TopK = 10, TopK2 = 3` (`FruitCakeSearch.cs:21,25,28`)
 = **154 rollouts**. The browser hardcodes `3/5/2` = **784** — 5× more. When this ran server-side, viewers
 never paid the cost; M32 moved the decision into the browser and kept the *expensive* config.
 
-### 2.5 Ruled out
+### 2.6 Ruled out
 
 Every alternative was checked and excluded: no fixed delay constant (only `BETWEEN_S = 0.25` /
 `GAMEOVER_S = 1.8`); no `setTimeout`/`setInterval` anywhere in the folder; checkpoint fetched **once** in
@@ -257,6 +299,10 @@ match rate — it is the number that decides whether this design earns its compl
   95th percentile over a ≥60 s run.
 - Speculation **match rate reported** (not gated — it is a measurement; a low rate sends us to M53.3).
 - No change to the drop sequence when the prediction matches.
+- **No resume jump.** Per-frame displacement after a decision must stay within normal fall speed — no
+  single oversized integration step (§2.4 measured a 26 px frame against a 3–5 px norm). Removing the block
+  removes its *cause*, but the `dt` clamp at `fruit-cake.ts:89` should be re-examined regardless: it is what
+  converts any future hitch into a silent teleport rather than a visible slowdown.
 
 ### M53.3 — Search-config A/B *(tuning; run only if M53.2's match rate is poor or phones still lag)*
 **Default position: keep 3/5/2.** Width and latency are deliberately **decoupled** — the worker is the

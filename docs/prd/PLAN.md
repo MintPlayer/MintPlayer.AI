@@ -2049,7 +2049,15 @@ of wall time**. Measured per decision: **784** `dropAndScore`, **3 920** `net.fo
 ~390 k O(n²) `buildContacts` — `chooseColumn` is **82 % of non-idle main-thread work** (rendering 2.1 %).
 Two reframes: the freeze is **once per DROP, not per merge** (it trails the settle by `BETWEEN_S = 0.25`),
 and cost grows **+240 ms per fruit** (R²=0.888), so the owner's ~3 s is simply a 9–12-fruit board. Search
-width is **fixed** at 784 regardless of board state. Closes the never-measured M32 risk
+width is **fixed** at 784 regardless of board state. **Frame-level analysis of the owner's 45 s recording
+independently confirms all of it** — 10 drops / 10 stalls (7 after a plain landing with no merge at all),
+durations monotonic in fruit count (2.78→4.02 s as it fills, dropping to 1.78 s right after a cascade cleared
+the board), and a **total** freeze (max luma delta 1/255 across the whole 1920×1080 frame for 3.1 s). It also
+pins the perceived ~3 s as **`BETWEEN_S` + `think`** (the NEXT-preview repaints once, 233 ms after physics
+stops, then everything dies) and confirms a **second defect**: the `dt` clamp at `fruit-cake.ts:89` discards
+~92 % of the stall and resumes with one 26 px frame against a 3–5 px norm (⇒ dt ≈ 0.23 s at the measured
+g ≈ 1000 px/s²) — the fruit visibly teleports a quarter-second down its fall on every drop. Closes the
+never-measured M32 risk
 (`FRUITCAKE_CLIENT_SIDE_AI_PRD.md:283`). Note the retired C# serving path shipped `2/10/3` = 154 rollouts;
 M32 moved the decision into the browser and kept the **5× more expensive** `3/5/2`.
 
@@ -2071,7 +2079,9 @@ M32 moved the decision into the browser and kept the **5× more expensive** `3/5
   rotation is **not** cosmetic: the flag gates only angular *damping*, while `angularVel` is written by
   `applyImpulse` regardless and feeds back into linear velocity via the friction impulse — so rotation-on
   (live) and rotation-off (search clones) worlds genuinely diverge. **Gates:** rest→next-spawn gap ≤
-  `BETWEEN_S + 150 ms` at p95 · match rate reported (measurement, not a bar) · drop sequence unchanged on match.
+  `BETWEEN_S + 150 ms` at p95 · match rate reported (measurement, not a bar) · drop sequence unchanged on match ·
+**no resume jump** (no single oversized integration step; re-examine the `dt` clamp, which is what turns any
+hitch into a silent teleport instead of a visible slowdown).
 - **M53.3 — Search-config A/B.** *(tuning; only if M53.2's match rate is poor or phones still lag.)*
   **Default position: keep 3/5/2** — width and latency stay **decoupled** (worker = the stall fix, width = a
   separate pacing call made *after* the AI plays smoothly; don't bundle a strength regression into a latency
