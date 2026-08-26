@@ -30,6 +30,11 @@
       "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/Snake/polyglot/snake_solver.pg",
       "target": "typescript",
       "output": "src/RLDemo.Web/ClientApp/src/app/snake/snake_solver"
+    },
+    {
+      "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/Tetris/polyglot/tetris_solver.pg",
+      "target": "typescript",
+      "output": "src/RLDemo.Web/ClientApp/src/app/tetris/tetris_solver"
     }
   ]
 }

@@ -46,6 +46,28 @@ public sealed record CrazyFruitsDqnOptions : DqnScoreOptions
 }
 
 /// <summary>
+/// <see cref="TetrisDqnCampaign"/> knobs on top of the shared spine's (TETRIS_PRD.md §3.7): γ=0.995 +
+/// 3-step returns by default (long-horizon survival), NoisyNets as the pre-registered escalation lever.
+/// </summary>
+public sealed record TetrisDqnOptions : DqnScoreOptions
+{
+    /// <summary>n-step return horizon.</summary>
+    public int NStep { get; init; } = 3;
+
+    /// <summary>NoisyNets exploration (learned σ) instead of ε-greedy — an M54.3 escalation lever.</summary>
+    public bool Noisy { get; init; }
+
+    /// <summary>Dense all-action regression toward the per-action Dellacherie-basis value reconstructed
+    /// from the observation planes (γ=0 only — the M49/M51 recipe, adopted for Tetris after the measured
+    /// M54.3 escalation: γ-bootstrap ranked placements at Spearman 0.27 vs Dellacherie after 100K+ steps
+    /// across three reward configurations).</summary>
+    public bool DenseRegression { get; init; }
+
+    /// <summary>Total gradient mass of the dense term relative to the realized-reward term.</summary>
+    public float DenseTargetWeight { get; init; } = 1.0f;
+}
+
+/// <summary>
 /// <see cref="FruitCakeDqnCampaign"/> knobs on top of the shared spine's. Reward shaping is NOT here — it lives
 /// on the injected training env (<c>FruitCakeEnv.ShapeRewards</c>/<c>ShapingGamma</c>), because it changes what
 /// the env emits, not how the campaign trains.

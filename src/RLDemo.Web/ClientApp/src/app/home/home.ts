@@ -77,6 +77,16 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
+      <a class="card" routerLink="/tetris">
+        <h2>Tetris</h2>
+        <p>
+          The falling-block classic with an AI that picks where every piece lands — the hand-tuned
+          Dellacherie evaluator, a trained DQN, and their look-ahead search tiers. Try the rising-garbage
+          survival mode. Keyboard or touch, entirely in your browser.
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
       <a class="card" routerLink="/chess">
         <h2>Chess</h2>
         <p>
