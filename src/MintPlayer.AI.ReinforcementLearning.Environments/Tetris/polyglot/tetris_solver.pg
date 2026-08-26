@@ -741,8 +741,12 @@ class PgTetris {
     return best
   }
 
-  // Net+search tier (PRD §3.9): beam over Q, one-ply rollout, expectimax over the unknown next-next
-  // piece via 7 forwards (Q is in lines units — reward = lines cleared, so r1 adds directly).
+  // Net+search tier (PRD §3.9): beam over Q, one-ply rollout over the KNOWN next piece, expectimax over
+  // the unknown next-next via 7 forwards. γ=0 semantics (M54.3 pivot): Q(s,a) is the net's estimate of the
+  // placement's own Dellacherie-basis value (line rewards live inside eroded), so the two-ply value is
+  // Q(s,a) + E[max_b Q(s′,b)] — own value plus best follow-up, the dellaSearchAction shape. Adding the raw
+  // line reward instead (the pre-pivot γ>0 formulation) double-ignores the placement's own board damage —
+  // measured at −65% survival vs the plain net tier before this fix.
   fn netSearchAction(net: PgTetDuelingNet, beamWidth: i32): i32 {
     let q1 = net.forward(this.buildObservation())
 
@@ -768,7 +772,7 @@ class PgTetris {
       let rot = this.actionRot(a2)
       let x = this.actionCol(a2)
       let saved = this.saveRows()
-      let cleared = this.simPlace(this.current, rot, x, this.dropY(this.current, rot, x))
+      this.simPlace(this.current, rot, x, this.dropY(this.current, rot, x))
 
       // The next piece is known and becomes current; expectimax over the 7 equally likely previews.
       var acc = 0.0
@@ -786,9 +790,7 @@ class PgTetris {
       }
       this.restoreRows(saved)
 
-      // r1 in TRAINING-reward units: lines + the tetris bonus (must match TetrisEnv's reward).
-      let r1 = cleared + (if cleared == 4 { RewardTetrisBonus } else { 0 })
-      let val = r1 + acc / PieceCount
+      let val = q1[a2] + acc / PieceCount
       if val > bestVal { bestVal = val; best = a2 }
     }
     return best
