@@ -202,8 +202,8 @@ public class TetrisEngineTests
         var t = MicroBoard(piece: 0, rot: 1, x: 9, y: 10); // vertical I hugging the right wall, open board
         Assert.True(t.microRotate(), "open-space rotation must succeed via a wall kick");
         Assert.Equal(0, t.activeRot);
-        Assert.Equal(6, t.activeX); // shifted just enough for the 4-wide horizontal I
-        Assert.Equal(10, t.activeY);
+        Assert.Equal(6, t.activeX);  // shifted just enough for the 4-wide horizontal I
+        Assert.Equal(13, t.activeY); // bottom-anchored: the bounding-box bottom row (14) is unchanged
     }
 
     [Fact]
@@ -238,6 +238,22 @@ public class TetrisEngineTests
                 Assert.True(t.microRotate(), $"piece {piece} rot {rot} must rotate in open space");
             }
         }
+    }
+
+    [Fact]
+    public void Rotate_SurroundedT_NeverJumpsUpward()
+    {
+        // Owner report 2026-08-26: a T rotated in a snug cavity translated upward (the old free-climb
+        // ladder). A fully boxed-in T must simply FAIL to rotate, without moving at all.
+        var t = MicroBoard(piece: 2, rot: 2, x: 4, y: 18); // T pointing up, resting in an exact cavity
+        for (int y = 17; y < 20; y++) t.rows[y] = FullRow;
+        // Carve exactly the T's own cells out of rows 18–19: (5,18) + (4..6,19).
+        t.rows[18] &= ~(1 << 5);
+        t.rows[19] &= ~0b0001110000;
+        Assert.False(t.microRotate(), "a boxed-in T must not rotate");
+        Assert.Equal(2, t.activeRot);
+        Assert.Equal(4, t.activeX);
+        Assert.Equal(18, t.activeY); // and it must not have moved — no jump
     }
 
     [Fact]

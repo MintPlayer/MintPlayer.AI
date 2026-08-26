@@ -436,15 +436,21 @@ class PgTetris {
     return true
   }
 
-  // Rotate with simple wall/floor kicks (owner report 2026-08-26: pieces not blocked by any squares must
-  // still rotate — the raw bounding-box check failed a vertical I at the right wall and a flat I on the
-  // floor). Ladder: in place first, then the smallest horizontal shift (±1..3 — 3 covers the I), then the
-  // same with rising floor kicks. No SRS kick tables (T-spins stay out of scope, PRD §7); micro-only —
-  // the AI's macro placements never rotate in place.
+  // Rotate with BOTTOM-ANCHORED re-seating + horizontal wall kicks (owner reports 2026-08-26: pieces not
+  // blocked by squares must still rotate — a vertical I at the right wall, a flat I on the floor — but a
+  // free upward-translation ladder let a surrounded T "jump up" when rotated). The new shape keeps its
+  // bounding-box BOTTOM row fixed (a taller rotation extends upward in place, a shorter one sits down);
+  // if that spot is blocked, a top-anchored fallback lets an airborne piece extend downward instead. The
+  // dx ladder (±1..3 — 3 covers the I) kicks off walls. There is NO free climb: a rotation that fits
+  // neither anchor fails. No SRS kick tables (T-spins stay out of scope, PRD §7); micro-only — the AI's
+  // macro placements never rotate in place.
   fn microRotate(): bool {
     if !this.activeLive || this.gameOver { return false }
     let nr = (this.activeRot + 1) % this.rotCount[this.current]
-    for dyi in 0..4 {
+    let anchor = this.activeY + this.rotH[this.current * 4 + this.activeRot] - this.rotH[this.current * 4 + nr]
+    for pass in 0..2 {
+      let ny = if pass == 0 { anchor } else { this.activeY }
+      if pass == 1 && ny == anchor { break }
       for dxi in 0..7 {
         var dx = 0
         if dxi == 1 { dx = -1 }
@@ -453,10 +459,10 @@ class PgTetris {
         if dxi == 4 { dx = 2 }
         if dxi == 5 { dx = -3 }
         if dxi == 6 { dx = 3 }
-        if this.fitsAt(this.current, nr, this.activeX + dx, this.activeY - dyi) {
+        if this.fitsAt(this.current, nr, this.activeX + dx, ny) {
           this.activeRot = nr
           this.activeX += dx
-          this.activeY -= dyi
+          this.activeY = ny
           return true
         }
       }
