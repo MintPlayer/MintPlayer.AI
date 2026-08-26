@@ -33,7 +33,7 @@ export function cellWidthCss(cssW: number): number {
 }
 
 export function render(ctx: CanvasRenderingContext2D, game: TetrisGame, cssW: number, cssH: number,
-  statusLine: string, mode: 'human' | 'watch'): void {
+  statusLine: string, mode: 'human' | 'watch', paused = false): void {
   const s = cssW / LOGICAL_W;
   ctx.save();
   ctx.scale(s, s);
@@ -41,6 +41,19 @@ export function render(ctx: CanvasRenderingContext2D, game: TetrisGame, cssW: nu
 
   ctx.fillStyle = '#141824';
   ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+  // Esc pause hides the WHOLE field (board, piece, preview, stats) — nothing to study while paused.
+  if (paused) {
+    ctx.fillStyle = '#e8ecf4';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 30px system-ui, sans-serif';
+    ctx.fillText('Paused', LOGICAL_W / 2, LOGICAL_H / 2 - 12);
+    ctx.font = '16px system-ui, sans-serif';
+    ctx.fillStyle = '#aab2c5';
+    ctx.fillText('press Esc or tap to resume', LOGICAL_W / 2, LOGICAL_H / 2 + 18);
+    ctx.restore();
+    return;
+  }
 
   // Status line above the well.
   ctx.fillStyle = '#aab2c5';

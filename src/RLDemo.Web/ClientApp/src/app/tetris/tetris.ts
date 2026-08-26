@@ -35,6 +35,8 @@ export class Tetris implements AfterViewInit {
   protected readonly tier = signal<Tier>('net');
   /** Rising-garbage mode: a full bottom row with one random gap every 10 placements. */
   protected readonly garbage = signal(false);
+  /** Esc pause: freezes the game AND hides the field (the render covers the canvas). */
+  protected readonly paused = signal(false);
   private director: TetrisDirector | null = null;
 
   private ctx: CanvasRenderingContext2D | null = null;
@@ -92,8 +94,10 @@ export class Tetris implements AfterViewInit {
   private readonly frame = (nowMs: number): void => {
     const dt = this.lastMs ? Math.min(250, nowMs - this.lastMs) : 0;
     this.lastMs = nowMs;
-    if (this.mode() === 'watch') this.director?.update(dt);
-    this.game.update(dt, this.mode() === 'human');
+    if (!this.paused()) {
+      if (this.mode() === 'watch') this.director?.update(dt);
+      this.game.update(dt, this.mode() === 'human');
+    }
     this.draw();
     this.rafId = requestAnimationFrame(this.frame);
   };
@@ -112,7 +116,7 @@ export class Tetris implements AfterViewInit {
       canvas.height = bh;
     }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    render(this.ctx, this.game, cssW, cssH, this.statusLine(), this.mode());
+    render(this.ctx, this.game, cssW, cssH, this.statusLine(), this.mode(), this.paused());
   }
 
   private statusLine(): string {
@@ -130,6 +134,13 @@ export class Tetris implements AfterViewInit {
   // ── Keyboard (desktop) ───────────────────────────────────────────────────────────────────────────────────
 
   protected onKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      this.paused.update(v => !v);
+      this.game.setSoftDrop(false); // never resume into a held drop
+      event.preventDefault();
+      return;
+    }
+    if (this.paused()) return; // the game is frozen — ignore play keys
     if (this.mode() !== 'human') return;
     if (this.game.gameOver) {
       if (event.key === 'Enter' || event.key === ' ') { this.game.newGame(); event.preventDefault(); }
@@ -155,6 +166,10 @@ export class Tetris implements AfterViewInit {
 
   protected onPointerDown(event: PointerEvent): void {
     event.preventDefault();
+    if (this.paused()) {
+      this.paused.set(false); // tap anywhere to resume
+      return;
+    }
     if (this.mode() !== 'human') return;
     if (this.game.gameOver) {
       this.game.newGame(); // tap to play again

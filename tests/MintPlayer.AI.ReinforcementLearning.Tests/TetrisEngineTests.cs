@@ -156,6 +156,74 @@ public class TetrisEngineTests
         Assert.Equal(2, t.wellSum());
     }
 
+    // ── Rotation kicks (owner report 2026-08-26: pieces not blocked by squares must still rotate) ──────────
+
+    private static PgTetris MicroBoard(int piece, int rot, int x, int y)
+    {
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.current = piece;
+        t.activeRot = rot;
+        t.activeX = x;
+        t.activeY = y;
+        t.activeLive = true;
+        return t;
+    }
+
+    [Fact]
+    public void Rotate_VerticalIAtTheRightWall_WallKicksIntoTheBoard()
+    {
+        var t = MicroBoard(piece: 0, rot: 1, x: 9, y: 10); // vertical I hugging the right wall, open board
+        Assert.True(t.microRotate(), "open-space rotation must succeed via a wall kick");
+        Assert.Equal(0, t.activeRot);
+        Assert.Equal(6, t.activeX); // shifted just enough for the 4-wide horizontal I
+        Assert.Equal(10, t.activeY);
+    }
+
+    [Fact]
+    public void Rotate_FlatIOnTheFloor_FloorKicksUpward()
+    {
+        var t = MicroBoard(piece: 0, rot: 0, x: 3, y: 19); // flat I lying on the floor
+        Assert.True(t.microRotate(), "open-space rotation must succeed via a floor kick");
+        Assert.Equal(1, t.activeRot);
+        Assert.Equal(16, t.activeY); // lifted just enough for the 4-tall vertical I
+    }
+
+    [Fact]
+    public void Rotate_TAgainstTheLeftWall_Succeeds()
+    {
+        var t = MicroBoard(piece: 2, rot: 1, x: 0, y: 10); // T pointing left, flush with the wall
+        Assert.True(t.microRotate());
+    }
+
+    [Fact]
+    public void Rotate_SZLJOnTheFloor_AllSucceedInOpenSpace()
+    {
+        // Every piece, every rotation slot, resting on the floor of an empty board: rotation must succeed
+        // (kick ladder), except the O piece which has a single rotation and trivially succeeds in place.
+        var probe = new PgTetris();
+        probe.reset(1, false, 0);
+        for (int piece = 0; piece < TetrisBoard.PieceCount; piece++)
+        {
+            for (int rot = 0; rot < probe.rotCount[piece]; rot++)
+            {
+                int h = probe.rotH[piece * 4 + rot];
+                var t = MicroBoard(piece, rot, x: 4, y: 20 - h); // resting on the floor
+                Assert.True(t.microRotate(), $"piece {piece} rot {rot} must rotate in open space");
+            }
+        }
+    }
+
+    [Fact]
+    public void Rotate_ActuallyBlockedBySquares_StillFails()
+    {
+        var t = MicroBoard(piece: 0, rot: 1, x: 9, y: 16); // vertical I at the right wall...
+        for (int y = 10; y < 20; y++) t.rows[y] = 0b0111111111; // ...columns 0..8 solid below row 10
+        Assert.False(t.microRotate(), "a rotation blocked by real squares must not kick through them");
+        Assert.Equal(1, t.activeRot);
+        Assert.Equal(9, t.activeX);
+    }
+
     [Fact]
     public void NesLevels_AdvanceEveryTenLines_WithPostLevelUpScoringAndTheSpeedCurve()
     {
