@@ -90,6 +90,7 @@ export function render(ctx: CanvasRenderingContext2D, game: TetrisGame, cssW: nu
 
   const stats: [string, string][] = [
     ['Score', `${b.score}`],
+    ['Level', `${b.level}`],
     ['Lines', `${b.lines}`],
     ['Tetrises', `${b.tetrises}`],
     ['Pieces', `${b.piecesPlaced}`],

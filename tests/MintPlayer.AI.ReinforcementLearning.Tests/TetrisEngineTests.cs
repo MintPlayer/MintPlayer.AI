@@ -157,6 +157,25 @@ public class TetrisEngineTests
     }
 
     [Fact]
+    public void NesLevels_AdvanceEveryTenLines_WithPostLevelUpScoringAndTheSpeedCurve()
+    {
+        var t = new PgTetris();
+        t.reset(3, false, 0);
+        Assert.Equal(0, t.level);
+        t.lines = 9;
+        t.afterLock(1); // 10th line ⇒ level 1; NES rule: the points use the level AFTER the level-up
+        Assert.Equal(10, t.lines);
+        Assert.Equal(1, t.level);
+        Assert.Equal(40 * 2, t.score);
+
+        Assert.Equal(48, t.gravityFrames(0));
+        Assert.Equal(8, t.gravityFrames(8));
+        Assert.Equal(6, t.gravityFrames(9));
+        Assert.Equal(2, t.gravityFrames(28));
+        Assert.Equal(1, t.gravityFrames(29)); // the kill screen
+    }
+
+    [Fact]
     public void SevenBag_DealsEachPieceExactlyOncePerBag()
     {
         var t = new PgTetris();

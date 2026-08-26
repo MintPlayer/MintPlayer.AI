@@ -9,7 +9,7 @@ import { PgTetris } from './tetris_solver';
 export const W = 10;
 export const H = 20;
 
-const GRAVITY_MS = 650;       // human gravity step
+const FRAME_MS = 1000 / 60;   // NES gravity is specified in frames per row at 60 fps
 const SOFT_DROP_MS = 45;      // gravity while the down key is held
 const FLASH_MS = 220;         // line-clear highlight
 const WATCH_FALL_MS = 160;    // watch-mode cosmetic drop time
@@ -81,7 +81,10 @@ export class TetrisGame {
     if (this.flashMs > 0) this.flashMs = Math.max(0, this.flashMs - dtMs);
     if (human && !this.gameOver) {
       this.gravityAcc += dtMs;
-      const interval = this.softDrop ? SOFT_DROP_MS : GRAVITY_MS;
+      // NES speed curve: level 0 = 48 frames/row (800 ms), level 9 = 6, kill screen 29+ = 1. Soft drop
+      // overrides with a fast fixed step (never slower than gravity).
+      const gravityMs = this.board.gravityFrames(this.board.level) * FRAME_MS;
+      const interval = this.softDrop ? Math.min(SOFT_DROP_MS, gravityMs) : gravityMs;
       while (this.gravityAcc >= interval) {
         this.gravityAcc -= interval;
         if (this.board.microDropStep()) {

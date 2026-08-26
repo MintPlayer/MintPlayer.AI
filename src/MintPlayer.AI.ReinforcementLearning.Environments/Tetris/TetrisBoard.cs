@@ -40,6 +40,8 @@ public sealed class TetrisBoard
     public int Score => _core.score;
     public int Lines => _core.lines;
     public int Tetrises => _core.tetrises;
+    /// <summary>NES level: lines/10 (start level 0); scoring is base × (level+1), gravity follows the NES curve.</summary>
+    public int Level => _core.level;
     public int PiecesPlaced => _core.piecesPlaced;
     public bool GameOver => _core.gameOver;
     public int LastLinesCleared => _core.lastLinesCleared;
@@ -247,6 +249,7 @@ public sealed class TetrisBoard
         _core.score = reader.ReadInt32();
         _core.lines = reader.ReadInt32();
         _core.tetrises = reader.ReadInt32();
+        _core.level = _core.lines / 10; // derived — recomputed rather than serialized
         _core.piecesPlaced = reader.ReadInt32();
         _core.gameOver = reader.ReadBoolean();
         _core.lastLinesCleared = reader.ReadInt32();

@@ -84,9 +84,10 @@ class PgTetris {
 
   var current: i32                   // piece in play (the macro action places it)
   var next: i32                      // 1-piece preview
-  var score: i32                     // NES-style score: 40/100/300/1200 per 1/2/3/4 lines
+  var score: i32                     // NES score: 40/100/300/1200 per 1/2/3/4 lines, × (level+1)
   var lines: i32                     // total lines cleared (the training-reward currency)
   var tetrises: i32                  // 4-line clears (the owner's headline metric)
+  var level: i32                     // NES progression: level = lines/10 (start level 0)
   var piecesPlaced: i32
   var gameOver: bool
   var lastLinesCleared: i32          // of the most recent lock
@@ -114,6 +115,7 @@ class PgTetris {
     this.score = 0
     this.lines = 0
     this.tetrises = 0
+    this.level = 0
     this.piecesPlaced = 0
     this.gameOver = false
     this.lastLinesCleared = 0
@@ -221,6 +223,7 @@ class PgTetris {
     this.score = 0
     this.lines = 0
     this.tetrises = 0
+    this.level = 0
     this.piecesPlaced = 0
     this.gameOver = false
     this.lastLinesCleared = 0
@@ -314,7 +317,7 @@ class PgTetris {
   }
 
   // NES-style line scoring (owner decision 2026-08-26): a tetris pays 30× a single — the score the AI
-  // is asked to maximize rewards building for 4-line clears.
+  // is asked to maximize rewards building for 4-line clears. Multiplied by (level+1) in afterLock.
   fn lineScore(cleared: i32): i32 {
     if cleared == 1 { return 40 }
     if cleared == 2 { return 100 }
@@ -323,12 +326,27 @@ class PgTetris {
     return 0
   }
 
+  // NES gravity curve: frames per one-row drop at 60 fps (levels 0–8 step down 48→8, then the classic
+  // plateaus; 29+ is the "kill screen" 1 frame/row). Single-sourced so the web timer and any future
+  // speed-aware logic agree. The AI's placement decisions have no gravity clock (benchmark convention).
+  fn gravityFrames(lvl: i32): i32 {
+    if lvl <= 8 { return 48 - 5 * lvl }
+    if lvl == 9 { return 6 }
+    if lvl <= 12 { return 5 }
+    if lvl <= 15 { return 4 }
+    if lvl <= 18 { return 3 }
+    if lvl <= 28 { return 2 }
+    return 1
+  }
+
   // Post-lock bookkeeping shared by both step APIs: scoring, counters, the garbage clock, and the next
   // piece draw. Does NOT decide game-over for the new piece — each path applies its own rule after this.
   fn afterLock(cleared: i32) {
-    this.score += this.lineScore(cleared)
     this.lines += cleared
     if cleared == 4 { this.tetrises += 1 }
+    // NES progression: level up every 10 lines; points use the level AFTER a level-up (NES rule).
+    this.level = tetDiv(this.lines - this.lines % 10, 10)
+    this.score += this.lineScore(cleared) * (this.level + 1)
     this.lastLinesCleared = cleared
     this.piecesPlaced += 1
     if this.garbageEvery > 0 {

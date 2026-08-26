@@ -129,7 +129,7 @@ internal static class TetrisLab
             Console.WriteLine($"net survival (B): {netB.Mean:F1} (gates: ≥ 100 · ≥ 4× random [{4 * randomB.Mean:F0}] · " +
                               $"{(netB.Mean - netB.Ci > randomB.Mean + randomB.Ci ? "CI-SEPARATED" : "OVERLAPPING")} vs random)");
             Console.WriteLine($"net gap share random→della (B): {gapShare:P0} (gate ≥ 25%)");
-            Console.WriteLine($"net score (A): {netA.Mean:F0} (gate ≥ 2000 — ≈50 single-line clears in NES points)");
+            Console.WriteLine($"net score (A): {netA.Mean:F0} (gate ≥ 5000 — ≈50 single-line clears with the NES level multiplier)");
             if (survB.Count >= 5)
             {
                 var netSearchB = survB[4];
