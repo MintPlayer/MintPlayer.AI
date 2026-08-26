@@ -47,10 +47,13 @@ internal static class TetrisLab
             Noisy = a.Has("--noisy"),
         };
         // Training + eval both uniform-random pieces, no garbage (the benchmark-honest protocol; garbage is
-        // an eval protocol and a web mode, not a training distribution — PRD §3.6).
+        // an eval protocol and a web mode, not a training distribution — PRD §3.6). PBRS shaping defaults ON
+        // (M54.3 escalation: the bare reward is too sparse — 180K steps measured near-random) and lives on
+        // the TRAIN env only, so gates stay honest; --no-pbrs reverts to the bare reward.
+        bool pbrs = !a.Has("--no-pbrs");
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             services => services.AddTetrisDqnCampaign(
-                trainEnv: new TetrisEnv(pieceBudget),
+                trainEnv: new TetrisEnv(pieceBudget) { ShapeBoardPotential = pbrs, PotentialGamma = gamma },
                 evalEnv: new TetrisEnv(pieceBudget),
                 options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "tetris-dqn.csv")));

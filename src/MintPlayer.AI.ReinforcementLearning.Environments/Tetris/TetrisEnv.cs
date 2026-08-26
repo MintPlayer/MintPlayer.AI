@@ -83,6 +83,23 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
     public Space<float[]> ObservationSpace { get; }
     public Space<int> ActionSpace { get; }
 
+    // ── Training-only potential-based shaping (M54.3 escalation, invoked 2026-08-26) ────────────────────────
+    // The bare reward is too sparse to bootstrap from: random placements clear ~1 line per 450 steps, and
+    // the 180K-step eval was still near-random (0.5 lines). PBRS (Ng et al.): reward += γ·Φ(s′) − Φ(s) with
+    // Φ = −(4·holes + rowT + colT + wells)/scale — dense signal along the Dellacherie basis, and
+    // policy-invariant when PotentialGamma matches the learner's γ (Φ := 0 at termination, preserving
+    // exact invariance). TRAIN env only — the eval env scores the bare game, so gates stay honest.
+
+    /// <summary>Enable the training-only board-potential shaping. Default off — a plain env scores the bare game.</summary>
+    public bool ShapeBoardPotential { get; set; }
+    /// <summary>Must match the learner's γ for policy invariance.</summary>
+    public double PotentialGamma { get; set; } = 0.995;
+    /// <summary>Divisor mapping board badness (~0–200) into reward units (lines ≈ 1).</summary>
+    public float PotentialScale { get; set; } = 25f;
+
+    private float Potential()
+        => -(4f * _board.Holes() + _board.RowTransitions() + _board.ColTransitions() + _board.WellSum()) / PotentialScale;
+
     public int PieceBudget => _pieceBudget;
     public int Score => _board.Score;
     public int Lines => _board.Lines;
@@ -105,6 +122,7 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
     {
         if (_done)
             throw new InvalidOperationException("Episode is done; call Reset() before stepping.");
+        float potentialBefore = ShapeBoardPotential ? Potential() : 0f;
         int cleared = _board.ApplyPlacement(action);
         if (cleared < 0)
             throw new ArgumentOutOfRangeException(nameof(action), action,
@@ -116,6 +134,8 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
         bool truncated = !terminated && _pieces >= _pieceBudget;
         _done = terminated || truncated;
         float reward = (cleared + (cleared == 4 ? TetrisBoard.TetrisRewardBonus : 0)) / RewardScale;
+        if (ShapeBoardPotential)
+            reward += (float)(PotentialGamma * (terminated ? 0f : Potential())) - potentialBefore;
         return new StepResult<float[]>(_board.BuildObservation(), reward, terminated, truncated, EnvInfo.Empty);
     }
 

@@ -121,6 +121,14 @@ public sealed class TetrisBoard
     /// piece, expectimax over the unknown third piece (PRD §3.8).</summary>
     public int DellaSearchAction(int beamA = 8, int beamB = 5) => _core.dellaSearchAction(beamA, beamB);
 
+    // ── Board features (the Dellacherie basis, on the CURRENT rows — the env's shaping potential reads
+    // these; per-placement deltas live in the observation planes) ───────────────────────────────────────────
+
+    public int Holes() => _core.holes();
+    public int RowTransitions() => _core.rowTransitions();
+    public int ColTransitions() => _core.colTransitions();
+    public int WellSum() => _core.wellSum();
+
     // ── Trained-net tiers through the single-source forward ─────────────────────────────────────────────────
     // The SDK's GreedyQAgent is the reference net player (float32 forward); these run the GENERATED f64
     // forward instead — the exact code the browser executes — so the Lab's net+search row and the
