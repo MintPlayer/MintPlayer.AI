@@ -20,7 +20,12 @@ import { ScreenWakeLock } from '../screen-wake-lock';
   templateUrl: './tetris.html',
   styleUrl: './tetris.scss',
   imports: [BsButtonTypeDirective],
-  host: { '(window:keydown)': 'onKeyDown($event)', '(window:keyup)': 'onKeyUp($event)' },
+  host: {
+    '(window:keydown)': 'onKeyDown($event)',
+    '(window:keyup)': 'onKeyUp($event)',
+    '(window:blur)': 'onFocusLost()',
+    '(document:visibilitychange)': 'onVisibilityChange()',
+  },
 })
 export class Tetris implements AfterViewInit {
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('board');
@@ -129,6 +134,20 @@ export class Tetris implements AfterViewInit {
       : d.effectiveTier;
     const last = d.episodes > 0 ? ` · last: ${d.lastLines} lines` : '';
     return `AI: ${tier}${this.garbage() ? ' · garbage/10' : ''}${last}`;
+  }
+
+  // Auto-pause when the window/tab loses focus (owner request): a running play-yourself game must not
+  // keep falling unseen. Watch mode is exempt (watching in a second window is legitimate), and there is
+  // nothing to protect after game over. Focus regain does NOT auto-resume — Esc or a tap does.
+  protected onFocusLost(): void {
+    if (this.mode() === 'human' && !this.game.gameOver && !this.paused()) {
+      this.paused.set(true);
+      this.game.setSoftDrop(false);
+    }
+  }
+
+  protected onVisibilityChange(): void {
+    if (document.hidden) this.onFocusLost();
   }
 
   // ── Keyboard (desktop) ───────────────────────────────────────────────────────────────────────────────────
