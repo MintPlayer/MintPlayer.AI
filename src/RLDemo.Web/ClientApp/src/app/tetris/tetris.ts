@@ -142,7 +142,7 @@ export class Tetris implements AfterViewInit {
   protected onFocusLost(): void {
     if (this.mode() === 'human' && !this.game.gameOver && !this.paused()) {
       this.paused.set(true);
-      this.game.setSoftDrop(false);
+      this.game.input.clear(); // keyup events are lost once focus is gone — drop all held keys
     }
   }
 
@@ -155,7 +155,7 @@ export class Tetris implements AfterViewInit {
   protected onKeyDown(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
       this.paused.update(v => !v);
-      this.game.setSoftDrop(false); // never resume into a held drop
+      this.game.input.clear(); // never resume into held keys (the DAS charge itself survives)
       event.preventDefault();
       return;
     }
@@ -165,12 +165,15 @@ export class Tetris implements AfterViewInit {
       if (event.key === 'Enter' || event.key === ' ') { this.game.newGame(); event.preventDefault(); }
       return;
     }
+    // NES-authentic input (PLAN M55): the OS/browser key auto-repeat is IGNORED entirely
+    // (event.repeat filtered) — keydown/keyup are pure press/release edges, and all repeat timing
+    // (DAS 16/10/6, soft-drop 3-then-2) belongs to the frame-locked machine in tetris-das.ts.
+    if (event.repeat) { event.preventDefault(); return; }
     switch (event.key) {
-      case 'ArrowLeft': case 'a': this.game.moveLeft(); break;
-      case 'ArrowRight': case 'd': this.game.moveRight(); break;
-      case 'ArrowUp': case 'x': case 'w': this.game.rotate(); break;
-      // Ignore key auto-repeat: after a lock cancels the soft drop, only a FRESH press re-arms it.
-      case 'ArrowDown': case 's': if (!event.repeat) this.game.setSoftDrop(true); break;
+      case 'ArrowLeft': case 'a': this.game.input.press(-1); break;
+      case 'ArrowRight': case 'd': this.game.input.press(1); break;
+      case 'ArrowUp': case 'x': case 'w': this.game.rotate(); break; // one rotation per press (NES)
+      case 'ArrowDown': case 's': this.game.input.pressDown(); break;
       case ' ': this.game.hardDrop(); break;
       default: return;
     }
@@ -178,7 +181,11 @@ export class Tetris implements AfterViewInit {
   }
 
   protected onKeyUp(event: KeyboardEvent): void {
-    if (event.key === 'ArrowDown' || event.key === 's') this.game.setSoftDrop(false);
+    switch (event.key) {
+      case 'ArrowLeft': case 'a': this.game.input.release(-1); break;
+      case 'ArrowRight': case 'd': this.game.input.release(1); break;
+      case 'ArrowDown': case 's': this.game.input.releaseDown(); break;
+    }
   }
 
   // ── Pointer input: ONE path for mouse + touch + pen ─────────────────────────────────────────────────────
@@ -195,6 +202,7 @@ export class Tetris implements AfterViewInit {
       return;
     }
     const { sx, sy } = this.toSurface(event);
+    this.game.input.clear(); // pointer takes over — a stale keyboard hold must not keep auto-shifting
     this.canvasRef().nativeElement.setPointerCapture(event.pointerId);
     this.drag = { sx, sy, movedCells: 0, startMs: performance.now(), consumed: false };
   }

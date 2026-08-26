@@ -2181,6 +2181,37 @@ superlinear clear bonuses and survival/holes reward terms (stack-and-camp / neve
 the inputs); M53 worker (search ≈ 10 ms/move, synchronous is fine); Polyglot 0.9.x bump (migrating 6 solvers'
 `init`→`constructor` for fixes we can route around).
 
+## M55 — Tetris NES-exact input: DAS, wall charge, hypertapping  *(2026-08-26; branch `m55-tetris-das`; see `TETRIS_PRD.md` §3.10)* ✅
+
+**Why:** owner question after M54 shipped — "is DAS/hypertapping exactly like the NES?" It wasn't:
+left/right (and rotate, and hard drop) repeated at the OS keyboard auto-repeat rate, i.e. hardware-dependent
+timing. 2-agent investigation (NES disassembly spec via meatfighter/tetris.wiki: DAS counts to 16, resets
+to 10 after each auto-shift ⇒ 6-frame repeat; blocked shift saturates to 16 = wall charge; charge survives
+release AND lock, only a fresh press rewrites it; Down blocks horizontal; soft drop 3-then-2 frames,
+non-cumulative with gravity; one rotation per press; input sampled once per 60.0988 Hz frame + input-path
+audit recommending the machine live in `TetrisGame` beside the `softDrop` precedent).
+
+- **M55.1 — Pure input machine + conformance spike.** ✅ `tetris-das.ts` (dependency-free NesInput:
+  press/release edges latched between frames, tick() = one NES frame driving shift/soft-drop/gravity with
+  ≤1 shift and ≤1 row per frame). **Gate:** frame-exact conformance harness. *`tools/tetris_das_check.mjs`
+  11/11: hold shifts at frames 0,16,22,28,34,40,46 · wall charge fires on the first unblocked held frame
+  then 6-frame repeat · charge carried across spawn · 6 taps in 12 frames = 6 shifts · sub-frame double-tap
+  collapses to one · down-blocks-horizontal · 3-then-2 soft drop · non-cumulative at kill-screen gravity ·
+  left+right = neutral. (One "failure" during the spike was the TEST being less NES-accurate than the
+  machine.)*
+- **M55.2 — Wire-up.** ✅ Component = pure edge reporting (`event.repeat` filtered everywhere — rotate and
+  hard drop no longer OS-auto-repeat either); human mode runs a fixed 16.639 ms frame accumulator inside
+  the rAF loop (not setInterval — survives non-60 Hz displays and tab throttling); gravity + soft drop
+  folded into the same tick; Esc/blur/pointer-down clear held keys (the DAS charge itself survives, as on
+  the NES); pointer drag stays absolute-position (deliberately not DAS-limited). Watch-mode pilot
+  untouched (drives `microShift` directly). Engine untouched — parity pin N/A. *Live smoke: taps, DAS
+  hold, soft drop, single rotation — 0 console errors.*
+
+**Rejected up front:** relying on OS auto-repeat with tuned delays (hardware/OS-dependent, the reported
+problem); setInterval timing (drifts, throttles); implementing DAS inside the `.pg` engine (input timing is
+a HOST concern — the engine stays a pure rules solver, C5); the −96-frame game-start Down lockout and
+pushdown scoring (documented skips); left+right simultaneous handling (D-pad impossibility → neutral).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.

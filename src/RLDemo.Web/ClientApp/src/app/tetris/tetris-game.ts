@@ -1,20 +1,23 @@
 // Animating host around the single-source engine (tetris_solver.pg → PgTetris). Two drive modes over the
 // SAME micro path (TETRIS_PRD.md §3.10, owner amendment 2026-08-26):
-//  • human: shift/rotate/soft/hard drop under the NES gravity timer;
+//  • human: an NES-authentic fixed-timestep input machine (PLAN M55) — one logic tick per NES frame
+//    (60.0988 Hz accumulator inside the rAF loop, NEVER the OS/browser key auto-repeat): frame-exact
+//    DAS 16/10/6 with wall charge, hypertap latching, Down-blocks-horizontal, 3-then-2 soft drop, and
+//    gravity folded into the same tick (max 1 row/frame). The machine itself lives in tetris-das.ts.
 //  • watch: the AI picks a macro placement, then a PILOT plays it like a human would — the piece spawns
 //    centered, visibly rotates and taps sideways to the target column (one input per ~90 ms), gravity
 //    runs at the real level speed, and it hard-drops once aligned. The result is whatever the real micro
 //    moves achieve: at kill-screen gravity even the AI's "fingers" can be outrun, authentically.
 
 import { PgTetris } from './tetris_solver';
+import { NES_FRAME_MS, NesInput } from './tetris-das';
 
 export const W = 10;
 export const H = 20;
 
-const FRAME_MS = 1000 / 60;   // NES gravity is specified in frames per row at 60 fps
-const SOFT_DROP_MS = 55;      // gravity while the down key is held
-const FLASH_MS = 220;         // line-clear highlight
-const PILOT_INPUT_MS = 90;    // watch-mode cadence between the AI's simulated key presses
+const FRAME_MS = NES_FRAME_MS; // one NES frame (60.0988 Hz)
+const FLASH_MS = 220;          // line-clear highlight
+const PILOT_INPUT_MS = 90;     // watch-mode cadence between the AI's simulated key presses
 
 /** Watch-mode pilot: the placement the AI chose, played through the micro path. */
 interface Pilot {
@@ -33,10 +36,20 @@ export class TetrisGame {
   flashMs = 0;
   flashLines = 0;
 
+  /** The NES input machine (human mode). The component reports key EDGES to it (press/release —
+   * OS auto-repeat filtered out); all repeat timing is the machine's own, one tick per NES frame. */
+  readonly input = new NesInput();
+
   private pilot: Pilot | null = null;
   private pilotAcc = 0;
   private gravityAcc = 0;
-  private softDrop = false;
+  private frameAcc = 0;
+
+  private readonly dasHost = {
+    shift: (dir: -1 | 1) => this.board.microShift(dir),
+    dropStep: () => this.board.microDropStep(),
+    gravityFrames: () => this.board.gravityFrames(this.board.level),
+  };
 
   constructor() {
     this.newGame();
@@ -50,7 +63,9 @@ export class TetrisGame {
     this.flashMs = 0;
     this.gravityAcc = 0;
     this.pilotAcc = 0;
-    this.softDrop = false;
+    this.frameAcc = 0;
+    this.input.clear();
+    this.input.onSpawn();
   }
 
   get gameOver(): boolean {
@@ -64,15 +79,11 @@ export class TetrisGame {
 
   // ── Human input (micro API) ────────────────────────────────────────────────────────────────────────────
 
+  // Immediate one-shot moves: the POINTER path (absolute-position drag/tap) and nothing else — the
+  // keyboard goes through the NES input machine instead.
   moveLeft(): void { if (!this.gameOver) this.board.microShift(-1); }
   moveRight(): void { if (!this.gameOver) this.board.microShift(1); }
   rotate(): void { if (!this.gameOver) this.board.microRotate(); }
-  setSoftDrop(on: boolean): void {
-    // Engaging the fast interval must not SPEND the slow-gravity time already accumulated — without
-    // this reset, up to a full gravity period (800 ms at level 0) converts into ~11 instant rows.
-    if (on && !this.softDrop) this.gravityAcc = 0;
-    this.softDrop = on;
-  }
 
   hardDrop(): void {
     if (this.gameOver) return;
@@ -80,8 +91,9 @@ export class TetrisGame {
     this.afterLock();
   }
 
-  /** Per-frame update: NES gravity (both modes — the piece falls at the level's real speed), the
-   * watch-mode pilot's simulated key presses, and the flash decay. */
+  /** Per-frame update. Human mode runs the NES machine on a fixed 60.0988 Hz accumulator (input +
+   * gravity in one frame-exact tick); watch mode runs the pilot's simulated key presses over the
+   * ms-based gravity it always had. */
   update(dtMs: number, human: boolean): void {
     if (this.flashMs > 0) this.flashMs = Math.max(0, this.flashMs - dtMs);
     if (this.gameOver) {
@@ -89,9 +101,19 @@ export class TetrisGame {
       return;
     }
 
+    if (human) {
+      this.frameAcc += dtMs;
+      while (this.frameAcc >= FRAME_MS) {
+        this.frameAcc -= FRAME_MS;
+        if (this.gameOver || !this.board.activeLive) break;
+        if (this.input.tick(this.dasHost)) this.afterLock(); // the piece locked this frame
+      }
+      return;
+    }
+
     // The pilot "presses keys" between gravity steps: rotate first, then tap toward the column, then
     // hard-drop. Two consecutive blocked inputs (a wall of stack in the way) bail to an immediate drop.
-    if (!human && this.pilot && this.board.activeLive) {
+    if (this.pilot && this.board.activeLive) {
       this.pilotAcc += dtMs;
       while (this.pilotAcc >= PILOT_INPUT_MS && this.pilot) {
         this.pilotAcc -= PILOT_INPUT_MS;
@@ -99,12 +121,11 @@ export class TetrisGame {
       }
     }
 
-    if ((human || this.pilot) && this.board.activeLive) {
+    if (this.pilot && this.board.activeLive) {
       this.gravityAcc += dtMs;
       const gravityMs = this.board.gravityFrames(this.board.level) * FRAME_MS;
-      const interval = human && this.softDrop ? Math.min(SOFT_DROP_MS, gravityMs) : gravityMs;
-      while (this.gravityAcc >= interval) {
-        this.gravityAcc -= interval;
+      while (this.gravityAcc >= gravityMs) {
+        this.gravityAcc -= gravityMs;
         if (this.board.microDropStep()) {
           this.pilot = null; // gravity locked the piece (possibly short of the target — authentic)
           this.afterLock();
@@ -143,9 +164,9 @@ export class TetrisGame {
   }
 
   private afterLock(): void {
-    // NES behavior: a lock cancels the soft drop — the next piece falls at gravity until the key is
-    // pressed AGAIN (the component ignores auto-repeat), so holding ↓ never slams the next piece.
-    this.softDrop = false;
+    // NES spawn bookkeeping: soft-drop disengages and the drop/gravity counters reset — but the DAS
+    // charge is PRESERVED (holding a direction through the spawn auto-shifts the new piece at once).
+    this.input.onSpawn();
     this.gravityAcc = 0;
     if (this.board.lastLinesCleared > 0) {
       this.flashMs = FLASH_MS;
