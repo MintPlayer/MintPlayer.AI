@@ -1,0 +1,46 @@
+:host {
+  display: block;
+}
+
+.subtitle {
+  color: #aab2c5;
+  max-width: 46rem;
+}
+
+.hint {
+  color: #8b93a7;
+  font-size: 0.9rem;
+  max-width: 46rem;
+}
+
+.modes {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+  flex-wrap: wrap;
+
+  .tier-label {
+    color: #aab2c5;
+    margin-left: 0.75rem;
+    font-size: 0.9rem;
+  }
+}
+
+// The stage: the 620:760 logical canvas (well + sidebar); aspect ratio is bound from the component.
+.tet-stage {
+  position: relative;
+  width: min(560px, 100%);
+  margin: 0.75rem auto;
+  background: #141824;
+  border-radius: 8px;
+  overflow: hidden;
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none; // we own pointer dragging — don't pan/scroll the page
+    cursor: pointer;
+  }
+}

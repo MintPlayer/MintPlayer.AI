@@ -1,0 +1,49 @@
+<h1>Tetris</h1>
+<p class="subtitle">
+  The classic falling-block game — and an AI that chooses <strong>where each piece lands</strong>. Watch the
+  hand-tuned Dellacherie evaluator, the trained DQN, or their look-ahead search versions play, or take the
+  keyboard yourself. Turn on <strong>rising garbage</strong> for a survival challenge: a nearly-full row pushes
+  the stack up every 10 pieces. Runs entirely in your browser.
+</p>
+
+<div class="modes">
+  <button type="button" [color]="mode() === 'human' ? colors.primary : colors.secondary" (click)="setMode('human')">Play yourself</button>
+  <button type="button" [color]="mode() === 'watch' ? colors.primary : colors.secondary" (click)="setMode('watch')">Watch AI</button>
+  <button type="button" [color]="garbage() ? colors.primary : colors.secondary" (click)="toggleGarbage()"
+          title="A full row with one random gap rises from the bottom every 10 placed pieces">
+    Rising garbage{{ garbage() ? ': on' : '' }}
+  </button>
+  @if (mode() === 'human') {
+    <button type="button" [color]="colors.secondary" (click)="newGame()">New game</button>
+  } @else {
+    <span class="tier-label">Player:</span>
+    <button type="button" [color]="tier() === 'random' ? colors.primary : colors.secondary" (click)="setTier('random')">Random</button>
+    <button type="button" [color]="tier() === 'dellacherie' ? colors.primary : colors.secondary" (click)="setTier('dellacherie')">Dellacherie</button>
+    <button type="button" [color]="tier() === 'della-search' ? colors.primary : colors.secondary" (click)="setTier('della-search')">Dellacherie + search</button>
+    <button type="button" [color]="tier() === 'net' ? colors.primary : colors.secondary" (click)="setTier('net')">Trained net</button>
+    <button type="button" [color]="tier() === 'net-search' ? colors.primary : colors.secondary" (click)="setTier('net-search')">Net + search</button>
+  }
+</div>
+
+<div class="tet-stage" [style.aspect-ratio]="stageAspect">
+  <canvas #board
+          (pointerdown)="onPointerDown($event)"
+          (pointermove)="onPointerMove($event)"
+          (pointerup)="onPointerUp($event)"
+          (pointercancel)="onPointerUp($event)"></canvas>
+</div>
+
+@if (mode() === 'human') {
+  <p class="hint">
+    Keyboard: ←/→ move, ↑ or X rotate, ↓ soft drop, Space hard drop. Touch: drag sideways to move, tap to
+    rotate, swipe down to drop. NES scoring: 40/100/300/1200 for 1/2/3/4 lines — a tetris pays 30× a single.
+  </p>
+} @else {
+  <p class="hint">
+    All the players run right here in your browser, on the exact engine the AI trained against.
+    <strong>Dellacherie</strong> is the classic six-feature hand-tuned evaluator; <strong>Trained net</strong>
+    is a masked dueling DQN choosing among all ~23 possible landings of each piece; the
+    <strong>search</strong> tiers add a look-ahead over the next piece. Rising garbage is the honest
+    benchmark — it separates the players fast.
+  </p>
+}

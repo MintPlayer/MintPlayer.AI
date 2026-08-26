@@ -24,7 +24,7 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
 
     public override string Environment => "tetris";
     protected override string StepNoun => "placements";
-    protected override string GateLabel => "mean lines";
+    protected override string GateLabel => "mean score";
     protected override string DisplayName => "Tetris DQN";
     protected override string FreshStartDetail => $" (10×20, afterstate placements, {evalEnv.PieceBudget}-piece episodes)";
     protected override int ObservationSize => TetrisEnv.ObservationSize;
@@ -51,21 +51,25 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
 
     protected override (double Gate, IReadOnlyList<CampaignMetric> Metrics, string Summary) EvaluateNet(IValueNet net)
     {
-        var (lines, pieces, topOuts) = EvalNet(net);
+        var (score, lines, tetrises, pieces, topOuts) = EvalNet(net);
         var metrics = new CampaignMetric[]
         {
+            new("score", score, "F0"),
             new("lines", lines, "F1"),
+            new("tetrises", tetrises, "F2"),
             new("pieces", pieces, "F1"),
             new("topouts", topOuts, "F0"),
         };
-        return (lines, metrics, $"mean lines {lines:F1} | mean pieces {pieces:F1} | top-outs {topOuts}/{Options.EvalEpisodes}");
+        return (score, metrics,
+            $"mean score {score:F0} | lines {lines:F1} | tetrises {tetrises:F2} | pieces {pieces:F1} | top-outs {topOuts}/{Options.EvalEpisodes}");
     }
 
-    /// <summary>Mean lines + pieces survived over fixed-seed greedy masked episodes (lines is the gate metric).</summary>
-    private (double Lines, double Pieces, int TopOuts) EvalNet(IValueNet net)
+    /// <summary>Mean NES score (the gate metric — the owner's objective), lines, tetrises and pieces
+    /// survived over fixed-seed greedy masked episodes. Top-outs are the stack-and-camp watchdog.</summary>
+    private (double Score, double Lines, double Tetrises, double Pieces, int TopOuts) EvalNet(IValueNet net)
     {
         var agent = new GreedyQAgent(net, TetrisEnv.ActionCount);
-        double totalLines = 0, totalPieces = 0;
+        double totalScore = 0, totalLines = 0, totalTetrises = 0, totalPieces = 0;
         int topOuts = 0;
         for (int e = 0; e < Options.EvalEpisodes; e++)
         {
@@ -81,9 +85,12 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
                     break;
                 }
             }
+            totalScore += evalEnv.Score;
             totalLines += evalEnv.Lines;
+            totalTetrises += evalEnv.Tetrises;
             totalPieces += evalEnv.PiecesPlaced;
         }
-        return (totalLines / Options.EvalEpisodes, totalPieces / Options.EvalEpisodes, topOuts);
+        int n = Options.EvalEpisodes;
+        return (totalScore / n, totalLines / n, totalTetrises / n, totalPieces / n, topOuts);
     }
 }

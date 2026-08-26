@@ -95,16 +95,24 @@ internal static class TetrisLab
         };
         if (agent is not null)
             policies.Add(("net", (b, _) => agent.Act(b.BuildObservation(), b.LegalMask(), greedy: true), episodes, 5_000));
+        // Net+search runs the GENERATED f64 forward (the browser's exact tier) via the facade-loaded net.
+        byte[]? ckptBytes = agent is not null ? File.ReadAllBytes(netPath) : null;
+        if (ckptBytes is not null)
+            policies.Add(("net-search(8)", (b, _) =>
+            {
+                if (b.NetInputSize < 0) b.LoadNet(new MemoryStream(ckptBytes));
+                return b.NetSearchAction(8);
+            }, searchEpisodes, 1_500));
 
-        Console.WriteLine("Protocol A — uniform pieces, no garbage, capped lines:");
+        Console.WriteLine("Protocol A — uniform pieces, no garbage, capped: NES score (lines · tetrises annotated):");
         var linesA = new List<(string Name, double Mean, double Ci)>();
         foreach (var (name, act, eps, _) in policies)
-            linesA.Add(RunProtocol(name, eps, act, garbageEvery: 0, pieceCap: pieceBudget, metricLines: true));
+            linesA.Add(RunProtocol(name, eps, act, garbageEvery: 0, pieceCap: pieceBudget, metricScore: true));
 
         Console.WriteLine("Protocol B — garbage every 10, survival (pieces placed):");
         var survB = new List<(string Name, double Mean, double Ci)>();
         foreach (var (name, act, eps, capB) in policies)
-            survB.Add(RunProtocol(name, eps, act, garbageEvery: 10, pieceCap: capB, metricLines: false));
+            survB.Add(RunProtocol(name, eps, act, garbageEvery: 10, pieceCap: capB, metricScore: false));
 
         var randomB = survB[0];
         var dellaB = survB[1];
@@ -121,14 +129,21 @@ internal static class TetrisLab
             Console.WriteLine($"net survival (B): {netB.Mean:F1} (gates: ≥ 100 · ≥ 4× random [{4 * randomB.Mean:F0}] · " +
                               $"{(netB.Mean - netB.Ci > randomB.Mean + randomB.Ci ? "CI-SEPARATED" : "OVERLAPPING")} vs random)");
             Console.WriteLine($"net gap share random→della (B): {gapShare:P0} (gate ≥ 25%)");
-            Console.WriteLine($"net lines (A): {netA.Mean:F1} (gate ≥ 50)");
+            Console.WriteLine($"net score (A): {netA.Mean:F0} (gate ≥ 2000 — ≈50 single-line clears in NES points)");
+            if (survB.Count >= 5)
+            {
+                var netSearchB = survB[4];
+                Console.WriteLine($"net+search vs net (B): {100 * (netSearchB.Mean - netB.Mean) / netB.Mean:+0.0;-0.0}% " +
+                                  $"({(netSearchB.Mean - netSearchB.Ci > netB.Mean + netB.Ci ? "CI-SEPARATED" : "OVERLAPPING")}; M54.4 gate: separated)");
+                Console.WriteLine($"net+search vs dellacherie (B): {100 * (netSearchB.Mean - dellaB.Mean) / dellaB.Mean:+0.0;-0.0}% (M54.4 headline gate: ≥ 0%)");
+            }
         }
     }
 
     private static (string, double, double) RunProtocol(string name, int episodes,
-        Func<TetrisBoard, int, int> policy, int garbageEvery, int pieceCap, bool metricLines)
+        Func<TetrisBoard, int, int> policy, int garbageEvery, int pieceCap, bool metricScore)
     {
-        double sum = 0, sumSq = 0;
+        double sum = 0, sumSq = 0, lines = 0, tetrises = 0;
         int topOuts = 0;
         for (int e = 0; e < episodes; e++)
         {
@@ -142,13 +157,16 @@ internal static class TetrisLab
                 if (action < 0 || b.ApplyPlacement(action) < 0) break;
             }
             if (b.GameOver) topOuts++;
-            double metric = metricLines ? b.Lines : b.PiecesPlaced;
+            double metric = metricScore ? b.Score : b.PiecesPlaced;
             sum += metric;
             sumSq += metric * metric;
+            lines += b.Lines;
+            tetrises += b.Tetrises;
         }
         double mean = sum / episodes;
         double ci = 1.96 * Math.Sqrt(Math.Max(0, sumSq / episodes - mean * mean) / episodes);
-        Console.WriteLine($"  {name,-20} mean {mean,8:F1} ± {ci:F1} (95% CI), top-outs {topOuts}/{episodes}");
+        Console.WriteLine($"  {name,-20} mean {mean,9:F1} ± {ci:F1} (95% CI), " +
+                          $"lines {lines / episodes:F1} · tetrises {tetrises / episodes:F2} · top-outs {topOuts}/{episodes}");
         return (name, mean, ci);
     }
 }

@@ -50,7 +50,7 @@ public class TetrisEngineTests
         int cleared = board.ApplyPlacement(1 * 10 + 0); // vertical I in column 0
         Assert.Equal(1, cleared);
         Assert.Equal(1, board.Lines);
-        Assert.Equal(100, board.Score);
+        Assert.Equal(40, board.Score); // NES single
         // The three surviving I cells slid down one row: column 0 filled in rows 17..19.
         Assert.True(board.Cell(0, 19));
         Assert.True(board.Cell(0, 17));
@@ -58,7 +58,7 @@ public class TetrisEngineTests
     }
 
     [Fact]
-    public void LineClear_TetrisScoresEightHundred()
+    public void LineClear_TetrisScoresTwelveHundredAndCounts()
     {
         var board = new TetrisBoard();
         board.Reset(1);
@@ -69,7 +69,8 @@ public class TetrisEngineTests
 
         int cleared = board.ApplyPlacement(1 * 10 + 9); // vertical I in column 9
         Assert.Equal(4, cleared);
-        Assert.Equal(800, board.Score);
+        Assert.Equal(1200, board.Score); // NES tetris
+        Assert.Equal(1, board.Tetrises);
         for (int y = 0; y < 20; y++) Assert.Equal(0, board.Row(y));
     }
 

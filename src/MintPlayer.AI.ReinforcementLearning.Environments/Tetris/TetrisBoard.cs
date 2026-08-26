@@ -7,8 +7,9 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.Tetris;
 
 /// <summary>
 /// The Tetris board: 10×20, 7 tetrominoes, afterstate macro-actions (action = rot·10 + col, hard
-/// vertical drop, no tucks/kicks — TETRIS_PRD.md §1). Reward currency is LINES cleared per placement;
-/// the display score (100/300/500/800) accrues separately. Optional 7-bag piece stream and the
+/// vertical drop, no tucks/kicks — TETRIS_PRD.md §1). Reward currency is LINES cleared per placement
+/// (+ the tetris bonus); the NES-style score (40/100/300/1200) accrues separately and is the metric the
+/// AI is asked to maximize. Optional 7-bag piece stream and the
 /// rising-garbage mode (a gapped bottom row every N placements). Top-out = no legal placement for the
 /// new piece, or a garbage shift overflowing the top.
 /// </summary>
@@ -32,8 +33,13 @@ public sealed class TetrisBoard
     /// <summary>Map any 64-bit seed onto the engine's minstd state range [1, 2^31−2].</summary>
     internal static int SeedToInt(ulong seed) => (int)(seed % 2147483646UL) + 1;
 
+    /// <summary>Training-reward bonus (lines units) for a 4-line clear — mirror of the engine's
+    /// <c>RewardTetrisBonus</c> (owner decision 2026-08-26: build for tetrises).</summary>
+    public const int TetrisRewardBonus = 8;
+
     public int Score => _core.score;
     public int Lines => _core.lines;
+    public int Tetrises => _core.tetrises;
     public int PiecesPlaced => _core.piecesPlaced;
     public bool GameOver => _core.gameOver;
     public int LastLinesCleared => _core.lastLinesCleared;
@@ -113,6 +119,77 @@ public sealed class TetrisBoard
     /// piece, expectimax over the unknown third piece (PRD §3.8).</summary>
     public int DellaSearchAction(int beamA = 8, int beamB = 5) => _core.dellaSearchAction(beamA, beamB);
 
+    // ── Trained-net tiers through the single-source forward ─────────────────────────────────────────────────
+    // The SDK's GreedyQAgent is the reference net player (float32 forward); these run the GENERATED f64
+    // forward instead — the exact code the browser executes — so the Lab's net+search row and the
+    // net-parity test measure what actually ships.
+
+    private PgTetDuelingNet? _net;
+
+    /// <summary>Input width of the loaded net; −1 when none is loaded.</summary>
+    public int NetInputSize => _net?.inputSize ?? -1;
+
+    /// <summary>Parse a dueling-q checkpoint into the single-source net (the line-for-line reference for
+    /// <c>tetris-net.ts</c> — keep the two in sync). False = wrong kind or input width (stale checkpoint).</summary>
+    public bool LoadNet(Stream checkpoint)
+    {
+        var net = ParseDuelingQCheckpoint(checkpoint);
+        if (net is null || net.inputSize != ObservationSize) return false;
+        _net = net;
+        return true;
+    }
+
+    /// <summary>Masked argmax over the loaded net's Q — the browser's "Trained net" tier.</summary>
+    public int NetAction() => _net is null ? -1 : _core.netAction(_net);
+
+    /// <summary>Beam over Q + one-ply rollout + expectimax over the unknown next-next piece — the browser's
+    /// "Net + search" tier (PRD §3.8).</summary>
+    public int NetSearchAction(int beamWidth = 8) => _net is null ? -1 : _core.netSearchAction(_net, beamWidth);
+
+    internal static PgTetDuelingNet? ParseDuelingQCheckpoint(Stream stream)
+    {
+        using var r = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+        List<double> ReadFloats()
+        {
+            int n = r.ReadInt32();
+            var a = new List<double>(n);
+            for (int i = 0; i < n; i++) a.Add(r.ReadSingle()); // float32 → exact f64, like the DataView read
+            return a;
+        }
+
+        if (r.ReadUInt32() != 0x434E4C52u) return null;      // "RLNC"
+        if (r.ReadString() != "dueling-q") return null;
+        int version = r.ReadInt32();
+        int inputSize = r.ReadInt32();
+        int hiddenCount = r.ReadInt32();
+        var hidden = new List<int>();
+        for (int i = 0; i < hiddenCount; i++) hidden.Add(r.ReadInt32());
+        int actions = r.ReadInt32();
+        bool noisy = version >= 2 && r.ReadByte() != 0;
+
+        var trunkW = new List<double>();
+        var trunkB = new List<double>();
+        for (int l = 0; l < hiddenCount; l++)
+        {
+            trunkW.AddRange(ReadFloats());
+            trunkB.AddRange(ReadFloats());
+        }
+
+        List<double> valueW, valueB, advW, advB;
+        if (!noisy)
+        {
+            valueW = ReadFloats(); valueB = ReadFloats();
+            advW = ReadFloats(); advB = ReadFloats();
+        }
+        else
+        {
+            valueW = ReadFloats(); ReadFloats(); valueB = ReadFloats(); ReadFloats();
+            advW = ReadFloats(); ReadFloats(); advB = ReadFloats(); ReadFloats();
+        }
+
+        return new PgTetDuelingNet(inputSize, actions, hidden, trunkW, trunkB, valueW, valueB, advW, advB);
+    }
+
     // ── Host-only helpers ────────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>Overwrite the board rows for directed tests (bitmasks, row 0 = top). Counters untouched.</summary>
@@ -142,6 +219,7 @@ public sealed class TetrisBoard
         writer.Write(_core.next);
         writer.Write(_core.score);
         writer.Write(_core.lines);
+        writer.Write(_core.tetrises);
         writer.Write(_core.piecesPlaced);
         writer.Write(_core.gameOver);
         writer.Write(_core.lastLinesCleared);
@@ -168,6 +246,7 @@ public sealed class TetrisBoard
         _core.next = reader.ReadInt32();
         _core.score = reader.ReadInt32();
         _core.lines = reader.ReadInt32();
+        _core.tetrises = reader.ReadInt32();
         _core.piecesPlaced = reader.ReadInt32();
         _core.gameOver = reader.ReadBoolean();
         _core.lastLinesCleared = reader.ReadInt32();

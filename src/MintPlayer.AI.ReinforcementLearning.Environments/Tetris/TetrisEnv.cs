@@ -12,8 +12,10 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.Tetris;
 /// <para>Action = one of 40 placements, hard-masked (<see cref="CurrentActionMask"/>); the mask CAN go
 /// all-false — that is the top-out, and the env reports it as <c>terminated</c> on the step that caused
 /// it (unlike the other games' never-empty masks, PRD §3.3/risk 2). Observation = 454 floats (board +
-/// piece one-hots + six per-action feature planes). Reward = LINES cleared (0–4, linear — the display
-/// score is cosmetic, PRD §3.5); top-out ⇒ terminated (the ended reward stream is the penalty), the
+/// piece one-hots + six per-action feature planes). Reward = LINES cleared plus the tetris
+/// bonus (owner amendment 2026-08-26: a 4-line clear pays 4+8=12 — the AI is asked to build for
+/// tetrises; raw superlinear score as reward was rejected as the stack-and-camp trap, PRD §3.5); the
+/// NES score (40/100/300/1200) is the reported metric. Top-out ⇒ terminated (the ended reward stream is the penalty), the
 /// piece budget ⇒ truncated (bootstraps).</para>
 /// </summary>
 public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider, IStatefulEnvironment
@@ -84,6 +86,7 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
     public int PieceBudget => _pieceBudget;
     public int Score => _board.Score;
     public int Lines => _board.Lines;
+    public int Tetrises => _board.Tetrises;
     public int PiecesPlaced => _pieces;
     /// <summary>The underlying board — for the scripted baselines and the serving/watch path.</summary>
     public TetrisBoard Board => _board;
@@ -112,7 +115,8 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
         bool terminated = _board.GameOver;
         bool truncated = !terminated && _pieces >= _pieceBudget;
         _done = terminated || truncated;
-        return new StepResult<float[]>(_board.BuildObservation(), cleared / RewardScale, terminated, truncated, EnvInfo.Empty);
+        float reward = (cleared + (cleared == 4 ? TetrisBoard.TetrisRewardBonus : 0)) / RewardScale;
+        return new StepResult<float[]>(_board.BuildObservation(), reward, terminated, truncated, EnvInfo.Empty);
     }
 
     public bool[] CurrentActionMask() => _board.LegalMask();

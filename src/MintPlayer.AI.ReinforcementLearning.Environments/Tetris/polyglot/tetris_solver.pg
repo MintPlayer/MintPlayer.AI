@@ -56,6 +56,11 @@ class PgTetris {
   const FullRow: i32 = 1023          // (1 << W) − 1
   const PieceCount: i32 = 7          // 0=I 1=O 2=T 3=S 4=Z 5=L 6=J
   const ActionCount: i32 = 40        // rot·10 + col
+  // Training-reward bonus for a 4-line clear, in lines units (owner decision 2026-08-26: the AI should
+  // build for and clear tetrises). reward = lines + (lines==4 ? bonus : 0) — a tetris pays 12 vs 4 for
+  // four singles. Superlinear SCORE as the raw reward was rejected (the stack-and-camp trap, PRD §3.5);
+  // netSearchAction's rollout reward must use the same units as training (TetrisEnv mirrors this const).
+  const RewardTetrisBonus: i32 = 8
 
   // Piece tables, built in init() (instance lists, NOT module-level lets — the module-globals-in-methods
   // fix is post-0.8.1). Rotation slot r of piece p lives at rotIdx = p·4 + r; each rotation holds 4 cells
@@ -79,8 +84,9 @@ class PgTetris {
 
   var current: i32                   // piece in play (the macro action places it)
   var next: i32                      // 1-piece preview
-  var score: i32                     // display score: 100/300/500/800 per 1/2/3/4 lines
+  var score: i32                     // NES-style score: 40/100/300/1200 per 1/2/3/4 lines
   var lines: i32                     // total lines cleared (the training-reward currency)
+  var tetrises: i32                  // 4-line clears (the owner's headline metric)
   var piecesPlaced: i32
   var gameOver: bool
   var lastLinesCleared: i32          // of the most recent lock
@@ -107,6 +113,7 @@ class PgTetris {
     this.next = 0
     this.score = 0
     this.lines = 0
+    this.tetrises = 0
     this.piecesPlaced = 0
     this.gameOver = false
     this.lastLinesCleared = 0
@@ -213,6 +220,7 @@ class PgTetris {
     for i in 0..H { this.rows.add(0) }
     this.score = 0
     this.lines = 0
+    this.tetrises = 0
     this.piecesPlaced = 0
     this.gameOver = false
     this.lastLinesCleared = 0
@@ -305,11 +313,13 @@ class PgTetris {
     return cleared
   }
 
+  // NES-style line scoring (owner decision 2026-08-26): a tetris pays 30× a single — the score the AI
+  // is asked to maximize rewards building for 4-line clears.
   fn lineScore(cleared: i32): i32 {
-    if cleared == 1 { return 100 }
-    if cleared == 2 { return 300 }
-    if cleared == 3 { return 500 }
-    if cleared == 4 { return 800 }
+    if cleared == 1 { return 40 }
+    if cleared == 2 { return 100 }
+    if cleared == 3 { return 300 }
+    if cleared == 4 { return 1200 }
     return 0
   }
 
@@ -318,6 +328,7 @@ class PgTetris {
   fn afterLock(cleared: i32) {
     this.score += this.lineScore(cleared)
     this.lines += cleared
+    if cleared == 4 { this.tetrises += 1 }
     this.lastLinesCleared = cleared
     this.piecesPlaced += 1
     if this.garbageEvery > 0 {
@@ -718,7 +729,9 @@ class PgTetris {
       }
       this.restoreRows(saved)
 
-      let val = cleared + acc / PieceCount
+      // r1 in TRAINING-reward units: lines + the tetris bonus (must match TetrisEnv's reward).
+      let r1 = cleared + (if cleared == 4 { RewardTetrisBonus } else { 0 })
+      let val = r1 + acc / PieceCount
       if val > bestVal { bestVal = val; best = a2 }
     }
     return best

@@ -2139,8 +2139,9 @@ scripted tiers random/Dellacherie/net/net+search in the `.pg`, Pattern C fully c
 - **M54.2 — Env + campaign + Lab.** **Gates:** campaign contract green · bitwise resume · `--baselines` prints
   both eval protocols with CIs.
 - **M54.3 — Training run** (CPU, 400K steps). **Gates:** net garbage/10 survival ≥ 100 pieces (≥4× random,
-  CI-separated) · gap-share vs Dellacherie ≥ 25% · ≥ 50 lines/500-piece standard. Escalation pre-registered:
-  `--noisy` → growth → honest stop-loss.
+  CI-separated) · gap-share vs Dellacherie ≥ 25% · ≥ 2000 mean NES score/500-piece standard (amended
+  2026-08-26 — owner: maximize score, build for tetrises; reward = lines + 8·[tetris], NES table
+  40/100/300/1200, tetris rate reported). Escalation pre-registered: `--noisy` → growth → honest stop-loss.
 - **M54.4 — Search tier** (depth-1 known-next + expectimax, in-`.pg`). **Gates:** net+search > net CI-separated ·
   ≥ Dellacherie-alone on garbage survival · ≤ 50 ms/move in-browser.
 - **M54.5 — Web** (Pattern C, human keyboard+touch incl. garbage toggle, watch tiers). **Gates:** net-parity

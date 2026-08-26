@@ -33,7 +33,9 @@ public class TetrisEnvTests
             var step = env.Step(action);
             Assert.False(step.Terminated); // 5 pieces cannot top out a fresh board
             Assert.Equal(piece == 4, step.Truncated);
-            Assert.Equal(env.Lines - linesBefore, step.Reward, 5); // reward IS lines cleared
+            int cleared = env.Lines - linesBefore;
+            // Hybrid reward (owner amendment 2026-08-26): lines + the tetris bonus.
+            Assert.Equal(cleared + (cleared == 4 ? TetrisBoard.TetrisRewardBonus : 0), step.Reward, 5);
         }
         Assert.Throws<InvalidOperationException>(() => env.Step(0));
     }
