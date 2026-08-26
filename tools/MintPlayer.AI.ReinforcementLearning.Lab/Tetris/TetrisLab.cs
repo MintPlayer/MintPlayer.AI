@@ -55,9 +55,11 @@ internal static class TetrisLab
         // (M54.3 escalation: the bare reward is too sparse — 180K steps measured near-random) and lives on
         // the TRAIN env only, so gates stay honest; --no-pbrs reverts to the bare reward.
         bool pbrs = !a.Has("--no-pbrs");
-        // Mixed garbage on/off per training episode (default ON — one net serves both web modes; garbage
-        // boards are otherwise out-of-distribution). --no-mix-garbage reverts to pure no-garbage training.
-        bool mixGarbage = !a.Has("--no-mix-garbage");
+        // Mixed garbage on/off per training episode. MEASURED WORSE on both protocols (tet5train head-to-
+        // head vs tet4train, 30 seeds: A 17,022 vs 21,739 · B survival 101.3 vs 105.0): the dense target is
+        // the same function on any board, so the clean-trained net already generalizes to garbage — the
+        // garbage ceiling is γ=0 MYOPIA, which search fixes, not state coverage. Kept as an opt-in flag.
+        bool mixGarbage = a.Has("--mix-garbage");
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             services => services.AddTetrisDqnCampaign(
                 trainEnv: new TetrisEnv(pieceBudget)
