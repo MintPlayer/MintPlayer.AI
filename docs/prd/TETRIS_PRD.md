@@ -120,6 +120,26 @@ unshaped), fixed then superseded; `--no-pbrs`/`--dense` flags keep both paths ru
 - **Training backend: CPU.** *Rejected: GPU/CUDA* — no resident DQN trainer exists (only ResidualMlp/conv-PV families); a 454×128×128×(40+1) MLP is far below the GEMM routing threshold that makes `AddGpuBackend` pay; CPU autograd is the deterministic reference; every shipped DQN game chose the same. Building a resident dueling trainer is real work with no payoff at this size — reconsider only if the net grows conv-shaped (§7).
 - **Exploration: ε-greedy** `LinearSchedule(1.0 → 0.05 over 30_000)` — masked random exploration over ~23 legal placements already visits diverse afterstates cheaply. **NoisyNets stays a shipped one-flag A/B lever** (`--noisy`, FruitCake precedent incl. plain→noisy checkpoint promotion): pre-registered escalation if the ε-greedy net plateaus below gate (§5 M54.3). *Rejected as default:* NoisyNets' per-step resample cost buys most when ε-exploration is structurally poor (long micro-action corridors) — not the macro-action case.
 
+**Amended 2026-08-26 (post-ship, `tet6train`/`tet7train` — the shipped net upgraded 4×).** The M54.3
+recipe left two levers untouched: the dense target (della/10 units) shares one gradient with the sampled-
+action realized reward (lines units) — a unit CONFLICT the 128×128 net resolved by blurring both — and
+capacity. `tet6train` (trunk **256×256**, `--dense-weight 8` to make the dense term dominate, lr 5e-4,
+400K-step budget) validated the diagnosis immediately: keep-best **83,265 mean score / 190.3 lines** at
+70K steps vs the shipped 21,813 (campaign eval, seeds 5000+e). Past that peak every eval DECLINED
+(56–60K by 210–330K steps) while the loss kept FALLING (0.63 → 0.14) — the third failure signature,
+**distribution narrowing**: the improving policy fills the 100K replay buffer with clean flat stacks and
+the net forgets messy states (which is where eval games are decided). Not saturation (that's a HIGH-loss
+plateau — `--grow` correctly never fired), not undervaluation-by-volume: the fix is DIVERSE sampling.
+Two knobs added (`TetrisDqnOptions.EpsilonEnd` / `--eps-end`, `BufferCapacity` / `--buffer`) and
+`tet7train` warm-started from the 83K keep-best (lr 2e-4, ε 0.3→**0.12** floor, buffer **300K**); its
+first eval already beat the seeded baseline. **Head-to-head on HELD-OUT seeds 9000+e** (the campaign's
+5000+e line selected the keep-best, so it can't also judge it; `tools/tetris_head2head.mjs`, TS twin =
+the browser's exact code): protocol A net **85,199 ± 3,519** vs 25,193 ± 8,326 (+238%, CI-separated);
+protocol B net survival **176.2 vs 99.5** (+77%, CI-separated); net-search(8) survival **435.2 vs 160.9**
+(+170%, CI-separated) — the new plain net outscores the OLD net+search on A. Shipped to
+`wwwroot/models/tetris.dqn.ckpt` (753 KB LFS). γ=0 myopia still bounds plain-net garbage survival;
+della-search's censored 1480+ stands as the strength ceiling.
+
 ### 3.8 Scripted baselines = sanity gates = difficulty tiers
 All in the `.pg`, exposed on the facade, reused verbatim by the browser tiers — the Crazy Fruits pattern:
 1. `randomAction` — uniform over legal placements;
@@ -140,7 +160,7 @@ Human mode plays **real-time micro-Tetris** (the engine exposes the micro-step A
 Engine `Tetris/polyglot/tetris_solver.pg` + `Tetris/TetrisBoard.cs` + `pgconfig.json` include · env `Tetris/TetrisEnv.cs` · campaign `Campaigns/Tetris/TetrisDqnCampaign.cs` + options/registration in `Shared/` · Lab `tools/.../Lab/Tetris/TetrisLab.cs` + dispatch line · weights `src/RLDemo.Web/wwwroot/models/tetris.dqn.ckpt` (Git LFS) · web `ClientApp/src/app/tetris/*` + route/nav/home-card · tests `TetrisEngineTests`, `TetrisEnvTests`, `TetrisParityTests` + `tools/tetris_parity.mjs`, `TetrisNetParityTests`, campaign contract/registration cases · docs `ARCHITECTURE.md` + `PLAN.md` sync.
 
 ## 4. Locked constants (do not re-derive)
-Board 10×20 · actions 40 (4 rot × 10 col, hard-masked, all-masked ⇒ terminated) · obs **454** = 200 board + 7+7 piece one-hots + 40×6 per-action Dellacherie-basis planes (scales: landing/20, eroded/8, ΔrowT/20, ΔcolT/20, Δholes/10, Δwells/20) · reward = lines + 8·[tetris] (scale 1; amended 2026-08-26), NES score 40/100/300/1200 × (level+1), level = lines/10, gravity = NES frame curve (web human mode) = eval gate metric, top-out = terminated, 500-piece training cap = truncated · NES input (M55): 60.0988 Hz logic frames, DAS 16/10 (6-frame repeat), wall charge 16, soft drop 3-then-2 frames, ≤1 shift and ≤1 row per frame · **γ 0 + dense Dellacherie-basis regression** (amended after the measured M54.3 escalation; targets = (−20L + 8E − 20ΔrT − 20ΔcT − 40Δh − 20Δw)/10 from the obs planes, NaN = illegal, weight 1.0) · n-step 1 · trunk [128,128] dueling double-DQN, ε 1.0→0.05/30K, CPU · RNG minstd (`PgTetRng`), 3 streams (pieces/garbage/spare) · training uniform-random no-garbage; web default 7-bag · garbage mode: every 10 placements, full row one random gap, overflow ⇒ game over · eval 100 eps seeds `5000+e`, protocol A (500-piece lines) + primary protocol B (garbage/10 survival) · spike bars (JS, n≥50): random A **0.06 ± 0.04** lines / B **21.6 ± 0.6** pieces; Dellacherie A **197.4 ± 0.4** lines / B **392.8 ± 45.1** pieces; branching ≈ 23; ~369K placements/s · ckpt `tetris.dqn` / `tetris.dqn-state` · Polyglot 0.8.1 (`init`, no `>>>`, no `i64`).
+Board 10×20 · actions 40 (4 rot × 10 col, hard-masked, all-masked ⇒ terminated) · obs **454** = 200 board + 7+7 piece one-hots + 40×6 per-action Dellacherie-basis planes (scales: landing/20, eroded/8, ΔrowT/20, ΔcolT/20, Δholes/10, Δwells/20) · reward = lines + 8·[tetris] (scale 1; amended 2026-08-26), NES score 40/100/300/1200 × (level+1), level = lines/10, gravity = NES frame curve (web human mode) = eval gate metric, top-out = terminated, 500-piece training cap = truncated · NES input (M55): 60.0988 Hz logic frames, DAS 16/10 (6-frame repeat), wall charge 16, soft drop 3-then-2 frames, ≤1 shift and ≤1 row per frame · **γ 0 + dense Dellacherie-basis regression** (amended after the measured M54.3 escalation; targets = (−20L + 8E − 20ΔrT − 20ΔcT − 40Δh − 20Δw)/10 from the obs planes, NaN = illegal, weight **8** since tet6 — the dense term must drown the unit-conflicting realized-reward term) · n-step 1 · trunk **[256,256]** dueling double-DQN (amended 2026-08-26, tet6train; [128,128] was the M54.3 ship), ε 1.0→0.05/30K (refine runs: `--eps-end 0.12 --buffer 300000` against distribution narrowing — §3.7), CPU · RNG minstd (`PgTetRng`), 3 streams (pieces/garbage/spare) · training uniform-random no-garbage; web default 7-bag · garbage mode: every 10 placements, full row one random gap, overflow ⇒ game over · eval 100 eps seeds `5000+e`, protocol A (500-piece lines) + primary protocol B (garbage/10 survival) · spike bars (JS, n≥50): random A **0.06 ± 0.04** lines / B **21.6 ± 0.6** pieces; Dellacherie A **197.4 ± 0.4** lines / B **392.8 ± 45.1** pieces; branching ≈ 23; ~369K placements/s · ckpt `tetris.dqn` / `tetris.dqn-state` · Polyglot 0.8.1 (`init`, no `>>>`, no `i64`).
 
 ## 5. Milestones & gates (falsifiable, in order)
 

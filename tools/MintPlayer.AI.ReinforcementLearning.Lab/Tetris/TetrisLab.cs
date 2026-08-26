@@ -49,6 +49,8 @@ internal static class TetrisLab
             // value read back from the observation planes.
             DenseRegression = a.Has("--dense"),
             DenseTargetWeight = a.Flt("--dense-weight", 1.0f),
+            EpsilonEnd = a.Flt("--eps-end", 0.05f),
+            BufferCapacity = a.Int("--buffer", 100_000),
         };
         // Training + eval both uniform-random pieces, no garbage (the benchmark-honest protocol; garbage is
         // an eval protocol and a web mode, not a training distribution — PRD §3.6). PBRS shaping defaults ON

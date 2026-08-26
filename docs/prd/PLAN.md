@@ -2218,6 +2218,18 @@ audit recommending the machine live in `TetrisGame` beside the `softDrop` preced
   net, action semantics, and the parity pin (472451993, re-verified) are untouched. *7 NES-rotation
   checks green on the TS twin (T pivot 4-cycle at a fixed origin, I wobble, diagonals-occupied rotation,
   wall/floor refusals, spawn-row head-room) + C# tests rewritten to the same expectations.*
+- **M55.4 — Net upgrade (tet6train, shipped in this PR).** ✅ Owner ask: "start a new training with
+  parameters that will significantly improve the net." Diagnosis first (TETRIS_PRD.md §3.7 amendment):
+  the M54.3 net's dense della/10-unit targets shared one gradient with lines-unit realized rewards (unit
+  conflict) at 128×128 capacity. `tet6train` = trunk 256×256 + `--dense-weight 8` + lr 5e-4 → keep-best
+  **83,265 campaign score at 70K steps (≈4× the shipped 21,813)**; evals then DECLINED while loss fell —
+  distribution narrowing (the improving policy floods the replay buffer with clean stacks), not
+  saturation, so `--grow` correctly never fired. Run stopped at 330K; two knobs added
+  (`--eps-end`, `--buffer` → `TetrisDqnOptions.EpsilonEnd/BufferCapacity`) and `tet7train` warm-started
+  from the keep-best (ε floor 0.12, buffer 300K, lr 2e-4) as the follow-on refine. **Ship gate — head-to-
+  head on HELD-OUT seeds 9000+e** (`tools/tetris_head2head.mjs`; 5000+e picked the keep-best so can't
+  judge it): A **85,199 vs 25,193** (+238%), B survival **176.2 vs 99.5** (+77%), net-search B **435.2 vs
+  160.9** (+170%) — all CI-separated; new ckpt (753 KB, LFS) to `wwwroot/models/tetris.dqn.ckpt`.
 
 **Rejected up front:** relying on OS auto-repeat with tuned delays (hardware/OS-dependent, the reported
 problem); setInterval timing (drifts, throttles); implementing DAS inside the `.pg` engine (input timing is
