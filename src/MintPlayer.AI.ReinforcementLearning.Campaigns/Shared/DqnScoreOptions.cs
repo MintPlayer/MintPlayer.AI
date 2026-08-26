@@ -46,6 +46,19 @@ public sealed record CrazyFruitsDqnOptions : DqnScoreOptions
 }
 
 /// <summary>
+/// <see cref="TetrisDqnCampaign"/> knobs on top of the shared spine's (TETRIS_PRD.md §3.7): γ=0.995 +
+/// 3-step returns by default (long-horizon survival), NoisyNets as the pre-registered escalation lever.
+/// </summary>
+public sealed record TetrisDqnOptions : DqnScoreOptions
+{
+    /// <summary>n-step return horizon (the PRD lock is 3).</summary>
+    public int NStep { get; init; } = 3;
+
+    /// <summary>NoisyNets exploration (learned σ) instead of ε-greedy — the M54.3 escalation lever.</summary>
+    public bool Noisy { get; init; }
+}
+
+/// <summary>
 /// <see cref="FruitCakeDqnCampaign"/> knobs on top of the shared spine's. Reward shaping is NOT here — it lives
 /// on the injected training env (<c>FruitCakeEnv.ShapeRewards</c>/<c>ShapingGamma</c>), because it changes what
 /// the env emits, not how the campaign trains.
