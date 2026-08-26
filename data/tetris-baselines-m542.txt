@@ -1,0 +1,12 @@
+Tetris baselines: 100 episodes (eval seeds 5000+e), protocol A = 500-piece lines, protocol B = garbage/10 survival
+  (no net at src\RLDemo.Web\wwwroot\models\tetris.dqn.ckpt — scripted baselines only)
+Protocol A — uniform pieces, no garbage, capped lines:
+  random               mean      0,1 ± 0,1 (95% CI), top-outs 100/100
+  dellacherie          mean    197,6 ± 0,3 (95% CI), top-outs 0/100
+  della-search(8,5)    mean    197,8 ± 0,4 (95% CI), top-outs 0/20
+Protocol B — garbage every 10, survival (pieces placed):
+  random               mean     22,5 ± 0,6 (95% CI), top-outs 100/100
+  dellacherie          mean    363,8 ± 40,3 (95% CI), top-outs 100/100
+  della-search(8,5)    mean   1480,0 ± 38,2 (95% CI), top-outs 1/20
+della vs random (B): CI-SEPARATED (16,2×; spike measured 18×)
+della-search vs della (B): +306,8% (CI-SEPARATED; M54.4 gate: separated)
