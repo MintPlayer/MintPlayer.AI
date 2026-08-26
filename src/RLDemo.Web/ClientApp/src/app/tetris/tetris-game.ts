@@ -10,7 +10,7 @@ export const W = 10;
 export const H = 20;
 
 const FRAME_MS = 1000 / 60;   // NES gravity is specified in frames per row at 60 fps
-const SOFT_DROP_MS = 70;      // gravity while the down key is held (~½ the board per second)
+const SOFT_DROP_MS = 55;      // gravity while the down key is held
 const FLASH_MS = 220;         // line-clear highlight
 const WATCH_FALL_MS = 160;    // watch-mode cosmetic drop time
 
@@ -68,7 +68,12 @@ export class TetrisGame {
   moveLeft(): void { if (!this.gameOver) this.board.microShift(-1); }
   moveRight(): void { if (!this.gameOver) this.board.microShift(1); }
   rotate(): void { if (!this.gameOver) this.board.microRotate(); }
-  setSoftDrop(on: boolean): void { this.softDrop = on; }
+  setSoftDrop(on: boolean): void {
+    // Engaging the fast interval must not SPEND the slow-gravity time already accumulated — without
+    // this reset, up to a full gravity period (800 ms at level 0) converts into ~11 instant rows.
+    if (on && !this.softDrop) this.gravityAcc = 0;
+    this.softDrop = on;
+  }
 
   hardDrop(): void {
     if (this.gameOver) return;
