@@ -51,6 +51,9 @@ public sealed class TetrisBoard
     /// <summary>Row bitmask (bit c = column c filled) of row <paramref name="y"/> (0 = top).</summary>
     public int Row(int y) => _core.rows[y];
 
+    /// <summary>Bitmask of the cells in row <paramref name="y"/> that arrived as GARBAGE (render tint).</summary>
+    public int GarbageMask(int y) => _core.garbageMasks[y];
+
     /// <summary>True if the cell at column <paramref name="x"/>, row <paramref name="y"/> is filled.</summary>
     public bool Cell(int x, int y) => ((_core.rows[y] >> x) & 1) == 1;
 
@@ -240,6 +243,7 @@ public sealed class TetrisBoard
         writer.Write(_core.activeY);
         writer.Write(_core.activeLive);
         for (int y = 0; y < Height; y++) writer.Write(_core.rows[y]);
+        for (int y = 0; y < Height; y++) writer.Write(_core.garbageMasks[y]);
     }
 
     /// <summary>Restore the state written by <see cref="WriteState"/>.</summary>
@@ -269,5 +273,7 @@ public sealed class TetrisBoard
         _core.activeLive = reader.ReadBoolean();
         _core.rows.Clear();
         for (int y = 0; y < Height; y++) _core.rows.Add(reader.ReadInt32());
+        _core.garbageMasks.Clear();
+        for (int y = 0; y < Height; y++) _core.garbageMasks.Add(reader.ReadInt32());
     }
 }

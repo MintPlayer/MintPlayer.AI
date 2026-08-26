@@ -67,13 +67,14 @@ export function render(ctx: CanvasRenderingContext2D, game: TetrisGame, cssW: nu
   ctx.strokeStyle = '#2a3040';
   ctx.strokeRect(BOARD_X - 0.5, BOARD_Y - 0.5, W * CELL + 1, H * CELL + 1);
 
-  // Stack cells (garbage rows — full rows with one gap — get a slightly warmer tint).
+  // Stack cells; cells that arrived as garbage carry the engine's per-cell garbage mask (grey tint) —
+  // player pieces resting on or filling into a garbage row keep the normal color.
   for (let y = 0; y < H; y++) {
     const row = b.rows[y];
     if (row === 0) continue;
-    const isGarbage = popcount(row) === W - 1 && game.garbageEvery > 0;
+    const gm = b.garbageMasks[y];
     for (let x = 0; x < W; x++) {
-      if (((row >> x) & 1) === 1) drawCell(ctx, x, y, isGarbage ? GARBAGE_TINT : STACK_COLOR);
+      if (((row >> x) & 1) === 1) drawCell(ctx, x, y, ((gm >> x) & 1) === 1 ? GARBAGE_TINT : STACK_COLOR);
     }
   }
 
@@ -137,12 +138,6 @@ export function render(ctx: CanvasRenderingContext2D, game: TetrisGame, cssW: nu
   }
 
   ctx.restore();
-}
-
-function popcount(v: number): number {
-  let n = 0;
-  while (v) { n += v & 1; v >>= 1; }
-  return n;
 }
 
 function easeIn(t: number): number {

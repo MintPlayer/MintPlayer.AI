@@ -90,6 +90,32 @@ public class TetrisEngineTests
     }
 
     [Fact]
+    public void GarbageMasks_TrackExactlyTheGarbageCells_ThroughFillsAndClears()
+    {
+        var t = new PgTetris();
+        t.reset(5, false, 0);
+        t.insertGarbageRow();
+        int gap = FullRow - t.rows[19];
+        Assert.Equal(t.rows[19], t.garbageMasks[19]); // fresh garbage row: mask == cells
+
+        // A player piece filling the gap must NOT be marked as garbage.
+        int gapCol = System.Numerics.BitOperations.TrailingZeroCount(gap);
+        t.current = 0; // vertical I into the gap column
+        int cleared = t.applyPlacement(1 * 10 + gapCol);
+        Assert.Equal(1, cleared); // the garbage row completes and clears
+        // The cleared garbage row is gone; the mask must carry no stale garbage bits anywhere.
+        for (int y = 0; y < 20; y++) Assert.Equal(0, t.garbageMasks[y] & ~t.rows[y] & FullRow);
+        for (int y = 0; y < 20; y++) Assert.Equal(0, t.garbageMasks[y]); // nothing garbage remains
+
+        // Two stacked garbage rows shift together and keep their masks aligned with their cells.
+        t.insertGarbageRow();
+        t.insertGarbageRow();
+        Assert.Equal(t.rows[19], t.garbageMasks[19]);
+        Assert.True((t.garbageMasks[18] & t.rows[18]) == t.garbageMasks[18]);
+        Assert.NotEqual(0, t.garbageMasks[18]);
+    }
+
+    [Fact]
     public void Garbage_OverflowEndsTheGame()
     {
         var t = new PgTetris();

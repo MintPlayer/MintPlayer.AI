@@ -75,6 +75,9 @@ class PgTetris {
 
   // Board: H row bitmasks, row 0 = top.
   var rows: List<i32> = List<i32>()
+  // Which cells arrived as GARBAGE (parallel bitmasks, moved in lockstep with rows through clears and
+  // shifts; player pieces are never marked) — the render's grey tint reads this, never a heuristic.
+  var garbageMasks: List<i32> = List<i32>()
 
   var pieceRng: PgTetRng = PgTetRng(1)
   var garbageRng: PgTetRng = PgTetRng(1)
@@ -129,6 +132,7 @@ class PgTetris {
     this.simEroded = 0
     this.buildPieceTables()
     for i in 0..H { this.rows.add(0) }
+    for i3 in 0..H { this.garbageMasks.add(0) }
   }
 
   // ── Piece data (spike shapes, spawn orientations; simple rotation, no kicks) ─────────────────────────────
@@ -220,6 +224,8 @@ class PgTetris {
     this.bagPos = 0
     this.rows.clear()
     for i in 0..H { this.rows.add(0) }
+    this.garbageMasks.clear()
+    for i4 in 0..H { this.garbageMasks.add(0) }
     this.score = 0
     this.lines = 0
     this.tetrises = 0
@@ -309,10 +315,14 @@ class PgTetris {
         cleared += 1
       } else {
         this.rows[write] = this.rows[y]
+        this.garbageMasks[write] = this.garbageMasks[y]
         write -= 1
       }
     }
-    for w2 in 0..(write + 1) { this.rows[w2] = 0 }
+    for w2 in 0..(write + 1) {
+      this.rows[w2] = 0
+      this.garbageMasks[w2] = 0
+    }
     return cleared
   }
 
@@ -365,8 +375,13 @@ class PgTetris {
       this.gameOver = true
       return
     }
-    for y in 0..(H - 1) { this.rows[y] = this.rows[y + 1] }
-    this.rows[H - 1] = FullRow - (1 << this.garbageRng.nextInt(W))
+    for y in 0..(H - 1) {
+      this.rows[y] = this.rows[y + 1]
+      this.garbageMasks[y] = this.garbageMasks[y + 1]
+    }
+    let mask = FullRow - (1 << this.garbageRng.nextInt(W))
+    this.rows[H - 1] = mask
+    this.garbageMasks[H - 1] = mask
   }
 
   // ── MACRO step API (AI/env): action = rot·10 + col ───────────────────────────────────────────────────────
@@ -537,14 +552,18 @@ class PgTetris {
     return sum
   }
 
+  // Save/restore the FULL board identity (rows + garbage masks): every planning/search simulation goes
+  // through simPlace → clearFullRows, which moves the masks — a rows-only restore would corrupt them.
   fn saveRows(): List<i32> {
     var saved: List<i32> = List<i32>()
     for y in 0..H { saved.add(this.rows[y]) }
+    for y2 in 0..H { saved.add(this.garbageMasks[y2]) }
     return saved
   }
 
   fn restoreRows(saved: List<i32>) {
     for y in 0..H { this.rows[y] = saved[y] }
+    for y2 in 0..H { this.garbageMasks[y2] = saved[H + y2] }
   }
 
   // Dellacherie score of placing `piece` at (rot, x) on the CURRENT rows — the canonical hand-tuned
