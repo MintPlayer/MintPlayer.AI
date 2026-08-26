@@ -47,7 +47,34 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
         TargetSyncEvery = 1_000,
         Epsilon = new LinearSchedule(Options.EpsilonStart, 0.05, 30_000),
         EvalEpisodes = Options.EvalEpisodes,
+        DenseTargets = Typed.DenseRegression ? DenseTargetsFromObservation : null,
+        DenseTargetWeight = Typed.DenseTargetWeight,
     };
+
+    // The observation's six per-action feature planes carry exactly the Dellacherie basis; undoing the
+    // plane normalizers reconstructs, per action, −landing + eroded − ΔrowT − ΔcolT − 4·Δholes − Δwells —
+    // the canonical evaluator up to a PER-STATE constant (absolute-vs-delta transitions), which the dueling
+    // V head absorbs. ÷10 into target units. A legal placement always has landing > 0 (row 19 lands at
+    // 0.05·20); a zero landing plane ⇒ illegal ⇒ NaN (unsupervised).
+    private const int PlaneBase = 214; // 200 board cells + 7 + 7 piece one-hots
+    private const int A = TetrisEnv.ActionCount;
+
+    private static float[] DenseTargetsFromObservation(float[] obs)
+    {
+        var targets = new float[A];
+        for (int a = 0; a < A; a++)
+        {
+            float landing = obs[PlaneBase + a];
+            if (landing <= 0f) { targets[a] = float.NaN; continue; }
+            float eroded = obs[PlaneBase + A + a];
+            float dRowT = obs[PlaneBase + 2 * A + a];
+            float dColT = obs[PlaneBase + 3 * A + a];
+            float dHoles = obs[PlaneBase + 4 * A + a];
+            float dWells = obs[PlaneBase + 5 * A + a];
+            targets[a] = (-20f * landing + 8f * eroded - 20f * dRowT - 20f * dColT - 40f * dHoles - 20f * dWells) / 10f;
+        }
+        return targets;
+    }
 
     protected override (double Gate, IReadOnlyList<CampaignMetric> Metrics, string Summary) EvaluateNet(IValueNet net)
     {

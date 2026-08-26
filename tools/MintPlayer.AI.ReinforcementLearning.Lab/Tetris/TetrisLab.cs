@@ -45,6 +45,10 @@ internal static class TetrisLab
             Grow = a.Has("--grow"), GrowEvery = a.Int("--grow-every", 5000),
             NStep = a.Int("--nstep", 3),
             Noisy = a.Has("--noisy"),
+            // The M49/M51 recipe (γ=0 only): dense all-action regression toward the Dellacherie-basis
+            // value read back from the observation planes.
+            DenseRegression = a.Has("--dense"),
+            DenseTargetWeight = a.Flt("--dense-weight", 1.0f),
         };
         // Training + eval both uniform-random pieces, no garbage (the benchmark-honest protocol; garbage is
         // an eval protocol and a web mode, not a training distribution — PRD §3.6). PBRS shaping defaults ON
