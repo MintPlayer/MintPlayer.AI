@@ -1,0 +1,143 @@
+# Tetris — PRD
+
+**Status:** 🔜 planned 2026-08-26 (4-agent investigation: repo-fit/architecture map, Tetris-AI literature survey, training-infra options, Polyglot compiler surface — findings in §2; spike **M54.0 executed same day**, measured numbers in §2.5/§4).
+**Owner:** Pieterjan
+**Milestone:** [PLAN.md](PLAN.md) M54 · branch `m54-tetris` · env id `tetris`, `.pg` type prefix `PgTet*` · the playground's first **afterstate-macro-action** game (place-the-piece decisions, not per-frame moves).
+
+---
+
+## 1. The game — what's locked, what's variable
+
+Modern-feel Tetris, benchmark-honest core:
+
+- **Board 10×20**, the academic benchmark size — every literature number in §2.2 is on it.
+- **7-bag randomizer** (each permutation of the 7 tetrominoes dealt before repeating) for the *web game* — modern feel, no S/Z droughts. **Uniform-random mode kept in the engine** for benchmark comparability (all §2.2 numbers are uniform); training/eval runs uniform so gates compare to literature.
+- **1-piece preview** (next piece visible). No hold in v1 (§7).
+- **Hard-drop macro-actions**: an action = (rotation, column), piece drops vertically and locks. **No tucks, no soft-drop slides, no SRS kicks** in v1 — exactly the simplification every benchmark result in §2.2 uses. The engine seam `enumeratePlacements()` is written so a BFS pathfinder (tucks/spins) can replace it later without touching the learner (§7).
+- **Rising-garbage mode (owner request, 2026-08-26)**: every `GarbageEvery` placements (default **10**), a full bottom row with **one gap at a random x** pushes the stack up one row; if the shift would push filled cells off the top, the game ends. Playable by humans, watchable for the AI, and — per the spike — the **primary evaluation protocol**: it bounds episode length naturally and separates policies 18× where the plain lines metric saturates (§2.5).
+- **Scoring (display)**: guideline-style 100/300/500/800 per 1/2/3/4 lines. Training reward is *not* the display score (§3.5).
+- Human play: keyboard (desktop) + touch (swipe/tap), one pointer-events path like Crazy Fruits.
+
+## 2. Investigation findings (4 agents + spike, 2026-08-26)
+
+### 2.1 Repo fit
+A new game has a fully paved path (agent 1, confirmed against M49–M53): single-source `.pg` engine + public facade, `IEnvironment<float[],int>` + `IActionMaskProvider` + `IStatefulEnvironment` env, `DqnScoreCampaign` subclass, Lab entry with the seeded-baselines gate harness, fully client-side web page (Pattern C: browser fetches `wwwroot/models/*.ckpt`, hand-written TS parser + `.pg`-transpiled forward). File-by-file touch list in §3.11. Doc drift note: `ARCHITECTURE.md` §3 obs numbers are historical; trust code.
+
+### 2.2 Literature (agent 2 — full citations in §8)
+- Every strong Tetris agent ever built evaluates **afterstates via placement macro-actions**; every famous failure is frame-level. Frame-level deep RL tops out at ~hundreds of lines; a random micro-action policy never clears a line, so there is no gradient to climb.
+- **Dellacherie's 6-feature hand-tuned linear evaluator ≈ 660K lines/game** (10×20, uniform, no preview) — beats a decade of 2000s RL (1K–5K lines) by two orders of magnitude, costs a day.
+- Learned linear weights by black-box search: CE/noisy-CE ~350K (Szita & Lőrincz), **BCTS ~35M** (Thiery & Scherrer, CE over Dellacherie + hole-depth + rows-with-holes), **CBMPI 51M** (record). CMA-ES converges near Dellacherie's hand weights.
+- Afterstate value nets trained DQN-style work but plateau (~1K–100K lines); reward-shaping traps: survival-only → never clears; superlinear clear bonuses → stack-and-camp; holes/height belong in the **inputs**, not the reward.
+- Lookahead multiplies any evaluator ×5–×100 (Böhm: 2-piece lookahead 480M) — the Snake/Crazy-Fruits "strength = search" lesson again.
+- Offline Tetris is NP-complete even to approximate — everything is a heuristic over boards.
+
+### 2.3 Training infra (agent 3)
+- **No CUDA-toolkit code exists** — GPU = ILGPU. Resident GPU trainers exist only for `ResidualMlp` (cube) and conv policy-value (chess/draughts). **The DQN/Dueling stack has no GPU trainer**; every DQN game (Crazy Fruits, Snake, FruitCake) trained **pure CPU** (`useGpu: false`), deliberately: small MLPs sit below the GEMM routing threshold and CPU autograd is the deterministic reference. Hetzner serving is CPU-only.
+- **NoisyNets are shipped code**, not a plan (`NoisyLinear`, noisy `DuelingQNet` heads, ckpt v2 `noisy` byte, FruitCake's `--noisy`) — `NOISYNETS_PRD.md`'s "not started" status is stale. `DqnOptions` exploration knobs on master: `Epsilon` (LinearSchedule — the only schedule type) and `NoisyNets`. (`ExploreBias` exists only on the unmerged M52 draft PR #40 branch — not available to this arc unless that ships first.)
+- **No generic search exists**: Crazy Fruits' expectimax and Snake's beam search live in their `.pg`; `FruitCakeSearch`'s injected-leaf-evaluator (`Func<TState,double>`) is the cleanest template. Tetris search = new-but-small code in `tetris_solver.pg`.
+- **No CEM/CMA-ES anywhere** — would be ~100 new lines sitting on existing `DeterministicParallel`/`Evaluator`/Xoshiro streams.
+- Browser inference supports MLP **and** conv (draughts ships a conv tower in `.pg`); all math is scalar f64 JS; M53 measured a few hundred ms/move budget for net+search combined.
+
+### 2.4 Polyglot compiler (agent 4; source at `C:\Repos\MintPlayer.Polyglot`, HEAD v0.9.8)
+- **No compiler changes needed** (owner offered them 2026-08-26 — kept as an option, unused). Bitwise `& | ^ ~ << >>` on `i32` fully supported, .NET-faithful width-wrap on both targets → **row-bitmask board is safe**. Never use `>>>` (parses, no sema/backend rule); never use `i64` (BigInt tax in TS).
+- `List<T>` API is tiny (`count [] add clear removeAt removeAll`, **no insert/pop**), no sized-array ctor (build with an `add` loop), no Dict/Set, `match` not `switch` (expression arms only), no method overloading, no std RNG (copy `PgCfRng`, minstd Schrage — all-i32, byte-identical).
+- **Version trap**: v0.9.8 renamed `init` → `constructor` with no alias; MintPlayer.AI pins **0.8.1**, whose solvers all use `init(`. Decision in §3.1. On 0.8.1, avoid re-using a loop-binder name later in the same method (issue #41, invalid C#, fixed only in 0.9.6) and avoid multi-arg indexer writes (#42).
+
+### 2.5 Spike M54.0 (executed 2026-08-26; script committed at `tetris-spike/tetris_spike.mjs`, plain Node)
+10×20, uniform pieces, hard-drop placements, canonical Dellacherie weights, minstd RNG:
+
+| Policy | Protocol | Result |
+|---|---|---|
+| random placement | uncapped | **25.6 ± 0.4 pieces** to top-out, **0.06** lines/episode (n=200) |
+| Dellacherie | 500-piece cap | **197.4 ± 0.4 lines** (n=50, 0 top-outs) — ~99% of the 200-line theoretical max → **plain capped-lines saturates; not a discriminating gate** |
+| Dellacherie | 10K-piece run | 3 997 lines, no top-out, 0.6 s |
+| random | garbage/10 | **21.6 ± 0.6 pieces** survived (n=100) |
+| Dellacherie | garbage/10 | **392.8 ± 45.1 pieces** survived (n=100, min 130 / max 1690) — **18× separation** |
+| Dellacherie | garbage/5 | 119.5 ± 7.1 pieces (n=100) — a harder ladder rung |
+
+Throughput (naive JS, incl. feature eval): **~369K placements/s**, ~15.9K pieces/s, branching ≈ 23 placements/piece. Eval is cheap; C# will match or beat this. **GO** for the afterstate design, garbage-survival gates, and web-side search budgets.
+
+## 3. Design
+
+### 3.1 Engine — `tetris_solver.pg`, single-source from day one
+`src/MintPlayer.AI.ReinforcementLearning.Environments/Tetris/polyglot/tetris_solver.pg`, all types `PgTet*`-prefixed (shared global C# namespace), plus one `pgconfig.json` include routing the TS twin to `src/RLDemo.Web/ClientApp/src/app/tetris/tetris_solver`. Public facade `TetrisBoard.cs` (state serialization `WriteState`/`ReadState`, float views, test helpers) — rules never in the facade.
+
+Core representation: **board = `List<i32>` of 20 row bitmasks** (bit c = column c filled), row 0 = top. All arithmetic `i32`; `divExact(a,b) => (a - a%b)/b` for quotients (repo convention). Piece data: module-level `let` flat `i32[]` tables — 7 pieces × ≤4 rotations, each rotation as 4 packed cell offsets + width/height/bottom-profile, indexed by `(piece*4 + rot)`. Line clear = rebuild kept rows top-aligned (no `insert`; iterate and shift — the spike's exact loop). Garbage insertion = shift rows up, append `FULL & ~(1 << gapX)`.
+
+`enumeratePlacements()` returns, for each legal (rot, col): the afterstate row masks, lines cleared, and the per-placement feature vector (§3.4) — the **one seam** the env, the scripted tiers, the search, and the browser all consume. Feature math (transitions, holes, wells) is pure bit-twiddling on the row masks — fully inside the supported operator set (§2.4).
+
+**Lock: stay on Polyglot 0.8.1, write `init(...)`.** No feature gap exists; discipline items: globally unique local names inside methods (issue #41), no multi-arg indexer writes (#42), distinct method names (no overloading). **Rejected:** bumping to 0.9.8 — costs migrating all 6 existing solvers (`init`→`constructor`) plus revalidating parity pins, for fixes we can route around; revisit as its own arc if a real feature need appears (owner has green-lit compiler mods should one arise).
+
+### 3.2 Deterministic RNG — the cross-language lock
+Copy `PgCfRng` (minstd Lehmer via Schrage, all-i32, byte-identical C#/TS) as `PgTetRng`. **Three independent streams** per game: piece stream (7-bag Fisher–Yates or uniform), garbage-gap stream, and a spare for future modes — so toggling garbage never perturbs the piece sequence (same convention as `crazyfruits_solver.pg`'s per-stream instances). Bag mode vs uniform mode is a constructor flag.
+
+### 3.3 Action space, masking — afterstate macro-actions
+**Lock: `DiscreteSpace(40)` = 4 rotations × 10 columns**, hard-masked. Slots where the piece has fewer distinct rotations (O:1, I/S/Z:2) or the rotation doesn't fit horizontally are masked off; ~9–34 legal per piece, mean branching ≈23 (spike). Top-out happens when `enumeratePlacements()` finds a placement whose cells would sit above row 0 — those are masked; **all-masked = terminal** (unlike Crazy Fruits' reshuffle-guaranteed-nonempty mask, Tetris' mask can legitimately go empty — the env must treat that as `terminated`, not violate the never-all-false invariant other games rely on).
+**Rejected:** frame-level micro-actions (left/right/rotate/drop) — the unanimous failure mode in §2.2; V(afterstate) with a variable-length placement list — doesn't fit `DqnTrainer`'s fixed masked head and would be new trainer machinery; the fixed 40-slot Q head over placements is the same information with the proven Crazy Fruits machinery.
+
+### 3.4 Observation — net inputs *(owner question: "what inputs does the net get")*
+**Lock: hybrid planes, 454 floats** =
+- **200** board occupancy (row-major, 0/1) — raw spatial truth;
+- **7 + 7** one-hot current piece + next piece (1-piece preview reaches the net, not only the search);
+- **40 × 6 = 240 per-action feature planes**: for each action slot, the Dellacherie-basis deltas of *taking that placement* — landing height /20, eroded piece cells /8, row-transitions delta /20, column-transitions delta /20, holes delta /10, well-sum delta /20 (illegal slots = 0).
+
+Per-action feature planes were the gate-passing lever in Crazy Fruits M51 (+the M49 lesson that raw cells alone under-informed the net); here they hand the net exactly the basis in which the literature's strongest linear policies live, while the raw 200-cell plane lets it learn what the basis misses. `ObservationLabels`/`ActionLabels` provided for `--viz`.
+**Rejected:** features-only input (caps the net at linear-evaluator strength — then why train a net); conv over the board (no conv *Q*-net exists in the repo — new trainer + browser work for a 10×20 grid an MLP handles; draughts precedent shows it's *possible* later, §7).
+
+### 3.5 Reward, episodes
+**Lock:** reward = **lines cleared per placement** (0–4, linear; `RewardScale = 1`), **top-out ⇒ `terminated`** (no explicit death penalty — the ended reward stream is the penalty), step-cap (training 500 placements) ⇒ `truncated` with bootstrap, per the Crazy Fruits framing (truncated ≠ terminated). Display score (100/300/500/800) is engine-side cosmetics, never reward.
+**Rejected:** superlinear clear bonuses (stack-and-camp trap, §2.2); survival bonuses (flat-forever trap); holes/height reward terms (they're inputs, §3.4; double-counting caps strength); γ=0 + DenseTargets (Crazy Fruits' recipe **does not transfer**: Tetris value is long-horizon survival — γ=0 has no path to it; `DenseTargets` requires γ=0, so it's structurally out).
+
+### 3.6 Environment + campaign — configuration, not new machinery
+`TetrisEnv : IEnvironment<float[],int>, IActionMaskProvider, IStatefulEnvironment` delegating everything to the facade. Constructor options: `Uniform|SevenBag`, `GarbageEvery` (0 = off). **Training env = uniform, garbage off** (benchmark-honest, max piece diversity); eval harness runs both protocols (§3.8). `TetrisDqnCampaign : DqnScoreCampaign` + `TetrisDqnOptions` in `Shared/DqnScoreOptions.cs` + `AddTetrisDqnCampaign` + `TetrisLab` (flags mirroring `CrazyFruitsLab`: `--hours --steps --lr --explore --noisy --hidden --gamma --nstep --baselines N --eval-only --net --garbage N`) + one `Program.cs` dispatch line.
+
+### 3.7 Net + algorithm *(owner questions: CUDA? NoisyNets?)*
+**Lock: masked Dueling Double-DQN on CPU.** `DuelingQNet`, trunk `[128,128]`, 454→40; `Gamma 0.995`, `NStep 3`, `BufferCapacity 100_000`, `BatchSize 128`, `WarmupSteps 2_000`, `TargetSyncEvery 1_000`, `LearningRate 1e-3`, `MaxGradNorm 10`, `TargetSteps 400_000` first run.
+- **Training backend: CPU.** *Rejected: GPU/CUDA* — no resident DQN trainer exists (only ResidualMlp/conv-PV families); a 454×128×128×(40+1) MLP is far below the GEMM routing threshold that makes `AddGpuBackend` pay; CPU autograd is the deterministic reference; every shipped DQN game chose the same. Building a resident dueling trainer is real work with no payoff at this size — reconsider only if the net grows conv-shaped (§7).
+- **Exploration: ε-greedy** `LinearSchedule(1.0 → 0.05 over 30_000)` — masked random exploration over ~23 legal placements already visits diverse afterstates cheaply. **NoisyNets stays a shipped one-flag A/B lever** (`--noisy`, FruitCake precedent incl. plain→noisy checkpoint promotion): pre-registered escalation if the ε-greedy net plateaus below gate (§5 M54.3). *Rejected as default:* NoisyNets' per-step resample cost buys most when ε-exploration is structurally poor (long micro-action corridors) — not the macro-action case.
+
+### 3.8 Scripted baselines = sanity gates = difficulty tiers
+All in the `.pg`, exposed on the facade, reused verbatim by the browser tiers — the Crazy Fruits pattern:
+1. `randomAction` — uniform over legal placements;
+2. `dellacherieAction` — canonical fixed weights (−landing + eroded − rowT − colT − 4·holes − wells): the literature yardstick, measured in the spike;
+3. `netAction` — pure masked argmax over the 40 Q-values;
+4. `searchAction(evaluator, depth)` — depth-1 exact over the **known** next piece + expectimax (mean over 7) for the unknown piece after it, beam-K on the first ply; evaluator injected (Dellacherie weights or the net's max-Q), the `FruitCakeSearch` leaf-injection pattern written in `.pg`.
+
+**Eval protocol (locked):** 100 fixed-seed episodes (`5000+e`), two boards: **(A) standard** uniform no-garbage, 500-piece cap, metric = lines; **(B) garbage/10** uncapped (5 000-piece safety cap), metric = pieces survived. **(B) is the primary gate** — the spike shows (A) saturates at the top while (B) separates 18× with headroom. Env-validation gate before any training: measured random/Dellacherie must reproduce spike numbers within CI (else the C# engine differs from the spike's rules).
+
+### 3.9 Web architecture — Pattern C, fully client-side *(+ forward search decision)*
+No controller, no model service, zero server inference. `ClientApp/src/app/tetris/`: component (mode signal `human | watch`), `tetris-game.ts` (animating host: gravity glide, lock flash, line-clear animation — cosmetic replay of engine steps), `tetris-render.ts` (Canvas 2D, DPR-aware), `tetris-net.ts` (hand-written `dueling-q` ckpt parser mirroring `DuelingQNetCheckpoint`, fetch `/models/tetris.dqn.ckpt`, null on failure, **input-size stale-ckpt guard** falling back to Dellacherie — M51.1 lesson), `tetris-director.ts` (tier switch: `random | dellacherie | net | net+search | garbage-mode toggle`). Route + nav + home card. `.ckpt` MIME mapping already present.
+**Forward search in the browser: yes, as a tier** — spike throughput (369K placements/s naive JS) says depth-1+expectimax over ~23×23×7 ≈ 3.7K leaves costs ~10 ms; far inside the M53 budget, so **no worker needed** — the director computes synchronously between drops. *Rejected:* M53 worker-plays-ahead (justified only if search grows to multi-hundred-ms; the protocol exists if depth-2-exact ever ships).
+
+### 3.10 Input — keyboard + pointer
+Human mode plays **real-time micro-Tetris** (the engine exposes the micro-step API the animator needs: move/rotate/soft/hard-drop against the current gravity row — placement enumeration is the AI's view, not the human's). Keyboard via host binding (`(window:keydown)`, Snake pattern): ←/→ move, ↑/x rotate, ↓ soft drop, space hard drop. Touch: pointer-events with the Crazy Fruits drag-vs-tap discriminator — horizontal drag = move, tap = rotate, swipe down = drop. Garbage mode toggle available in human play too (owner request — it's a playable challenge, not just an AI protocol).
+
+### 3.11 Files touched
+Engine `Tetris/polyglot/tetris_solver.pg` + `Tetris/TetrisBoard.cs` + `pgconfig.json` include · env `Tetris/TetrisEnv.cs` · campaign `Campaigns/Tetris/TetrisDqnCampaign.cs` + options/registration in `Shared/` · Lab `tools/.../Lab/Tetris/TetrisLab.cs` + dispatch line · weights `src/RLDemo.Web/wwwroot/models/tetris.dqn.ckpt` (Git LFS) · web `ClientApp/src/app/tetris/*` + route/nav/home-card · tests `TetrisEngineTests`, `TetrisEnvTests`, `TetrisParityTests` + `tools/tetris_parity.mjs`, `TetrisNetParityTests`, campaign contract/registration cases · docs `ARCHITECTURE.md` + `PLAN.md` sync.
+
+## 4. Locked constants (do not re-derive)
+Board 10×20 · actions 40 (4 rot × 10 col, hard-masked, all-masked ⇒ terminated) · obs **454** = 200 board + 7+7 piece one-hots + 40×6 per-action Dellacherie-basis planes (scales: landing/20, eroded/8, ΔrowT/20, ΔcolT/20, Δholes/10, Δwells/20) · reward = lines (linear, scale 1), top-out = terminated, 500-piece training cap = truncated · γ 0.995 · n-step 3 · trunk [128,128] dueling double-DQN, ε 1.0→0.05/30K, CPU · RNG minstd (`PgTetRng`), 3 streams (pieces/garbage/spare) · training uniform-random no-garbage; web default 7-bag · garbage mode: every 10 placements, full row one random gap, overflow ⇒ game over · eval 100 eps seeds `5000+e`, protocol A (500-piece lines) + primary protocol B (garbage/10 survival) · spike bars (JS, n≥50): random A **0.06 ± 0.04** lines / B **21.6 ± 0.6** pieces; Dellacherie A **197.4 ± 0.4** lines / B **392.8 ± 45.1** pieces; branching ≈ 23; ~369K placements/s · ckpt `tetris.dqn` / `tetris.dqn-state` · Polyglot 0.8.1 (`init`, no `>>>`, no `i64`).
+
+## 5. Milestones & gates (falsifiable, in order)
+
+- **M54.0 — Spike.** ✅ 2026-08-26 (pre-PRD). Node afterstate Tetris + Dellacherie. **Gate: does garbage-survival separate policies where capped-lines saturates, and is eval affordable?** *Result: GO — 18× separation (21.6 vs 392.8 pieces), lines metric saturates at 197.4/200, 369K placements/s. Script: `tetris-spike/tetris_spike.mjs`.*
+- **M54.1 — Engine + parity.** `tetris_solver.pg` (board, pieces, 7-bag/uniform, garbage, `enumeratePlacements`, features, random/Dellacherie/search tiers) + facade + engine tests. **Gates:** pinned C#↔TS parity checksum (1 000-move seeded episode, `tools/tetris_parity.mjs`, Crazy Fruits hash recipe) · C# Dellacherie & random reproduce §2.5 spike bars within 95% CI on both protocols (env-validation — else the rules diverged from the spike).
+- **M54.2 — Env + campaign + Lab.** `TetrisEnv`, campaign, options, registration, baselines/eval harness, contract tests. **Gates:** campaign contract test green (train→checkpoint→fresh-resume continues) · `--baselines` prints both protocols with CIs · full-state resume bitwise (repo standard).
+- **M54.3 — Training run.** CPU, uniform no-garbage, 400K steps first pass. **Gates (protocol B primary): net-argmax survival ≥ 100 pieces mean (≥4× random, CI-separated) · net ≥ 25% of Dellacherie's gap over random on B** ((net−random)/(della−random) ≥ 0.25) · protocol A: net ≥ 50 lines mean (random is ~0; any real clearing is CI-separated). *Pre-registered escalation, in order: (1) `--noisy` A/B (shipped lever, §3.7); (2) longer schedule + Net2Net growth (`--grow`, spine supports it); (3) stop-loss = ship best net honestly gate-annotated (M42/M50 precedent) — the search tier still carries the showcase.*
+- **M54.4 — Search tier.** `searchAction` over both evaluators, measured on both protocols. **Gates:** net+search > net alone, CI-separated · net+search ≥ Dellacherie-alone on protocol B (the "training+search beats the hand heuristic" headline; if missed, ship measured and say so) · browser search ≤ 50 ms/move measured.
+- **M54.5 — Web.** Page, human play (keyboard+touch, garbage toggle), watch tiers, ckpt to `wwwroot/models/` (LFS), net-parity test through real ckpt bytes. **Gates:** `TetrisNetParityTests` max |Q_sdk − Q_pg| < 2e-3 + legal argmax · live Playwright pass desktop + phone-width: 0 console errors, 0 `/api/tetris*` requests, human game playable, all watch tiers advance, stale-ckpt guard exercised (rename ckpt → director falls back to Dellacherie).
+- **M54.6 — Ship.** `ARCHITECTURE.md` section, PLAN.md sync, PRD status/gate results filled in. **Gate:** CI green (`Category!=Slow`), one PR, all docs consistent.
+- **M54.7 — CEM-tuned linear tier (stretch, GO only if M54.3/M54.4 leave Dellacherie unbeaten).** ~100-line CEM loop on `DeterministicParallel`/Xoshiro over the 6-weight (or BCTS-8) vector, fitness = protocol-B survival (bounded episodes — exactly what CEM needs). **Gate:** tuned weights ≥ 1.5× Dellacherie on B, CI-separated; ships as a fifth web tier. *Rationale: literature's best strength-per-effort (§2.2); kept behind a GO so the RL path stays the story unless it needs rescuing.*
+
+## 6. Risks
+1. **Net plateaus far below Dellacherie** (literature says afterstate DQN ≪ tuned linear). *Mitigated:* per-action feature planes give the net the linear policy's basis as a floor; escalation ladder pre-registered (M54.3); search tier and M54.7 CEM carry the showcase if RL underwhelms. Honest-gate language ready.
+2. **Mask-can-go-empty breaks a hidden all-false assumption** in shared DQN plumbing (other games guarantee non-empty). *Mitigated:* M54.2 contract test includes a forced top-out step; audit `DqnTrainer` masked-max on terminal transitions (terminal target ignores next-state max anyway).
+3. **Parity drift in feature bit-twiddling** (transitions/wells are fiddly). *Mitigated:* features are part of the observation ⇒ covered by the pinned parity checksum; engine tests pin feature values on hand-drawn boards.
+4. **Human micro-play vs AI macro-actions diverge** (two step APIs on one engine). *Mitigated:* micro-step API is the primitive; `enumeratePlacements` is derived from it in-engine; engine test asserts a placement's afterstate equals replaying its micro-steps.
+5. **0.8.1 compiler bugs** (#41 name reuse, #42 indexer writes emit invalid C#). *Mitigated:* discipline list in §3.1; compiler mods are owner-approved as a fallback if something unroutable appears.
+
+## 7. Out of scope (genuinely not being done, not deferred-for-size)
+Hold piece; tucks/soft-drop slides/SRS kicks/T-spins (seam reserved: `enumeratePlacements` swappable for a BFS pathfinder); multi-piece preview >1; versus/two-board garbage battles; conv Q-net + resident GPU dueling trainer (reopen only with evidence the MLP is the bottleneck *and* the net outgrew CPU); levels/gravity-speed progression in watch mode; Polyglot 0.9.x bump (own arc).
+
+## 8. References
+Algorta & Şimşek, *The Game of Tetris in Machine Learning*, arXiv:1905.01652 (survey; Dellacherie ~660K, deep-RL failure catalog) · Szita & Lőrincz 2006, noisy CE, ~350K (Neural Computation 18(12)) · Thiery & Scherrer, *Improvements on Learning Tetris with Cross Entropy* (BCTS, ~35M; 2008 RL-competition winner) · Gabillon, Ghavamzadeh & Scherrer, *Approximate Dynamic Programming Finally Performs Well in the Game of Tetris*, NIPS 2013 (CBMPI, 51M) · Demaine, Hohenberger & Liben-Nowell, *Tetris is Hard, Even to Approximate*, COCOON 2003 · Böhm et al. 2005 (GA + 2-piece lookahead, 480M) · Fortunato et al., *Noisy Networks for Exploration*, arXiv:1706.10295 · tetris.wiki Random Generator (7-bag) · repo: [CRAZY_FRUITS_PRD.md](CRAZY_FRUITS_PRD.md) (Pattern C + per-action planes), [CRAZY_FRUITS_RANKING_PRD.md](CRAZY_FRUITS_RANKING_PRD.md) (M51 lessons), [FRUITCAKE_WATCH_AI_STALL_PRD.md](FRUITCAKE_WATCH_AI_STALL_PRD.md) (M53 worker protocol, browser budgets), [SNAKE_SEARCH_PRD.md](SNAKE_SEARCH_PRD.md) (strength = search), [NOISYNETS_PRD.md](NOISYNETS_PRD.md) (stale status; code shipped), `docs/ADDING_A_GAME.md`, `docs/ARCHITECTURE.md` §3/§8/§10 · spike: [tetris-spike/tetris_spike.mjs](tetris-spike/tetris_spike.mjs).

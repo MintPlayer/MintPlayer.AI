@@ -2115,6 +2115,48 @@ partitioning) — needs `.pg` edits, alters the C# training path, risks parity; 
 no prediction left to validate); throttling to ~1 drop/s (the tab would still hang); `webWorkerTsConfig`
 (inert); adding `"webworker"` to the shared `lib` (conflicts with DOM).
 
+## M54 — Tetris: afterstate AI + rising-garbage mode  *(2026-08-26; branch `m54-tetris`; see `TETRIS_PRD.md`)* 🔜
+
+**Why:** owner request 2026-08-26 — "add a Tetris AI like the other games", plus a rising-garbage mode (bottom
+row with one random gap every ~10 placements). Planned via a 4-agent investigation (repo-fit/architecture,
+Tetris-AI literature, training-infra options, Polyglot compiler surface) + an executed spike. Literature is
+unanimous: strength lives in **afterstate placement macro-actions** (Dellacherie's 6-feature hand-tuned linear
+≈ 660K lines; CE/CBMPI-tuned linear 35–51M; frame-level deep RL ≈ hundreds — arXiv:1905.01652), so the design
+is a masked 40-slot (4 rot × 10 col) dueling double-DQN over per-placement afterstates, obs 454 = 200 board
+cells + piece/next one-hots + 40×6 Dellacherie-basis per-action planes (the M51 lever), reward = lines (linear),
+γ 0.995, **CPU** (no resident DQN GPU trainer exists; MLP below GEMM routing threshold — investigation),
+ε-greedy with shipped NoisyNets as the pre-registered A/B lever. Engine is a single-source `tetris_solver.pg`
+(row-bitmask board — compiler check confirmed full faithful bitwise support on 0.8.1; no compiler mods needed),
+scripted tiers random/Dellacherie/net/net+search in the `.pg`, Pattern C fully client-side web page.
+
+- **M54.0 — Spike.** ✅ (2026-08-26, pre-PRD, `docs/prd/tetris-spike/tetris_spike.mjs`) **Gate: does
+  garbage-survival separate policies where capped-lines saturates, and is eval affordable?** *GO — random 21.6
+  ± 0.6 vs Dellacherie 392.8 ± 45.1 pieces survived under garbage/10 (18×), while 500-piece-cap lines saturates
+  (Dellacherie 197.4/200 max); ~369K placements/s naive JS. Garbage-mode survival locked as primary eval
+  protocol.*
+- **M54.1 — Engine + parity.** `.pg` engine (7-bag/uniform, garbage, `enumeratePlacements`, Dellacherie/search
+  tiers) + facade. **Gates:** pinned C#↔TS parity checksum · C# reproduces the spike bars within 95% CI.
+- **M54.2 — Env + campaign + Lab.** **Gates:** campaign contract green · bitwise resume · `--baselines` prints
+  both eval protocols with CIs.
+- **M54.3 — Training run** (CPU, 400K steps). **Gates:** net garbage/10 survival ≥ 100 pieces (≥4× random,
+  CI-separated) · gap-share vs Dellacherie ≥ 25% · ≥ 50 lines/500-piece standard. Escalation pre-registered:
+  `--noisy` → growth → honest stop-loss.
+- **M54.4 — Search tier** (depth-1 known-next + expectimax, in-`.pg`). **Gates:** net+search > net CI-separated ·
+  ≥ Dellacherie-alone on garbage survival · ≤ 50 ms/move in-browser.
+- **M54.5 — Web** (Pattern C, human keyboard+touch incl. garbage toggle, watch tiers). **Gates:** net-parity
+  < 2e-3 through real ckpt bytes · live Playwright desktop+phone: 0 console errors, 0 `/api/tetris*`, stale-ckpt
+  fallback exercised.
+- **M54.6 — Ship.** ARCHITECTURE.md + PLAN.md + PRD sync, one PR, CI green.
+- **M54.7 — CEM-tuned linear tier** (stretch, GO only if Dellacherie stays unbeaten). **Gate:** ≥ 1.5×
+  Dellacherie survival, CI-separated.
+
+**Rejected up front:** frame-level micro-actions (the literature's unanimous failure mode); γ=0 + DenseTargets
+(Crazy Fruits' recipe needs no long horizon — Tetris survival does; DenseTargets requires γ=0); GPU training
+(no resident DQN trainer; net far below routing threshold); conv Q-net (doesn't exist; 10×20 MLP territory);
+superlinear clear bonuses and survival/holes reward terms (stack-and-camp / never-clear traps — holes belong in
+the inputs); M53 worker (search ≈ 10 ms/move, synchronous is fine); Polyglot 0.9.x bump (migrating 6 solvers'
+`init`→`constructor` for fixes we can route around).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
