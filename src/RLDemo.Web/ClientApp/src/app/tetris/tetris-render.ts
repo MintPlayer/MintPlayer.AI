@@ -163,6 +163,7 @@ function drawPiece(ctx: CanvasRenderingContext2D, b: { cellX: number[]; cellY: n
   for (let k = 0; k < 4; k++) {
     const cx = x + b.cellX[ri * 4 + k];
     const cy = y + b.cellY[ri * 4 + k];
+    if (cy < 0) continue; // NES head-room: cells in the virtual rows above the board aren't drawn
     if (ghost) drawCell(ctx, cx, cy, 'rgba(232, 236, 244, 0.35)', true);
     else drawCellAt(ctx, BOARD_X + cx * CELL, BOARD_Y + cy * CELL, color!);
   }

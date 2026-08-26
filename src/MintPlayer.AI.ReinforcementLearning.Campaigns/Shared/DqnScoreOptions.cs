@@ -65,6 +65,17 @@ public sealed record TetrisDqnOptions : DqnScoreOptions
 
     /// <summary>Total gradient mass of the dense term relative to the realized-reward term.</summary>
     public float DenseTargetWeight { get; init; } = 1.0f;
+
+    /// <summary>ε floor after the 30K-step linear decay. The tet6train run showed the dense recipe's
+    /// failure mode is DISTRIBUTION NARROWING (eval decayed from its 70K-step peak while the loss kept
+    /// falling — the improving policy fills the replay buffer with clean flat stacks and the net forgets
+    /// messy states); a higher floor keeps hard states in the buffer. Dense regression labels every legal
+    /// action per visited state, so ε's only job here is state coverage, not action credit.</summary>
+    public float EpsilonEnd { get; init; } = 0.05f;
+
+    /// <summary>Replay buffer capacity — larger keeps early messy-stack states alive longer (same
+    /// distribution-narrowing counter as <see cref="EpsilonEnd"/>).</summary>
+    public int BufferCapacity { get; init; } = 100_000;
 }
 
 /// <summary>

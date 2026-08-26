@@ -27,10 +27,11 @@
   }
 }
 
-// The stage: the 620:760 logical canvas (well + sidebar); aspect ratio is bound from the component.
+// The stage: the 620:760 logical canvas (well + sidebar); aspect ratio is bound onto the canvas.
+// --zoom (component signal, 0.5–1.5) scales the whole stage — pro players zoom out for a smaller field.
 .tet-stage {
   position: relative;
-  width: min(560px, 100%);
+  width: calc(min(560px, 100%) * var(--zoom, 1));
   margin: 0.75rem auto;
   background: #141824;
   border-radius: 8px;
@@ -39,8 +40,54 @@
   canvas {
     display: block;
     width: 100%;
-    height: 100%;
     touch-action: none; // we own pointer dragging — don't pan/scroll the page
     cursor: pointer;
+  }
+
+  // Zoom / fullscreen controls: 3 columns in the lower right-hand (sidebar) area of the stage. They are
+  // CHILDREN of the fullscreened element, so the same controls carry into the fullscreen layout.
+  .stage-controls {
+    position: absolute;
+    right: 2.5%;
+    bottom: 3%;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.4rem;
+
+    button {
+      width: 2.2rem;
+      height: 2.2rem;
+      border: 1px solid #2a3040;
+      border-radius: 6px;
+      background: rgba(20, 24, 36, 0.85);
+      color: #aab2c5;
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+
+      &:hover {
+        color: #e8ecf4;
+        border-color: #3a4256;
+      }
+    }
+  }
+
+  // Stage-only fullscreen (the FruitCake pattern): the canvas — board AND the in-canvas right-hand
+  // column — centers in the viewport at its aspect ratio; --zoom still applies within the viewport.
+  &.fullscreen {
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    border-radius: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    canvas {
+      width: auto;
+      height: calc(100vh * var(--zoom, 1));
+      max-width: 100vw;
+      max-height: 100vh;
+    }
   }
 }

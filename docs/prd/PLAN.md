@@ -2181,6 +2181,64 @@ superlinear clear bonuses and survival/holes reward terms (stack-and-camp / neve
 the inputs); M53 worker (search ≈ 10 ms/move, synchronous is fine); Polyglot 0.9.x bump (migrating 6 solvers'
 `init`→`constructor` for fixes we can route around).
 
+## M55 — Tetris NES-exact input: DAS, wall charge, hypertapping  *(2026-08-26; branch `m55-tetris-das`; see `TETRIS_PRD.md` §3.10)* ✅
+
+**Why:** owner question after M54 shipped — "is DAS/hypertapping exactly like the NES?" It wasn't:
+left/right (and rotate, and hard drop) repeated at the OS keyboard auto-repeat rate, i.e. hardware-dependent
+timing. 2-agent investigation (NES disassembly spec via meatfighter/tetris.wiki: DAS counts to 16, resets
+to 10 after each auto-shift ⇒ 6-frame repeat; blocked shift saturates to 16 = wall charge; charge survives
+release AND lock, only a fresh press rewrites it; Down blocks horizontal; soft drop 3-then-2 frames,
+non-cumulative with gravity; one rotation per press; input sampled once per 60.0988 Hz frame + input-path
+audit recommending the machine live in `TetrisGame` beside the `softDrop` precedent).
+
+- **M55.1 — Pure input machine + conformance spike.** ✅ `tetris-das.ts` (dependency-free NesInput:
+  press/release edges latched between frames, tick() = one NES frame driving shift/soft-drop/gravity with
+  ≤1 shift and ≤1 row per frame). **Gate:** frame-exact conformance harness. *`tools/tetris_das_check.mjs`
+  11/11: hold shifts at frames 0,16,22,28,34,40,46 · wall charge fires on the first unblocked held frame
+  then 6-frame repeat · charge carried across spawn · 6 taps in 12 frames = 6 shifts · sub-frame double-tap
+  collapses to one · down-blocks-horizontal · 3-then-2 soft drop · non-cumulative at kill-screen gravity ·
+  left+right = neutral. (One "failure" during the spike was the TEST being less NES-accurate than the
+  machine.)*
+- **M55.2 — Wire-up.** ✅ Component = pure edge reporting (`event.repeat` filtered everywhere — rotate and
+  hard drop no longer OS-auto-repeat either); human mode runs a fixed 16.639 ms frame accumulator inside
+  the rAF loop (not setInterval — survives non-60 Hz displays and tab throttling); gravity + soft drop
+  folded into the same tick; Esc/blur/pointer-down clear held keys (the DAS charge itself survives, as on
+  the NES); pointer drag stays absolute-position (deliberately not DAS-limited). Watch-mode pilot
+  untouched (drives `microShift` directly). Engine untouched — parity pin N/A. *Live smoke: taps, DAS
+  hold, soft drop, single rotation — 0 console errors.*
+
+- **M55.3 — NRS rotation (ROM-exact).** ✅ Owner follow-up: "are the rotation centers correct?" They
+  weren't (bounding-box anchoring), and the owner clarified the earlier kick request actually meant NES
+  target-cells-only checking (occupied diagonals must not block — the T-slot feel). Owner decision: pure
+  NES, kicks REMOVED. Implemented from the ROM orientation table ($8A9C, meatfighter disassembly): the
+  existing shape tables already matched the NES states AND the (rot+1) cycle order matched the A-button
+  cycle for every piece — only per-state NRS origin offsets + NES spawn states (origin (5,0): Td/Jd/Ld/
+  Sh/Zh/Ih) + the y ≥ −2 virtual head-room (what makes spawn-row rotation possible; locking above the
+  board = top-out) were added. Micro-only: the MACRO placement API is origin-agnostic, so the trained
+  net, action semantics, and the parity pin (472451993, re-verified) are untouched. *7 NES-rotation
+  checks green on the TS twin (T pivot 4-cycle at a fixed origin, I wobble, diagonals-occupied rotation,
+  wall/floor refusals, spawn-row head-room) + C# tests rewritten to the same expectations.*
+- **M55.4 — Net upgrade (tet6train, shipped in this PR).** ✅ Owner ask: "start a new training with
+  parameters that will significantly improve the net." Diagnosis first (TETRIS_PRD.md §3.7 amendment):
+  the M54.3 net's dense della/10-unit targets shared one gradient with lines-unit realized rewards (unit
+  conflict) at 128×128 capacity. `tet6train` = trunk 256×256 + `--dense-weight 8` + lr 5e-4 → keep-best
+  **83,265 campaign score at 70K steps (≈4× the shipped 21,813)**; evals then DECLINED while loss fell —
+  distribution narrowing (the improving policy floods the replay buffer with clean stacks), not
+  saturation, so `--grow` correctly never fired. Run stopped at 330K; two knobs added
+  (`--eps-end`, `--buffer` → `TetrisDqnOptions.EpsilonEnd/BufferCapacity`) and `tet7train` warm-started
+  from the keep-best (ε floor 0.12, buffer 300K, lr 2e-4) as the follow-on refine — outcome: healthier
+  eval band (64–88K, no collapse) but a held-out WASH vs tet6 (all tiers CI-overlapping), so tet6 stays
+  shipped; ~85K is the recipe's held-out ceiling at this scale. **Ship gate — head-to-
+  head on HELD-OUT seeds 9000+e** (`tools/tetris_head2head.mjs`; 5000+e picked the keep-best so can't
+  judge it): A **85,199 vs 25,193** (+238%), B survival **176.2 vs 99.5** (+77%), net-search B **435.2 vs
+  160.9** (+170%) — all CI-separated; new ckpt (753 KB, LFS) to `wwwroot/models/tetris.dqn.ckpt`.
+
+**Rejected up front:** relying on OS auto-repeat with tuned delays (hardware/OS-dependent, the reported
+problem); setInterval timing (drifts, throttles); implementing DAS inside the `.pg` engine (input timing is
+a HOST concern — the engine stays a pure rules solver, C5); the −96-frame game-start Down lockout and
+pushdown scoring (documented skips); left+right simultaneous handling (D-pad impossibility → neutral);
+keeping the wall/floor kick ladder (superseded by the owner's pure-NES decision — NES has no kicks).
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.
