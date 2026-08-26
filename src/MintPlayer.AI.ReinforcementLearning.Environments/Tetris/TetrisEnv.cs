@@ -85,20 +85,30 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
 
     // ── Training-only potential-based shaping (M54.3 escalation, invoked 2026-08-26) ────────────────────────
     // The bare reward is too sparse to bootstrap from: random placements clear ~1 line per 450 steps, and
-    // the 180K-step eval was still near-random (0.5 lines). PBRS (Ng et al.): reward += γ·Φ(s′) − Φ(s) with
-    // Φ = −(4·holes + rowT + colT + wells)/scale — dense signal along the Dellacherie basis, and
-    // policy-invariant when PotentialGamma matches the learner's γ (Φ := 0 at termination, preserving
-    // exact invariance). TRAIN env only — the eval env scores the bare game, so gates stay honest.
+    // the 180K-step eval was still near-random (0.5 lines). PBRS (Ng et al.): reward += γ·Φ(s′) − Φ(s),
+    // Φ = max(0, Ceiling − (4·holes + rowT + colT + wells))/scale — dense signal along the Dellacherie
+    // basis, policy-invariant when PotentialGamma matches the learner's γ.
+    //
+    // ORIENTATION IS LOAD-BEARING (bug found 2026-08-26 on tet2train, which learned to be WORSE than the
+    // unshaped run): termination uses Φ := 0, so every living state's Φ must sit ABOVE 0 — with a negative
+    // Φ the terminal step pays 0 − Φ(s) = +|Φ|, a REWARD for dying that grows with how bad the board is.
+    // The ceiling keeps a clean board at ~+6 potential (forfeited on top-out) and a terrible board near 0.
+    // TRAIN env only — the eval env scores the bare game, so gates stay honest.
 
     /// <summary>Enable the training-only board-potential shaping. Default off — a plain env scores the bare game.</summary>
     public bool ShapeBoardPotential { get; set; }
     /// <summary>Must match the learner's γ for policy invariance.</summary>
     public double PotentialGamma { get; set; } = 0.995;
-    /// <summary>Divisor mapping board badness (~0–200) into reward units (lines ≈ 1).</summary>
+    /// <summary>Board badness (~0–200 on real boards) above which the potential clamps to 0.</summary>
+    public float PotentialCeiling { get; set; } = 200f;
+    /// <summary>Divisor mapping potential into reward units (lines ≈ 1; clean board ⇒ Φ = 6).</summary>
     public float PotentialScale { get; set; } = 25f;
 
     private float Potential()
-        => -(4f * _board.Holes() + _board.RowTransitions() + _board.ColTransitions() + _board.WellSum()) / PotentialScale;
+    {
+        float badness = 4f * _board.Holes() + _board.RowTransitions() + _board.ColTransitions() + _board.WellSum();
+        return Math.Max(0f, PotentialCeiling - badness) / PotentialScale;
+    }
 
     public int PieceBudget => _pieceBudget;
     public int Score => _board.Score;
