@@ -55,9 +55,17 @@ internal static class TetrisLab
         // (M54.3 escalation: the bare reward is too sparse — 180K steps measured near-random) and lives on
         // the TRAIN env only, so gates stay honest; --no-pbrs reverts to the bare reward.
         bool pbrs = !a.Has("--no-pbrs");
+        // Mixed garbage on/off per training episode (default ON — one net serves both web modes; garbage
+        // boards are otherwise out-of-distribution). --no-mix-garbage reverts to pure no-garbage training.
+        bool mixGarbage = !a.Has("--no-mix-garbage");
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             services => services.AddTetrisDqnCampaign(
-                trainEnv: new TetrisEnv(pieceBudget) { ShapeBoardPotential = pbrs, PotentialGamma = gamma },
+                trainEnv: new TetrisEnv(pieceBudget)
+                {
+                    ShapeBoardPotential = pbrs,
+                    PotentialGamma = gamma,
+                    MixedGarbageTraining = mixGarbage,
+                },
                 evalEnv: new TetrisEnv(pieceBudget),
                 options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "tetris-dqn.csv")));

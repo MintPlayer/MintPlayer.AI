@@ -95,6 +95,14 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
     // The ceiling keeps a clean board at ~+6 potential (forfeited on top-out) and a terrible board near 0.
     // TRAIN env only — the eval env scores the bare game, so gates stay honest.
 
+    /// <summary>Training-only distribution mix (owner request 2026-08-26: ONE net for garbage on+off):
+    /// each episode flips the rising-garbage mode on (every 10) or off, 50/50 from the env RNG stream.
+    /// Garbage boards (near-full rows, gaps, buried holes) are otherwise out-of-distribution for a net
+    /// whose own play converges to clean flat stacks. At γ=0 + dense targets this is benign covariate
+    /// mixing — the labels are computed from the observation, identically on both distributions (the M52
+    /// lesson). Eval envs keep a FIXED garbage setting so both gate protocols stay comparable.</summary>
+    public bool MixedGarbageTraining { get; set; }
+
     /// <summary>Enable the training-only board-potential shaping. Default off — a plain env scores the bare game.</summary>
     public bool ShapeBoardPotential { get; set; }
     /// <summary>Must match the learner's γ for policy invariance.</summary>
@@ -122,7 +130,10 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
     {
         if (seed.HasValue)
             _rng = new Xoshiro256StarStar(seed.Value);
-        _board.Reset(_rng.NextUInt64(), _sevenBag, _garbageEvery);
+        int garbage = MixedGarbageTraining
+            ? ((_rng.NextUInt64() & 1) == 0 ? 0 : 10)
+            : _garbageEvery;
+        _board.Reset(_rng.NextUInt64(), _sevenBag, garbage);
         _pieces = 0;
         _done = false;
         return (_board.BuildObservation(), EnvInfo.Empty);
