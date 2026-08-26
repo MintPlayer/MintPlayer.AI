@@ -139,7 +139,8 @@ export class Tetris implements AfterViewInit {
       case 'ArrowLeft': case 'a': this.game.moveLeft(); break;
       case 'ArrowRight': case 'd': this.game.moveRight(); break;
       case 'ArrowUp': case 'x': case 'w': this.game.rotate(); break;
-      case 'ArrowDown': case 's': this.game.setSoftDrop(true); break;
+      // Ignore key auto-repeat: after a lock cancels the soft drop, only a FRESH press re-arms it.
+      case 'ArrowDown': case 's': if (!event.repeat) this.game.setSoftDrop(true); break;
       case ' ': this.game.hardDrop(); break;
       default: return;
     }

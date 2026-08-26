@@ -10,7 +10,7 @@ export const W = 10;
 export const H = 20;
 
 const FRAME_MS = 1000 / 60;   // NES gravity is specified in frames per row at 60 fps
-const SOFT_DROP_MS = 45;      // gravity while the down key is held
+const SOFT_DROP_MS = 70;      // gravity while the down key is held (~½ the board per second)
 const FLASH_MS = 220;         // line-clear highlight
 const WATCH_FALL_MS = 160;    // watch-mode cosmetic drop time
 
@@ -118,6 +118,10 @@ export class TetrisGame {
   }
 
   private afterLock(): void {
+    // NES behavior: a lock cancels the soft drop — the next piece falls at gravity until the key is
+    // pressed AGAIN (the component ignores auto-repeat), so holding ↓ never slams the next piece.
+    this.softDrop = false;
+    this.gravityAcc = 0;
     if (this.board.lastLinesCleared > 0) {
       this.flashMs = FLASH_MS;
       this.flashLines = this.board.lastLinesCleared;
