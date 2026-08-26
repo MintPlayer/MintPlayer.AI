@@ -25,6 +25,7 @@ import { ScreenWakeLock } from '../screen-wake-lock';
     '(window:keyup)': 'onKeyUp($event)',
     '(window:blur)': 'onFocusLost()',
     '(document:visibilitychange)': 'onVisibilityChange()',
+    '(document:fullscreenchange)': 'onFullscreenChange()',
   },
 })
 export class Tetris implements AfterViewInit {
@@ -42,6 +43,39 @@ export class Tetris implements AfterViewInit {
   protected readonly garbage = signal(false);
   /** Esc pause: freezes the game AND hides the field (the render covers the canvas). */
   protected readonly paused = signal(false);
+
+  // View controls (owner request: pro players may find the view too large). Zoom scales the stage (and,
+  // in fullscreen, the canvas within the viewport) via the --zoom CSS variable; the buttons live INSIDE
+  // the stage element so they carry into the fullscreen layout. Zoom is a per-browser convenience.
+  protected readonly zoom = signal(this.loadZoom());
+  protected readonly isFullscreen = signal(false);
+  private static readonly ZOOM_MIN = 0.5;
+  private static readonly ZOOM_MAX = 1.5;
+
+  private readonly stageRef = viewChild.required<ElementRef<HTMLElement>>('stage');
+
+  private loadZoom(): number {
+    try {
+      const v = parseFloat(localStorage.getItem('tetris.zoom') ?? '');
+      return Number.isFinite(v) ? Math.min(Tetris.ZOOM_MAX, Math.max(Tetris.ZOOM_MIN, v)) : 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  protected zoomBy(delta: number): void {
+    this.zoom.update(z => Math.min(Tetris.ZOOM_MAX, Math.max(Tetris.ZOOM_MIN, Math.round((z + delta) * 8) / 8)));
+    try { localStorage.setItem('tetris.zoom', String(this.zoom())); } catch { /* private mode etc. */ }
+  }
+
+  protected toggleFullscreen(): void {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void this.stageRef().nativeElement.requestFullscreen?.();
+  }
+
+  protected onFullscreenChange(): void {
+    this.isFullscreen.set(!!document.fullscreenElement);
+  }
   private director: TetrisDirector | null = null;
 
   private ctx: CanvasRenderingContext2D | null = null;

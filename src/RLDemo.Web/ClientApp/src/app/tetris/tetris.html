@@ -25,12 +25,20 @@
   }
 </div>
 
-<div class="tet-stage" [style.aspect-ratio]="stageAspect">
+<div class="tet-stage" #stage [style.--zoom]="zoom()" [class.fullscreen]="isFullscreen()">
   <canvas #board
+          [style.aspect-ratio]="stageAspect"
           (pointerdown)="onPointerDown($event)"
           (pointermove)="onPointerMove($event)"
           (pointerup)="onPointerUp($event)"
           (pointercancel)="onPointerUp($event)"></canvas>
+  <div class="stage-controls">
+    <button type="button" (click)="zoomBy(-0.125)" title="Zoom out">−</button>
+    <button type="button" (click)="zoomBy(0.125)" title="Zoom in">+</button>
+    <button type="button" (click)="toggleFullscreen()" [title]="isFullscreen() ? 'Exit fullscreen' : 'Fullscreen'">
+      {{ isFullscreen() ? '🡼' : '⛶' }}
+    </button>
+  </div>
 </div>
 
 @if (mode() === 'human') {
