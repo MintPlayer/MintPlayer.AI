@@ -144,11 +144,10 @@ public class TetrisEngineTests
         const int rot = 2, col = 5;
         Assert.Equal(0, macro.ApplyPlacement(rot * 10 + col));
 
-        Assert.True(micro.MicroSpawn());
-        Assert.True(micro.MicroRotate());
-        Assert.True(micro.MicroRotate());
-        Assert.True(micro.MicroShift(+1)); // spawn x=3 → 5
-        Assert.True(micro.MicroShift(+1));
+        Assert.True(micro.MicroSpawn());   // NES spawn: Td, box x=4 (origin 5)
+        Assert.True(micro.MicroRotate());  // → Tl (uses the y=−1 head-room)
+        Assert.True(micro.MicroRotate());  // → Tu = macro rot 2
+        Assert.True(micro.MicroShift(+1)); // box x=4 → 5
         Assert.True(micro.MicroHardDrop());
 
         for (int y = 0; y < 20; y++) Assert.Equal(macro.Row(y), micro.Row(y));
@@ -182,7 +181,7 @@ public class TetrisEngineTests
         Assert.Equal(2, t.wellSum());
     }
 
-    // ── Rotation kicks (owner report 2026-08-26: pieces not blocked by squares must still rotate) ──────────
+    // ── NES rotation (M55.3, ROM-table NRS: in-place pivot, target-cells-only check, NO kicks) ─────────────
 
     private static PgTetris MicroBoard(int piece, int rot, int x, int y)
     {
@@ -196,72 +195,107 @@ public class TetrisEngineTests
         return t;
     }
 
-    [Fact]
-    public void Rotate_VerticalIAtTheRightWall_WallKicksIntoTheBoard()
+    private static int[] Cells(PgTetris t)
     {
-        var t = MicroBoard(piece: 0, rot: 1, x: 9, y: 10); // vertical I hugging the right wall, open board
-        Assert.True(t.microRotate(), "open-space rotation must succeed via a wall kick");
-        Assert.Equal(0, t.activeRot);
-        Assert.Equal(6, t.activeX);  // shifted just enough for the 4-wide horizontal I
-        Assert.Equal(13, t.activeY); // bottom-anchored: the bounding-box bottom row (14) is unchanged
+        var ri = t.current * 4 + t.activeRot;
+        return [.. Enumerable.Range(0, 4)
+            .Select(k => (t.activeY + t.cellY[ri * 4 + k]) * 10 + t.activeX + t.cellX[ri * 4 + k])
+            .OrderBy(c => c)];
     }
 
     [Fact]
-    public void Rotate_FlatIOnTheFloor_FloorKicksUpward()
+    public void NesSpawn_PiecesAppearAtOriginFiveInTheirNesState()
     {
-        var t = MicroBoard(piece: 0, rot: 0, x: 3, y: 19); // flat I lying on the floor
-        Assert.True(t.microRotate(), "open-space rotation must succeed via a floor kick");
-        Assert.Equal(1, t.activeRot);
-        Assert.Equal(16, t.activeY); // lifted just enough for the 4-tall vertical I
-    }
-
-    [Fact]
-    public void Rotate_TAgainstTheLeftWall_Succeeds()
-    {
-        var t = MicroBoard(piece: 2, rot: 1, x: 0, y: 10); // T pointing left, flush with the wall
-        Assert.True(t.microRotate());
-    }
-
-    [Fact]
-    public void Rotate_SZLJOnTheFloor_AllSucceedInOpenSpace()
-    {
-        // Every piece, every rotation slot, resting on the floor of an empty board: rotation must succeed
-        // (kick ladder), except the O piece which has a single rotation and trivially succeeds in place.
-        var probe = new PgTetris();
-        probe.reset(1, false, 0);
-        for (int piece = 0; piece < TetrisBoard.PieceCount; piece++)
+        // NES spawn origin (5,0): T/J/L/S/Z occupy x 4–6, O x 4–5, I x 3–6; spawn states Td/Jd/Ld/Sh/Zh/Ih.
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        (int piece, int rot, int x)[] expected =
+            [(0, 0, 3), (1, 0, 4), (2, 0, 4), (3, 0, 4), (4, 0, 4), (5, 1, 4), (6, 3, 4)];
+        foreach (var (piece, rot, x) in expected)
         {
-            for (int rot = 0; rot < probe.rotCount[piece]; rot++)
-            {
-                int h = probe.rotH[piece * 4 + rot];
-                var t = MicroBoard(piece, rot, x: 4, y: 20 - h); // resting on the floor
-                Assert.True(t.microRotate(), $"piece {piece} rot {rot} must rotate in open space");
-            }
+            t.current = piece;
+            Assert.True(t.microSpawn());
+            Assert.Equal(rot, t.activeRot);
+            Assert.Equal(x, t.activeX);
+            Assert.Equal(0, t.activeY);
         }
     }
 
     [Fact]
-    public void Rotate_SurroundedT_NeverJumpsUpward()
+    public void NesRotation_TCyclesInPlaceAroundItsPivot()
     {
-        // Owner report 2026-08-26: a T rotated in a snug cavity translated upward (the old free-climb
-        // ladder). A fully boxed-in T must simply FAIL to rotate, without moving at all.
-        var t = MicroBoard(piece: 2, rot: 2, x: 4, y: 18); // T pointing up, resting in an exact cavity
-        for (int y = 17; y < 20; y++) t.rows[y] = FullRow;
-        // Carve exactly the T's own cells out of rows 18–19: (5,18) + (4..6,19).
-        t.rows[18] &= ~(1 << 5);
-        t.rows[19] &= ~0b0001110000;
-        Assert.False(t.microRotate(), "a boxed-in T must not rotate");
-        Assert.Equal(2, t.activeRot);
-        Assert.Equal(4, t.activeX);
-        Assert.Equal(18, t.activeY); // and it must not have moved — no jump
+        // The research sanity example, origin (5,10): Td → Tl → Tu → Tr → Td, pivot never moves.
+        var t = MicroBoard(piece: 2, rot: 0, x: 4, y: 10); // Td box top-left = origin(5,10) + (−1,0)
+        Assert.Equal(new[] { 104, 105, 106, 115 }, Cells(t));            // (4..6,10) + (5,11)
+        Assert.True(t.microRotate());
+        Assert.Equal(new[] { 95, 104, 105, 115 }, Cells(t));             // Tl: (5,9)(4,10)(5,10)(5,11)
+        Assert.True(t.microRotate());
+        Assert.Equal(new[] { 95, 104, 105, 106 }, Cells(t));             // Tu: (5,9)(4..6,10)
+        Assert.True(t.microRotate());
+        Assert.Equal(new[] { 95, 105, 106, 115 }, Cells(t));             // Tr: (5,9)(5,10)(6,10)(5,11)
+        Assert.True(t.microRotate());
+        Assert.Equal(new[] { 104, 105, 106, 115 }, Cells(t));            // back to Td — a true pivot
     }
 
     [Fact]
-    public void Rotate_ActuallyBlockedBySquares_StillFails()
+    public void NesRotation_IWobblesBetweenItsTwoStates()
+    {
+        // Ih (3..6,10) ⇄ Iv (5,8..11) — the NES I's characteristic asymmetric wobble about column 5.
+        var t = MicroBoard(piece: 0, rot: 0, x: 3, y: 10);
+        Assert.Equal(new[] { 103, 104, 105, 106 }, Cells(t));
+        Assert.True(t.microRotate());
+        Assert.Equal(new[] { 85, 95, 105, 115 }, Cells(t));
+        Assert.True(t.microRotate());
+        Assert.Equal(new[] { 103, 104, 105, 106 }, Cells(t));
+    }
+
+    [Fact]
+    public void NesRotation_TRotatesWithAllFourDiagonalsOccupied()
+    {
+        // The owner's scenario: only the TARGET cells matter — filled diagonal corners around the pivot
+        // must not block the rotation (the NES "T-slot" feel).
+        var t = MicroBoard(piece: 2, rot: 0, x: 4, y: 10); // Td, pivot (5,10)
+        t.rows[9] = (1 << 4) | (1 << 6);   // corners above: (4,9) (6,9)
+        t.rows[11] = (1 << 4) | (1 << 6);  // corners below: (4,11) (6,11)
+        Assert.True(t.microRotate(), "occupied diagonals must not block an NRS rotation");
+        Assert.Equal(new[] { 95, 104, 105, 115 }, Cells(t)); // Tl, in place
+    }
+
+    [Fact]
+    public void NesRotation_NoKicks_WallAndFloorBlockRotation()
+    {
+        // Pure NES: a vertical I hugging the right wall CANNOT rotate (Ih would need x 7..10)...
+        var t = MicroBoard(piece: 0, rot: 1, x: 9, y: 10);
+        Assert.False(t.microRotate());
+        Assert.Equal(1, t.activeRot);
+        Assert.Equal(9, t.activeX);
+        Assert.Equal(10, t.activeY);
+        // ...and a flat I on the floor cannot go vertical (Iv would need rows 17..22).
+        var t2 = MicroBoard(piece: 0, rot: 0, x: 3, y: 19);
+        Assert.False(t2.microRotate());
+        Assert.Equal(0, t2.activeRot);
+    }
+
+    [Fact]
+    public void NesRotation_SpawnRowRotationUsesTheVirtualHeadroom()
+    {
+        // On the NES the validity check accepts cells up to 2 rows above the board — so a T can rotate
+        // on its spawn row (Tl's box top lands at y = −1).
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.current = 2;
+        Assert.True(t.microSpawn());
+        Assert.True(t.microRotate(), "spawn-row rotation must succeed via the y ≥ −2 head-room");
+        Assert.Equal(1, t.activeRot);
+        Assert.Equal(-1, t.activeY);
+    }
+
+    [Fact]
+    public void NesRotation_BlockedBySquares_StillFails()
     {
         var t = MicroBoard(piece: 0, rot: 1, x: 9, y: 16); // vertical I at the right wall...
         for (int y = 10; y < 20; y++) t.rows[y] = 0b0111111111; // ...columns 0..8 solid below row 10
-        Assert.False(t.microRotate(), "a rotation blocked by real squares must not kick through them");
+        Assert.False(t.microRotate(), "a rotation blocked by real squares must fail in place");
         Assert.Equal(1, t.activeRot);
         Assert.Equal(9, t.activeX);
     }

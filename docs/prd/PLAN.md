@@ -2207,10 +2207,23 @@ audit recommending the machine live in `TetrisGame` beside the `softDrop` preced
   untouched (drives `microShift` directly). Engine untouched — parity pin N/A. *Live smoke: taps, DAS
   hold, soft drop, single rotation — 0 console errors.*
 
+- **M55.3 — NRS rotation (ROM-exact).** ✅ Owner follow-up: "are the rotation centers correct?" They
+  weren't (bounding-box anchoring), and the owner clarified the earlier kick request actually meant NES
+  target-cells-only checking (occupied diagonals must not block — the T-slot feel). Owner decision: pure
+  NES, kicks REMOVED. Implemented from the ROM orientation table ($8A9C, meatfighter disassembly): the
+  existing shape tables already matched the NES states AND the (rot+1) cycle order matched the A-button
+  cycle for every piece — only per-state NRS origin offsets + NES spawn states (origin (5,0): Td/Jd/Ld/
+  Sh/Zh/Ih) + the y ≥ −2 virtual head-room (what makes spawn-row rotation possible; locking above the
+  board = top-out) were added. Micro-only: the MACRO placement API is origin-agnostic, so the trained
+  net, action semantics, and the parity pin (472451993, re-verified) are untouched. *7 NES-rotation
+  checks green on the TS twin (T pivot 4-cycle at a fixed origin, I wobble, diagonals-occupied rotation,
+  wall/floor refusals, spawn-row head-room) + C# tests rewritten to the same expectations.*
+
 **Rejected up front:** relying on OS auto-repeat with tuned delays (hardware/OS-dependent, the reported
 problem); setInterval timing (drifts, throttles); implementing DAS inside the `.pg` engine (input timing is
 a HOST concern — the engine stays a pure rules solver, C5); the −96-frame game-start Down lockout and
-pushdown scoring (documented skips); left+right simultaneous handling (D-pad impossibility → neutral).
+pushdown scoring (documented skips); left+right simultaneous handling (D-pad impossibility → neutral);
+keeping the wall/floor kick ladder (superseded by the owner's pure-NES decision — NES has no kicks).
 
 ## Testing strategy (cross-cutting, from research)
 

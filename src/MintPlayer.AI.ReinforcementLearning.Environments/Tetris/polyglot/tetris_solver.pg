@@ -66,12 +66,21 @@ class PgTetris {
   // fix is post-0.8.1). Rotation slot r of piece p lives at rotIdx = p·4 + r; each rotation holds 4 cells
   // at cellX/cellY[rotIdx·4 + k], bounding box rotW/rotH[rotIdx], and per-column bottom profile
   // rotBottom[rotIdx·4 + x] (max cell y in that column; −1 for x ≥ rotW).
+  //
+  // The shapes and the (rot+1) cycle order match the NES ROM's orientation table ($8A9C) and A-button
+  // (clockwise) rotation table ($88EE) exactly; rotOffX/rotOffY give each state's NRS box offset from
+  // the piece ORIGIN (the pivot the NES keeps per falling piece), and spawnRot the NES spawn state —
+  // together they make micro rotation a true in-place pivot (M55.3). The MACRO placement API is
+  // origin-agnostic (normalized boxes × columns), so the AI/net/parity surface is untouched.
   var rotCount: List<i32> = List<i32>()
   var rotW: List<i32> = List<i32>()
   var rotH: List<i32> = List<i32>()
   var cellX: List<i32> = List<i32>()
   var cellY: List<i32> = List<i32>()
   var rotBottom: List<i32> = List<i32>()
+  var rotOffX: List<i32> = List<i32>()   // NRS box top-left minus origin, per rotation slot
+  var rotOffY: List<i32> = List<i32>()
+  var spawnRot: List<i32> = List<i32>()  // NES spawn state per piece (as a rot slot index)
 
   // Board: H row bitmasks, row 0 = top.
   var rows: List<i32> = List<i32>()
@@ -151,6 +160,11 @@ class PgTetris {
     this.addRot(0, 0, 0, 0, 0, 0, 0, 0)
   }
 
+  fn addOff(dx: i32, dy: i32) {
+    this.rotOffX.add(dx)
+    this.rotOffY.add(dy)
+  }
+
   fn buildPieceTables() {
     // I
     this.rotCount.add(2)
@@ -194,6 +208,52 @@ class PgTetris {
     this.addRot(0, 0, 0, 1, 1, 1, 2, 1)
     this.addRot(0, 0, 1, 0, 0, 1, 0, 2)
     this.addRot(0, 0, 1, 0, 2, 0, 2, 1)
+
+    // NRS origin offsets per rotation slot (box top-left − origin; ROM $8A9C, meatfighter tables) and
+    // the NES spawn state per piece. Origin spawns at (5, 0); every spawn state has dy = 0.
+    // I: Ih(−2,0) Iv(0,−2)
+    this.addOff(-2, 0)
+    this.addOff(0, -2)
+    this.addOff(0, 0)
+    this.addOff(0, 0)
+    // O: (−1,0)
+    this.addOff(-1, 0)
+    this.addOff(0, 0)
+    this.addOff(0, 0)
+    this.addOff(0, 0)
+    // T: Td(−1,0) Tl(−1,−1) Tu(−1,−1) Tr(0,−1)
+    this.addOff(-1, 0)
+    this.addOff(-1, -1)
+    this.addOff(-1, -1)
+    this.addOff(0, -1)
+    // S: Sh(−1,0) Sv(0,−1)
+    this.addOff(-1, 0)
+    this.addOff(0, -1)
+    this.addOff(0, 0)
+    this.addOff(0, 0)
+    // Z: Zh(−1,0) Zv(0,−1)
+    this.addOff(-1, 0)
+    this.addOff(0, -1)
+    this.addOff(0, 0)
+    this.addOff(0, 0)
+    // L: Lr(0,−1) Ld(−1,0) Ll(−1,−1) Lu(−1,−1)
+    this.addOff(0, -1)
+    this.addOff(-1, 0)
+    this.addOff(-1, -1)
+    this.addOff(-1, -1)
+    // J: Jl(−1,−1) Ju(−1,−1) Jr(0,−1) Jd(−1,0)
+    this.addOff(-1, -1)
+    this.addOff(-1, -1)
+    this.addOff(0, -1)
+    this.addOff(-1, 0)
+    // Spawn states: I=Ih(0) O=0 T=Td(0) S=Sh(0) Z=Zh(0) L=Ld(1) J=Jd(3)
+    this.spawnRot.add(0)
+    this.spawnRot.add(0)
+    this.spawnRot.add(0)
+    this.spawnRot.add(0)
+    this.spawnRot.add(0)
+    this.spawnRot.add(1)
+    this.spawnRot.add(3)
 
     // Bounding boxes + bottom profiles for all 28 rotation slots.
     for ri in 0..(PieceCount * 4) {
@@ -263,14 +323,17 @@ class PgTetris {
   }
 
   // ── Geometry ─────────────────────────────────────────────────────────────────────────────────────────────
+  // NES validity: x in bounds, bottom in bounds, and cells may sit up to 2 rows ABOVE the visible board
+  // (the ROM check accepts y ≥ −2; those virtual rows are always empty) — that head-room is what lets a
+  // piece rotate on its spawn row. The MACRO path only ever passes y ≥ 0, so it is unaffected.
   fn fitsAt(piece: i32, rot: i32, x: i32, y: i32): bool {
     let ri = piece * 4 + rot
     if x < 0 || x + this.rotW[ri] > W { return false }
-    if y < 0 || y + this.rotH[ri] > H { return false }
+    if y < -2 || y + this.rotH[ri] > H { return false }
     for k in 0..4 {
       let cx = x + this.cellX[ri * 4 + k]
       let cy = y + this.cellY[ri * 4 + k]
-      if ((this.rows[cy] >> cx) & 1) == 1 { return false }
+      if cy >= 0 && ((this.rows[cy] >> cx) & 1) == 1 { return false }
     }
     return true
   }
@@ -420,11 +483,14 @@ class PgTetris {
   }
 
   // ── MICRO step API (human play). Same lock path; rotation is simple (no kicks) ───────────────────────────
+  // NES spawn: the piece origin appears at (5, 0) in its piece-specific spawn state; the box top-left is
+  // origin + the state's NRS offset (every spawn state has dy = 0).
   fn microSpawn(): bool {
-    this.activeRot = 0
-    this.activeX = 3
+    let sr = this.spawnRot[this.current]
+    this.activeRot = sr
+    this.activeX = 5 + this.rotOffX[this.current * 4 + sr]
     this.activeY = 0
-    this.activeLive = this.fitsAt(this.current, 0, 3, 0)
+    this.activeLive = this.fitsAt(this.current, sr, this.activeX, 0)
     if !this.activeLive { this.gameOver = true }
     return this.activeLive
   }
@@ -436,38 +502,23 @@ class PgTetris {
     return true
   }
 
-  // Rotate with BOTTOM-ANCHORED re-seating + horizontal wall kicks (owner reports 2026-08-26: pieces not
-  // blocked by squares must still rotate — a vertical I at the right wall, a flat I on the floor — but a
-  // free upward-translation ladder let a surrounded T "jump up" when rotated). The new shape keeps its
-  // bounding-box BOTTOM row fixed (a taller rotation extends upward in place, a shorter one sits down);
-  // if that spot is blocked, a top-anchored fallback lets an airborne piece extend downward instead. The
-  // dx ladder (±1..3 — 3 covers the I) kicks off walls. There is NO free climb: a rotation that fits
-  // neither anchor fails. No SRS kick tables (T-spins stay out of scope, PRD §7); micro-only — the AI's
-  // macro placements never rotate in place.
+  // NES rotation (M55.3, owner decision: pure NRS): the piece pivots IN PLACE about its origin — the new
+  // state's box lands at origin + its NRS offset (so the box top-left moves by the offset delta, the
+  // origin never moves), and the rotation succeeds iff the new state's four TARGET cells are free
+  // (diagonal neighbours are irrelevant — a T in a snug slot rotates). No kicks of any kind: blocked by
+  // wall, floor, or stack ⇒ nothing happens. The (rot+1) cycle IS the NES A-button (clockwise) order.
   fn microRotate(): bool {
     if !this.activeLive || this.gameOver { return false }
+    let cur = this.current * 4 + this.activeRot
     let nr = (this.activeRot + 1) % this.rotCount[this.current]
-    let anchor = this.activeY + this.rotH[this.current * 4 + this.activeRot] - this.rotH[this.current * 4 + nr]
-    for pass in 0..2 {
-      let ny = if pass == 0 { anchor } else { this.activeY }
-      if pass == 1 && ny == anchor { break }
-      for dxi in 0..7 {
-        var dx = 0
-        if dxi == 1 { dx = -1 }
-        if dxi == 2 { dx = 1 }
-        if dxi == 3 { dx = -2 }
-        if dxi == 4 { dx = 2 }
-        if dxi == 5 { dx = -3 }
-        if dxi == 6 { dx = 3 }
-        if this.fitsAt(this.current, nr, this.activeX + dx, ny) {
-          this.activeRot = nr
-          this.activeX += dx
-          this.activeY = ny
-          return true
-        }
-      }
-    }
-    return false
+    let nxt = this.current * 4 + nr
+    let nx = this.activeX - this.rotOffX[cur] + this.rotOffX[nxt]
+    let ny = this.activeY - this.rotOffY[cur] + this.rotOffY[nxt]
+    if !this.fitsAt(this.current, nr, nx, ny) { return false }
+    this.activeRot = nr
+    this.activeX = nx
+    this.activeY = ny
+    return true
   }
 
   // One gravity/soft-drop step: true if the piece LOCKED (lastLinesCleared holds the clear count).
@@ -491,6 +542,14 @@ class PgTetris {
   }
 
   fn microLock() {
+    // Locking with cells in the virtual rows above the board (activeY < 0 — every state's box has a
+    // cell in its top row) is a top-out: the NES lets those cells vanish and the next spawn fails; we
+    // end the game one lock earlier — same outcome, and no negative row indices reach simPlace.
+    if this.activeY < 0 {
+      this.activeLive = false
+      this.gameOver = true
+      return
+    }
     let cleared = this.simPlace(this.current, this.activeRot, this.activeX, this.activeY)
     this.activeLive = false
     this.afterLock(cleared)
