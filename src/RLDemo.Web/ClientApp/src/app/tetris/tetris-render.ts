@@ -78,16 +78,11 @@ export function render(ctx: CanvasRenderingContext2D, game: TetrisGame, cssW: nu
     }
   }
 
-  // Falling piece: human = the live micro piece + its ghost; watch = the animated drop.
-  if (mode === 'human' && b.activeLive && !b.gameOver) {
+  // Falling piece (both modes drive the same live micro piece) + its ghost landing outline.
+  if (b.activeLive && !b.gameOver) {
     const gy = game.ghostY();
     if (gy >= 0 && gy !== b.activeY) drawPiece(ctx, b, b.current, b.activeRot, b.activeX, gy, null, true);
     drawPiece(ctx, b, b.current, b.activeRot, b.activeX, b.activeY, PIECE_COLORS[b.current], false);
-  }
-  const anim = game.anim;
-  if (anim) {
-    const yNow = Math.min(anim.yTo, anim.yTo * easeIn(anim.t));
-    drawPiece(ctx, b, anim.piece, anim.rot, anim.x, yNow, PIECE_COLORS[anim.piece], false);
   }
 
   // Line-clear flash: a soft band pulse over the whole well (the rows are already gone in the engine).
@@ -122,7 +117,7 @@ export function render(ctx: CanvasRenderingContext2D, game: TetrisGame, cssW: nu
   }
 
   // Game-over overlay.
-  if (b.gameOver && !anim) {
+  if (b.gameOver) {
     ctx.fillStyle = 'rgba(10, 12, 18, 0.72)';
     ctx.fillRect(BOARD_X, BOARD_Y, W * CELL, H * CELL);
     ctx.fillStyle = '#e8ecf4';
@@ -138,10 +133,6 @@ export function render(ctx: CanvasRenderingContext2D, game: TetrisGame, cssW: nu
   }
 
   ctx.restore();
-}
-
-function easeIn(t: number): number {
-  return t * t;
 }
 
 function drawCell(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, outline = false): void {

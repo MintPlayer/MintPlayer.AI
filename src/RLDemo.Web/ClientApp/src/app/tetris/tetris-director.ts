@@ -85,6 +85,6 @@ export class TetrisDirector {
       case 'net': action = board.netAction(this.net!); break;
       case 'net-search': action = board.netSearchAction(this.net!, 8); break;
     }
-    if (action >= 0) this.game.startDrop(action);
+    if (action >= 0) this.game.pilotTo(action);
   }
 }
