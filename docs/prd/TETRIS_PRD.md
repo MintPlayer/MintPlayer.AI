@@ -132,7 +132,11 @@ the net forgets messy states (which is where eval games are decided). Not satura
 plateau — `--grow` correctly never fired), not undervaluation-by-volume: the fix is DIVERSE sampling.
 Two knobs added (`TetrisDqnOptions.EpsilonEnd` / `--eps-end`, `BufferCapacity` / `--buffer`) and
 `tet7train` warm-started from the 83K keep-best (lr 2e-4, ε 0.3→**0.12** floor, buffer **300K**); its
-first eval already beat the seeded baseline. **Head-to-head on HELD-OUT seeds 9000+e** (the campaign's
+keep-best hit 88,425 on the campaign line — but the held-out head-to-head came back a WASH (all four
+tiers CI-overlapping; plain-net A −3.7%, B −14.1%), so tet6 stays shipped. Lesson pinned: a campaign-line
+eval on the seeds that SELECTED the keep-best cannot judge it, and the higher ε floor kept the eval band
+healthy (64–88K vs tet6's 56–60K collapse) without adding transferable strength — the recipe's held-out
+ceiling at this scale is ~85K. **Head-to-head on HELD-OUT seeds 9000+e** (the campaign's
 5000+e line selected the keep-best, so it can't also judge it; `tools/tetris_head2head.mjs`, TS twin =
 the browser's exact code): protocol A net **85,199 ± 3,519** vs 25,193 ± 8,326 (+238%, CI-separated);
 protocol B net survival **176.2 vs 99.5** (+77%, CI-separated); net-search(8) survival **435.2 vs 160.9**

@@ -2226,7 +2226,9 @@ audit recommending the machine live in `TetrisGame` beside the `softDrop` preced
   distribution narrowing (the improving policy floods the replay buffer with clean stacks), not
   saturation, so `--grow` correctly never fired. Run stopped at 330K; two knobs added
   (`--eps-end`, `--buffer` → `TetrisDqnOptions.EpsilonEnd/BufferCapacity`) and `tet7train` warm-started
-  from the keep-best (ε floor 0.12, buffer 300K, lr 2e-4) as the follow-on refine. **Ship gate — head-to-
+  from the keep-best (ε floor 0.12, buffer 300K, lr 2e-4) as the follow-on refine — outcome: healthier
+  eval band (64–88K, no collapse) but a held-out WASH vs tet6 (all tiers CI-overlapping), so tet6 stays
+  shipped; ~85K is the recipe's held-out ceiling at this scale. **Ship gate — head-to-
   head on HELD-OUT seeds 9000+e** (`tools/tetris_head2head.mjs`; 5000+e picked the keep-best so can't
   judge it): A **85,199 vs 25,193** (+238%), B survival **176.2 vs 99.5** (+77%), net-search B **435.2 vs
   160.9** (+170%) — all CI-separated; new ckpt (753 KB, LFS) to `wwwroot/models/tetris.dqn.ckpt`.
