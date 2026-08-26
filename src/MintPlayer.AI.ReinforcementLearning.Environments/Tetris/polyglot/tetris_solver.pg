@@ -1,0 +1,794 @@
+// tetris_solver.pg — single-source Tetris engine (docs/prd/TETRIS_PRD.md §3.1). ONE source, transpiled to
+// C# and TS; types are `PgTet`-prefixed (every .pg emits into the same global C# namespace).
+//
+// Everything the browser needs — rules, placement enumeration, per-placement features, the observation,
+// the scripted tiers (random / Dellacherie / search) and the net forward pass — lives here, so C#
+// training/serving and the web page share one engine. All rules arithmetic is i32 (f64 only in
+// features/observation/net); rows are 10-bit i32 bitmasks (bit c = column c filled — values ≤ 1023, so
+// only `<< >> & |` on small positives are ever needed). Every rule is deterministic; planning (the
+// per-placement evaluation and the search tiers) consumes NO RNG.
+//
+// Two step APIs over one lock path (PRD §3.10 / risk 4):
+//   • MACRO (AI/env): action = rot·10 + col ∈ [0,40), hard vertical drop — applyPlacement().
+//   • MICRO (human): spawn/left/right/rotate/softDrop/hardDrop on an active piece — same lock,
+//     scoring, garbage and spawn bookkeeping via afterLock().
+
+import { List } from "std.collections"
+import { Math } from "std.math"
+
+// Exact i32 quotient of a non-negative dividend (same rationale as the other solvers' divExact —
+// unique name: module-level fns from every .pg share one C# class).
+fn tetDiv(a: i32, b: i32): i32 => (a - a % b) / b
+
+// ── Deterministic RNG — minstd Lehmer LCG via Schrage (identical to PgCfRng; own copy because the TS
+// twins are separate modules). Byte-identical streams in .NET int and JS number.
+class PgTetRng {
+  const M: i32 = 2147483647
+  const A: i32 = 48271
+  const Q: i32 = 44488
+  const R: i32 = 3399
+
+  var state: i32
+
+  init(seed: i32) {
+    var s = seed % M
+    if s < 0 { s += M - 1 }
+    if s == 0 { s = 1 }
+    this.state = s
+  }
+
+  fn next(): i32 {
+    let r = this.state % Q
+    let q = tetDiv(this.state, Q)
+    var s = A * r - R * q
+    if s <= 0 { s += M }
+    this.state = s
+    return s
+  }
+
+  fn nextInt(n: i32): i32 => this.next() % n
+}
+
+// ── The game ───────────────────────────────────────────────────────────────────────────────────────────────
+class PgTetris {
+  const W: i32 = 10
+  const H: i32 = 20
+  const FullRow: i32 = 1023          // (1 << W) − 1
+  const PieceCount: i32 = 7          // 0=I 1=O 2=T 3=S 4=Z 5=L 6=J
+  const ActionCount: i32 = 40        // rot·10 + col
+
+  // Piece tables, built in init() (instance lists, NOT module-level lets — the module-globals-in-methods
+  // fix is post-0.8.1). Rotation slot r of piece p lives at rotIdx = p·4 + r; each rotation holds 4 cells
+  // at cellX/cellY[rotIdx·4 + k], bounding box rotW/rotH[rotIdx], and per-column bottom profile
+  // rotBottom[rotIdx·4 + x] (max cell y in that column; −1 for x ≥ rotW).
+  var rotCount: List<i32> = List<i32>()
+  var rotW: List<i32> = List<i32>()
+  var rotH: List<i32> = List<i32>()
+  var cellX: List<i32> = List<i32>()
+  var cellY: List<i32> = List<i32>()
+  var rotBottom: List<i32> = List<i32>()
+
+  // Board: H row bitmasks, row 0 = top.
+  var rows: List<i32> = List<i32>()
+
+  var pieceRng: PgTetRng = PgTetRng(1)
+  var garbageRng: PgTetRng = PgTetRng(1)
+  var useBag: bool                   // 7-bag (web default) vs uniform (training/benchmark)
+  var bag: List<i32> = List<i32>()
+  var bagPos: i32
+
+  var current: i32                   // piece in play (the macro action places it)
+  var next: i32                      // 1-piece preview
+  var score: i32                     // display score: 100/300/500/800 per 1/2/3/4 lines
+  var lines: i32                     // total lines cleared (the training-reward currency)
+  var piecesPlaced: i32
+  var gameOver: bool
+  var lastLinesCleared: i32          // of the most recent lock
+
+  // Rising-garbage mode (PRD §1): every garbageEvery placements a full bottom row with one random gap
+  // pushes the stack up; overflow = game over. 0 = off.
+  var garbageEvery: i32
+  var garbageCounter: i32
+
+  // Micro (human) piece state — macro play never reads these.
+  var activeRot: i32
+  var activeX: i32
+  var activeY: i32
+  var activeLive: bool               // false between lock and the next microSpawn
+
+  // Per-placement eval scratch, set by simPlace (valid immediately after the call).
+  var simLanding: f64                // H − dropY − rotH/2 (spike's midpoint landing height)
+  var simEroded: i32                 // linesCleared × piece cells inside the cleared rows
+
+  init() {
+    this.useBag = false
+    this.bagPos = 0
+    this.current = 0
+    this.next = 0
+    this.score = 0
+    this.lines = 0
+    this.piecesPlaced = 0
+    this.gameOver = false
+    this.lastLinesCleared = 0
+    this.garbageEvery = 0
+    this.garbageCounter = 0
+    this.activeRot = 0
+    this.activeX = 0
+    this.activeY = 0
+    this.activeLive = false
+    this.simLanding = 0.0
+    this.simEroded = 0
+    this.buildPieceTables()
+    for i in 0..H { this.rows.add(0) }
+  }
+
+  // ── Piece data (spike shapes, spawn orientations; simple rotation, no kicks) ─────────────────────────────
+  fn addRot(x0: i32, y0: i32, x1: i32, y1: i32, x2: i32, y2: i32, x3: i32, y3: i32) {
+    this.cellX.add(x0)
+    this.cellY.add(y0)
+    this.cellX.add(x1)
+    this.cellY.add(y1)
+    this.cellX.add(x2)
+    this.cellY.add(y2)
+    this.cellX.add(x3)
+    this.cellY.add(y3)
+  }
+
+  fn addEmptyRot() {
+    this.addRot(0, 0, 0, 0, 0, 0, 0, 0)
+  }
+
+  fn buildPieceTables() {
+    // I
+    this.rotCount.add(2)
+    this.addRot(0, 0, 1, 0, 2, 0, 3, 0)
+    this.addRot(0, 0, 0, 1, 0, 2, 0, 3)
+    this.addEmptyRot()
+    this.addEmptyRot()
+    // O
+    this.rotCount.add(1)
+    this.addRot(0, 0, 1, 0, 0, 1, 1, 1)
+    this.addEmptyRot()
+    this.addEmptyRot()
+    this.addEmptyRot()
+    // T
+    this.rotCount.add(4)
+    this.addRot(0, 0, 1, 0, 2, 0, 1, 1)
+    this.addRot(1, 0, 0, 1, 1, 1, 1, 2)
+    this.addRot(1, 0, 0, 1, 1, 1, 2, 1)
+    this.addRot(0, 0, 0, 1, 1, 1, 0, 2)
+    // S
+    this.rotCount.add(2)
+    this.addRot(1, 0, 2, 0, 0, 1, 1, 1)
+    this.addRot(0, 0, 0, 1, 1, 1, 1, 2)
+    this.addEmptyRot()
+    this.addEmptyRot()
+    // Z
+    this.rotCount.add(2)
+    this.addRot(0, 0, 1, 0, 1, 1, 2, 1)
+    this.addRot(1, 0, 0, 1, 1, 1, 0, 2)
+    this.addEmptyRot()
+    this.addEmptyRot()
+    // L
+    this.rotCount.add(4)
+    this.addRot(0, 0, 0, 1, 0, 2, 1, 2)
+    this.addRot(0, 0, 1, 0, 2, 0, 0, 1)
+    this.addRot(0, 0, 1, 0, 1, 1, 1, 2)
+    this.addRot(2, 0, 0, 1, 1, 1, 2, 1)
+    // J
+    this.rotCount.add(4)
+    this.addRot(1, 0, 1, 1, 0, 2, 1, 2)
+    this.addRot(0, 0, 0, 1, 1, 1, 2, 1)
+    this.addRot(0, 0, 1, 0, 0, 1, 0, 2)
+    this.addRot(0, 0, 1, 0, 2, 0, 2, 1)
+
+    // Bounding boxes + bottom profiles for all 28 rotation slots.
+    for ri in 0..(PieceCount * 4) {
+      var w = 0
+      var h = 0
+      for k in 0..4 {
+        if this.cellX[ri * 4 + k] + 1 > w { w = this.cellX[ri * 4 + k] + 1 }
+        if this.cellY[ri * 4 + k] + 1 > h { h = this.cellY[ri * 4 + k] + 1 }
+      }
+      this.rotW.add(w)
+      this.rotH.add(h)
+      for bx in 0..4 {
+        var bottom = -1
+        for k2 in 0..4 {
+          if this.cellX[ri * 4 + k2] == bx && this.cellY[ri * 4 + k2] > bottom { bottom = this.cellY[ri * 4 + k2] }
+        }
+        this.rotBottom.add(bottom)
+      }
+    }
+  }
+
+  // ── Reset / piece stream ─────────────────────────────────────────────────────────────────────────────────
+  fn reset(seed: i32, sevenBag: bool, garbageRate: i32) {
+    this.pieceRng = PgTetRng(seed)
+    this.garbageRng = PgTetRng(seed + 1000003)
+    this.useBag = sevenBag
+    this.bag.clear()
+    this.bagPos = 0
+    this.rows.clear()
+    for i in 0..H { this.rows.add(0) }
+    this.score = 0
+    this.lines = 0
+    this.piecesPlaced = 0
+    this.gameOver = false
+    this.lastLinesCleared = 0
+    this.garbageEvery = garbageRate
+    this.garbageCounter = 0
+    this.activeLive = false
+    this.current = this.drawPiece()
+    this.next = this.drawPiece()
+  }
+
+  fn refillBag() {
+    this.bag.clear()
+    for p in 0..PieceCount { this.bag.add(p) }
+    for i2 in 0..(PieceCount - 1) {
+      let i = PieceCount - 1 - i2
+      let j = this.pieceRng.nextInt(i + 1)
+      let tmp = this.bag[i]
+      this.bag[i] = this.bag[j]
+      this.bag[j] = tmp
+    }
+    this.bagPos = 0
+  }
+
+  fn drawPiece(): i32 {
+    if !this.useBag { return this.pieceRng.nextInt(PieceCount) }
+    if this.bagPos >= PieceCount { this.refillBag() }
+    if this.bag.count == 0 { this.refillBag() }
+    let p = this.bag[this.bagPos]
+    this.bagPos += 1
+    return p
+  }
+
+  // ── Geometry ─────────────────────────────────────────────────────────────────────────────────────────────
+  fn fitsAt(piece: i32, rot: i32, x: i32, y: i32): bool {
+    let ri = piece * 4 + rot
+    if x < 0 || x + this.rotW[ri] > W { return false }
+    if y < 0 || y + this.rotH[ri] > H { return false }
+    for k in 0..4 {
+      let cx = x + this.cellX[ri * 4 + k]
+      let cy = y + this.cellY[ri * 4 + k]
+      if ((this.rows[cy] >> cx) & 1) == 1 { return false }
+    }
+    return true
+  }
+
+  // Hard-drop landing row (top of bounding box) for a vertical drop from above; −1 = illegal (out of
+  // range, or no room at the top — the spike's top-out placement rule).
+  fn dropY(piece: i32, rot: i32, x: i32): i32 {
+    if rot < 0 || rot >= this.rotCount[piece] { return -1 }
+    if !this.fitsAt(piece, rot, x, 0) { return -1 }
+    var y = 0
+    for _step in 0..H {
+      if this.fitsAt(piece, rot, x, y + 1) { y += 1 } else { break }
+    }
+    return y
+  }
+
+  // ── Lock primitives (shared by macro and micro paths — risk 4) ───────────────────────────────────────────
+  // Write the piece, clear full rows, and record the eval scratch (landing height + eroded cells).
+  // Pure board mutation: no RNG, no scoring, no spawn — the planning/search tiers call this on saved rows.
+  fn simPlace(piece: i32, rot: i32, x: i32, y: i32): i32 {
+    let ri = piece * 4 + rot
+    for k in 0..4 {
+      let cy = y + this.cellY[ri * 4 + k]
+      this.rows[cy] = this.rows[cy] | (1 << (x + this.cellX[ri * 4 + k]))
+    }
+    var pieceCellsCleared = 0
+    for k2 in 0..4 {
+      if this.rows[y + this.cellY[ri * 4 + k2]] == FullRow { pieceCellsCleared += 1 }
+    }
+    let cleared = this.clearFullRows()
+    this.simLanding = (H - y) - this.rotH[ri] / 2.0
+    this.simEroded = cleared * pieceCellsCleared
+    return cleared
+  }
+
+  fn clearFullRows(): i32 {
+    var cleared = 0
+    var write = H - 1
+    for i in 0..H {
+      let y = H - 1 - i
+      if this.rows[y] == FullRow {
+        cleared += 1
+      } else {
+        this.rows[write] = this.rows[y]
+        write -= 1
+      }
+    }
+    for w2 in 0..(write + 1) { this.rows[w2] = 0 }
+    return cleared
+  }
+
+  fn lineScore(cleared: i32): i32 {
+    if cleared == 1 { return 100 }
+    if cleared == 2 { return 300 }
+    if cleared == 3 { return 500 }
+    if cleared == 4 { return 800 }
+    return 0
+  }
+
+  // Post-lock bookkeeping shared by both step APIs: scoring, counters, the garbage clock, and the next
+  // piece draw. Does NOT decide game-over for the new piece — each path applies its own rule after this.
+  fn afterLock(cleared: i32) {
+    this.score += this.lineScore(cleared)
+    this.lines += cleared
+    this.lastLinesCleared = cleared
+    this.piecesPlaced += 1
+    if this.garbageEvery > 0 {
+      this.garbageCounter += 1
+      if this.garbageCounter >= this.garbageEvery {
+        this.garbageCounter = 0
+        this.insertGarbageRow()
+      }
+    }
+    this.current = this.next
+    this.next = this.drawPiece()
+  }
+
+  fn insertGarbageRow() {
+    if this.rows[0] != 0 {
+      this.gameOver = true
+      return
+    }
+    for y in 0..(H - 1) { this.rows[y] = this.rows[y + 1] }
+    this.rows[H - 1] = FullRow - (1 << this.garbageRng.nextInt(W))
+  }
+
+  // ── MACRO step API (AI/env): action = rot·10 + col ───────────────────────────────────────────────────────
+  fn actionRot(action: i32): i32 => tetDiv(action, W)
+  fn actionCol(action: i32): i32 => action % W
+
+  fn placementLegal(action: i32): bool {
+    if this.gameOver || action < 0 || action >= ActionCount { return false }
+    return this.dropY(this.current, this.actionRot(action), this.actionCol(action)) >= 0
+  }
+
+  fn legalMask(): List<bool> {
+    var mask: List<bool> = List<bool>()
+    for a in 0..ActionCount { mask.add(this.placementLegal(a)) }
+    return mask
+  }
+
+  fn hasLegalPlacement(): bool {
+    for a in 0..ActionCount { if this.placementLegal(a) { return true } }
+    return false
+  }
+
+  // Apply a placement end-to-end (lock, clear, score, garbage clock, draw). Returns the LINES cleared
+  // (0–4, the training-reward currency; display score accrues separately) or −1 for an illegal action.
+  // The board tops out — gameOver — when the NEW current piece has no legal placement (all-masked ⇒
+  // terminated, PRD §3.3) or the garbage shift overflows.
+  fn applyPlacement(action: i32): i32 {
+    if !this.placementLegal(action) { return -1 }
+    let rot = this.actionRot(action)
+    let x = this.actionCol(action)
+    let y = this.dropY(this.current, rot, x)
+    let cleared = this.simPlace(this.current, rot, x, y)
+    this.afterLock(cleared)
+    if !this.gameOver && !this.hasLegalPlacement() { this.gameOver = true }
+    return cleared
+  }
+
+  // ── MICRO step API (human play). Same lock path; rotation is simple (no kicks) ───────────────────────────
+  fn microSpawn(): bool {
+    this.activeRot = 0
+    this.activeX = 3
+    this.activeY = 0
+    this.activeLive = this.fitsAt(this.current, 0, 3, 0)
+    if !this.activeLive { this.gameOver = true }
+    return this.activeLive
+  }
+
+  fn microShift(dx: i32): bool {
+    if !this.activeLive || this.gameOver { return false }
+    if !this.fitsAt(this.current, this.activeRot, this.activeX + dx, this.activeY) { return false }
+    this.activeX += dx
+    return true
+  }
+
+  fn microRotate(): bool {
+    if !this.activeLive || this.gameOver { return false }
+    let nr = (this.activeRot + 1) % this.rotCount[this.current]
+    if !this.fitsAt(this.current, nr, this.activeX, this.activeY) { return false }
+    this.activeRot = nr
+    return true
+  }
+
+  // One gravity/soft-drop step: true if the piece LOCKED (lastLinesCleared holds the clear count).
+  fn microDropStep(): bool {
+    if !this.activeLive || this.gameOver { return false }
+    if this.fitsAt(this.current, this.activeRot, this.activeX, this.activeY + 1) {
+      this.activeY += 1
+      return false
+    }
+    this.microLock()
+    return true
+  }
+
+  fn microHardDrop(): bool {
+    if !this.activeLive || this.gameOver { return false }
+    for _step in 0..H {
+      if this.fitsAt(this.current, this.activeRot, this.activeX, this.activeY + 1) { this.activeY += 1 } else { break }
+    }
+    this.microLock()
+    return true
+  }
+
+  fn microLock() {
+    let cleared = this.simPlace(this.current, this.activeRot, this.activeX, this.activeY)
+    this.activeLive = false
+    this.afterLock(cleared)
+    if !this.gameOver { this.microSpawn() }
+  }
+
+  // ── Per-placement features (spike math, ported verbatim — the C# gate reproduces the spike bars) ─────────
+  fn rowTransitions(): i32 {
+    var t = 0
+    for y in 0..H {
+      var prev = 1
+      for c in 0..W {
+        let cur = (this.rows[y] >> c) & 1
+        if cur != prev { t += 1 }
+        prev = cur
+      }
+      if prev == 0 { t += 1 }
+    }
+    return t
+  }
+
+  fn colTransitions(): i32 {
+    var t = 0
+    for c in 0..W {
+      var prev = 0
+      for y in 0..H {
+        let cur = (this.rows[y] >> c) & 1
+        if cur != prev { t += 1 }
+        prev = cur
+      }
+      if prev == 0 { t += 1 }
+    }
+    return t
+  }
+
+  fn holes(): i32 {
+    var n = 0
+    for c in 0..W {
+      var seen = false
+      for y in 0..H {
+        if ((this.rows[y] >> c) & 1) == 1 { seen = true } else { if seen { n += 1 } }
+      }
+    }
+    return n
+  }
+
+  // Spike's well variant: per column, the contiguous empty run below the FIRST cell that is empty with
+  // both lateral neighbours (or walls) filled; scanning stops at the column's first filled cell.
+  fn wellSum(): i32 {
+    var sum = 0
+    for c in 0..W {
+      for y in 0..H {
+        if ((this.rows[y] >> c) & 1) == 1 { break }
+        let leftFilled = if c == 0 { 1 } else { (this.rows[y] >> (c - 1)) & 1 }
+        let rightFilled = if c == W - 1 { 1 } else { (this.rows[y] >> (c + 1)) & 1 }
+        if leftFilled == 1 && rightFilled == 1 {
+          var yy = y
+          for _d in 0..H {
+            if yy < H && ((this.rows[yy] >> c) & 1) == 0 { sum += 1; yy += 1 } else { break }
+          }
+          break
+        }
+      }
+    }
+    return sum
+  }
+
+  fn saveRows(): List<i32> {
+    var saved: List<i32> = List<i32>()
+    for y in 0..H { saved.add(this.rows[y]) }
+    return saved
+  }
+
+  fn restoreRows(saved: List<i32>) {
+    for y in 0..H { this.rows[y] = saved[y] }
+  }
+
+  // Dellacherie score of placing `piece` at (rot, x) on the CURRENT rows — the canonical hand-tuned
+  // evaluator: −landing + eroded − rowT − colT − 4·holes − wells, all on the afterstate (spike formula).
+  // Board restored; no RNG. Returns −1e18 for an illegal placement.
+  fn dellaScoreFor(piece: i32, rot: i32, x: i32): f64 {
+    let y = this.dropY(piece, rot, x)
+    if y < 0 { return -1.0e18 }
+    let saved = this.saveRows()
+    this.simPlace(piece, rot, x, y)
+    let s = 0.0 - this.simLanding + this.simEroded - this.rowTransitions() - this.colTransitions() - 4 * this.holes() - this.wellSum()
+    this.restoreRows(saved)
+    return s
+  }
+
+  // Best Dellacherie placement value of `piece` on the current rows (−1e18 when the piece cannot land —
+  // dying scores as badly as it should in the search).
+  fn bestDellaFor(piece: i32): f64 {
+    var best = -1.0e18
+    for r in 0..this.rotCount[piece] {
+      for x in 0..(W - this.rotW[piece * 4 + r] + 1) {
+        let s = this.dellaScoreFor(piece, r, x)
+        if s > best { best = s }
+      }
+    }
+    return best
+  }
+
+  // ── Observation (PRD §3.4) — 454 floats: 200 board cells + 7 current + 7 next one-hots + six
+  // 40-wide per-action planes (landing/20, eroded/8, ΔrowT/20, ΔcolT/20, Δholes/10, Δwells/20;
+  // illegal action ⇒ 0 in every plane). Plane-major like the other solvers.
+  fn buildObservation(): List<f64> => this.buildObservationFor(this.current, this.next)
+
+  fn buildObservationFor(curPiece: i32, nextPiece: i32): List<f64> {
+    var obs: List<f64> = List<f64>()
+    for y in 0..H {
+      for c in 0..W { obs.add(if ((this.rows[y] >> c) & 1) == 1 { 1.0 } else { 0.0 }) }
+    }
+    for p in 0..PieceCount { obs.add(if p == curPiece { 1.0 } else { 0.0 }) }
+    for p2 in 0..PieceCount { obs.add(if p2 == nextPiece { 1.0 } else { 0.0 }) }
+
+    let preRowT = this.rowTransitions()
+    let preColT = this.colTransitions()
+    let preHoles = this.holes()
+    let preWells = this.wellSum()
+
+    // Action-major scratch (6 features per action), emitted plane-major below.
+    var feat: List<f64> = List<f64>()
+    for _a in 0..(ActionCount * 6) { feat.add(0.0) }
+    for a in 0..ActionCount {
+      let rot = this.actionRot(a)
+      let x = this.actionCol(a)
+      if rot >= this.rotCount[curPiece] { continue }
+      let y = this.dropY(curPiece, rot, x)
+      if y < 0 { continue }
+      let saved = this.saveRows()
+      this.simPlace(curPiece, rot, x, y)
+      feat[a * 6] = this.simLanding / 20.0
+      feat[a * 6 + 1] = this.simEroded / 8.0
+      feat[a * 6 + 2] = (this.rowTransitions() - preRowT) / 20.0
+      feat[a * 6 + 3] = (this.colTransitions() - preColT) / 20.0
+      feat[a * 6 + 4] = (this.holes() - preHoles) / 10.0
+      feat[a * 6 + 5] = (this.wellSum() - preWells) / 20.0
+      this.restoreRows(saved)
+    }
+    for f in 0..6 {
+      for a2 in 0..ActionCount { obs.add(feat[a2 * 6 + f]) }
+    }
+    return obs
+  }
+
+  // ── Scripted tiers — sanity gates, eval bars, and the site's watch tiers ─────────────────────────────────
+
+  // Uniform-random legal placement. Takes its OWN rng so policy sampling never touches the piece stream.
+  fn randomAction(policyRng: PgTetRng): i32 {
+    var legal: List<i32> = List<i32>()
+    for a in 0..ActionCount { if this.placementLegal(a) { legal.add(a) } }
+    if legal.count == 0 { return -1 }
+    return legal[policyRng.nextInt(legal.count)]
+  }
+
+  // The Dellacherie tier: argmax placement by the canonical evaluator (first strict improvement wins ties
+  // — the spike's iteration order: rotation-major, then column).
+  fn dellacherieAction(): i32 {
+    var best = -1
+    var bestScore = -1.0e18
+    for a in 0..ActionCount {
+      if !this.placementLegal(a) { continue }
+      let s = this.dellaScoreFor(this.current, this.actionRot(a), this.actionCol(a))
+      if s > bestScore { bestScore = s; best = a }
+    }
+    return best
+  }
+
+  // Search tier over the Dellacherie evaluator (PRD §3.8/M54.4): beamA over first-ply placement scores,
+  // beamB over the KNOWN next piece's placements, then expectimax (mean over the 7 pieces' best
+  // placement) for the unknown third piece. Deterministic, no RNG, board restored.
+  fn dellaSearchAction(beamA: i32, beamB: i32): i32 {
+    var v1: List<f64> = List<f64>()
+    for a in 0..ActionCount {
+      v1.add(if this.placementLegal(a) { this.dellaScoreFor(this.current, this.actionRot(a), this.actionCol(a)) } else { -1.0e18 })
+    }
+
+    var beam: List<i32> = List<i32>()
+    for _pick in 0..beamA {
+      var bestA = -1
+      var bestV = -1.0e18
+      for a2 in 0..ActionCount {
+        if !this.placementLegal(a2) { continue }
+        var taken = false
+        for j in 0..beam.count { if beam[j] == a2 { taken = true } }
+        if !taken && v1[a2] > bestV { bestV = v1[a2]; bestA = a2 }
+      }
+      if bestA < 0 { break }
+      beam.add(bestA)
+    }
+    if beam.count == 0 { return -1 }
+
+    var best = beam[0]
+    var bestTotal = -1.0e18
+    for bi in 0..beam.count {
+      let a3 = beam[bi]
+      let saved = this.saveRows()
+      this.simPlace(this.current, this.actionRot(a3), this.actionCol(a3), this.dropY(this.current, this.actionRot(a3), this.actionCol(a3)))
+
+      // Second ply: the known next piece — collect its placement scores, keep the top beamB.
+      var v2: List<f64> = List<f64>()
+      var r2s: List<i32> = List<i32>()
+      var x2s: List<i32> = List<i32>()
+      for r2 in 0..this.rotCount[this.next] {
+        for x2 in 0..(W - this.rotW[this.next * 4 + r2] + 1) {
+          let s2 = this.dellaScoreFor(this.next, r2, x2)
+          if s2 > -1.0e17 {
+            v2.add(s2)
+            r2s.add(r2)
+            x2s.add(x2)
+          }
+        }
+      }
+
+      var maxB = -1.0e18
+      var used: List<bool> = List<bool>()
+      for _i in 0..v2.count { used.add(false) }
+      for _pick2 in 0..beamB {
+        var bi2 = -1
+        var bv2 = -1.0e18
+        for i2 in 0..v2.count { if !used[i2] && v2[i2] > bv2 { bv2 = v2[i2]; bi2 = i2 } }
+        if bi2 < 0 { break }
+        used[bi2] = true
+        let saved2 = this.saveRows()
+        this.simPlace(this.next, r2s[bi2], x2s[bi2], this.dropY(this.next, r2s[bi2], x2s[bi2]))
+        var acc = 0.0
+        for p in 0..PieceCount { acc += this.bestDellaFor(p) }
+        this.restoreRows(saved2)
+        let total2 = v2[bi2] + acc / PieceCount
+        if total2 > maxB { maxB = total2 }
+      }
+
+      this.restoreRows(saved)
+      let total = v1[a3] + maxB
+      if total > bestTotal { bestTotal = total; best = a3 }
+    }
+    return best
+  }
+
+  // Trained-net tier: masked greedy argmax over Q for the current observation.
+  fn netAction(net: PgTetDuelingNet): i32 {
+    let q = net.forward(this.buildObservation())
+    var best = -1
+    var bestQ = -1.0e18
+    for a in 0..ActionCount {
+      if !this.placementLegal(a) { continue }
+      if q[a] > bestQ { bestQ = q[a]; best = a }
+    }
+    return best
+  }
+
+  // Net+search tier (PRD §3.9): beam over Q, one-ply rollout, expectimax over the unknown next-next
+  // piece via 7 forwards (Q is in lines units — reward = lines cleared, so r1 adds directly).
+  fn netSearchAction(net: PgTetDuelingNet, beamWidth: i32): i32 {
+    let q1 = net.forward(this.buildObservation())
+
+    var beam: List<i32> = List<i32>()
+    for _pick in 0..beamWidth {
+      var bestA = -1
+      var bestQ = -1.0e18
+      for a in 0..ActionCount {
+        if !this.placementLegal(a) { continue }
+        var taken = false
+        for j in 0..beam.count { if beam[j] == a { taken = true } }
+        if !taken && q1[a] > bestQ { bestQ = q1[a]; bestA = a }
+      }
+      if bestA < 0 { break }
+      beam.add(bestA)
+    }
+    if beam.count == 0 { return -1 }
+
+    var best = beam[0]
+    var bestVal = -1.0e18
+    for bi in 0..beam.count {
+      let a2 = beam[bi]
+      let rot = this.actionRot(a2)
+      let x = this.actionCol(a2)
+      let saved = this.saveRows()
+      let cleared = this.simPlace(this.current, rot, x, this.dropY(this.current, rot, x))
+
+      // The next piece is known and becomes current; expectimax over the 7 equally likely previews.
+      var acc = 0.0
+      for p in 0..PieceCount {
+        let q2 = net.forward(this.buildObservationFor(this.next, p))
+        var bestQ2 = 0.0
+        var any = false
+        for a3 in 0..ActionCount {
+          let rot3 = this.actionRot(a3)
+          if rot3 >= this.rotCount[this.next] { continue }
+          if this.dropY(this.next, rot3, this.actionCol(a3)) < 0 { continue }
+          if !any || q2[a3] > bestQ2 { bestQ2 = q2[a3]; any = true }
+        }
+        acc += bestQ2
+      }
+      this.restoreRows(saved)
+
+      let val = cleared + acc / PieceCount
+      if val > bestVal { bestVal = val; best = a2 }
+    }
+    return best
+  }
+}
+
+// ── Dueling-Q net inference (single-source forward; identical math to the other solvers' nets) ─────────────
+// INFERENCE ONLY — training stays on the SDK. Weights arrive float32 from the checkpoint parser
+// (C# DuelingQNetCheckpoint / tetris-net.ts); trunk tensors FLAT (layers concatenated).
+class PgTetDuelingNet {
+  var inputSize: i32
+  var actions: i32
+  var hidden: List<i32>
+  var trunkWFlat: List<f64>
+  var trunkBFlat: List<f64>
+  var valueW: List<f64>
+  var valueB: List<f64>
+  var advW: List<f64>
+  var advB: List<f64>
+
+  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, valueW: List<f64>, valueB: List<f64>, advW: List<f64>, advB: List<f64>) {
+    this.inputSize = inputSize
+    this.actions = actions
+    this.hidden = hidden
+    this.trunkWFlat = trunkWFlat
+    this.trunkBFlat = trunkBFlat
+    this.valueW = valueW
+    this.valueB = valueB
+    this.advW = advW
+    this.advB = advB
+  }
+
+  fn forward(obs: List<f64>): List<f64> {
+    var x = obs
+    var prev = this.inputSize
+    var wOff = 0
+    var bOff = 0
+    for l in 0..this.hidden.count {
+      let h = this.hidden[l]
+      x = relu(linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h))
+      wOff += prev * h
+      bOff += h
+      prev = h
+    }
+    let value = linear(x, this.valueW, 0, this.valueB, 0, prev, 1)
+    let adv = linear(x, this.advW, 0, this.advB, 0, prev, this.actions)
+
+    var sumA = 0.0
+    for k in 0..this.actions { sumA += adv[k] }
+    let meanA = sumA / this.actions
+    let v = value[0]
+
+    var q: List<f64> = List<f64>()
+    for k2 in 0..this.actions { q.add(adv[k2] + (v - meanA)) }
+    return q
+  }
+
+  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
+    var out: List<f64> = List<f64>()
+    for o in 0..outDim {
+      var s = b[bOff + o]
+      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
+      out.add(s)
+    }
+    return out
+  }
+
+  static fn relu(x: List<f64>): List<f64> {
+    var out: List<f64> = List<f64>()
+    for v in x { out.add(Math.max(0.0, v)) }
+    return out
+  }
+}
