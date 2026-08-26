@@ -2115,7 +2115,7 @@ partitioning) — needs `.pg` edits, alters the C# training path, risks parity; 
 no prediction left to validate); throttling to ~1 drop/s (the tab would still hang); `webWorkerTsConfig`
 (inert); adding `"webworker"` to the shared `lib` (conflicts with DOM).
 
-## M54 — Tetris: afterstate AI + rising-garbage mode  *(2026-08-26; branch `m54-tetris`; see `TETRIS_PRD.md`)* ✅ (planned→shipped in one day: net 21,813 NES score/85.8 lines on protocol A [gate 5,000], survival 106 on garbage protocol B [gate 100], gap-share 24% an honest 1-point miss; **della-search 1480+ garbage survival = 4× Dellacherie**, browser-live)
+## M54 — Tetris: afterstate AI + rising-garbage mode  *(2026-08-26; branch `m54-tetris`; PR #42; see `TETRIS_PRD.md`)* ✅ (planned→shipped in one day: net 21,813 NES score/85.8 lines on protocol A [gate 5,000], survival 106 on garbage protocol B [gate 100], gap-share 24% an honest 1-point miss; **della-search 1480+ garbage survival = 4× Dellacherie**, browser-live)
 
 **Why:** owner request 2026-08-26 — "add a Tetris AI like the other games", plus a rising-garbage mode (bottom
 row with one random gap every ~10 placements). Planned via a 4-agent investigation (repo-fit/architecture,
