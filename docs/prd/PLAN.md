@@ -2115,7 +2115,7 @@ partitioning) — needs `.pg` edits, alters the C# training path, risks parity; 
 no prediction left to validate); throttling to ~1 drop/s (the tab would still hang); `webWorkerTsConfig`
 (inert); adding `"webworker"` to the shared `lib` (conflicts with DOM).
 
-## M54 — Tetris: afterstate AI + rising-garbage mode  *(2026-08-26; branch `m54-tetris`; see `TETRIS_PRD.md`)* 🔜
+## M54 — Tetris: afterstate AI + rising-garbage mode  *(2026-08-26; branch `m54-tetris`; see `TETRIS_PRD.md`)* ⏳
 
 **Why:** owner request 2026-08-26 — "add a Tetris AI like the other games", plus a rising-garbage mode (bottom
 row with one random gap every ~10 placements). Planned via a 4-agent investigation (repo-fit/architecture,
@@ -2134,15 +2134,25 @@ scripted tiers random/Dellacherie/net/net+search in the `.pg`, Pattern C fully c
   ± 0.6 vs Dellacherie 392.8 ± 45.1 pieces survived under garbage/10 (18×), while 500-piece-cap lines saturates
   (Dellacherie 197.4/200 max); ~369K placements/s naive JS. Garbage-mode survival locked as primary eval
   protocol.*
-- **M54.1 — Engine + parity.** `.pg` engine (7-bag/uniform, garbage, `enumeratePlacements`, Dellacherie/search
-  tiers) + facade. **Gates:** pinned C#↔TS parity checksum · C# reproduces the spike bars within 95% CI.
-- **M54.2 — Env + campaign + Lab.** **Gates:** campaign contract green · bitwise resume · `--baselines` prints
-  both eval protocols with CIs.
-- **M54.3 — Training run** (CPU, 400K steps). **Gates:** net garbage/10 survival ≥ 100 pieces (≥4× random,
-  CI-separated) · gap-share vs Dellacherie ≥ 25% · ≥ 5000 mean NES score/500-piece standard (amended
-  2026-08-26 — owner: maximize score, build for tetrises; reward = lines + 8·[tetris], full NES rules:
-  score 40/100/300/1200 × (level+1), level = lines/10, gravity frame curve; tetris rate reported).
-  Escalation pre-registered: `--noisy` → growth → honest stop-loss.
+- **M54.1 — Engine + parity.** ✅ (2026-08-26) `.pg` engine (7-bag/uniform, garbage, `enumeratePlacements`,
+  Dellacherie/search tiers) + facade. **Gates:** pinned C#↔TS parity checksum · C# reproduces the spike bars
+  within 95% CI. *Checksum **472451993** identical on the first TS run; all spike bars green. Same-day
+  additions kept the pin (score/level not hashed): full NES rules (levels, ×(level+1) scoring, gravity
+  curve), rotation wall/floor kicks (owner report: unblocked pieces must rotate — 5 tests, TS-twin-verified),
+  Esc pause, soft-drop fixes.*
+- **M54.2 — Env + campaign + Lab.** ✅ (2026-08-26) **Gates:** campaign contract green · bitwise resume ·
+  `--baselines` prints both eval protocols with CIs. *20/20 targeted tests incl. top-out termination through
+  the trainer; table in `data/tetris-baselines-m542.txt`.*
+- **M54.3 — Training run** (CPU, 400K steps ≈ 50 min). ⏳ **Gates:** net garbage/10 survival ≥ 100 pieces
+  (≥4× random, CI-separated) · gap-share vs Dellacherie ≥ 25% · ≥ 5000 mean NES score/500-piece standard
+  (amended 2026-08-26 — owner: maximize score, build for tetrises; reward = lines + 8·[tetris], full NES
+  rules; tetris rate reported). *Escalation journal: three γ-bootstrap configs (bare · inverted-PBRS [bug:
+  negative Φ made dying pay — measured worse than unshaped] · corrected-PBRS) ALL pinned at random ≤180K;
+  Q-probe showed spread 0.58 / Spearman 0.27 vs Dellacherie with tiny TD loss = signal starvation, not
+  saturation (`--grow` correctly not triggered — growth answers a high-loss plateau). Pivoted to the M49/M51
+  γ=0 + dense per-action regression (targets = Dellacherie basis from the obs planes): first eval 2.2
+  lines/42.1 pieces at 15K — 7× any bootstrap run at any step. γ-bootstrap is now 0-for-2 on this stack's
+  puzzle games; γ=0 dense is 2-for-2.*
 - **M54.4 — Search tier** (depth-1 known-next + expectimax, in-`.pg`). **Gates:** net+search > net CI-separated ·
   ≥ Dellacherie-alone on garbage survival · ≤ 50 ms/move in-browser.
 - **M54.5 — Web** (Pattern C, human keyboard+touch incl. garbage toggle, watch tiers). **Gates:** net-parity
