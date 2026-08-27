@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Coverage settings for the "XPlat Code Coverage" collector (coverlet.collector), passed to
+     dotnet test via the settings switch. Mirrors MintPlayer.Dotnet.Tools' file; see
+     docs/prd/COVERAGE_PRD.md §3.1 for the rationale behind each choice. -->
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat code coverage">
+        <Configuration>
+          <!-- The only format both coverlet and coverage.mintplayer.com speak natively. -->
+          <Format>cobertura</Format>
+          <!-- **/obj/**: this repo compiles generated code out of obj/ — the Polyglot
+               transpiler's C# (obj/**/polyglot/*.cs) and MintPlayer.SourceGenerators output.
+               None of it is in `git ls-files`, so the server could never resolve those paths;
+               excluding keeps the total meaningful instead of diluted by unmatchable lines. -->
+          <ExcludeByFile>**/obj/**/*.cs,**/*.g.cs,**/*.Designer.cs</ExcludeByFile>
+          <!-- SourceLink would rewrite report paths to raw.githubusercontent.com URLs, which
+               breaks the server's suffix-matching against `git ls-files`. -->
+          <UseSourceLink>false</UseSourceLink>
+          <DeterministicReport>false</DeterministicReport>
+          <SkipAutoProps>false</SkipAutoProps>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

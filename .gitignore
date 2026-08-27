@@ -13,6 +13,8 @@ out/
 TestResults/
 coverage*.xml
 *.coverage
+# `dotnet test --results-directory coverage` output (CI coverage collection)
+coverage/
 
 ## Node / Angular
 node_modules/
