@@ -2239,6 +2239,28 @@ a HOST concern — the engine stays a pure rules solver, C5); the −96-frame ga
 pushdown scoring (documented skips); left+right simultaneous handling (D-pad impossibility → neutral);
 keeping the wall/floor kick ladder (superseded by the owner's pure-NES decision — NES has no kicks).
 
+## M56 — Code coverage in CI + upload to coverage.mintplayer.com  *(2026-08-27; branch `m56-coverage`; see `COVERAGE_PRD.md`)*
+
+Mirror MintPlayer.Dotnet.Tools' coverage setup (`f69b852` + its `827a945` refinements) on this
+repo: `dotnet test --collect:"XPlat Code Coverage"` (coverlet.collector was already referenced)
+with a repo-root `coverlet.runsettings` (Cobertura; excludes `obj/`-generated code — Polyglot
+transpiler output + source generators — which `git ls-files` can't resolve server-side), and
+upload via `MintPlayer/CodeCoverage/action@master` in both `pull-request.yml` and
+`build-master.yml`. Auth is **OIDC** (`id-token: write`) — the repo is public, so the service
+auto-provisions it and no `COVERAGE_TOKEN` secret is needed. Guards adopted from the reference:
+fork-PR skip, `hashFiles` no-report guard, `disable-search: true`, `finish: true`,
+`fail-ci-if-error: false`, `base-sha` on PRs. The reference's `--no-build` timing win (88s→32s
+there) was already in place here since #43's timing pass — only collection + upload are new.
+Coverage number = the fast bucket (`Category!=Slow`), stated next to the README badge.
+
+- **M56.1 — Spike S1**: local targeted collection run (build Release, test `--no-build
+  --settings coverlet.runsettings --collect` on a small filter) proving a Cobertura report
+  appears with no `obj/`-generated paths in it.
+- **M56.2 — Workflows**: collection + upload steps in both workflows, explicit `permissions:`
+  blocks (PR: `contents:read, packages:read, id-token:write`; master adds `packages:write`
+  for the existing GPR push), `.gitignore` `coverage/` entry.
+- **M56.3 — README badge** + this PLAN entry.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.

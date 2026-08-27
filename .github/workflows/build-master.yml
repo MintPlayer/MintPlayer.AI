@@ -10,6 +10,14 @@ jobs:
     name: build-master
     runs-on: ubuntu-latest
 
+    # id-token: the coverage upload authenticates via GitHub OIDC (tokenless — the repo is
+    # public, so coverage.mintplayer.com auto-provisions it; no COVERAGE_TOKEN secret needed).
+    # packages: write — PushGithub pushes nupkgs to GPR with github.token.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
     steps:
     - name: Checkout
       uses: actions/checkout@v7
@@ -32,7 +40,34 @@ jobs:
       run: dotnet build --configuration Release --no-restore -p:EnableSpaBuilder=false
 
     - name: Test
-      run: dotnet test --configuration Release --no-build --filter "Category!=Slow" --verbosity normal
+      # --no-build (already here since #43's timing pass) is what keeps coverage honest AND fast:
+      # without it dotnet test silently rebuilds and measures that second build instead of the
+      # Release binaries built above (Dotnet.Tools measured 88s -> 32s from this flag alone).
+      #
+      # --collect writes coverage.cobertura.xml into a GUID-named subdirectory of
+      # --results-directory, hence the ** in the upload glob below.
+      run: >
+        dotnet test --configuration Release --no-build --filter "Category!=Slow" --verbosity normal
+        --settings coverlet.runsettings
+        --collect:"XPlat Code Coverage" --results-directory coverage
+
+    - name: Upload coverage
+      # always(): a Test failure must still not lose the datapoint (if a report was written).
+      # hashFiles guard: a run that produced no report is a no-op, not an upload of nothing.
+      if: always() && hashFiles('coverage/**/coverage.cobertura.xml') != ''
+      uses: MintPlayer/CodeCoverage/action@master
+      with:
+        url: https://coverage.mintplayer.com
+        use-oidc: true
+        files: |
+          coverage/**/coverage.cobertura.xml
+        # With search on, a glob that matches nothing silently falls back to auto-detection
+        # and would upload stray unparsable reports.
+        disable-search: true
+        # Closes the build now instead of waiting out the ~2-minute server debounce.
+        finish: true
+        # A coverage-service outage must never block a NuGet release.
+        fail-ci-if-error: false
 
     # Only the two library projects are packable (IsPackable=false everywhere else).
     - name: Pack

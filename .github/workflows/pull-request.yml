@@ -10,6 +10,14 @@ jobs:
     name: pull-request
     runs-on: ubuntu-latest
 
+    # id-token: the coverage upload authenticates via GitHub OIDC (tokenless — the repo is
+    # public, so coverage.mintplayer.com auto-provisions it; no COVERAGE_TOKEN secret needed).
+    # packages: read — `dotnet restore` pulls from GPR with github.token.
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+
     steps:
     - name: Checkout
       uses: actions/checkout@v7
@@ -32,7 +40,45 @@ jobs:
       run: dotnet build --configuration Release --no-restore -p:EnableSpaBuilder=false
 
     - name: Test
-      run: dotnet test --configuration Release --no-build --filter "Category!=Slow" --verbosity normal
+      # --no-build (already here since #43's timing pass) is what keeps coverage honest AND fast:
+      # without it dotnet test silently rebuilds and measures that second build instead of the
+      # Release binaries built above (Dotnet.Tools measured 88s -> 32s from this flag alone).
+      #
+      # --collect writes coverage.cobertura.xml into a GUID-named subdirectory of
+      # --results-directory, hence the ** in the upload glob below.
+      run: >
+        dotnet test --configuration Release --no-build --filter "Category!=Slow" --verbosity normal
+        --settings coverlet.runsettings
+        --collect:"XPlat Code Coverage" --results-directory coverage
+
+    # Nothing here gates the merge — the service publishes the `coverage/project` and
+    # `coverage/patch` check runs itself; branch protection can require those.
+    #
+    # Placed before the Angular build: upload as soon as the report exists, so a broken
+    # ClientApp doesn't cost the coverage datapoint.
+    - name: Upload coverage
+      # Fork PRs get neither secrets nor an OIDC token, so the upload cannot work there. Skip
+      # rather than fail — a contributor's PR must not go red over that.
+      # hashFiles guard: a run that produced no report is a no-op, not an upload of nothing.
+      if: >
+        github.event.pull_request.head.repo.full_name == github.repository
+        && hashFiles('coverage/**/coverage.cobertura.xml') != ''
+      continue-on-error: true
+      uses: MintPlayer/CodeCoverage/action@master
+      with:
+        url: https://coverage.mintplayer.com
+        use-oidc: true
+        files: |
+          coverage/**/coverage.cobertura.xml
+        # With search on, a glob that matches nothing silently falls back to auto-detection
+        # and would upload stray unparsable reports.
+        disable-search: true
+        base-sha: ${{ github.event.pull_request.base.sha }}
+        # Closes the build now instead of waiting out the ~2-minute server debounce, so the
+        # check runs appear while the PR is still being looked at.
+        finish: true
+        # A coverage-service outage must never be the reason a PR cannot merge.
+        fail-ci-if-error: false
 
     # The .NET steps skip the SPA (EnableSpaBuilder=false). Build the Angular app explicitly so a
     # broken ClientApp fails the PR — not the post-merge Docker build. Same command prod ships
