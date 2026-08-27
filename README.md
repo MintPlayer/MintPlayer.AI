@@ -1,7 +1,7 @@
 # MintPlayer.AI.ReinforcementLearning
 
 [![Coverage](https://coverage.mintplayer.com/badge/MintPlayer/MintPlayer.AI.svg)](https://coverage.mintplayer.com/r/MintPlayer/MintPlayer.AI)
-<sub>(coverage is measured over the fast test bucket — CI excludes `Category=Slow` training/perft gates)</sub>
+
 
 A reinforcement-learning library written from scratch in C#/.NET — no Python, no libtorch,
 no native dependencies.
