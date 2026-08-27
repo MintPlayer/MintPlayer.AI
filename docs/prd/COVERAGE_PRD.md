@@ -69,6 +69,14 @@ Mirrors Dotnet.Tools' file, with one repo-specific addition. Settings:
   can actually view) instead of diluting it with unmatchable generated lines. The `.pg`
   *sources* stay effectively measured through nothing — accepted: coverage speaks C#/TS file
   language, and the generated C# is exercised or not together with its callers.
+- `Exclude: [MintPlayer.AI.ReinforcementLearning.Ilgpu]*` — **required, found the hard way** (37
+  test failures on the PR's first CI run): ILGPU compiles kernel methods from their IL at
+  runtime, and coverlet's injected `RecordHit` tracker calls make that compile throw
+  `ILGPU.InternalCompilerException` (in `GemmTiled_Kernel` et al.). The whole assembly stays
+  uninstrumented — per-method exclusion would be fragile since any helper a kernel calls breaks
+  the same way. `Ilgpu.Hosting` (DI glue, no kernels) stays covered. This is the one deliberate
+  departure from Dotnet.Tools' "no assembly Exclude list" stance; that repo has no runtime IL
+  compiler.
 - `UseSourceLink: false` — SourceLink would rewrite report paths to raw.githubusercontent URLs,
   which breaks the server's suffix-matching against `git ls-files`.
 - `DeterministicReport: false`, `SkipAutoProps: false` — same choices as Dotnet.Tools; no
