@@ -1,6 +1,6 @@
 # Tetris — techniques: tetris-aware evaluator, movement-aware placements, SRS mode, technique dial
 
-**Status:** 📋 PLANNED 2026-08-30 — not started. Planned via a 4-agent investigation (repo/architecture map,
+**Status:** 🧪 SPIKES RUN 2026-08-30 — **M57.0 complete, and it re-scopes the arc.** S0 is a decisive **GO** (the evaluator was the whole story, §6.R); S1/S2 are a **NO-GO on tucks** — the movement-aware action space is not a strength lever. Feature work M57.1–M57.7 not started. Planned via a 4-agent investigation (repo/architecture map,
 NES-technique research, Tetris-AI literature survey, training feasibility + gates — findings in §2). **No spike
 has been run yet**; §6 defines four, and **S0 is decisive enough that it may cancel most of the rest**.
 **Owner:** Pieterjan
@@ -617,6 +617,113 @@ peak RSS, written `*-state.ckpt` size, and the env-vs-learn split (re-run at `--
 **Order: S0 → S0b → S1 → S1b → S2 → engine work → S4 → the retrain.**
 
 ---
+
+
+---
+
+## 6.R Spike results (executed 2026-08-30)
+
+All four scripts are committed under `docs/prd/tetris-spike/` and run in plain Node against the generated
+TS twin — no training, no engine change, no `.pg` edit.
+
+### S0 — evaluator widening: **GO, decisively**
+
+`s0_evaluator.mjs`, protocol A (uniform, no garbage, 500-piece cap), 12 eps/config, seeds 5000+.
+
+| config | score | tetris/ep | TRT | score/piece | top-out |
+|---|---|---|---|---|---|
+| baseline (exact Dellacherie) | 91,482 | 0.08 | 0.2% | 183.0 | 0% |
+| **well-sign split only** | **104,912** | **0.92** | 1.9% | 209.8 | 0% |
+| + burn −3, ready 2, tetris 8 | **136,652** | **3.83** | 8.4% | 292.5 | 8% |
+
+**The §0 diagnosis is confirmed.** Splitting the `−Δwells` sign alone — one term, no new features —
+buys **+14.7% score and 11× the tetrises**, with zero top-outs. It is a strict Pareto improvement, which
+is exactly what "the target function was fighting itself" predicts.
+
+*Methodology note, recorded because it nearly produced a false NO-GO:* the first pass copied StackRabbit's
+**absolute** weights (ready +6, covered −10, burn −12) onto the Dellacherie basis. That is a scale error —
+StackRabbit prices holes at −50 where Dellacherie prices them at −4 — so the tetris terms arrived ~12×
+overweight, drowned the safety terms, and every config topped out 100% of the time. **Weights must be
+scaled to the basis they join.**
+
+### S0b — CEM on the widened basis: improves the mean, but not CI-separated
+
+`s0b_cem.mjs`, pop 20 / elite 5 / 6 iters, tuned on seeds 7000+, **evaluated on held-out seeds 9000+**, 30 eps.
+
+| policy | score | tetris/ep | TRT | score/piece | top-out |
+|---|---|---|---|---|---|
+| Dellacherie (baseline) | 97,983 ± 3,928 | 0.57 | 1.1% | 196.0 | 0% |
+| S0 hand-widened | **156,154 ± 10,532** | 4.93 | 10.1% | 313.9 | 3% |
+| CEM-tuned | 186,111 ± 34,491 | **11.03** | **28.1%** | 443.0 | **30%** |
+
+The hand-widened vector is **CI-separated above Dellacherie (+59%)** — that is the solid result. CEM pushes
+the mean to +90% and TRT to 28%, but its CI is 3× wider and **top-out rises to 30%**: fitness was raw score
+with no death term, so CEM bought variance. **Do not ship the CEM vector as-is**; re-run with a death-aware
+fitness (or top-out-rate constraint) and more episodes per evaluation before trusting it. The tuning/eval
+seed split was disjoint by construction, per the tet7 lesson.
+
+### S1 — reachability census: **NO-GO on tucks**
+
+`s1_reachability.mjs`, exact frame simulation (shift→rotate→gravity, NRS pivot, no kicks), 80 boards ×
+7 pieces per config. Boards with ≥1 tuck, at DAS 10 Hz / level 18:
+
+| board population | boards with ≥1 tuck | tucks/piece | mean \|reach\| vs \|hard\| |
+|---|---|---|---|
+| Dellacherie (clean) | **0%** | 0.00 | 23.1 vs 23.1 |
+| garbage/10 (dirty) | **1%** | 0.02 | 22.9 vs 23.0 |
+| random (messy) | 19% | 1.81 | 5.7 vs 6.9 |
+
+**A good evaluator keeps its own surface flat, so it never creates anything to tuck under.** Tucks are
+plentiful only on boards a strong policy does not produce. The PRD gate needed ≥20% at 10 Hz; the
+decision-relevant populations give 0–1%.
+
+The tap dial *does* bite where tucks exist — on messy boards, rolling yields 5.3 tucks/piece against DAS's
+1.8 (3×), and at the kill screen the enumerator reproduces the known physics exactly: on a hand-built ledge,
+DAS and hypertapping find **0** tucks at 1 frame/row while rolling still finds 13. So the frame model is
+sound; the opportunity simply is not there.
+
+### S2 — Dellacherie over the extended set: **NO-GO**
+
+`s2_extended_set.mjs`, same evaluator over the 40 hard drops vs the frame-simulation reachable set,
+DAS 10 Hz, 10 eps, 600-piece cap, seeds 5000+.
+
+| | protocol B survival | protocol A survival |
+|---|---|---|
+| hard-drop (40) | 347.4 ± 97.5 | 600.0 (cap) |
+| movement-aware | 184.0 ± 52.0 | 536.3 ± 116.9 |
+| *control:* reachable set restricted to hard-drop rows | *199.9 ± 74.9* | *536.3 ± 116.9* |
+
+Gate needed **+15% CI-separated**; measured **negative**. Tucks were chosen only 0.8–1.4 times per episode.
+
+> **Honest caveat on the magnitude.** The control — the identical code path with tucked placements removed —
+> does **not** reproduce the hard-drop baseline on protocol B (199.9 vs 347.4), even after matching the
+> engine's rotation-major/first-strict-improvement tie-break. So the **−47% headline is confounded and must
+> not be quoted as "tucks cost 47%"**. What *is* robust: tucks are chosen rarely, they do not help, and the
+> gate fails — which agrees independently with S1. The residual control gap is unexplained; the likely
+> candidate is that on late, messy protocol-B boards the DAS-budgeted reachable set is genuinely *smaller*
+> than the 40 hard-drop placements (S1's random population shows exactly that: 5.7 reachable vs 6.9 hard).
+> If so it is a real effect and a further argument against the feature, but it is **not measured**, and
+> anyone reopening this should close that gap first.
+
+### S1b — not run
+
+The SRS-without-lock-delay reachability check (§5.4) was not executed. With S1/S2 removing the case for the
+movement-aware action space, it is only decision-relevant if SRS mode is pursued for the browser demo.
+
+### What the spikes change
+
+1. **M57.1 (evaluator widening) is promoted to the whole arc.** It is a formula change, it is measured at
+   **+59% score CI-separated** with **9× the tetrises**, and it needs no action-space work, no frame model
+   and no retrain to demonstrate. The dense target, `dellaScoreFor` and the observation planes all read the
+   same basis, so one change lifts the net *and* both search tiers.
+2. **M57.3 (movement-aware enumeration) loses its strength justification.** Per §6's own NO-GO clause: ship
+   the dial for humans, keep the 40-action net. The frame simulator is written and validated — it belongs in
+   the browser pilot (so watch-mode replays a real input sequence at the selected rate) rather than in the
+   action space.
+3. **M57.5 (the retrain) is not yet justified at N=160.** A retrain on the *widened evaluator* at the
+   existing N=40 is the cheap, high-value run — and it is the one the measurements support.
+4. **The tap dial (M57.6, the three radios) survives as an authenticity/demo feature**, which is what G6
+   pre-registered as a shippable honest result. It makes the AI more human, not stronger.
 
 ## 7. Milestones
 

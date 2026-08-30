@@ -2301,7 +2301,24 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
   0.9.9-vs-0.8.1 codegen signature is `this.bag.length = 0` vs `this.bag = []` (a cheap way to prove which CLI
   ran; there is no `polyglot` on PATH and no `PolyglotTool` override here). Full record:
   `polyglot-pilot/POLYGLOT_M57_FEASIBILITY.md`. **Convention from now on: `constructor(...)`, never `init(...)`.**
-- **M57.0 — Spikes.** S0 evaluator widening (~15 min, no training, no engine work): GO if some
+- **M57.0 — Spikes.** ✅ RUN 2026-08-30 — **and they re-scope the arc** (scripts in `docs/prd/tetris-spike/`,
+  full tables in `TETRIS_TECHNIQUES_PRD.md` §6.R). **S0 = GO, decisively:** the §0 diagnosis is confirmed —
+  splitting the `−Δwells` sign ALONE buys **+14.7% score and 11× the tetrises** with zero top-outs, and the
+  widened basis reaches **156,154 ± 10,532 vs Dellacherie's 97,983 ± 3,928 (+59%, CI-separated) with 4.93
+  tetrises/ep vs 0.57** on held-out seeds. **S0b:** CEM pushes the mean to 186K and TRT to 28.1% but with a
+  3× wider CI and **30% top-out** — fitness was raw score with no death term, so don't ship it as-is.
+  **S1 = NO-GO on tucks:** on the boards a good evaluator actually produces, tucks barely exist — **0% of
+  clean boards and 1% of garbage boards** expose one at DAS/L18 (gate needed ≥20%); they are plentiful only
+  on random/messy boards (19%). A good evaluator keeps its surface flat, so it never creates anything to tuck
+  under. The frame model itself is validated (on a hand-built ledge at the kill screen: DAS/hyper find **0**
+  tucks, rolling finds **13** — the known physics, reproduced). **S2 = NO-GO:** the extended set does not
+  improve protocol-B survival; tucks are chosen 0.8–1.4×/episode. *The −47% headline is CONFOUNDED — the
+  control (same path, tucks removed) does not reproduce the baseline — so only the sign and the gate outcome
+  are trustworthy; see §6.R's caveat.* **S1b not run.** *Consequences:* M57.1 is promoted to the whole arc;
+  M57.3's movement-aware action space loses its strength case (the frame simulator belongs in the browser
+  pilot, not the action space); the N=160 retrain is not yet justified — a widened-evaluator retrain at N=40
+  is; the three radios survive as an authenticity/demo feature, exactly what G6 pre-registered.
+- **M57.0 (original plan) — Spikes.** S0 evaluator widening (~15 min, no training, no engine work): GO if some
   weighting reaches ≥2.0 tetrises/ep at score ≥85,000. S0b CEM on the widened basis (the un-run M54.7,
   on a basis that can *express* tetris play — CMA-ES on the narrow basis provably converges back to
   Dellacherie). S1 reachability census + S1b SRS-without-lock-delay check. S2 Dellacherie over the
