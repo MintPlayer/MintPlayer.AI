@@ -85,7 +85,7 @@ class PgTetris {
   const EvalCol9: f64 = -0.355       // column 8 tall ⇒ the well is sealed from the 4-tap side
   const EvalTetris: f64 = 7.047      // realised 4-line clear
   const EvalMaxSafeCol9: i32 = 8
-  const ObsPlanes: i32 = 15          // per-action observation planes (M54 had 6; M57.5 widened the basis)
+  const ObsPlanes: i32 = 16          // per-action planes; 0-5 ARE the M54 basis (obs indices 214..453)
   const EvalInaccessible: f64 = -0.975 // per row of stack above the height at which a wall is still reachable
 
   // Tap budget (PRD §4.1): frames per shift. 6 = DAS 10Hz (the ROM auto-repeat), 5 = hypertapping 12Hz,
@@ -829,13 +829,22 @@ class PgTetris {
     for p in 0..PieceCount { obs.add(if p == curPiece { 1.0 } else { 0.0 }) }
     for p2 in 0..PieceCount { obs.add(if p2 == nextPiece { 1.0 } else { 0.0 }) }
 
-    // M57.5: FIFTEEN per-action planes carrying the widened evaluator's basis (M54 had six, and they
-    // were the narrow anti-tetris basis). Values are ABSOLUTE afterstate quantities, not deltas — the
-    // evaluator uses them absolutely, so the dense target reconstructs EXACTLY rather than up to a
-    // per-state constant that the dueling V head had to absorb. Planes 12/13 carry the DIG and LINEOUT
-    // mode flags so the C# dense target can apply the same branch the engine does; plane 14 is an
-    // explicit legality flag (M54 inferred illegality from `landing <= 0`, which is not sound — a
-    // placement resting at the very bottom can have landing <= 0).
+    let preRowT = this.rowTransitions()
+    let preColT = this.colTransitions()
+    let preHoles = this.holes()
+    let preWells = this.wellSum()
+    let preWellsExc = this.wellSumExceptWell()
+
+    // M57.5c — the plane layout is BACKWARD-COMPATIBLE by design. Planes 0-5 are byte-for-byte the M54
+    // basis (same quantities, same divisors, same order), so they occupy exactly observation indices
+    // 214..453 — the whole of the old 454-float observation. That lets DuelingQNet.GrowInput transplant
+    // the shipped M54 net (campaign eval 83,265) into the wider net FUNCTION-PRESERVINGLY: the old
+    // weights keep their meaning, the new planes start at zero, so training begins from the best net we
+    // have rather than from scratch. Four from-scratch runs on the widened basis all peaked around
+    // 9-15K and then decayed (training journal), which is why this re-orientation exists.
+    // Planes 6-15 carry the tetris-aware terms, ALREADY GATED so the dense target stays LINEAR in them
+    // (a piecewise target only fitted to R^2 0.54, and spike s7 showed every evaluator tops out 100% of
+    // episodes at that accuracy).
     var feat: List<f64> = List<f64>()
     for _a in 0..(ActionCount * ObsPlanes) { feat.add(0.0) }
     for a in 0..ActionCount {
@@ -855,22 +864,28 @@ class PgTetris {
       let overLeft = this.colHeight(0) - m5
       let overRight = this.colHeight(W - 1) - m4
       let inacc = (if overLeft > 0 { overLeft } else { 0 }) + (if overRight > 0 { overRight } else { 0 })
+      let burnLines = if cleared > 0 && cleared < 4 { cleared } else { 0 }
       let b = a * ObsPlanes
+      // planes 0-5: the M54 basis, unchanged (deltas, original divisors)
       feat[b] = this.simLanding / 20.0
       feat[b + 1] = this.simEroded / 8.0
-      feat[b + 2] = this.rowTransitions() / 40.0
-      feat[b + 3] = this.colTransitions() / 40.0
-      feat[b + 4] = holeCount / 20.0
-      feat[b + 5] = this.wellSumExceptWell() / 20.0
-      feat[b + 6] = this.tetrisReady() / 4.0
+      feat[b + 2] = (this.rowTransitions() - preRowT) / 20.0
+      feat[b + 3] = (this.colTransitions() - preColT) / 20.0
+      feat[b + 4] = (holeCount - preHoles) / 10.0
+      feat[b + 5] = (this.wellSum() - preWells) / 20.0
+      // planes 6-15: the M57 tetris-aware terms, pre-gated
+      feat[b + 6] = (if lineout || dig { 0 } else { this.tetrisReady() }) / 4.0
       feat[b + 7] = this.coveredWell() / 10.0
-      feat[b + 8] = (if cleared > 0 && cleared < 4 { cleared } else { 0 }) / 4.0
+      feat[b + 8] = (if lineout || dig { 0 } else { burnLines }) / 4.0
       feat[b + 9] = if cleared == 4 { 1.0 } else { 0.0 }
       feat[b + 10] = (if col9 > 0 { col9 } else { 0 }) / 10.0
       feat[b + 11] = inacc / 10.0
-      feat[b + 12] = if dig { 1.0 } else { 0.0 }
-      feat[b + 13] = if lineout { 1.0 } else { 0.0 }
+      feat[b + 12] = (if lineout { 0 } else { if dig { burnLines } else { 0 } }) / 4.0
+      feat[b + 13] = (if dig { holeCount } else { 0 }) / 20.0
       feat[b + 14] = 1.0
+      // the evaluator penalises wells OUTSIDE the well column; plane 5 keeps the M54 meaning for the
+      // warm start, so the dense target reads this one instead.
+      feat[b + 15] = (this.wellSumExceptWell() - preWellsExc) / 20.0
       this.restoreRows(saved)
     }
     for f in 0..ObsPlanes {

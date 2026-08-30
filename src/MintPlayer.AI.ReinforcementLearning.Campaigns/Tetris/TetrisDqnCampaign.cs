@@ -32,6 +32,31 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
     protected override IReadOnlyList<string>? OutputLabels => TetrisEnv.ActionLabels;
 
     /// <summary>The Crazy Fruits recipe re-pointed at long-horizon survival (PRD §3.7 locks).</summary>
+    /// <summary>
+    /// M57.5c warm-start. The observation gained the tetris-aware planes (454 -> 854), so a net trained
+    /// before M57.5 must have its input grown to fit. This is function-preserving ONLY because planes 0-5
+    /// are still the M54 basis, in the M54 order, occupying exactly indices 214..453 — i.e. the whole of
+    /// the old observation is an unchanged PREFIX of the new one, and the added planes start at zero
+    /// weight. <c>ObservationLayout_KeepsTheM54BasisAsItsPrefix</c> pins that.
+    ///
+    /// The rule this encodes: you cannot swap an input's MEANING when auto-widening a net. Growing is
+    /// safe only as an append. Reordering or reinterpreting an existing plane would keep the width legal
+    /// while silently feeding the transplanted weights different quantities — no guard would catch it,
+    /// because both the input width and the action count would still match.
+    /// </summary>
+    protected override IValueNet AdaptWarmNet(DuelingQNet loaded)
+    {
+        if (loaded.InputSize == TetrisEnv.ObservationSize) return loaded;
+        if (loaded.InputSize > TetrisEnv.ObservationSize)
+            throw new InvalidOperationException(
+                $"warm net input {loaded.InputSize} EXCEEDS the observation {TetrisEnv.ObservationSize} — " +
+                "the observation shrank, so the old weights no longer line up. Retrain from scratch.");
+
+        Log($"growing the loaded net's input {loaded.InputSize} → {TetrisEnv.ObservationSize} " +
+            "(M54 basis preserved as the observation prefix; new planes zero-init, so the policy is unchanged at step 0)");
+        return loaded.GrowInput(TetrisEnv.ObservationSize);
+    }
+
     protected override DqnOptions BaseOptions => new()
     {
         Dueling = true,
@@ -77,22 +102,18 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
 
             if (Plane(14) < 0.5f) { targets[a] = float.NaN; continue; } // explicit legality flag
 
-            float landing = Plane(0) * 20f, eroded = Plane(1) * 8f;
-            float rowT = Plane(2) * 40f, colT = Plane(3) * 40f;
-            float holes = Plane(4) * 20f, wells = Plane(5) * 20f;
-            float ready = Plane(6) * 4f, covered = Plane(7) * 10f;
-            float burn = Plane(8) * 4f, isTetris = Plane(9);
-            float col9 = Plane(10) * 10f, inacc = Plane(11) * 10f;
-            bool dig = Plane(12) > 0.5f, lineout = Plane(13) > 0.5f;
-
-            float s = -landing + eroded - rowT - colT + WHoles * holes + WWells * wells;
-            if (!lineout)
-            {
-                if (!dig) s += WReady * ready;
-                s += (dig ? WBurnDig : WBurn) * burn;
-            }
-            if (dig) s += WHoleDig * holes;
-            s += WCovered * covered + WTetris * isTetris + WCol9 * col9 + WInacc * inacc;
+            // Pure LINEAR combination — the planes are already gated, so there is no DIG/LINEOUT branch
+            // here (a piecewise target only fitted to R^2 0.54, and spike s7 showed that accuracy tops
+            // out 100% of episodes for ANY evaluator).
+            // Planes 2-5 are DELTAS (kept in the M54 form so the shipped net transplants); the target
+            // needs absolutes, but the two differ only by a per-state constant, which the centring below
+            // removes exactly. Plane 15 carries the well-column-excluded well delta the evaluator wants.
+            float s = -Plane(0) * 20f + Plane(1) * 8f - Plane(2) * 20f - Plane(3) * 20f
+                    + WHoles * Plane(4) * 10f + WWells * Plane(15) * 20f
+                    + WReady * Plane(6) * 4f + WCovered * Plane(7) * 10f
+                    + WBurn * Plane(8) * 4f + WTetris * Plane(9)
+                    + WCol9 * Plane(10) * 10f + WInacc * Plane(11) * 10f
+                    + WBurnDig * Plane(12) * 4f + WHoleDig * Plane(13) * 20f;
             targets[a] = s;
         }
 

@@ -20,9 +20,9 @@ public sealed class TetrisBoard
     public const int PieceCount = 7; // 0=I 1=O 2=T 3=S 4=Z 5=L 6=J
     public const int ActionCount = 40; // 4 rotations × 10 columns, hard-masked
     /// <summary>Per-action observation planes. M54 had 6 (the narrow anti-tetris Dellacherie basis);
-    /// M57.5 widened to 15 so the net sees the same basis its dense target is built from.
+    /// M57.5c uses 16, of which planes 0-5 ARE the M54 basis in the M54 order, so the shipped M54 net transplants via GrowInput.
     /// Must equal <c>PgTetris.ObsPlanes</c>; TetrisEnvTests pins the observation length.</summary>
-    public const int ObservationPlanes = 15;
+    public const int ObservationPlanes = 16;
 
     // 814: 200 board cells + 7 current + 7 next one-hots + fifteen 40-wide per-action feature planes
     // (M57.5 — TETRIS_TECHNIQUES_PRD §6.S). Planes are ABSOLUTE afterstate quantities, not deltas, so the

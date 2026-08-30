@@ -956,6 +956,104 @@ episodes before drawing any conclusion from it.
 the kill screen at 230. Default 0, and `reset` clears it, so every pre-M57 protocol is byte-identical.
 Pinned by `StartLevel_FollowsTheNesTransitionCurveAndDrivesGravity`.
 
+---
+
+## 6.U What this session established — the durable lessons (2026-08-30)
+
+Written for whoever picks this up next. Each item is something that was **measured**, usually after a wrong
+guess, and each one cost real time.
+
+### L1 — The evaluator was the whole story for tetris rate (confirmed)
+`−20·Δwells` penalised the very well a tetris needs. Splitting that single sign, with no training and no
+action-space change, bought **+14.7% score and 11× the tetrises**. The full widened basis reached
+**+97% score and 33× the tetrises**, and *improved* protocol-B survival. §0's diagnosis was right and is
+the highest-value change in the milestone.
+
+### L2 — Weights must be scaled to the basis they join
+StackRabbit prices holes at −50; Dellacherie at −4. Copying StackRabbit's **absolute** weights over-weighted
+the tetris terms ~12×, drowned the safety terms, and topped out **100%** of episodes. It looked like a clean
+NO-GO on the whole idea. Rescaling to the host basis turned it into a decisive GO.
+*Rule: when porting weights between evaluators, anchor on a shared term and rescale.*
+
+### L3 — DIG mode is not optional
+The widened evaluator without a DIG branch scored **+30% on protocol A but lost 52% of protocol-B survival**:
+the burn penalty made it refuse the singles that dig a garbage board out. Found by measurement, not design.
+*Rule: any burn penalty needs a hole-aware escape hatch.*
+
+### L4 — "Falling eval + falling loss" is ambiguous; the loss LEVEL disambiguates it
+Distribution narrowing and a target-scale failure produce the **same shape**. A healthy Tetris run here sits
+at loss ≈ 1.0–1.5. The first M57.5 run sat at **14–29** — that is mis-scaled targets, not a narrowed replay
+buffer. Reaching for the narrowing remedy first would have wasted the run (and did, once).
+
+### L5 — Centre the dense target per state
+Switching the planes from deltas to absolutes made reconstruction exact but reintroduced a large constant:
+targets at **mean −92, sd 28.7** raw, i.e. −9.2 ± 2.9 after ÷10, against M54's ≈0 ± 1. Centring on the mean
+over legal actions is free — a dueling V head absorbs any per-state constant, and only the *ranking* matters.
+Effect at 10K steps: score 50 → 222, loss 29.3 → 1.59. **Centring also makes deltas and absolutes
+interchangeable**, since they differ by exactly a per-state constant.
+
+### L6 — Keep the dense target LINEAR in the planes
+Emitting raw values plus DIG/LINEOUT flags made the target piecewise: the net had to learn `ready × (1−dig)`
+rather than read it, and fitted only **R² 0.54**. Emit the **already-gated** quantities instead, so the
+target is a pure dot product. M54's target was linear in its planes, which is why its net fitted it.
+
+### L7 — R² 0.54 is not "decent", it is lethal (spike s7)
+Adding matched noise to a *perfect* evaluator and playing greedily:
+
+| R² | narrow basis | widened basis |
+|---|---|---|
+| 1.00 | 500 pieces | 464 pieces |
+| 0.80 | 141 | 124 |
+| **0.54** | **85, 100% top-out** | **65, 100% top-out** |
+
+Both bases collapse. So the widened evaluator is **not** unusually fragile — 54% accuracy simply produces a
+lethal policy for *any* evaluator, because greedy argmax over a noisy value stacks itself to death. This
+refuted the "the widened evaluator is harder to approximate safely" theory, and explains why every
+from-scratch widened run shows `top-outs 20/20` at **every** checkpoint.
+
+### L8 — You cannot swap an input's MEANING when auto-widening a net *(owner, 2026-08-30)*
+`GrowInput` is function-preserving **only as an append**. Reordering or reinterpreting an existing plane keeps
+the width legal while silently feeding the transplanted weights different quantities — and **no guard catches
+it**, because both the input width and the action count still match. This is why planes 0–5 are byte-for-byte
+the M54 basis at indices 214..453, pinned by `ObservationLayout_KeepsTheM54BasisAsItsPrefix`, and why the
+warm start reproduced M54's **83,265** exactly rather than garbage.
+*Corollary worth building later: stamp a plane-layout version into the checkpoint so a mismatch fails loudly.*
+
+### L9 — Warm-start from the best net; four from-scratch runs never got close
+| run | basis | peak campaign eval |
+|---|---|---|
+| tet6 (M54, shipped) | narrow | **83,265** |
+| tet9 | widened, piecewise target | 14,970 @60K |
+| tet10 | + anti-narrowing | 8,220 @60K |
+| tet11 | + RewardScale 20 | 1,589 @80K |
+| tet12 | + linear target | 9,321 @55K |
+| **tet13** | **warm-started from tet6** | **baseline 83,265 at step 0** |
+
+Every from-scratch widened run peaked around 9–15K and decayed. The warm start begins **5.6× above the best
+of them**, and keep-best means it can only ship an improvement.
+
+### L10 — A refuted theory, recorded so it is not retried
+Realized reward (up to 12, lines units) was thought to be swamping the centred dense target (sd ≈1.55) and
+teaching "whatever action I sampled is good". `RewardScale` 1 → 20 measured **worse** (tet11: 1,589 where
+tet9 reached 14,970), so it removed signal rather than noise. Reverted to 1. The real defect was L6.
+
+### L11 — Two testing traps found in passing
+- The env's reward assertion was **vacuous**: five pieces on a fresh board never clear a line, so a
+  `RewardScale` change slipped past it entirely. Replaced with one that drives the env until a real clear.
+- `SpikeBar_DellacherieClearsNearMaximalLines` asserted 197.4 lines and **zero** top-outs — i.e. it *enforced*
+  the flatten-and-burn behaviour this milestone removes. A test can encode the bug; changing it was correct,
+  and the replacement pins the new contract plus a stack-and-camp watchdog.
+
+### L12 — Operational notes (cost real time)
+- **Never infer a run is dead from an empty log** — output is buffered. Check the process list. Deleting a
+  run's data directory while it lives kills it with `DirectoryNotFoundException`.
+- A running Lab.exe **locks the build outputs**, so `dotnet test` fails with MSB3027 until it is stopped. The
+  campaign checkpoints every 10 minutes and resumes cleanly, so stop → test → relaunch costs ≤10 minutes.
+- `setsid` does not exist in Git Bash; a background launcher whose parent shell exits can take the training
+  process group with it.
+- Training throughput is **not constant**: it roughly quadrupled as the policy degraded (shorter episodes ⇒
+  faster evals), so an ETA extrapolated from a strong-policy phase is badly wrong.
+
 ## 7. Milestones
 
 - **M57.0 — Spikes S0/S0b/S1/S1b/S2.** Gates as above. **This milestone can end the arc** with a measured

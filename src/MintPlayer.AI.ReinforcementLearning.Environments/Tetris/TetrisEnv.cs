@@ -20,9 +20,14 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.Tetris;
 /// </summary>
 public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider, IStatefulEnvironment
 {
-    public const int ObservationSize = TetrisBoard.ObservationSize; // 454
+    public const int ObservationSize = TetrisBoard.ObservationSize; // 814 since M57.5
     public const int ActionCount = TetrisBoard.ActionCount;         // 40
-    /// <summary>Reward normalization: reward IS lines cleared (0–4) — already O(1), so ÷1.</summary>
+    /// <summary>Divisor on the realized reward. Kept at 1 (the M54 value).
+    /// M57.5 tried 20, on the theory that a realized reward of up to 12 was swamping the CENTRED dense
+    /// target (sd ~1.55) and teaching "whatever action I sampled is good". MEASURED WORSE: tet11 reached
+    /// only 1,589 at 80K where tet9 (scale 1) reached 14,970 at 60K, so the theory was wrong — scaling it
+    /// down removed signal rather than noise. The real defect was that the dense target was PIECEWISE and
+    /// only fitted to R^2 0.54; see TetrisDqnCampaign and spike s7.</summary>
     public const float RewardScale = 1f;
 
     private static readonly string[] PieceNames = ["I", "O", "T", "S", "Z", "L", "J"];
