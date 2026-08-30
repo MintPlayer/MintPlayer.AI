@@ -25,6 +25,12 @@ internal static class LabHost
         Action<IServiceCollection> configureCampaign, Action<CampaignProgress> onEval,
         double? firstEvalMinutes = null, double? evalEveryMinutes = null)
     {
+        // Exclusive ownership of the data directory for the whole run. Two Lab processes once shared one:
+        // both appended to logs/*.csv and both wrote the checkpoints, silently blending two policies into
+        // one set of numbers that were then believed. Read-only modes (--eval-only, --baselines) do not
+        // take the lock, so inspecting a directory while a run trains it still works.
+        using var directoryLock = evalOnly ? null : TrainingDirectoryLock.Acquire(dataDir);
+
         // DI all the way: the model store, clock, (optional) GPU backend, CampaignRunner, the games and the
         // campaign itself all come from the container.
         var builder = AIHost.CreateBuilder(dataDir);

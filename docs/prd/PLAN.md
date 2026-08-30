@@ -2406,6 +2406,13 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
   *Operational (L12):* two Lab processes silently shared `data/tet14train`, interleaving its CSV and
   checkpoints — **verify the previous process is gone before relaunching**, and never infer a run is dead
   from an empty log (output is buffered).
+  *Framework fix shipped (owner ask — "prevent this from happening in future trainings"):* an exclusive
+  **training-directory lock** (`Core/Checkpoints/TrainingDirectoryLock.cs`, acquired in `LabHost.Run`) so two
+  runs can never share a `--data` directory again. It is an **OS file handle** (`FileShare.None` +
+  `DeleteOnClose`), not a PID file, so it survives a hard kill without going stale — which matters because a
+  running `Lab.exe` locks the build outputs and gets killed routinely. Read-only modes (`--eval-only`,
+  `--baselines`) do not take it. The failure names the holding pid and its full command line. 5 tests in
+  `TrainingDirectoryLockTests`, including that an abandoned handle does not strand the directory.
   *Next:* tet15 running, gated on **held-out play** (seeds 9000+e), never on a fit statistic — L9. If it
   does not hold, the next lever is a **shared per-candidate scorer**, which needs no trainer change:
   `IValueNet` only requires `Forward([B,854]) → [B,40]`, so a net that internally reshapes the candidate

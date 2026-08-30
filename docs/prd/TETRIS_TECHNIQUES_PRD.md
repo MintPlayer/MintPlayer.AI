@@ -1012,6 +1012,24 @@ explicit legality plane. Two differences matter:
   Git Bash. Throughput is not constant - it roughly quadrupled as the policy degraded, so ETAs from a
   strong-policy phase are badly wrong. **And heredocs are banned by CLAUDE.md; write a script file instead.**
 
+### Framework fix shipped: exclusive training-directory lock
+
+The `data/tet14train` contamination was a **framework** defect, not a Tetris one — any game could hit it, and
+it fails silently, which is the worst property a defect can have. Fixed in
+`Core/Checkpoints/TrainingDirectoryLock.cs`, acquired for the whole run in `LabHost.Run`:
+
+- The lock is an **OS file handle** (`FileShare.None` + `DeleteOnClose`), not a PID/marker file, so it is
+  released automatically on process exit **including a hard kill** — which matters here, because a running
+  `Lab.exe` locks the build outputs and therefore gets killed routinely.
+- **Read-only modes do not take it** (`--eval-only`, and `--baselines` never reaches `LabHost`), so a
+  directory can still be inspected while a run trains it.
+- A sibling `.training.owner` breadcrumb records pid / start time / command line purely so the failure names
+  the culprit. Verified end-to-end: a second run against a live directory dies with
+  *"'…\tet15train' is already being written by another training run (pid=12260 | … | command=…) … Stop the
+  other process, or use a different --data directory."*
+- Pinned by `TrainingDirectoryLockTests` (5 tests), including that an **abandoned handle does not strand the
+  directory** — the property a hand-rolled marker file would get wrong.
+
 ### Repo defects found (fix in this milestone)
 
 1. `TetrisLab` missing `if (grow) hidden = DqnGrowth.Start;` - `--grow` throws for every off-ladder trunk.
