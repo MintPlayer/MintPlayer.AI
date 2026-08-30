@@ -34,7 +34,7 @@ class PgCfRng {
 
   var state: i32
 
-  init(seed: i32) {
+  constructor(seed: i32) {
     var s = seed % M
     if s < 0 { s += M - 1 }
     if s == 0 { s = 1 }       // state must stay in [1, M−1]
@@ -119,7 +119,7 @@ class PgCrazyFruits {
   // steps still consume it normally; stageSwap clears the shield, so it never outlives the move.
   var shielded: List<bool> = List<bool>()
 
-  init() {
+  constructor() {
     this.score = 0
     this.movesMade = 0
     this.lastMoveScore = 0
@@ -1048,7 +1048,7 @@ class PgCfDuelingNet {
   var advW: List<f64>
   var advB: List<f64>
 
-  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, valueW: List<f64>, valueB: List<f64>, advW: List<f64>, advB: List<f64>) {
+  constructor(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, valueW: List<f64>, valueB: List<f64>, advW: List<f64>, advB: List<f64>) {
     this.inputSize = inputSize
     this.actions = actions
     this.hidden = hidden

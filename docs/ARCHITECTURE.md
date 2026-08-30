@@ -532,6 +532,28 @@ physics; the facades hold only host glue (events, rendering hooks, RNG, state I/
 `…/FruitCake/polyglot/README.md` and
 [`prd/POLYGLOT_FRUITCAKE_PRD.md`](prd/POLYGLOT_FRUITCAKE_PRD.md).
 
+**Writing `.pg` — toolchain and conventions** (all 7 solvers: chess, crazyfruits, draughts, fruitcake,
+mountaincar, snake, tetris). The pin is **`MintPlayer.Polyglot.MSBuild` 0.9.9**.
+
+- **Constructors are `constructor(...)`, never `init(...)`** (renamed upstream in v0.9.8; the repo migrated
+  2026-08-30). A stray `init(` fails with a misleading `expected a member` pointing at the *following* line —
+  if you see that cascade, it is the constructor keyword, not a real syntax error.
+- **Don't design around the old 0.8.1 constraint list.** Measured 2026-08-30: `while`, `record`, nested
+  `List<List<i32>>`, interfaces and **a real BFS worklist queue** all work. The often-cited TS7022
+  "evolving-any" claim (`snake_solver.pg:266`) does **not** reproduce on 0.8.1 or 0.9.9 — the emitter annotates
+  list locals (`let frontier: number[] = []`) and the output passes `tsc --strict`. Any note quoting compiler
+  limits must name the version it was measured against.
+- **The CLI writes output only when content changes**, so an old mtime on a `*_solver.ts` twin is *not* evidence
+  of staleness. Verify by transpiling to a scratch dir and diffing content.
+- **To prove which CLI ran:** 0.9.9 emits `this.bag.length = 0` for `List.clear()`; 0.8.1 emitted
+  `this.bag = []`. There is no `polyglot` on PATH and no `PolyglotTool` override here — MSBuild uses the
+  package's bundled `tools/win-x64/polyglot.exe`.
+- Cross-language pins live in `tests/…/*ParityTests.cs` (C# side) and the **manual** `tools/*_parity.mjs`
+  harnesses (TS side, not run by CI). Re-run both after any toolchain change.
+
+Full investigation and migration record:
+[`prd/polyglot-pilot/POLYGLOT_M57_FEASIBILITY.md`](prd/polyglot-pilot/POLYGLOT_M57_FEASIBILITY.md).
+
 **The `.pg` now holds the whole *inference* path too (M32).** Beyond physics, `fruitcake_solver.pg` also contains
 `buildObservation` (the 89-dim vector), `PgDuelingNet.forward` (f64 dueling-Q forward pass), and `chooseColumn`
 (the depth-3 expectimax search with the net-leaf inlined) — so the **entire FruitCake AI is single-sourced** and, f64

@@ -52,7 +52,7 @@ class PgDraughtsState {
   var whiteToMove: bool
   var noProgress: i32
 
-  init(size: i32, flyingKings: bool, menCaptureBackward: bool, majorityCapture: bool, noProgressLimit: i32, squares: List<i32>, whiteToMove: bool, noProgress: i32) {
+  constructor(size: i32, flyingKings: bool, menCaptureBackward: bool, majorityCapture: bool, noProgressLimit: i32, squares: List<i32>, whiteToMove: bool, noProgress: i32) {
     this.size = size
     this.flyingKings = flyingKings
     this.menCaptureBackward = menCaptureBackward
@@ -423,7 +423,7 @@ class PgDraughtsConvNet {
   var vHeadB: List<f64>         // [1]
 
   // Dims only — the parser assigns the weight arrays field-by-field as it reads them (in Parameters() order).
-  init(planes: i32, boardH: i32, boardW: i32, filters: i32, blocks: i32, actions: i32) {
+  constructor(planes: i32, boardH: i32, boardW: i32, filters: i32, blocks: i32, actions: i32) {
     this.planes = planes
     this.boardH = boardH
     this.boardW = boardW
@@ -559,7 +559,7 @@ class PgDraughtsNet {
   var valueB: List<f64>          // [1]
   var conv: PgDraughtsConvNet?   // non-null ⇒ conv net; forward delegates to it (the MLP fields are unused)
 
-  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, policyW: List<f64>, policyB: List<f64>, valueW: List<f64>, valueB: List<f64>) {
+  constructor(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, policyW: List<f64>, policyB: List<f64>, valueW: List<f64>, valueB: List<f64>) {
     this.inputSize = inputSize
     this.actions = actions
     this.hidden = hidden
@@ -630,7 +630,7 @@ class PgDraughtsMctsNode {
   var terminal: bool
   var terminalValue: f64            // set when terminal: -1 loss (side to move can't move) / 0 draw, mover-relative
 
-  init(moves: List<i32>, terminal: bool, terminalValue: f64) {
+  constructor(moves: List<i32>, terminal: bool, terminalValue: f64) {
     this.moves = moves
     this.terminal = terminal
     this.terminalValue = terminalValue

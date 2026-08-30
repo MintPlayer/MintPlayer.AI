@@ -120,7 +120,7 @@ dotnet run -c Release --project tools/…Lab -- --game chess --demo --sims 400 -
 - Source: `fruitcake_solver.pg` (single source) → C# in `obj/` (build-time, MSBuild PackageReference
   `MintPlayer.Polyglot.MSBuild` v0.3.1, `PrivateAssets=all`) + committed TS `fruitcake_solver.ts`. macOS dev must
   point `$(PolyglotTool)` at a local `polyglot` binary. `dotnet watch` re-transpiles on save.
-- Syntax: `import { List } from "std.collections"`, `import { Math } from "std.math"`; `record X(f: t)`; `class X { var f: t; init(...) {...}; fn m(...): t {...} }`; `fn f(a: i32): t => expr`; `for i in 0..n`, `for v in list`;
+- Syntax: `import { List } from "std.collections"`, `import { Math } from "std.math"`; `record X(f: t)`; `class X { var f: t; constructor(...) {...}; fn m(...): t {...} }` *(was `init(...)` before the 0.9.9 migration, 2026-08-30)*; `fn f(a: i32): t => expr`; `for i in 0..n`, `for v in list`;
   types `f64 i32 bool List<T> T?`; `Math.min/max/sqrt/exp/tanh/log/PI`. Generated C# types are `Pg`-prefixed + internal,
   wrapped by a hand-written **facade** (`FruitCakeWorld.cs`); a **parity test** pins facade↔core.
 - **Constraints:** no nested-generic params (`List<List<f64>>` mishandled → flat `List<f64>` + offsets, see
