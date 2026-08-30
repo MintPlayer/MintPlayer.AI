@@ -2370,7 +2370,27 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
 - **M57.4 — SRS second mode.** Kick tables (JLSTZ + I), CCW, T-spin detection, duplicate-state
   canonicalization. **Gate:** NRS pin **unchanged** — `rotCount` is read by five enumerators, and
   setting it to 4 for I/O/S/Z shifts every baseline *before a single kick fires*.
-- **M57.5 — Retrain.** From scratch (an action-head change forces it; nothing in the repo grows an
+- **M57.5 — Net basis + retrain.** 🔄 IN PROGRESS 2026-08-30. Observation widened 454 → **854** (16
+  per-action planes); dense target rebuilt to reconstruct the M57.1 evaluator exactly via a shared
+  `evalAfterstate`, so the net's teacher and the search tier's evaluator cannot drift (pinned by
+  `DenseTargets_ReconstructTheEnginesOwnEvaluatorExactly`). **Twelve lessons in PRD §6.U**; load-bearing
+  ones: **(L8, owner)** *you cannot swap an input's MEANING when auto-widening a net* — `GrowInput` is
+  function-preserving only as an APPEND; a reordered plane keeps the width legal while silently feeding
+  transplanted weights different quantities and **no guard catches it** (width and action count both still
+  match). Hence planes 0–5 are byte-for-byte the M54 basis at indices 214..453, pinned by
+  `ObservationLayout_KeepsTheM54BasisAsItsPrefix`. **(L7)** spike s7: at **R² 0.54 EVERY** evaluator —
+  narrow or widened — tops out 100% of episodes, so a "decent" fit is lethal and the from-scratch runs were
+  never going to work. **(L6)** keep the target LINEAR in the planes (pre-gated quantities); piecewise only
+  fitted R² 0.54. **(L5)** centre the target per state — free under a dueling V head, and it makes deltas
+  and absolutes interchangeable. **(L4)** falling eval + falling loss is AMBIGUOUS; the loss LEVEL
+  disambiguates (≈1.0–1.5 healthy; 14–29 = mis-scaled targets). **(L3)** DIG mode mandatory: without it
+  +30% on A but **−52%** protocol-B survival. **(L2)** rescale ported weights to the host basis.
+  *Journal:* tet8 (uncentred, abandoned) · tet9 14,970@60K · tet10 8,220@60K · tet11 1,589@80K
+  (RewardScale 20 — refuted, reverted) · tet12 9,321@55K — **all four from-scratch runs peaked at 9–15K and
+  decayed**, against the shipped M54 net's **83,265**. **tet13 warm-starts from that net via `AdaptWarmNet`
+  + `GrowInput` and reproduced 83,265 EXACTLY at step 0** — the evidence the prefix rule held; keep-best
+  means it can only ship an improvement. Running.
+- **M57.5 (original plan) — Retrain.** From scratch (an action-head change forces it; nothing in the repo grows an
   action head). N=160 via `(rot, col, depth 0..3)`, obs 1174, **~5.9 h measured** — **GPU is not a
   lever** (largest GEMM 14.9M MACs vs the 256M routing threshold). **One net, tap budget applied as an
   inference-time mask** — exact at γ=0 since the target is `w·φ(afterstate)`, so the three radios cost
