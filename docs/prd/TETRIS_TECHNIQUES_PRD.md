@@ -1,6 +1,6 @@
 # Tetris — techniques: tetris-aware evaluator, movement-aware placements, SRS mode, technique dial
 
-**Status:** 🧪 SPIKES RUN 2026-08-30 — **M57.0 complete, and it re-scopes the arc.** S0 is a decisive **GO** (the evaluator was the whole story, §6.R); S1/S2 are a **NO-GO on tucks** — the movement-aware action space is not a strength lever. Feature work M57.1–M57.7 not started. Planned via a 4-agent investigation (repo/architecture map,
+**Status:** 🧪 SPIKES RUN 2026-08-30 — **M57.0 complete, and it re-scopes the arc.** S0 is a decisive **GO** (the evaluator was the whole story); S1/S2 are a **NO-GO on tucks**; **S3 is a GO on the tap budget** — lateral reach is decisive above L19 (at the kill screen DAS scores **0**, rolling **37,135**). All in §6.R. Feature work M57.1–M57.7 not started. Planned via a 4-agent investigation (repo/architecture map,
 NES-technique research, Tetris-AI literature survey, training feasibility + gates — findings in §2). **No spike
 has been run yet**; §6 defines four, and **S0 is decisive enough that it may cancel most of the rest**.
 **Owner:** Pieterjan
@@ -704,6 +704,70 @@ Gate needed **+15% CI-separated**; measured **negative**. Tucks were chosen only
 > than the 40 hard-drop placements (S1's random population shows exactly that: 5.7 reachable vs 6.9 hard).
 > If so it is a real effect and a further argument against the feature, but it is **not measured**, and
 > anyone reopening this should close that gap first.
+
+### S3 — lateral reach and the tap budget at PINNED gravity: **GO, and it corrects S1/S2's scope**
+
+`s3_lateral_reach.mjs`. **Owner hypothesis (2026-08-30):** *the model may prefer a flat field because it
+cannot get pieces over to the side.* S0–S2 could not test this — **they all started at level 0 (48
+frames/row), where input speed binds on nothing.** Gate G7 pre-registered precisely this failure mode and
+was not honoured. This spike pins gravity instead.
+
+**Part 1 — lateral reach.** Greatest flat-stack height at which the piece can still reach each wall
+(spawn x=5, so column 9 is 4 taps and column 0 is 5):
+
+| | DAS 10Hz | hyper 12Hz | hyper 15Hz | rolling 20Hz | 30Hz cap |
+|---|---|---|---|---|---|
+| L9 (6f/row) | 16 | 16 | 16 | 16 | 16 |
+| L18 (3f/row) | 15 | 16 | 16 | 16 | 16 |
+| L19 (2f/row) | **13** | 14 | 15 | **16** | 16 |
+| L29 (1f/row) | **7** | 9 | 11 | **13** | 15 |
+
+**Part 2 — strength, widened evaluator, tap-constrained action set, gravity pinned** (8 eps, 400-piece cap,
+seeds 5000+):
+
+| | DAS | hyper 12 | hyper 15 | rolling 20 | 30Hz |
+|---|---|---|---|---|---|
+| **L18** score | 60,178 | 64,323 | 87,398 | 84,575 | 92,440 |
+| **L19** score | 37,135 | 39,068 | 60,178 | **79,910** (+115% vs DAS) | 84,575 |
+| **L29** score | **0** | 15 | 780 | **37,135** | 60,178 |
+| L29 pieces survived | 21 | 23 | 52 | **224** | 302 |
+| L29 well-column touches/ep | **2.0** | 3.1 | 7.5 | **34.6** | 49.1 |
+
+**At the kill screen DAS scores zero** — 21 pieces, two well-column touches in a whole episode. Rolling
+scores 37,135 and survives 224. This reproduces the real rolling revolution from first principles: the kill
+screen was unscoreable with DAS and hypertapping until rolling was invented in 2020, and the engine
+reproduces that without being told.
+
+*Caveat:* 8 episodes, CIs ±25–31k, so orderings within a few thousand points at L18/L19 are **not**
+separated. The L29 result (0 vs 37,135) is not a CI question.
+
+**The synthesis — there are TWO independent causes of flatness, and S0 found only one:**
+
+1. **The `−Δwells` sign trap** — wrong at *every* level, fixed by S0, worth +59%.
+2. **Genuine unreachability at high gravity** — *correct* behaviour for DAS (a stack above
+   `max5TapHeight` really cannot feed the well), *wrong* for rolling. This is exactly what StackRabbit's
+   `max5TapHeight < 4 ⇒ LINEOUT` mode switch encodes.
+
+The current model cannot tell these regimes apart, because it has **no input model at all** — so it flattens
+uniformly, which is right for DAS at L29 and leaves most of the score on the table for rolling.
+
+**This corrects §6.R's earlier conclusion.** The technique dial is **not** a cosmetic/demo feature; it is a
+first-order strength factor above level 19. What S1/S2 correctly rule out is the **tuck** half of the
+movement-aware action space. What they did *not* test — and S3 now shows is decisive — is **lateral reach**.
+Those are different axes, and only the second one pays.
+
+**Revised consequences:**
+- **M57.1 (evaluator widening) still leads**, and gains two terms it did not have: `inaccessibleLeft` /
+  `inaccessibleRight` derived from `max4/max5TapHeight`, plus the LINEOUT-style mode switch. Without them the
+  agent cannot know which regime it is in.
+- **M57.3 is re-scoped, not cancelled.** Drop tucks (S1/S2). Keep the **tap-budgeted legality mask** — the
+  frame simulator earns its place by deciding *which columns are reachable at this level and rate*, which is
+  a mask over the existing 40 actions, **not** an action-space expansion. N stays 40; no retrain forced by
+  action-count change.
+- **G7 (a high-gravity protocol) is now mandatory, not optional.** Every gate measured at level 0 is blind to
+  the effect that dominates real play. Protocol A's level-0 start is why the shipped net looks acceptable.
+- **The three radios (M57.6) are a genuine strength control**, and the visitor can watch DAS fail at the kill
+  screen while rolling keeps scoring.
 
 ### S1b — not run
 

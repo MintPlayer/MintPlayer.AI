@@ -2317,7 +2317,20 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
   are trustworthy; see §6.R's caveat.* **S1b not run.** *Consequences:* M57.1 is promoted to the whole arc;
   M57.3's movement-aware action space loses its strength case (the frame simulator belongs in the browser
   pilot, not the action space); the N=160 retrain is not yet justified — a widened-evaluator retrain at N=40
-  is; the three radios survive as an authenticity/demo feature, exactly what G6 pre-registered.
+  is. **S3 (added after an owner challenge — "maybe it can't get pieces to the side?") CORRECTS that last
+  point and is a GO:** S0–S2 all started at **level 0 (48 f/row), where input speed binds on nothing** — gate
+  G7 pre-registered exactly this blind spot and it was not honoured. With gravity PINNED, tap speed is a
+  first-order strength factor: max stack height still reaching the wall is **DAS 7 / hyper 9–11 / rolling 13
+  / 30Hz 15 at L29** (all 16 at L9), and score at **L19 is DAS 37,135 vs rolling 79,910 (+115%)**; **at the
+  kill screen DAS scores 0** (21 pieces, 2 well-column touches/ep) **vs rolling 37,135** (224 pieces, 34.6) —
+  the real rolling revolution reproduced from first principles. *8 eps, CIs ±25–31k, so L18/L19 orderings
+  within a few thousand aren't separated; 0-vs-37,135 is not a CI question.* **Synthesis: TWO independent
+  causes of flatness** — the `−Δwells` sign trap (wrong at every level, S0 fixes it) and genuine
+  unreachability at high gravity (RIGHT for DAS, wrong for rolling). The model has no input model at all, so
+  it can't tell the regimes apart. *Revised:* M57.1 gains `inaccessibleLeft/Right` + a LINEOUT-style mode
+  switch; **M57.3 is re-scoped not cancelled** — drop tucks, keep the tap-budgeted legality MASK over the
+  existing 40 actions (N stays 40, no action-count retrain); **G7 high-gravity protocol is now mandatory**;
+  the three radios are a genuine strength control, not an authenticity feature.
 - **M57.0 (original plan) — Spikes.** S0 evaluator widening (~15 min, no training, no engine work): GO if some
   weighting reaches ≥2.0 tetrises/ep at score ≥85,000. S0b CEM on the widened basis (the un-run M54.7,
   on a basis that can *express* tetris play — CMA-ES on the narrow basis provably converges back to
