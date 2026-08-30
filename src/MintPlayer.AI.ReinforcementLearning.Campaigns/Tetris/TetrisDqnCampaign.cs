@@ -56,22 +56,44 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
     // the canonical evaluator up to a PER-STATE constant (absolute-vs-delta transitions), which the dueling
     // V head absorbs. ÷10 into target units. A legal placement always has landing > 0 (row 19 lands at
     // 0.05·20); a zero landing plane ⇒ illegal ⇒ NaN (unsupervised).
-    private const int PlaneBase = 214; // 200 board cells + 7 + 7 piece one-hots
+    private const int PlaneBase = TetrisBoard.Width * TetrisBoard.Height + 2 * TetrisBoard.PieceCount;
     private const int A = TetrisEnv.ActionCount;
 
-    private static float[] DenseTargetsFromObservation(float[] obs)
+    // M57.5: reconstruct the WIDENED evaluator per action, exactly. The planes carry ABSOLUTE afterstate
+    // quantities plus the DIG/LINEOUT mode flags, so this applies the same branch the engine does in
+    // PgTetris.evalAfterstate — no per-state constant for the dueling V head to absorb, and no
+    // hand-written inverse of the normalizers to drift (the M54 hazard).
+    // Weights MUST match the .pg consts; TetrisEnvTests pins agreement against the engine's own scores.
+    private const float WHoles = -5.582f, WWells = -0.847f, WReady = 3.402f, WCovered = -0.201f;
+    private const float WBurn = -3.700f, WBurnDig = -0.650f, WHoleDig = -0.505f, WCol9 = -0.355f;
+    private const float WTetris = 7.047f, WInacc = -0.975f;
+
+    internal static float[] DenseTargetsFromObservation(float[] obs)
     {
         var targets = new float[A];
         for (int a = 0; a < A; a++)
         {
-            float landing = obs[PlaneBase + a];
-            if (landing <= 0f) { targets[a] = float.NaN; continue; }
-            float eroded = obs[PlaneBase + A + a];
-            float dRowT = obs[PlaneBase + 2 * A + a];
-            float dColT = obs[PlaneBase + 3 * A + a];
-            float dHoles = obs[PlaneBase + 4 * A + a];
-            float dWells = obs[PlaneBase + 5 * A + a];
-            targets[a] = (-20f * landing + 8f * eroded - 20f * dRowT - 20f * dColT - 40f * dHoles - 20f * dWells) / 10f;
+            float Plane(int i) => obs[PlaneBase + i * A + a];
+
+            if (Plane(14) < 0.5f) { targets[a] = float.NaN; continue; } // explicit legality flag
+
+            float landing = Plane(0) * 20f, eroded = Plane(1) * 8f;
+            float rowT = Plane(2) * 40f, colT = Plane(3) * 40f;
+            float holes = Plane(4) * 20f, wells = Plane(5) * 20f;
+            float ready = Plane(6) * 4f, covered = Plane(7) * 10f;
+            float burn = Plane(8) * 4f, isTetris = Plane(9);
+            float col9 = Plane(10) * 10f, inacc = Plane(11) * 10f;
+            bool dig = Plane(12) > 0.5f, lineout = Plane(13) > 0.5f;
+
+            float s = -landing + eroded - rowT - colT + WHoles * holes + WWells * wells;
+            if (!lineout)
+            {
+                if (!dig) s += WReady * ready;
+                s += (dig ? WBurnDig : WBurn) * burn;
+            }
+            if (dig) s += WHoleDig * holes;
+            s += WCovered * covered + WTetris * isTetris + WCol9 * col9 + WInacc * inacc;
+            targets[a] = s / 10f;
         }
         return targets;
     }

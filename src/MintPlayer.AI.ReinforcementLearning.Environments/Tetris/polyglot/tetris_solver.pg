@@ -85,6 +85,7 @@ class PgTetris {
   const EvalCol9: f64 = -0.355       // column 8 tall ⇒ the well is sealed from the 4-tap side
   const EvalTetris: f64 = 7.047      // realised 4-line clear
   const EvalMaxSafeCol9: i32 = 8
+  const ObsPlanes: i32 = 15          // per-action observation planes (M54 had 6; M57.5 widened the basis)
   const EvalInaccessible: f64 = -0.975 // per row of stack above the height at which a wall is still reachable
 
   // Tap budget (PRD §4.1): frames per shift. 6 = DAS 10Hz (the ROM auto-repeat), 5 = hypertapping 12Hz,
@@ -736,20 +737,14 @@ class PgTetris {
   // Baseline terms are unchanged (−landing + eroded − rowT − colT − 4·holes) but wells now exclude the
   // well column, and the tetris-aware + reachability terms are added. Board restored; no RNG.
   // Returns −1e18 for an illegal placement.
-  fn dellaScoreFor(piece: i32, rot: i32, x: i32): f64 {
-    let y = this.dropY(piece, rot, x)
-    if y < 0 { return -1.0e18 }
-    let saved = this.saveRows()
-    let cleared = this.simPlace(piece, rot, x, y)
+  // Widened evaluator over the CURRENT (already-placed) rows. `simLanding`/`simEroded` must still be
+  // valid — i.e. call this immediately after simPlace. SHARED by dellaScoreFor (the scripted + search
+  // tiers) and by the observation planes (the net's dense target), so the teacher the net distils and
+  // the evaluator the search uses can never drift apart. That drift was a live hazard in M54, where the
+  // dense target was a hand-written inverse of the observation normalizers.
+  fn evalAfterstate(cleared: i32): f64 {
     let holeCount = this.holes()
     var s = 0.0 - this.simLanding + this.simEroded - this.rowTransitions() - this.colTransitions() + EvalHoles * holeCount + EvalWells * this.wellSumExceptWell()
-
-    // Mode switches (StackRabbit's getAiMode). Both are load-bearing and were MEASURED:
-    //  • LINEOUT — the left wall is out of reach at this level and tap rate, so tetris-building is futile.
-    //  • DIG — the board has holes (garbage mode arrives this way): burning is how you survive, so a burn
-    //    penalty tuned for a clean board is actively lethal. Without this switch the widened evaluator
-    //    scored +30% on protocol A but LOST 52% of protocol-B survival (M57.1 first measurement) — it
-    //    refused to clear the singles that dig a garbage board out.
     let m5 = this.maxTapHeight(5)
     let m4 = this.maxTapHeight(4)
     let lineout = m5 < 4
@@ -768,7 +763,17 @@ class PgTetris {
     if overLeft > 0 { s = s + EvalInaccessible * overLeft }
     let overRight = this.colHeight(W - 1) - m4
     if overRight > 0 { s = s + EvalInaccessible * overRight }
+    return s
+  }
 
+  // Widened evaluator score of placing `piece` at (rot, x) on the CURRENT rows (M57.1).
+  // Board restored; no RNG. Returns -1e18 for an illegal placement.
+  fn dellaScoreFor(piece: i32, rot: i32, x: i32): f64 {
+    let y = this.dropY(piece, rot, x)
+    if y < 0 { return -1.0e18 }
+    let saved = this.saveRows()
+    let cleared = this.simPlace(piece, rot, x, y)
+    let s = this.evalAfterstate(cleared)
     this.restoreRows(saved)
     return s
   }
@@ -799,14 +804,15 @@ class PgTetris {
     for p in 0..PieceCount { obs.add(if p == curPiece { 1.0 } else { 0.0 }) }
     for p2 in 0..PieceCount { obs.add(if p2 == nextPiece { 1.0 } else { 0.0 }) }
 
-    let preRowT = this.rowTransitions()
-    let preColT = this.colTransitions()
-    let preHoles = this.holes()
-    let preWells = this.wellSum()
-
-    // Action-major scratch (6 features per action), emitted plane-major below.
+    // M57.5: FIFTEEN per-action planes carrying the widened evaluator's basis (M54 had six, and they
+    // were the narrow anti-tetris basis). Values are ABSOLUTE afterstate quantities, not deltas — the
+    // evaluator uses them absolutely, so the dense target reconstructs EXACTLY rather than up to a
+    // per-state constant that the dueling V head had to absorb. Planes 12/13 carry the DIG and LINEOUT
+    // mode flags so the C# dense target can apply the same branch the engine does; plane 14 is an
+    // explicit legality flag (M54 inferred illegality from `landing <= 0`, which is not sound — a
+    // placement resting at the very bottom can have landing <= 0).
     var feat: List<f64> = List<f64>()
-    for _a in 0..(ActionCount * 6) { feat.add(0.0) }
+    for _a in 0..(ActionCount * ObsPlanes) { feat.add(0.0) }
     for a in 0..ActionCount {
       let rot = this.actionRot(a)
       let x = this.actionCol(a)
@@ -814,17 +820,36 @@ class PgTetris {
       let y = this.dropY(curPiece, rot, x)
       if y < 0 { continue }
       let saved = this.saveRows()
-      this.simPlace(curPiece, rot, x, y)
-      feat[a * 6] = this.simLanding / 20.0
-      feat[a * 6 + 1] = this.simEroded / 8.0
-      feat[a * 6 + 2] = (this.rowTransitions() - preRowT) / 20.0
-      feat[a * 6 + 3] = (this.colTransitions() - preColT) / 20.0
-      feat[a * 6 + 4] = (this.holes() - preHoles) / 10.0
-      feat[a * 6 + 5] = (this.wellSum() - preWells) / 20.0
+      let cleared = this.simPlace(curPiece, rot, x, y)
+      let holeCount = this.holes()
+      let m5 = this.maxTapHeight(5)
+      let m4 = this.maxTapHeight(4)
+      let dig = holeCount > 0
+      let lineout = m5 < 4
+      let col9 = this.colHeight(WellCol - 1) - EvalMaxSafeCol9
+      let overLeft = this.colHeight(0) - m5
+      let overRight = this.colHeight(W - 1) - m4
+      let inacc = (if overLeft > 0 { overLeft } else { 0 }) + (if overRight > 0 { overRight } else { 0 })
+      let b = a * ObsPlanes
+      feat[b] = this.simLanding / 20.0
+      feat[b + 1] = this.simEroded / 8.0
+      feat[b + 2] = this.rowTransitions() / 40.0
+      feat[b + 3] = this.colTransitions() / 40.0
+      feat[b + 4] = holeCount / 20.0
+      feat[b + 5] = this.wellSumExceptWell() / 20.0
+      feat[b + 6] = this.tetrisReady() / 4.0
+      feat[b + 7] = this.coveredWell() / 10.0
+      feat[b + 8] = (if cleared > 0 && cleared < 4 { cleared } else { 0 }) / 4.0
+      feat[b + 9] = if cleared == 4 { 1.0 } else { 0.0 }
+      feat[b + 10] = (if col9 > 0 { col9 } else { 0 }) / 10.0
+      feat[b + 11] = inacc / 10.0
+      feat[b + 12] = if dig { 1.0 } else { 0.0 }
+      feat[b + 13] = if lineout { 1.0 } else { 0.0 }
+      feat[b + 14] = 1.0
       this.restoreRows(saved)
     }
-    for f in 0..6 {
-      for a2 in 0..ActionCount { obs.add(feat[a2 * 6 + f]) }
+    for f in 0..ObsPlanes {
+      for a2 in 0..ActionCount { obs.add(feat[a2 * ObsPlanes + f]) }
     }
     return obs
   }

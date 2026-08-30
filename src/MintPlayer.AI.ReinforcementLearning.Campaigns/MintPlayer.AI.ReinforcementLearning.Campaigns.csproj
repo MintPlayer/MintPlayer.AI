@@ -26,4 +26,8 @@
     <ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Ilgpu\MintPlayer.AI.ReinforcementLearning.Ilgpu.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="MintPlayer.AI.ReinforcementLearning.Tests" />
+  </ItemGroup>
+
 </Project>

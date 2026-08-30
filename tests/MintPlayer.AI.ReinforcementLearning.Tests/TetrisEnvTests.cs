@@ -137,4 +137,47 @@ public class TetrisEnvTests
             dir.Delete(recursive: true);
         }
     }
+
+    /// <summary>
+    /// M57.5 anti-drift gate. The net's dense regression target is reconstructed in C# from the
+    /// observation planes, while the search tiers score placements with the engine's own
+    /// <c>evalAfterstate</c>. If those two ever disagree, the net is being distilled from a DIFFERENT
+    /// evaluator than the one that plays — the exact failure mode M54 carried (a hand-written inverse of
+    /// the plane normalizers, correct only up to a per-state constant). This pins them together.
+    /// </summary>
+    [Fact]
+    public void DenseTargets_ReconstructTheEnginesOwnEvaluatorExactly()
+    {
+        int checkedActions = 0;
+        for (int e = 0; e < 12; e++)
+        {
+            var board = new TetrisBoard();
+            board.Reset((ulong)(4100 + e), sevenBag: false, garbageEvery: e % 3 == 0 ? 10 : 0);
+
+            // walk into a non-trivial mid-game position (garbage episodes exercise the DIG branch)
+            for (int i = 0; i < 30 + e * 5 && !board.GameOver; i++) board.ApplyPlacement(board.DellacherieAction());
+            if (board.GameOver) continue;
+
+            var obs = board.BuildObservation();
+            Assert.Equal(TetrisBoard.ObservationSize, obs.Length);
+
+            var targets = TetrisDqnCampaign.DenseTargetsFromObservation(obs);
+            var mask = board.LegalMask();
+
+            for (int a = 0; a < TetrisBoard.ActionCount; a++)
+            {
+                if (!mask[a])
+                {
+                    Assert.True(float.IsNaN(targets[a]), $"action {a} is illegal but got a supervised target");
+                    continue;
+                }
+                double engine = board.DellaScore(a / TetrisBoard.Width, a % TetrisBoard.Width);
+                Assert.False(float.IsNaN(targets[a]), $"action {a} is legal but the target is NaN");
+                Assert.True(Math.Abs(targets[a] * 10.0 - engine) < 2e-2,
+                    $"seed {4100 + e} action {a}: dense target {targets[a] * 10.0:F4} != engine evaluator {engine:F4}");
+                checkedActions++;
+            }
+        }
+        Assert.True(checkedActions > 200, $"only {checkedActions} legal actions exercised — the fixture is too weak");
+    }
 }

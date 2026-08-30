@@ -32,8 +32,9 @@ export class TetrisDirector {
       // Stale-ckpt guard (the M51.1 lesson): a net trained on an older observation layout cannot forward
       // against the current engine — treat it as missing (Dellacherie fallback) instead of erroring per move.
       const obsSize = this.game.board.buildObservation().length;
-      if (net && net.inputSize !== obsSize) {
-        console.warn(`tetris: checkpoint input ${net.inputSize} ≠ observation ${obsSize} — stale checkpoint, falling back to Dellacherie`);
+      const actionCount = this.game.board.legalMask().length;
+      if (net && (net.inputSize !== obsSize || net.actions !== actionCount)) {
+        console.warn(`tetris: checkpoint ${net.inputSize}x${net.actions} ≠ engine ${obsSize}x${actionCount} — stale checkpoint, falling back to Dellacherie`);
         net = null;
       }
       this.net = net;

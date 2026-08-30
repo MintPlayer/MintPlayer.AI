@@ -26,9 +26,13 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
     public const float RewardScale = 1f;
 
     private static readonly string[] PieceNames = ["I", "O", "T", "S", "Z", "L", "J"];
+    // M57.5: the widened basis (15 planes). Absolute afterstate values, not deltas.
     private static readonly string[] FeaturePlaneNames =
-        ["landing height (÷20)", "eroded piece cells (÷8)", "Δ row transitions (÷20)",
-         "Δ column transitions (÷20)", "Δ holes (÷10)", "Δ well depth (÷20)"];
+        ["landing height (÷20)", "eroded piece cells (÷8)", "row transitions (÷40)",
+         "column transitions (÷40)", "holes (÷20)", "well depth outside the well column (÷20)",
+         "tetris-ready rows (÷4)", "covered-well depth (÷10)", "burned (non-tetris) lines (÷4)",
+         "is a tetris (1/0)", "column 9 height over safe (÷10)", "rows above reachable wall height (÷10)",
+         "DIG mode (1/0)", "LINEOUT mode (1/0)", "placement is legal (1/0)"];
 
     /// <summary>Plain-language name per observation feature, index order of <c>buildObservation</c>.</summary>
     public static readonly IReadOnlyList<string> ObservationLabels = BuildObservationLabels();

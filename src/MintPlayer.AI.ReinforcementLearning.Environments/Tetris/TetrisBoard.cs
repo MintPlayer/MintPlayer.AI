@@ -19,9 +19,15 @@ public sealed class TetrisBoard
     public const int Height = 20;
     public const int PieceCount = 7; // 0=I 1=O 2=T 3=S 4=Z 5=L 6=J
     public const int ActionCount = 40; // 4 rotations × 10 columns, hard-masked
-    // 454: 200 board cells + 7 current + 7 next one-hots + six 40-wide per-action feature planes
-    // (landing/20, eroded/8, ΔrowT/20, ΔcolT/20, Δholes/10, Δwells/20 — PRD §3.4).
-    public const int ObservationSize = Width * Height + 2 * PieceCount + 6 * ActionCount;
+    /// <summary>Per-action observation planes. M54 had 6 (the narrow anti-tetris Dellacherie basis);
+    /// M57.5 widened to 15 so the net sees the same basis its dense target is built from.
+    /// Must equal <c>PgTetris.ObsPlanes</c>; TetrisEnvTests pins the observation length.</summary>
+    public const int ObservationPlanes = 15;
+
+    // 814: 200 board cells + 7 current + 7 next one-hots + fifteen 40-wide per-action feature planes
+    // (M57.5 — TETRIS_TECHNIQUES_PRD §6.S). Planes are ABSOLUTE afterstate quantities, not deltas, so the
+    // dense target reconstructs the evaluator exactly rather than up to a per-state constant.
+    public const int ObservationSize = Width * Height + 2 * PieceCount + ObservationPlanes * ActionCount;
 
     private readonly PgTetris _core = new();
 
@@ -147,7 +153,10 @@ public sealed class TetrisBoard
     public bool LoadNet(Stream checkpoint)
     {
         var net = ParseDuelingQCheckpoint(checkpoint);
-        if (net is null || net.inputSize != ObservationSize) return false;
+        // M57 correction: also check the ACTION head. The input-width check was only INCIDENTALLY safe —
+        // obs = 214 + planes*actions, so an action-count change happened to move the width too. A net whose
+        // head disagreed while the width matched would load and silently mis-index every action.
+        if (net is null || net.inputSize != ObservationSize || net.actions != ActionCount) return false;
         _net = net;
         return true;
     }
