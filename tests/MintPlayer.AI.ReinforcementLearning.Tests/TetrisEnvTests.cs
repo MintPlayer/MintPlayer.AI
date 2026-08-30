@@ -166,7 +166,7 @@ public class TetrisEnvTests
             var targets = TetrisDqnCampaign.DenseTargetsFromObservation(obs);
             var mask = board.LegalMask();
 
-            double sum = 0;
+            double maxLegal = double.NegativeInfinity;
             int n = 0;
             var engine = new double[TetrisBoard.ActionCount];
             for (int a = 0; a < TetrisBoard.ActionCount; a++)
@@ -178,15 +178,16 @@ public class TetrisEnvTests
                 }
                 Assert.False(float.IsNaN(targets[a]), $"action {a} is legal but the target is NaN");
                 engine[a] = board.DellaScore(a / TetrisBoard.Width, a % TetrisBoard.Width);
-                sum += engine[a];
+                if (engine[a] > maxLegal) maxLegal = engine[a];
                 n++;
             }
             if (n == 0) continue;
 
-            // Targets are CENTRED on the mean legal value (the dueling V head absorbs any per-state
-            // constant, and centring is what keeps the target scale sane — see the campaign comment).
-            // So the invariant is on the RANKING: target == (engineValue - meanLegal) / 10.
-            double mean = sum / n;
+            // Targets are anchored on the per-state MAX over legal actions (see the campaign comment for
+            // why max and not mean: it keeps the realized-reward disagreement on the sampled arm POSITIVE,
+            // which is the configuration both working recipes share). The invariant is on the RANKING:
+            // target == (engineValue - maxLegal) / 10, so the best action sits at exactly 0.
+            double mean = maxLegal;
             for (int a = 0; a < TetrisBoard.ActionCount; a++)
             {
                 if (!mask[a]) continue;

@@ -117,19 +117,35 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
             targets[a] = s;
         }
 
-        // Centre the per-state targets on the mean of the LEGAL actions, then scale.
-        // Measured: the widened evaluator's raw values sit at mean -92, sd 28.7, so a bare /10 produced
-        // targets centred at -9.2 with sd 2.9 — against M54's roughly zero-centred, sd~1 — and training
-        // regressed (score 120 -> 29 over 60K steps while loss fell: a target-SCALE failure, not the
-        // distribution narrowing that signature usually means). Switching the planes from deltas to
-        // absolute values for exactness is what reintroduced the offset; the old delta form existed to
-        // avoid it. Centring is free: a dueling V head absorbs any per-state constant by construction,
-        // and what the advantage head must learn is the RANKING, which centring leaves untouched.
-        float sum = 0f; int n = 0;
-        for (int a = 0; a < A; a++) if (!float.IsNaN(targets[a])) { sum += targets[a]; n++; }
-        if (n == 0) return targets;
-        float mean = sum / n;
-        for (int a = 0; a < A; a++) if (!float.IsNaN(targets[a])) targets[a] = (targets[a] - mean) / 10f;
+        // Anchor the per-state targets on the per-state MAX over legal actions, then scale.
+        //
+        // WHY MAX AND NOT MEAN. DqnTrainer keeps the REALIZED reward on the sampled arm and skips that arm
+        // in the dense term (DqnTrainer.cs:308-325), so the taken action is labelled in a different unit
+        // system from its 39 siblings. What matters is the SIGN of that disagreement, measured over
+        // 15 eps x 400 placements:
+        //
+        //     recipe                                  bias (realized - dense) on the taken arm
+        //     Crazy Fruits (works)                                   +0.82
+        //     Tetris M54 narrow (works, 83,265)                      +0.97
+        //     Tetris M57.5 widened + MEAN-centred (fails)            -1.59
+        //
+        // A positive bias REINFORCES the argmax; a negative one drags down exactly the action the policy
+        // rates best, and it strengthens as epsilon decays (-1.20 at eps 0.5 -> -1.59 at 0.05). That is a
+        // mechanical prediction of "peaks early, then decays", which is what all five M57.5 runs did, in
+        // lockstep with the epsilon schedule. Mean-centring is what flipped that sign.
+        //
+        // Anchoring on the max puts the best action's target at exactly 0 and every other below it, so the
+        // realized reward (mean +0.39, up to 12 on a tetris) pulls the argmax arm UP again - restoring the
+        // configuration both working recipes share. Everything mean-centring was introduced for survives:
+        // the dueling V head absorbs a per-state constant either way, the huge negative offset that killed
+        // tet8 is still removed, and the RANKING is identical.
+        //
+        // Also refuted by the same measurement: RewardScale 20 (tet11) moves the bias to -1.97, i.e. WORSE
+        // - the defect is the offset, not the magnitude, which is why that run failed.
+        float max = float.NegativeInfinity;
+        for (int a = 0; a < A; a++) if (!float.IsNaN(targets[a]) && targets[a] > max) max = targets[a];
+        if (float.IsNegativeInfinity(max)) return targets;
+        for (int a = 0; a < A; a++) if (!float.IsNaN(targets[a])) targets[a] = (targets[a] - max) / 10f;
         return targets;
     }
 

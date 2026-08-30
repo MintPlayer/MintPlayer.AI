@@ -2370,38 +2370,50 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
 - **M57.4 — SRS second mode.** Kick tables (JLSTZ + I), CCW, T-spin detection, duplicate-state
   canonicalization. **Gate:** NRS pin **unchanged** — `rotCount` is read by five enumerators, and
   setting it to 4 for I/O/S/Z shifts every baseline *before a single kick fires*.
-- **M57.5 — Net basis + retrain.** 🔄 RESTARTED 2026-08-30 after five failed runs; full post-mortem in
-  PRD §6.U. Observation widened 454 → **854** (16 per-action planes, planes 0–5 kept byte-for-byte as the
-  M54 basis) and the dense target rebuilt to reconstruct the M57.1 evaluator exactly via a shared
-  `evalAfterstate`, pinned by `DenseTargets_ReconstructTheEnginesOwnEvaluatorExactly`.
-  **THE root cause of the failures, and the meta-lesson (L0, owner): use the framework's built-in features
-  before inventing anything.** Fit quality at the same 256×256 trunk — narrow target **R² 0.841** (loss
-  0.23 / variance 1.448) vs widened **R² 0.615** (loss ~0.93 / variance 2.413): the widened target is
-  richer and the net UNDERFITS it. That is the repo's own documented saturation signature (a loss plateau
-  at a high level) whose documented remedy is **`--grow`** — and **`--grow` was never enabled in any of the
-  five runs**, while four of them were spent hand-tuning `--eps-end`/`--buffer` and a bespoke noise spike
-  was written even though **NoisyNets (`--noisy`) is already shipped here**.
-  *Corrections:* the s7 noise spike **overstated the damage and was the wrong tool** (independent Gaussian
-  noise per action, where a trained net makes structured errors — it predicted 141 pieces at R² 0.80 while
-  tet6 achieved **455 at R² 0.841**), so "R² 0.54 is lethal" is withdrawn; "the target is unfittable" was
-  premature, never having been tested with more capacity; `RewardScale` 20 stays refuted (tet11 1,589 vs
-  tet9 14,970), reverted to 1. Spike `s7` and the superseded `s0b` removed rather than left to mislead.
-  *Lessons that stand:* **L8 (owner)** you cannot swap an input's MEANING when auto-widening a net —
-  `GrowInput` is function-preserving only as an APPEND, and a reordered plane keeps the width legal while
-  silently feeding transplanted weights different quantities, which **no guard catches**; verified both
-  ways, since holding planes 0–5 as the M54 prefix reproduced **83,265 exactly** at step 0 (pinned by
-  `ObservationLayout_KeepsTheM54BasisAsItsPrefix`). **L3** DIG mode is mandatory (without it +30% on A but
-  **−52%** protocol-B survival). **L4** falling eval + falling loss is AMBIGUOUS; the loss LEVEL
-  disambiguates. **L5** centre the target per state. **L6** keep it linear in the planes. **L11** two tests
-  were silently wrong — one vacuous, one that *enforced* the flatten-and-burn behaviour this milestone
-  removes.
-  *Journal (archived to `data/_archive-m57-failed-runs/`):* tet8 abandoned · tet9 14,970@60K · tet10
-  8,220@60K · tet11 1,589@80K · tet12 9,321@55K · tet13 warm-start 83,265→799 — all against the shipped
-  **83,265**.
-  *Corrected plan:* start from scratch with **`--grow` on from step 0** (target R² ≥ 0.84), then `--noisy`
-  if exploration is still the limiter; **gate on R², not just score**; keep the centred, linear, pre-gated
-  target and `RewardScale` 1. **None of this blocks M57.1**, which is independent, shipped and measured,
-  and is what delivers the tetris-rate goal today (search tier 15.60 tetrises/ep, TRT 44%, vs 0.26).
+- **M57.5 — Net basis + retrain.** 🔄 ROOT CAUSE FOUND 2026-08-30 by a 3-agent investigation; full record
+  in PRD §6.U. Five runs failed, **three diagnoses were proposed and all three were refuted by
+  measurement**. The real cause: `DqnTrainer` keeps the REALIZED reward on the sampled arm and skips that
+  arm in the dense term (`DqnTrainer.cs:308-325`), so the taken action is labelled in a different unit
+  system from its 39 siblings — and what matters is the **SIGN** of that disagreement. Measured:
+  **Crazy Fruits +0.82** (works), **Tetris M54 narrow +0.97** (works, 83,265), **M57.5 mean-centred
+  −1.59** (collapses). A negative bias drags down exactly the action the policy rates best, and it
+  strengthens as ε decays (−1.20 → −1.59), which mechanically predicts *"peaks early then decays in
+  lockstep with the ε schedule"* — what all five runs did. **L5's mean-centring flipped that sign.**
+  **Fix (one line): anchor on the per-state MAX over legal actions, not the mean**, so the best action's
+  target is 0, everything else negative, and the realized reward pulls the argmax UP — the configuration
+  both working recipes share. First measurement, tet15 vs tet9 at 10K steps with only the anchoring
+  changed: **score 222 → 4,149, lines 5.1 → 30.1, pieces 50.4 → 116.0**.
+  *Refuted, recorded so they are not retried:* **(a)** `RewardScale` 20 — measured worse, and the mechanism
+  explains it (bias moves to −1.97; the defect is the OFFSET, not the magnitude). **(b)** "the widened
+  evaluator is fragile to approximate" — spike s7 injected *independent Gaussian* noise where a trained net
+  makes *structured* errors; it predicted 141 pieces at R² 0.80 while tet6 achieved 455 at R² 0.89; spike
+  removed. **(c)** "the net underfits, use `--grow`" — **fit was never the problem** (R² measured from the
+  checkpoints: tet6 **0.893**, tet14 **0.868**; the earlier 0.615 was an artefact of dividing a
+  `Huber + 8×dense` loss by the target variance), the target is **exactly linear** in the observation so
+  even `Linear(854,40)` fits it, **a net at R² 0.868 scored 1,486** (so an R² gate would have green-lit it),
+  and **`--grow` cannot deliver capacity anyway**: `DqnGrowth.Stages` tops out at `[128,128,128]`, *half*
+  the shipped `[256,256]`, and it **throws** on any off-ladder trunk (`DuelingQNet.cs:118`).
+  *Why Crazy Fruits works:* its dense target is ONE plane read back and scaled — same units, same sign as
+  the realized reward, **uncentred** — and its episodes never terminate, so a ranking error costs one move
+  rather than the game.
+  *Repo defects to fix here:* `TetrisLab` missing `if (grow) hidden = DqnGrowth.Start;` (present in Snake
+  and FruitCake — `--grow` is a landmine for every DQN game); `DqnGrowth` ceiling below the shipped trunk;
+  `--noisy` on Tetris cold-starts and shares the ε-greedy state file (no `ToNoisy`, no split `StateId`);
+  Lab defaults reproduce the known-failed tet1–tet3 recipe; `NOISYNETS_PRD.md` still says "not started"
+  (shipped M28, and measured to **match not beat** ε-greedy on FruitCake); `TETRIS_PRD.md` §3.6 documents a
+  `--garbage N` flag that does not exist; `TetrisEnv.cs:23` says obs 814 (it is 854); no checkpoint
+  plane-layout version stamp.
+  *Operational (L12):* two Lab processes silently shared `data/tet14train`, interleaving its CSV and
+  checkpoints — **verify the previous process is gone before relaunching**, and never infer a run is dead
+  from an empty log (output is buffered).
+  *Next:* tet15 running, gated on **held-out play** (seeds 9000+e), never on a fit statistic — L9. If it
+  does not hold, the next lever is a **shared per-candidate scorer**, which needs no trainer change:
+  `IValueNet` only requires `Forward([B,854]) → [B,40]`, so a net that internally reshapes the candidate
+  block to `[B*40,16]` and applies a shared MLP satisfies it — ~40× fewer parameters and 40 labelled
+  examples per state instead of one. `TETRIS_PRD.md:76` rejected this as "doesn't fit `DqnTrainer`'s fixed
+  masked head"; that reason does not hold.
+  **None of this blocks M57.1**, which is independent, shipped and measured, and is what delivers the goal
+  today (search tier **15.60 tetrises/ep, TRT 44%** vs 0.26).
 - **M57.5 (original plan) — Retrain.** From scratch (an action-head change forces it; nothing in the repo grows an
   action head). N=160 via `(rot, col, depth 0..3)`, obs 1174, **~5.9 h measured** — **GPU is not a
   lever** (largest GEMM 14.9M MACs vs the 256M routing threshold). **One net, tap budget applied as an
