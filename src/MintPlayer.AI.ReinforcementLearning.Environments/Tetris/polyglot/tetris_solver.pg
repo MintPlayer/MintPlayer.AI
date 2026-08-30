@@ -130,7 +130,11 @@ class PgTetris {
   var score: i32                     // NES score: 40/100/300/1200 per 1/2/3/4 lines, × (level+1)
   var lines: i32                     // total lines cleared (the training-reward currency)
   var tetrises: i32                  // 4-line clears (the owner's headline metric)
-  var level: i32                     // NES progression: level = lines/10 (start level 0)
+  var level: i32                     // NES progression (see levelForLines) — honours startLevel
+  // M57 / gate G7: NES start-level selection. S3 measured that tap speed constrains NOTHING at level 0
+  // (48 frames/row) and becomes decisive at 19+ — so every metric taken from a level-0 start is blind to
+  // the regime where real play happens. Default 0 keeps every pre-M57 protocol byte-identical.
+  var startLevel: i32 = 0
   var piecesPlaced: i32
   var gameOver: bool
   var lastLinesCleared: i32          // of the most recent lock
@@ -307,7 +311,28 @@ class PgTetris {
   }
 
   // ── Reset / piece stream ─────────────────────────────────────────────────────────────────────────────────
+  // NES A-TYPE level curve with a selectable start level. The first level-up arrives after
+  // min(startLevel*10 + 10, max(100, startLevel*10 - 50)) lines, then every 10 thereafter — the ROM's
+  // rule, which is why an 18-start reaches 19 at 130 lines and the 29 kill screen at 230.
+  fn levelForLines(clearedLines: i32): i32 {
+    if this.startLevel == 0 { return tetDiv(clearedLines - clearedLines % 10, 10) }
+    let a = this.startLevel * 10 + 10
+    let b0 = this.startLevel * 10 - 50
+    let b = if b0 > 100 { b0 } else { 100 }
+    let first = if a < b { a } else { b }
+    if clearedLines < first { return this.startLevel }
+    let extra = clearedLines - first
+    return this.startLevel + 1 + tetDiv(extra - extra % 10, 10)
+  }
+
+  // Set the NES start level. Call AFTER reset (reset clears it back to 0).
+  fn setStartLevel(lvl: i32) {
+    this.startLevel = lvl
+    this.level = this.levelForLines(this.lines)
+  }
+
   fn reset(seed: i32, sevenBag: bool, garbageRate: i32) {
+    this.startLevel = 0
     this.pieceRng = PgTetRng(seed)
     this.garbageRng = PgTetRng(seed + 1000003)
     this.useBag = sevenBag
@@ -448,8 +473,8 @@ class PgTetris {
   fn afterLock(cleared: i32) {
     this.lines += cleared
     if cleared == 4 { this.tetrises += 1 }
-    // NES progression: level up every 10 lines; points use the level AFTER a level-up (NES rule).
-    this.level = tetDiv(this.lines - this.lines % 10, 10)
+    // NES progression; points use the level AFTER a level-up (NES rule).
+    this.level = this.levelForLines(this.lines)
     this.score += this.lineScore(cleared) * (this.level + 1)
     this.lastLinesCleared = cleared
     this.piecesPlaced += 1

@@ -121,6 +121,17 @@ public sealed class TetrisBoard
     }
 
     /// <summary>The Dellacherie tier: argmax placement by the canonical hand-tuned evaluator.</summary>
+    /// <summary>NES start level (gate G7). Call AFTER <see cref="Reset"/> — reset clears it to 0.
+    /// Tap speed constrains nothing at level 0 (48 frames/row) and is decisive from 19 upward, so a
+    /// level-0 protocol cannot see the regime this milestone is about.</summary>
+    public void SetStartLevel(int level) => _core.setStartLevel(level);
+
+    /// <summary>Frames per one-row drop at the current level (the NES gravity curve).</summary>
+    public int GravityFrames() => _core.gravityFrames(_core.level);
+
+    /// <summary>Tap budget in frames per shift: 6 = DAS 10Hz, 5 = hypertapping 12Hz, 3 = rolling 20Hz.</summary>
+    public void SetTapRate(int framesPerShift) => _core.setTapRate(framesPerShift);
+
     public int DellacherieAction() => _core.dellacherieAction();
 
     /// <summary>Dellacherie score of placing the current piece at (rot, col); −1e18 if illegal.</summary>

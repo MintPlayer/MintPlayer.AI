@@ -853,6 +853,93 @@ binds. S3 is where the dial pays, and G7's high-gravity protocol is how it will 
   still carry the old six features. Widening those is what forces the retrain.
 - G7's high-gravity protocol is not yet implemented, so the tap-dial terms are unexercised by any gate.
 
+---
+
+## 6.T M57.5 + G7/G6 — the net's basis, and the dial measured on the real engine (2026-08-30)
+
+### The target-scale bug (recorded because it cost a training run)
+
+M57.5 widened the observation to 15 per-action planes and switched them from **deltas** to **absolute**
+afterstate values, so the dense target could reconstruct the evaluator exactly instead of up to a per-state
+constant. That was right for exactness and **wrong for scale**: measured over 869 legal actions on real
+boards, the widened evaluator's raw values sit at **mean −92.1, sd 28.7**, so a bare `/10` produced targets
+centred at **−9.2 with sd 2.9** — against M54's roughly zero-centred, sd≈1.
+
+The first run degraded accordingly, and the signature was misleading:
+
+| steps | score | lines | loss |
+|---|---|---|---|
+| 15K | 120 | 2.9 | 26.8 |
+| 40K | 89 | 2.2 | 19.7 |
+| 60K | **29** | **0.7** | 14.1 |
+
+Falling loss with falling eval is the PRD's *distribution-narrowing* signature — but here it was a
+**target-scale failure**, and the giveaway was the absolute loss level (14–29 against tet6's ~1.3). The old
+delta-based planes existed precisely to keep the target centred; switching to absolute values removed that
+without replacing it.
+
+**Fix: centre the target per state** on the mean over legal actions, then scale. This is free — a dueling
+V head absorbs any per-state constant by construction, and what the advantage head must learn is the
+*ranking*, which centring leaves untouched. It is also more robust than deltas, since it standardises the
+scale regardless of how the basis is later extended. Immediate effect at 10K steps:
+
+| | score | lines | pieces | loss |
+|---|---|---|---|---|
+| uncentred (broken) | 50 | 1.2 | 36.9 | 29.3 |
+| **centred (fixed)** | **222** | **5.1** | **50.4** | **1.59** |
+
+The anti-drift test was updated to pin the *centred* invariant (`target == (engineValue − meanLegal)/10`)
+rather than the absolute one.
+
+### G7 — high-gravity protocol, and G6 — the technique dial, on the shipped engine
+
+`s6_g7_protocol.mjs`, 16 eps, 400-piece cap, seeds 5000+, NES start levels via the new `setStartLevel`.
+
+**dellacherie (widened):**
+
+| start | DAS 10Hz | hyper 12Hz | rolling 20Hz |
+|---|---|---|---|
+| L0 | 116,171 | 116,388 | 119,850 |
+| L18 | 243,565 | 266,151 | 273,028 |
+| **L19** | **168,404** (TRT 4.2%) | 249,808 (14.3%) | **288,556** (15.5%) |
+| L29 | 283,350 | 293,925 | 250,800 |
+
+**della-search(8,5):**
+
+| start | DAS 10Hz | hyper 12Hz | rolling 20Hz |
+|---|---|---|---|
+| L0 | 156,594 (TRT 40.5%) | 166,826 (43.1%) | 167,530 (42.4%) |
+| L18 | 416,266 (40.3%) | 382,789 (43.5%) | **437,504 (49.0%)** |
+| **L19** | **148,128 (TRT 0.6%, 0.25 tetrises)** | 428,169 (41.0%) | **451,675 (TRT 52.2%, 16.19 tetrises)** |
+| L29 | 243,525 (2.1%) | 243,525 (2.1%) | 219,975 (0.6%) |
+
+**G6 paired per-seed deltas vs DAS** (exact pairing — the piece stream is seed-determined and
+setting-independent):
+
+| | hyper 12Hz | rolling 20Hz |
+|---|---|---|
+| L0 | +216 ± 379 — **ns** | +3,679 ± 8,172 — **ns** |
+| L18 | +22,586 ± 29,189 — ns | **+29,463 ± 27,474 — SIGNIFICANT** |
+| **L19** | **+81,404 ± 52,386 — SIGNIFICANT** | **+120,153 ± 44,089 — SIGNIFICANT** |
+| L29 | +10,575 ± 13,149 — ns | −32,550 ± 41,548 — ns |
+
+**G6 PASSES**, and it passes in exactly the pattern the physics predicts: **no effect at L0** (48 frames/row
+constrains nothing — a good negative control), significant at L18/L19, and the headline is L19, where the
+search tier under DAS collapses to **TRT 0.6%** while rolling sustains **TRT 52.2%** — clearing the G3
+target of 50%. The AI cannot feed the well under DAS at that gravity, which is precisely the owner's
+hypothesis, now measured on the shipped engine rather than a spike harness.
+
+*L29 is noisy and non-significant here*: the level multiplier is large enough that even a low-TRT policy
+scores well, and 16 episodes at a 400-piece cap is too coarse to separate the settings. Report L29 with more
+episodes before drawing any conclusion from it.
+
+### Engine addition: NES start-level selection
+
+`setStartLevel(lvl)` + `levelForLines()` implement the ROM A-TYPE curve — first level-up after
+`min(start*10+10, max(100, start*10−50))` lines, then every 10 — so an 18-start reaches 19 at 130 lines and
+the kill screen at 230. Default 0, and `reset` clears it, so every pre-M57 protocol is byte-identical.
+Pinned by `StartLevel_FollowsTheNesTransitionCurveAndDrivesGravity`.
+
 ## 7. Milestones
 
 - **M57.0 — Spikes S0/S0b/S1/S1b/S2.** Gates as above. **This milestone can end the arc** with a measured

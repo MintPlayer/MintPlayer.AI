@@ -424,4 +424,32 @@ public class TetrisEngineTests
         Assert.True(dellaMean >= 200.0, $"della garbage survival {dellaMean:F1} < 200 (spike: 392.8 ± 45.1)");
         Assert.True(dellaMean >= 5 * randomMean, "expected a wide policy separation under garbage");
     }
+
+    /// <summary>
+    /// M57 / gate G7. The NES A-TYPE curve with a selectable start level: the first level-up arrives after
+    /// min(start*10+10, max(100, start*10-50)) lines, then every 10. An 18-start therefore reaches 19 at
+    /// 130 lines and the level-29 kill screen at 230 — the numbers competitive play is organised around.
+    /// </summary>
+    [Fact]
+    public void StartLevel_FollowsTheNesTransitionCurveAndDrivesGravity()
+    {
+        var b = new TetrisBoard();
+        b.Reset(1);
+        Assert.Equal(0, b.Level);                 // default is unchanged: every pre-M57 protocol is intact
+        Assert.Equal(48, b.GravityFrames());      // level 0 = 48 frames/row
+
+        b.SetStartLevel(18);
+        Assert.Equal(18, b.Level);
+        Assert.Equal(3, b.GravityFrames());       // level 18 = 3 frames/row
+
+        b.SetStartLevel(19);
+        Assert.Equal(2, b.GravityFrames());       // 19-28 = 2
+        b.SetStartLevel(29);
+        Assert.Equal(1, b.GravityFrames());       // the kill screen = 1
+
+        // Reset clears the start level so protocols cannot leak into one another.
+        b.Reset(2);
+        Assert.Equal(0, b.Level);
+        Assert.Equal(48, b.GravityFrames());
+    }
 }

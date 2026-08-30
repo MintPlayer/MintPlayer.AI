@@ -164,6 +164,9 @@ public class TetrisEnvTests
             var targets = TetrisDqnCampaign.DenseTargetsFromObservation(obs);
             var mask = board.LegalMask();
 
+            double sum = 0;
+            int n = 0;
+            var engine = new double[TetrisBoard.ActionCount];
             for (int a = 0; a < TetrisBoard.ActionCount; a++)
             {
                 if (!mask[a])
@@ -171,10 +174,23 @@ public class TetrisEnvTests
                     Assert.True(float.IsNaN(targets[a]), $"action {a} is illegal but got a supervised target");
                     continue;
                 }
-                double engine = board.DellaScore(a / TetrisBoard.Width, a % TetrisBoard.Width);
                 Assert.False(float.IsNaN(targets[a]), $"action {a} is legal but the target is NaN");
-                Assert.True(Math.Abs(targets[a] * 10.0 - engine) < 2e-2,
-                    $"seed {4100 + e} action {a}: dense target {targets[a] * 10.0:F4} != engine evaluator {engine:F4}");
+                engine[a] = board.DellaScore(a / TetrisBoard.Width, a % TetrisBoard.Width);
+                sum += engine[a];
+                n++;
+            }
+            if (n == 0) continue;
+
+            // Targets are CENTRED on the mean legal value (the dueling V head absorbs any per-state
+            // constant, and centring is what keeps the target scale sane — see the campaign comment).
+            // So the invariant is on the RANKING: target == (engineValue - meanLegal) / 10.
+            double mean = sum / n;
+            for (int a = 0; a < TetrisBoard.ActionCount; a++)
+            {
+                if (!mask[a]) continue;
+                double expected = (engine[a] - mean) / 10.0;
+                Assert.True(Math.Abs(targets[a] - expected) < 2e-2,
+                    $"seed {4100 + e} action {a}: dense target {targets[a]:F4} != centred engine value {expected:F4}");
                 checkedActions++;
             }
         }

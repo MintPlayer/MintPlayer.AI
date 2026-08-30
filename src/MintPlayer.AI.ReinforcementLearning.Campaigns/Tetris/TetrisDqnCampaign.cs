@@ -93,8 +93,22 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
             }
             if (dig) s += WHoleDig * holes;
             s += WCovered * covered + WTetris * isTetris + WCol9 * col9 + WInacc * inacc;
-            targets[a] = s / 10f;
+            targets[a] = s;
         }
+
+        // Centre the per-state targets on the mean of the LEGAL actions, then scale.
+        // Measured: the widened evaluator's raw values sit at mean -92, sd 28.7, so a bare /10 produced
+        // targets centred at -9.2 with sd 2.9 — against M54's roughly zero-centred, sd~1 — and training
+        // regressed (score 120 -> 29 over 60K steps while loss fell: a target-SCALE failure, not the
+        // distribution narrowing that signature usually means). Switching the planes from deltas to
+        // absolute values for exactness is what reintroduced the offset; the old delta form existed to
+        // avoid it. Centring is free: a dueling V head absorbs any per-state constant by construction,
+        // and what the advantage head must learn is the RANKING, which centring leaves untouched.
+        float sum = 0f; int n = 0;
+        for (int a = 0; a < A; a++) if (!float.IsNaN(targets[a])) { sum += targets[a]; n++; }
+        if (n == 0) return targets;
+        float mean = sum / n;
+        for (int a = 0; a < A; a++) if (!float.IsNaN(targets[a])) targets[a] = (targets[a] - mean) / 10f;
         return targets;
     }
 
