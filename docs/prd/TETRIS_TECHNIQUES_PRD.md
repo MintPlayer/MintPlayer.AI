@@ -1,6 +1,6 @@
 # Tetris — techniques: tetris-aware evaluator, movement-aware placements, SRS mode, technique dial
 
-**Status:** 🧪 SPIKES RUN 2026-08-30 — **M57.0 complete, and it re-scopes the arc.** S0 is a decisive **GO** (the evaluator was the whole story); S1/S2 are a **NO-GO on tucks**; **S3 is a GO on the tap budget** — lateral reach is decisive above L19 (at the kill screen DAS scores **0**, rolling **37,135**). All in §6.R. Feature work M57.1–M57.7 not started. Planned via a 4-agent investigation (repo/architecture map,
+**Status:** 🧪 SPIKES RUN 2026-08-30 — **M57.0 complete, and it re-scopes the arc.** S0 is a decisive **GO** (the evaluator was the whole story); S1/S2 are a **NO-GO on tucks**; **M57.1 is BUILT and measured (§6.S: +97% score, 33× tetrises, protocol B improved)**; **S3 is a GO on the tap budget** — lateral reach is decisive above L19 (at the kill screen DAS scores **0**, rolling **37,135**). All in §6.R. Feature work M57.1–M57.7 not started. Planned via a 4-agent investigation (repo/architecture map,
 NES-technique research, Tetris-AI literature survey, training feasibility + gates — findings in §2). **No spike
 has been run yet**; §6 defines four, and **S0 is decisive enough that it may cancel most of the rest**.
 **Owner:** Pieterjan
@@ -788,6 +788,70 @@ movement-aware action space, it is only decision-relevant if SRS mode is pursued
    existing N=40 is the cheap, high-value run — and it is the one the measurements support.
 4. **The tap dial (M57.6, the three radios) survives as an authenticity/demo feature**, which is what G6
    pre-registered as a shippable honest result. It makes the AI more human, not stronger.
+
+---
+
+## 6.S M57.1 BUILT — the widened evaluator, measured in the engine (2026-08-30)
+
+Implemented in `tetris_solver.pg` (`dellaScoreFor`), so it lifts **both** scripted tiers and the search tier
+at once. **The observation planes, the net and the checkpoint are deliberately untouched** — this milestone
+changes what the evaluator *wants*, not what the network *sees*, so `tetris.dqn.ckpt` stays valid and no
+retrain is forced yet.
+
+### What was added
+- `wellSumExceptWell()` — wells penalised everywhere **except** the well column. *The* sign fix.
+- `tetrisReady()`, `coveredWell()`, `colHeight()` — the board shape the Dellacherie basis cannot express.
+- `maxTapHeight(taps)` + `tapFramesPerShift` + `setTapRate()` — the tap budget from S3, and the
+  `inaccessibleLeft/Right` penalties derived from it.
+- **Two mode switches**, both load-bearing and both measured:
+  - **LINEOUT** (`maxTapHeight(5) < 4`) — the left wall is unreachable at this level and tap rate, so
+    tetris-building is futile; stop paying for the well.
+  - **DIG** (`holes > 0`) — on a holed board *burning is how you survive*. Without this switch the widened
+    evaluator scored +30% on protocol A but **lost 52% of protocol-B survival**: it refused to clear the
+    singles that dig a garbage board out. This was measured, not anticipated.
+
+### Weights
+CEM-tuned (`s5_tune_widened.mjs`) under a **constrained** fitness —
+`(A_score/100k + 0.6·A_tetrises/4) × min(1, B_survival/364)`. The multiplicative term means survival below
+the M54 baseline scales the whole objective down and **cannot be bought back with score**, which is the
+lesson from S0b (raw-score CEM bought 30% top-outs). Tuned on seeds 7000+, evaluated on held-out 9000+.
+
+### Results — 30 episodes, seeds 5000+, through the TS twin (the browser's exact code)
+
+| | protocol A score | lines | tetrises/ep | TRT | protocol B survival |
+|---|---|---|---|---|---|
+| M54 dellacherie | 94,636 | 197.6 | 0.26 | 0.5% | 363.8 ± 40.3 |
+| **M57.1 dellacherie** | **186,179 ± 18,961 (+97%)** | 190.3 | **8.50 (33×)** | **17.9%** | **430.2 ± 66.6 (+18%)** |
+| M54 della-search | 93,678 | — | — | — | 1480 (right-censored) |
+| **M57.1 della-search** | **218,560 ± 56,045 (+133%)** | 141.7 | **15.60** | **44.0%** | 1413 ± 88 |
+
+**Gate G1 (no regression) PASSES on both protocols** — protocol B *improved* for the scripted tier and is
+at baseline for the search tier (whose 1480 was right-censored at the 1500 cap, so the two overlap).
+**Gate G3 (tetris rate)**: TRT 44% for della-search against a ≥50% target — close, and 88× the shipped net's
+0.5%. Competitive human maxout pace is 60%.
+
+The tap dial shows no effect on protocol A (186,179 / 185,922 / 184,525 for DAS / hyper / rolling), which is
+**correct and expected**: protocol A starts at level 0 and rarely reaches the gravity where reachability
+binds. S3 is where the dial pays, and G7's high-gravity protocol is how it will be gated.
+
+### Deliberate re-pins
+- **Parity checksum 472451993 → 765594964.** The protocol drives `dellacherieAction`/`dellaSearchAction`, so
+  a change of evaluator moves it by construction. The *rules* are untouched — piece stream, lock path,
+  clears, garbage and scoring all unchanged. TS twin re-verified: `node tools/tetris_parity.mjs` agrees.
+- **`SpikeBar_DellacherieClearsNearMaximalLines` → `SpikeBar_DellacherieBuildsForTetrisesTradingLinesForScore`.**
+  The old test asserted 197.4 lines and **zero** top-outs — the signature of exactly the flatten-and-burn
+  behaviour this milestone removes. The new test pins the new contract (score ≥ 110k, tetrises ≥ 2.0,
+  lines ≥ 165) and keeps a stack-and-camp watchdog (≤ 6 top-outs in 20 episodes).
+
+**529/529 fast bucket green; CrazyFruits parity and the 11 DAS frame checks unaffected.**
+
+### Still open after M57.1
+- **The net has not been retrained**, so the *shipped browser net* still plays the old way. The evaluator
+  lives in the scripted + search tiers only. M57.5 (retrain against the widened dense target) is where the
+  net inherits this — and it now has a much better teacher to distil from.
+- The dense target in `TetrisDqnCampaign.cs:74` is still the OLD narrow basis, and the observation planes
+  still carry the old six features. Widening those is what forces the retrain.
+- G7's high-gravity protocol is not yet implemented, so the tap-dial terms are unexercised by any gate.
 
 ## 7. Milestones
 

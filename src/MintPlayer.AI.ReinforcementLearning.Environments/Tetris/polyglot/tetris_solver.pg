@@ -62,6 +62,36 @@ class PgTetris {
   // netSearchAction's rollout reward must use the same units as training (TetrisEnv mirrors this const).
   const RewardTetrisBonus: i32 = 8
 
+  // ── M57.1 tetris-aware evaluator (PRD TETRIS_TECHNIQUES §3.1, spike results §6.R) ──────────────────
+  // The Dellacherie basis is ANTI-TETRIS: its wellSum term penalises the very well a tetris needs, so a
+  // policy maximising it flattens the stack and burns singles (measured: 0.08 tetrises/episode). Splitting
+  // the well term — penalise wells everywhere EXCEPT the designated well column — plus StackRabbit's
+  // tetris-aware terms measured +59% score, CI-separated, with 9× the tetrises (spike S0/S0b).
+  // Weights must be scaled TO THIS BASIS. Copying StackRabbit's absolute values (it prices holes at −50
+  // where Dellacherie prices them at −4) over-weights the tetris terms ~12×, drowns the safety terms and
+  // tops out 100% of the time — measured, S0. Every weight below was then CEM-tuned in that scale.
+  // Weights CEM-tuned 2026-08-30 (spike S5) under a CONSTRAINED fitness — A-score and tetrises multiplied
+  // by min(1, B_survival/364), so survival below the M54 baseline scales the whole objective down and
+  // cannot be bought back with score. Held-out (seeds 9000+): A 161,902 / 6.30 tetrises per episode /
+  // TRT 13.9% / B 325.6 — against the M54 baseline of A 94,636 / 0.26 tetrises / B 363.8.
+  const WellCol: i32 = 9             // right well: the vertical I favours it, and it is 4 taps from spawn
+  const EvalHoles: f64 = -5.582      // (was the Dellacherie -4)
+  const EvalWells: f64 = -0.847      // wells OUTSIDE the well column (was -1)
+  const EvalReady: f64 = 3.402       // rows complete except the well column
+  const EvalCovered: f64 = -0.201    // the well is capped — the tetris is gone until it is dug out
+  const EvalBurn: f64 = -3.700       // per line cleared that is NOT a tetris: makes a single COST something
+  const EvalBurnDig: f64 = -0.650    // ...but on a holed board burning is SURVIVAL — relax it (DIG mode)
+  const EvalHoleDig: f64 = -0.505    // extra hole pressure while digging out
+  const EvalCol9: f64 = -0.355       // column 8 tall ⇒ the well is sealed from the 4-tap side
+  const EvalTetris: f64 = 7.047      // realised 4-line clear
+  const EvalMaxSafeCol9: i32 = 8
+  const EvalInaccessible: f64 = -0.975 // per row of stack above the height at which a wall is still reachable
+
+  // Tap budget (PRD §4.1): frames per shift. 6 = DAS 10Hz (the ROM auto-repeat), 5 = hypertapping 12Hz,
+  // 3 = rolling 20Hz, 2 = the 30Hz hardware ceiling. Drives BOTH the reachability terms below and (M57.3)
+  // the legality mask. Default DAS — the ROM behaviour, and the most restrictive human setting.
+  var tapFramesPerShift: i32 = 6
+
   // Piece tables, built in constructor() (instance lists, NOT module-level lets — the module-globals-in-methods
   // fix is post-0.8.1). Rotation slot r of piece p lives at rotIdx = p·4 + r; each rotation holds 4 cells
   // at cellX/cellY[rotIdx·4 + k], bounding box rotW/rotH[rotIdx], and per-column bottom profile
@@ -631,15 +661,114 @@ class PgTetris {
     for y2 in 0..H { this.garbageMasks[y2] = saved[H + y2] }
   }
 
-  // Dellacherie score of placing `piece` at (rot, x) on the CURRENT rows — the canonical hand-tuned
-  // evaluator: −landing + eroded − rowT − colT − 4·holes − wells, all on the afterstate (spike formula).
-  // Board restored; no RNG. Returns −1e18 for an illegal placement.
+  // ── M57.1 board-shape features the Dellacherie basis cannot express ───────────────────────────────
+  fn colHeight(c: i32): i32 {
+    for y in 0..H {
+      if ((this.rows[y] >> c) & 1) == 1 { return H - y }
+    }
+    return 0
+  }
+
+  // wellSum with the designated well column EXCLUDED — THE sign fix (spike S0: this term alone is worth
+  // +14.7% score and 11× the tetrises, because the tetris well stops being self-penalising).
+  fn wellSumExceptWell(): i32 {
+    var sum = 0
+    for c in 0..W {
+      if c == WellCol { continue }
+      for y in 0..H {
+        if ((this.rows[y] >> c) & 1) == 1 { break }
+        let leftFilled = if c == 0 { 1 } else { (this.rows[y] >> (c - 1)) & 1 }
+        let rightFilled = if c == W - 1 { 1 } else { (this.rows[y] >> (c + 1)) & 1 }
+        if leftFilled == 1 && rightFilled == 1 {
+          var yy = y
+          for _d in 0..H {
+            if yy < H && ((this.rows[yy] >> c) & 1) == 0 { sum += 1; yy += 1 } else { break }
+          }
+          break
+        }
+      }
+    }
+    return sum
+  }
+
+  // Rows that are complete except the well column — i.e. rows a single vertical I would clear.
+  fn tetrisReady(): i32 {
+    if this.colHeight(WellCol) > 16 { return 0 }
+    let wellMask = 1 << WellCol
+    var n = 0
+    for y in 0..H {
+      if (this.rows[y] | wellMask) == FullRow && (this.rows[y] & wellMask) == 0 { n += 1 }
+    }
+    return n
+  }
+
+  // Empty cells sealed underneath the topmost filled cell of the well column.
+  fn coveredWell(): i32 {
+    for y in 0..H {
+      if ((this.rows[y] >> WellCol) & 1) == 1 {
+        var d = 0
+        for yy in (y + 1)..H {
+          if ((this.rows[yy] >> WellCol) & 1) == 0 { d += 1 }
+        }
+        return d
+      }
+    }
+    return 0
+  }
+
+  // ── M57.1 tap-budget reachability (spike S3 — the owner's "can it get pieces to the side?" question) ──
+  // Rows fallen by the time `taps` shifts have been issued, then the greatest stack height at which a
+  // placement that far from spawn (x=5) still lands. Column 9 is 4 taps away, column 0 is 5.
+  // MEASURED at L29 (1 frame/row): DAS reaches height 7, hypertapping 9–11, rolling 13, 30Hz 15 — which is
+  // why DAS scores ZERO on the kill screen and rolling scores 37,135. Above these heights the wall is
+  // simply unreachable, and an agent that does not know it keeps trying to feed a well it cannot feed.
+  fn maxTapHeight(taps: i32): i32 {
+    let g = this.gravityFrames(this.level)
+    let fallen = tetDiv(taps * this.tapFramesPerShift, g)
+    return H - 3 - fallen
+  }
+
+  fn setTapRate(framesPerShift: i32) {
+    this.tapFramesPerShift = framesPerShift
+  }
+
+  // Dellacherie score of placing `piece` at (rot, x) on the CURRENT rows — WIDENED (M57.1).
+  // Baseline terms are unchanged (−landing + eroded − rowT − colT − 4·holes) but wells now exclude the
+  // well column, and the tetris-aware + reachability terms are added. Board restored; no RNG.
+  // Returns −1e18 for an illegal placement.
   fn dellaScoreFor(piece: i32, rot: i32, x: i32): f64 {
     let y = this.dropY(piece, rot, x)
     if y < 0 { return -1.0e18 }
     let saved = this.saveRows()
-    this.simPlace(piece, rot, x, y)
-    let s = 0.0 - this.simLanding + this.simEroded - this.rowTransitions() - this.colTransitions() - 4 * this.holes() - this.wellSum()
+    let cleared = this.simPlace(piece, rot, x, y)
+    let holeCount = this.holes()
+    var s = 0.0 - this.simLanding + this.simEroded - this.rowTransitions() - this.colTransitions() + EvalHoles * holeCount + EvalWells * this.wellSumExceptWell()
+
+    // Mode switches (StackRabbit's getAiMode). Both are load-bearing and were MEASURED:
+    //  • LINEOUT — the left wall is out of reach at this level and tap rate, so tetris-building is futile.
+    //  • DIG — the board has holes (garbage mode arrives this way): burning is how you survive, so a burn
+    //    penalty tuned for a clean board is actively lethal. Without this switch the widened evaluator
+    //    scored +30% on protocol A but LOST 52% of protocol-B survival (M57.1 first measurement) — it
+    //    refused to clear the singles that dig a garbage board out.
+    let m5 = this.maxTapHeight(5)
+    let m4 = this.maxTapHeight(4)
+    let lineout = m5 < 4
+    let dig = holeCount > 0
+    if !lineout {
+      if !dig { s = s + EvalReady * this.tetrisReady() }
+      let burnW = if dig { EvalBurnDig } else { EvalBurn }
+      s = s + burnW * (if cleared > 0 && cleared < 4 { cleared } else { 0 })
+    }
+    if dig { s = s + EvalHoleDig * holeCount }
+    s = s + EvalCovered * this.coveredWell()
+    s = s + EvalTetris * (if cleared == 4 { 1 } else { 0 })
+    let col9 = this.colHeight(WellCol - 1) - EvalMaxSafeCol9
+    if col9 > 0 { s = s + EvalCol9 * col9 }
+    let overLeft = this.colHeight(0) - m5
+    if overLeft > 0 { s = s + EvalInaccessible * overLeft }
+    let overRight = this.colHeight(W - 1) - m4
+    if overRight > 0 { s = s + EvalInaccessible * overRight }
+
     this.restoreRows(saved)
     return s
   }

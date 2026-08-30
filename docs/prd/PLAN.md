@@ -2337,7 +2337,26 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
   Dellacherie). S1 reachability census + S1b SRS-without-lock-delay check. S2 Dellacherie over the
   extended set: **NO-GO if protocol-B survival is flat — a perfect evaluator that can't exploit the
   extra placements proves a distilled γ=0 net won't either, cancelling the retrain.**
-- **M57.1 — Evaluator widening.** `tetrisReady`/`coveredWell`/**`burn`**/`col9`/`builtOutLeft`/hole-depth/
+- **M57.1 — Evaluator widening.** ✅ BUILT 2026-08-30 (PRD §6.S). In `tetris_solver.pg`'s `dellaScoreFor`,
+  so it lifts BOTH scripted tiers and the search tier at once; **obs planes, net and checkpoint deliberately
+  untouched** (this changes what the evaluator WANTS, not what the net SEES — no retrain forced yet).
+  Added `wellSumExceptWell` (the sign fix), `tetrisReady`, `coveredWell`, `colHeight`, `maxTapHeight` +
+  `setTapRate` + inaccessible-wall penalties, and **two mode switches**: LINEOUT (`maxTapHeight(5) < 4`) and
+  **DIG** (`holes > 0`) — the latter discovered by measurement, not design: without it the widened evaluator
+  scored +30% on A but **lost 52% of protocol-B survival**, because it refused to clear the singles that dig
+  a garbage board out. Weights CEM-tuned under a CONSTRAINED fitness
+  (`(A_score/100k + 0.6·A_tet/4) × min(1, B/364)`) so survival below baseline scales the objective down and
+  can't be bought back with score — the fix for S0b's 30%-top-out failure. **Measured, 30 eps, seeds 5000+:
+  dellacherie A 94,636 → 186,179 (+97%), tetrises 0.26 → 8.50 (33×), TRT 0.5% → 17.9%, protocol B 363.8 →
+  430.2 (+18%); della-search A 93,678 → 218,560 (+133%), 15.60 tetrises, TRT 44.0%, B 1413 (baseline 1480
+  right-censored).** **G1 no-regression PASSES on both protocols.** Deliberate re-pins: parity checksum
+  472451993 → **765594964** (the protocol drives the evaluator; rules untouched, TS twin re-verified) and
+  `SpikeBar_Dellacherie…` rewritten — the old test asserted 197.4 lines and ZERO top-outs, i.e. exactly the
+  flatten-and-burn behaviour this milestone removes; the new one pins score ≥110k / tetrises ≥2.0 /
+  lines ≥165 plus a ≤6/20 top-out watchdog. 529/529 fast bucket green. *Not done: the NET is unchanged, so
+  the shipped browser net still plays the old way — the dense target and obs planes still carry the narrow
+  basis, and widening those is what forces the M57.5 retrain (which now has a far better teacher to distil).*
+- **M57.1 (original plan) — Evaluator widening.** `tetrisReady`/`coveredWell`/**`burn`**/`col9`/`builtOutLeft`/hole-depth/
   `inaccessibleLeft|Right` (StackRabbit's shipped weights), the `−Δwells` sign split, realized-reward
   term dropped, mode-switched weights (`max5TapHeight < 4` ⇒ LINEOUT). **Gate:** the three copies of φ
   (dense target, `dellaScoreFor`, obs planes) agree by test.

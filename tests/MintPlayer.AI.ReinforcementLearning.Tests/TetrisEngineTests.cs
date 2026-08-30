@@ -374,19 +374,34 @@ public class TetrisEngineTests
         Assert.InRange(mean, 24.0, 27.5); // spike: 25.6 ± 0.4 (n=200)
     }
 
+    /// <summary>
+    /// M57.1 re-pin. Pre-M57.1 this asserted "clears near-maximal lines, never tops out" (197.4 lines,
+    /// 0 top-outs) — the signature of an evaluator that flattens the stack and burns singles. The widened
+    /// evaluator deliberately trades a little line-count, and a few top-outs, for far more SCORE and
+    /// tetrises: the whole point of the milestone. Baselines it replaced: 197.4 lines / ~94.6k score /
+    /// 0.26 tetrises / 0 top-outs.
+    /// </summary>
     [Fact]
-    public void SpikeBar_DellacherieClearsNearMaximalLinesInCappedEpisodes()
+    public void SpikeBar_DellacherieBuildsForTetrisesTradingLinesForScore()
     {
-        double totalLines = 0;
+        double totalLines = 0, totalScore = 0, totalTetrises = 0;
+        int topOuts = 0;
         for (int e = 0; e < 20; e++)
         {
             var board = new TetrisBoard();
             board.Reset((ulong)(7000 + e));
             for (int i = 0; i < 500 && !board.GameOver; i++) board.ApplyPlacement(board.DellacherieAction());
-            Assert.False(board.GameOver); // spike: 0 top-outs in 50 episodes
+            if (board.GameOver) topOuts++;
             totalLines += board.Lines;
+            totalScore += board.Score;
+            totalTetrises += board.Tetrises;
         }
-        Assert.True(totalLines / 20 >= 190.0, $"mean lines {totalLines / 20:F1} < 190 (spike: 197.4 ± 0.4)");
+        double lines = totalLines / 20, score = totalScore / 20, tetrises = totalTetrises / 20;
+        Assert.True(score >= 110_000, $"mean score {score:F0} < 110,000 (M57.1 measured ~132k; pre-M57.1 94.6k)");
+        Assert.True(tetrises >= 2.0, $"mean tetrises {tetrises:F2} < 2.0 (M57.1 measured ~3.4; pre-M57.1 0.26)");
+        Assert.True(lines >= 165.0, $"mean lines {lines:F1} < 165 (M57.1 measured ~191; pre-M57.1 197.4)");
+        // Stack-and-camp watchdog: building for tetrises costs SOME top-outs, but must not become reckless.
+        Assert.True(topOuts <= 6, $"{topOuts}/20 episodes topped out — the tetris terms have gone reckless");
     }
 
     [Fact]

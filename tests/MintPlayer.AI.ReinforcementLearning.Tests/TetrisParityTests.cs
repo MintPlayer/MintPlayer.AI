@@ -10,9 +10,15 @@ namespace MintPlayer.AI.ReinforcementLearning.Tests;
 /// </summary>
 public class TetrisParityTests
 {
-    // Verified 2026-08-26 against the TS twin: `node tools/tetris_parity.mjs` (committed harness).
-    // Pin history: M54.1 initial 472451993 (matched the TS twin on the first run).
-    private const long PinnedChecksum = 472_451_993;
+    // Verified against the TS twin: `node tools/tetris_parity.mjs` (committed harness).
+    // Pin history:
+    //   M54.1 (2026-08-26) 472451993 — initial; matched the TS twin on the first run.
+    //   M57.1 (2026-08-30) 765594964 — DELIBERATE re-pin. The protocol drives dellacherieAction and
+    //     dellaSearchAction, and M57.1 widened the evaluator behind both (tetris-aware terms + the
+    //     LINEOUT/DIG mode switches, PRD TETRIS_TECHNIQUES §3.1). The RULES are untouched: the piece
+    //     stream, lock path, clears, garbage and scoring are all unchanged — only which placement the
+    //     evaluator prefers moved, which is exactly what this protocol hashes.
+    private const long PinnedChecksum = 765_594_964;
 
     [Fact]
     public void MixedEpisode_ChecksumMatchesTheTsTwin()
