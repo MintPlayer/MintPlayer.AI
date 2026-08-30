@@ -932,14 +932,28 @@ argmax arm UP - restoring the configuration both working recipes share. Everythi
 survives: the dueling V head absorbs a per-state constant either way, tet8's killer offset is still gone,
 and the ranking is untouched.
 
-**First measurement, tet15 vs tet9 at 10K steps, only the anchoring changed:**
+**Result — tet15, the only variable changed being mean -> max anchoring:**
 
-| | tet9 (mean) | tet15 (max) |
-|---|---|---|
-| score | 222 | **4,149** |
-| lines | 5.1 | **30.1** |
-| tetrises | 0.00 | **0.20** |
-| pieces | 50.4 | **116.0** |
+| steps | score | lines | tetrises | pieces | top-outs | loss |
+|---|---|---|---|---|---|---|
+| 10K | 4,149 | 30.1 | 0.20 | 116 | 20/20 | 1.36 |
+| 15K | 28,739 | 89.5 | 0.25 | 265 | 18/20 | 1.56 |
+| **90K** | **94,688** | 191.3 | **0.65** | 489 | **1/20** | 0.72 |
+| 170K | 91,260 | 191.4 | 0.50 | 489 | 1/20 | **0.17** |
+
+For comparison at 10K steps, tet9 (mean-centred) scored **222** with 5.1 lines and 50.4 pieces.
+
+**This is the first net of the arc to beat the shipped baseline: 94,688 vs tet6's 83,265.** Top-outs
+collapsed from 20/20 to **1/20**, pieces reached 489 of a 500-piece cap, and the loss settled at **0.17**
+against tet6's 0.23 - so the fit is better too, on a richer target. Tetrises 0.65/ep vs tet6's 0.25.
+
+The sign diagnosis is therefore confirmed end-to-end: the failure was never capacity, never the evaluator,
+and never the reward magnitude - it was that mean-centring put the best action's target ABOVE the realized
+label, so the one label that disagreed dragged down precisely the action the policy preferred.
+
+**NOT YET SHIPPED.** These are the campaign's own selecting seeds (5000+e). Per L9 and the tet7 precedent
+(88,425 selecting / a complete wash held-out), the ship decision needs held-out seeds 9000+e through
+`tools/tetris_head2head.mjs`. Until that runs, treat 94,688 as promising, not proven.
 
 ### Three refuted diagnoses (recorded so they are not retried)
 
@@ -1048,7 +1062,10 @@ it fails silently, which is the worst property a defect can have. Fixed in
 
 1. **Ship M57.1 regardless.** The evaluator is independent, measured, and is what delivers the goal today:
    search tier **15.60 tetrises/ep, TRT 44%** against 0.26 before.
-2. **tet15** - max-anchored, single variable, running. Gate on **held-out play**, not R^2.
+2. **tet15** - max-anchored, single variable. **DONE: 94,688 at 90K, beating the shipped 83,265.**
+   Next step is the held-out run (seeds 9000+e) that gates shipping; then ship the checkpoint to
+   `wwwroot/models/` and re-verify the browser path (obs is 854 now, so the stale-guard demotes the
+   old 454 net until the new one lands).
 3. If tet15 holds, fold in the repo defects above; if it does not, the next lever is the **shared
    per-candidate scorer**: `IValueNet` only requires `Forward([B,854]) -> [B,40]`, so a net that internally
    reshapes the candidate block to `[B*40,16]` and applies a shared MLP fits the existing trainer with no

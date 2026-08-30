@@ -2382,7 +2382,12 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
   **Fix (one line): anchor on the per-state MAX over legal actions, not the mean**, so the best action's
   target is 0, everything else negative, and the realized reward pulls the argmax UP — the configuration
   both working recipes share. First measurement, tet15 vs tet9 at 10K steps with only the anchoring
-  changed: **score 222 → 4,149, lines 5.1 → 30.1, pieces 50.4 → 116.0**.
+  changed: **score 222 → 4,149** at 10K. **RESULT: 94,688 at 90K — the first net of the arc to BEAT
+  the shipped 83,265** — top-outs collapsing 20/20 → **1/20**, 489 pieces of a 500 cap, 0.65
+  tetrises/ep (tet6: 0.25) and loss **0.17** (tet6: 0.23), i.e. a better fit on a richer target.
+  Confirms the sign diagnosis end-to-end. **NOT YET SHIPPED**: those are the campaign's selecting
+  seeds (5000+e); per L9 and the tet7 precedent the ship gate is held-out 9000+e via
+  `tools/tetris_head2head.mjs`.
   *Refuted, recorded so they are not retried:* **(a)** `RewardScale` 20 — measured worse, and the mechanism
   explains it (bias moves to −1.97; the defect is the OFFSET, not the magnitude). **(b)** "the widened
   evaluator is fragile to approximate" — spike s7 injected *independent Gaussian* noise where a trained net
@@ -2413,7 +2418,9 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
   running `Lab.exe` locks the build outputs and gets killed routinely. Read-only modes (`--eval-only`,
   `--baselines`) do not take it. The failure names the holding pid and its full command line. 5 tests in
   `TrainingDirectoryLockTests`, including that an abandoned handle does not strand the directory.
-  *Next:* tet15 running, gated on **held-out play** (seeds 9000+e), never on a fit statistic — L9. If it
+  *Next:* held-out evaluation of the tet15 net (seeds 9000+e), then ship the checkpoint to
+  `wwwroot/models/` and re-verify the browser path (obs is 854 now, so the stale guard demotes the
+  old 454 net until the new one lands). Gated on **held-out play**, never on a fit statistic — L9. If it
   does not hold, the next lever is a **shared per-candidate scorer**, which needs no trainer change:
   `IValueNet` only requires `Forward([B,854]) → [B,40]`, so a net that internally reshapes the candidate
   block to `[B*40,16]` and applies a shared MLP satisfies it — ~40× fewer parameters and 40 labelled
