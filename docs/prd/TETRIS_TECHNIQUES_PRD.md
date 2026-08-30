@@ -891,6 +891,22 @@ scale regardless of how the basis is later extended. Immediate effect at 10K ste
 The anti-drift test was updated to pin the *centred* invariant (`target == (engineValue − meanLegal)/10`)
 rather than the absolute one.
 
+### M57.5 training journal (2026-08-30)
+
+| run | change | outcome |
+|---|---|---|
+| `tet8train` | first attempt, uncentred target | **abandoned** — score 120→89→29 over 60K while loss fell 26.8→14.1. Not distribution narrowing: the absolute loss level (14–29 vs tet6's ~1.3) identified a target-SCALE failure. |
+| `tet9train` | centred target | healthy — loss 1.59 at 10K, and **0.20 tetrises/ep by 35K**, which the shipped net only reached after 400K. Peaked **14,970 at 60K**, then decayed 5,601 (85K) → 3,423 (115K) with loss falling 1.29→0.95. **This time it IS distribution narrowing** — same shape tet6 showed at 70K. |
+| `tet10train` | + `--eps-end 0.12 --buffer 150000` | the PRD's documented anti-narrowing remedy. Running. |
+
+**The diagnostic lesson worth keeping:** *falling eval + falling loss* is ambiguous on its own. Distribution
+narrowing and a target-scale failure produce the same shape. **The absolute loss level separates them** — a
+healthy Tetris run here sits near 1.0–1.5, so 14–29 means the targets are mis-scaled, not the replay
+distribution. Check the level before reaching for the narrowing remedy.
+
+Buffer note: at obs 814 a 300K buffer would write a ~3.9 GB state checkpoint every 10 minutes, so it is
+capped at 150K (~2.0 GB) per the feasibility estimate.
+
 ### G7 — high-gravity protocol, and G6 — the technique dial, on the shipped engine
 
 `s6_g7_protocol.mjs`, 16 eps, 400-piece cap, seeds 5000+, NES start levels via the new `setStartLevel`.
