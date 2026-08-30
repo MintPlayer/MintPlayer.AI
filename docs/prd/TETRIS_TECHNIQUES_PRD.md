@@ -648,7 +648,9 @@ scaled to the basis they join.**
 
 ### S0b — CEM on the widened basis: improves the mean, but not CI-separated
 
-`s0b_cem.mjs`, pop 20 / elite 5 / 6 iters, tuned on seeds 7000+, **evaluated on held-out seeds 9000+**, 30 eps.
+CEM, pop 20 / elite 5 / 6 iters, tuned on seeds 7000+, **evaluated on held-out seeds 9000+**, 30 eps.
+*(The exploratory `s0b_cem.mjs` was superseded by `s5_tune_widened.mjs`, whose constrained fitness produced
+the weights that shipped, and has been removed.)*
 
 | policy | score | tetris/ep | TRT | score/piece | top-out |
 |---|---|---|---|---|---|
@@ -855,204 +857,144 @@ binds. S3 is where the dial pays, and G7's high-gravity protocol is how it will 
 
 ---
 
-## 6.T M57.5 + G7/G6 — the net's basis, and the dial measured on the real engine (2026-08-30)
+## 6.T G7 + G6 - the high-gravity protocol and the technique dial, on the shipped engine
 
-### The target-scale bug (recorded because it cost a training run)
+`s6_g7_protocol.mjs`, 16 eps, 400-piece cap, seeds 5000+, NES start levels via `setStartLevel`.
 
-M57.5 widened the observation to 15 per-action planes and switched them from **deltas** to **absolute**
-afterstate values, so the dense target could reconstruct the evaluator exactly instead of up to a per-state
-constant. That was right for exactness and **wrong for scale**: measured over 869 legal actions on real
-boards, the widened evaluator's raw values sit at **mean −92.1, sd 28.7**, so a bare `/10` produced targets
-centred at **−9.2 with sd 2.9** — against M54's roughly zero-centred, sd≈1.
+**Why this exists:** S0-S2 all ran from **level 0 (48 frames/row)**, where tap speed constrains nothing.
+Gate G7 pre-registered exactly that blind spot and it was not honoured, so those spikes could not see the
+regime real play happens in. Owner challenge, 2026-08-30: *"maybe it prefers a flat field because it can't
+get pieces over to the side?"* - correct, and this is the measurement.
 
-The first run degraded accordingly, and the signature was misleading:
+**Lateral reach** - greatest flat-stack height at which the piece can still reach each wall (spawn x=5, so
+column 9 is 4 taps, column 0 is 5):
 
-| steps | score | lines | loss |
+| | DAS 10Hz | hyper 12Hz | hyper 15Hz | rolling 20Hz | 30Hz cap |
+|---|---|---|---|---|---|
+| L9 (6f/row) | 16 | 16 | 16 | 16 | 16 |
+| L18 (3f/row) | 15 | 16 | 16 | 16 | 16 |
+| **L19 (2f/row)** | **13** | 14 | 15 | **16** | 16 |
+| **L29 (1f/row)** | **7** | 9 | 11 | **13** | 15 |
+
+**Strength, gravity pinned** - `della-search(8,5)` at L19:
+
+| rate | score | tetrises/ep | TRT |
 |---|---|---|---|
-| 15K | 120 | 2.9 | 26.8 |
-| 40K | 89 | 2.2 | 19.7 |
-| 60K | **29** | **0.7** | 14.1 |
+| DAS 10Hz | 148,128 | 0.25 | **0.6%** |
+| hyper 12Hz | 428,169 | 14.44 | 41.0% |
+| **rolling 20Hz** | **451,675** | **16.19** | **52.2%** |
 
-Falling loss with falling eval is the PRD's *distribution-narrowing* signature — but here it was a
-**target-scale failure**, and the giveaway was the absolute loss level (14–29 against tet6's ~1.3). The old
-delta-based planes existed precisely to keep the target centred; switching to absolute values removed that
-without replacing it.
+**G6 paired per-seed deltas vs DAS** (exact pairing - the piece stream is seed-determined and
+setting-independent): **ns at L0** (a good negative control), **+29,463 +/- 27,474 SIGNIFICANT at L18**,
+**+120,153 +/- 44,089 SIGNIFICANT at L19**. **G6 PASSES**, in exactly the pattern the physics predicts.
 
-**Fix: centre the target per state** on the mean over legal actions, then scale. This is free — a dueling
-V head absorbs any per-state constant by construction, and what the advantage head must learn is the
-*ranking*, which centring leaves untouched. It is also more robust than deltas, since it standardises the
-scale regardless of how the basis is later extended. Immediate effect at 10K steps:
+At level 19 under DAS the search tier **cannot feed the well at all**; under rolling it clears the G3
+target of 50% TRT. *L29 is noisy and non-significant at 16 episodes - the level multiplier lets even a
+low-TRT policy score well. Do not draw conclusions from it without more episodes.*
 
-| | score | lines | pieces | loss |
-|---|---|---|---|---|
-| uncentred (broken) | 50 | 1.2 | 36.9 | 29.3 |
-| **centred (fixed)** | **222** | **5.1** | **50.4** | **1.59** |
-
-The anti-drift test was updated to pin the *centred* invariant (`target == (engineValue − meanLegal)/10`)
-rather than the absolute one.
-
-### M57.5 training journal (2026-08-30)
-
-| run | change | outcome |
-|---|---|---|
-| `tet8train` | first attempt, uncentred target | **abandoned** — score 120→89→29 over 60K while loss fell 26.8→14.1. Not distribution narrowing: the absolute loss level (14–29 vs tet6's ~1.3) identified a target-SCALE failure. |
-| `tet9train` | centred target | healthy — loss 1.59 at 10K, and **0.20 tetrises/ep by 35K**, which the shipped net only reached after 400K. Peaked **14,970 at 60K**, then decayed 5,601 (85K) → 3,423 (115K) with loss falling 1.29→0.95. **This time it IS distribution narrowing** — same shape tet6 showed at 70K. |
-| `tet10train` | + `--eps-end 0.12 --buffer 150000` | the PRD's documented anti-narrowing remedy. Running. |
-
-**The diagnostic lesson worth keeping:** *falling eval + falling loss* is ambiguous on its own. Distribution
-narrowing and a target-scale failure produce the same shape. **The absolute loss level separates them** — a
-healthy Tetris run here sits near 1.0–1.5, so 14–29 means the targets are mis-scaled, not the replay
-distribution. Check the level before reaching for the narrowing remedy.
-
-Buffer note: at obs 814 a 300K buffer would write a ~3.9 GB state checkpoint every 10 minutes, so it is
-capped at 150K (~2.0 GB) per the feasibility estimate.
-
-### G7 — high-gravity protocol, and G6 — the technique dial, on the shipped engine
-
-`s6_g7_protocol.mjs`, 16 eps, 400-piece cap, seeds 5000+, NES start levels via the new `setStartLevel`.
-
-**dellacherie (widened):**
-
-| start | DAS 10Hz | hyper 12Hz | rolling 20Hz |
-|---|---|---|---|
-| L0 | 116,171 | 116,388 | 119,850 |
-| L18 | 243,565 | 266,151 | 273,028 |
-| **L19** | **168,404** (TRT 4.2%) | 249,808 (14.3%) | **288,556** (15.5%) |
-| L29 | 283,350 | 293,925 | 250,800 |
-
-**della-search(8,5):**
-
-| start | DAS 10Hz | hyper 12Hz | rolling 20Hz |
-|---|---|---|---|
-| L0 | 156,594 (TRT 40.5%) | 166,826 (43.1%) | 167,530 (42.4%) |
-| L18 | 416,266 (40.3%) | 382,789 (43.5%) | **437,504 (49.0%)** |
-| **L19** | **148,128 (TRT 0.6%, 0.25 tetrises)** | 428,169 (41.0%) | **451,675 (TRT 52.2%, 16.19 tetrises)** |
-| L29 | 243,525 (2.1%) | 243,525 (2.1%) | 219,975 (0.6%) |
-
-**G6 paired per-seed deltas vs DAS** (exact pairing — the piece stream is seed-determined and
-setting-independent):
-
-| | hyper 12Hz | rolling 20Hz |
-|---|---|---|
-| L0 | +216 ± 379 — **ns** | +3,679 ± 8,172 — **ns** |
-| L18 | +22,586 ± 29,189 — ns | **+29,463 ± 27,474 — SIGNIFICANT** |
-| **L19** | **+81,404 ± 52,386 — SIGNIFICANT** | **+120,153 ± 44,089 — SIGNIFICANT** |
-| L29 | +10,575 ± 13,149 — ns | −32,550 ± 41,548 — ns |
-
-**G6 PASSES**, and it passes in exactly the pattern the physics predicts: **no effect at L0** (48 frames/row
-constrains nothing — a good negative control), significant at L18/L19, and the headline is L19, where the
-search tier under DAS collapses to **TRT 0.6%** while rolling sustains **TRT 52.2%** — clearing the G3
-target of 50%. The AI cannot feed the well under DAS at that gravity, which is precisely the owner's
-hypothesis, now measured on the shipped engine rather than a spike harness.
-
-*L29 is noisy and non-significant here*: the level multiplier is large enough that even a low-TRT policy
-scores well, and 16 episodes at a 400-piece cap is too coarse to separate the settings. Report L29 with more
-episodes before drawing any conclusion from it.
-
-### Engine addition: NES start-level selection
-
-`setStartLevel(lvl)` + `levelForLines()` implement the ROM A-TYPE curve — first level-up after
-`min(start*10+10, max(100, start*10−50))` lines, then every 10 — so an 18-start reaches 19 at 130 lines and
-the kill screen at 230. Default 0, and `reset` clears it, so every pre-M57 protocol is byte-identical.
-Pinned by `StartLevel_FollowsTheNesTransitionCurveAndDrivesGravity`.
+**Engine addition:** `setStartLevel(lvl)` + `levelForLines()` implement the ROM A-TYPE curve (first
+level-up after `min(start*10+10, max(100, start*10-50))` lines, then every 10), so an 18-start reaches 19
+at 130 lines and the kill screen at 230. Default 0 and `reset` clears it, so every pre-M57 protocol is
+byte-identical. Pinned by `StartLevel_FollowsTheNesTransitionCurveAndDrivesGravity`.
 
 ---
 
-## 6.U What this session established — the durable lessons (2026-08-30)
+## 6.U M57.5 net retrain - post-mortem, and the corrected plan (2026-08-30)
 
-Written for whoever picks this up next. Each item is something that was **measured**, usually after a wrong
-guess, and each one cost real time.
+**Five runs, all worse than the shipped net. All five ran without the one framework feature that addresses
+the symptom they showed.** This section exists so that is not repeated.
 
-### L1 — The evaluator was the whole story for tetris rate (confirmed)
-`−20·Δwells` penalised the very well a tetris needs. Splitting that single sign, with no training and no
-action-space change, bought **+14.7% score and 11× the tetrises**. The full widened basis reached
-**+97% score and 33× the tetrises**, and *improved* protocol-B survival. §0's diagnosis was right and is
-the highest-value change in the milestone.
+### What happened
 
-### L2 — Weights must be scaled to the basis they join
-StackRabbit prices holes at −50; Dellacherie at −4. Copying StackRabbit's **absolute** weights over-weighted
-the tetris terms ~12×, drowned the safety terms, and topped out **100%** of episodes. It looked like a clean
-NO-GO on the whole idea. Rescaling to the host basis turned it into a decisive GO.
-*Rule: when porting weights between evaluators, anchor on a shared term and rescale.*
-
-### L3 — DIG mode is not optional
-The widened evaluator without a DIG branch scored **+30% on protocol A but lost 52% of protocol-B survival**:
-the burn penalty made it refuse the singles that dig a garbage board out. Found by measurement, not design.
-*Rule: any burn penalty needs a hole-aware escape hatch.*
-
-### L4 — "Falling eval + falling loss" is ambiguous; the loss LEVEL disambiguates it
-Distribution narrowing and a target-scale failure produce the **same shape**. A healthy Tetris run here sits
-at loss ≈ 1.0–1.5. The first M57.5 run sat at **14–29** — that is mis-scaled targets, not a narrowed replay
-buffer. Reaching for the narrowing remedy first would have wasted the run (and did, once).
-
-### L5 — Centre the dense target per state
-Switching the planes from deltas to absolutes made reconstruction exact but reintroduced a large constant:
-targets at **mean −92, sd 28.7** raw, i.e. −9.2 ± 2.9 after ÷10, against M54's ≈0 ± 1. Centring on the mean
-over legal actions is free — a dueling V head absorbs any per-state constant, and only the *ranking* matters.
-Effect at 10K steps: score 50 → 222, loss 29.3 → 1.59. **Centring also makes deltas and absolutes
-interchangeable**, since they differ by exactly a per-state constant.
-
-### L6 — Keep the dense target LINEAR in the planes
-Emitting raw values plus DIG/LINEOUT flags made the target piecewise: the net had to learn `ready × (1−dig)`
-rather than read it, and fitted only **R² 0.54**. Emit the **already-gated** quantities instead, so the
-target is a pure dot product. M54's target was linear in its planes, which is why its net fitted it.
-
-### L7 — R² 0.54 is not "decent", it is lethal (spike s7)
-Adding matched noise to a *perfect* evaluator and playing greedily:
-
-| R² | narrow basis | widened basis |
+| run | change | peak campaign eval |
 |---|---|---|
-| 1.00 | 500 pieces | 464 pieces |
-| 0.80 | 141 | 124 |
-| **0.54** | **85, 100% top-out** | **65, 100% top-out** |
+| tet6 (M54, **shipped**) | narrow basis | **83,265** |
+| tet8 | widened obs, uncentred target | abandoned (score 120 -> 29 while loss fell 26.8 -> 14.1) |
+| tet9 | + centred target | 14,970 @60K, then decayed |
+| tet10 | + `--eps-end 0.12 --buffer 150000` | 8,220 @60K, decayed harder |
+| tet11 | + `RewardScale 20` | 1,589 @80K - **refuted, reverted** |
+| tet12 | + linear (pre-gated) target | 9,321 @55K, decayed |
+| tet13 | **warm-start from tet6** | baseline **83,265 at step 0**, pulled down to 799 |
 
-Both bases collapse. So the widened evaluator is **not** unusually fragile — 54% accuracy simply produces a
-lethal policy for *any* evaluator, because greedy argmax over a noisy value stacks itself to death. This
-refuted the "the widened evaluator is harder to approximate safely" theory, and explains why every
-from-scratch widened run shows `top-outs 20/20` at **every** checkpoint.
+Archived under `data/_archive-m57-failed-runs/`.
 
-### L8 — You cannot swap an input's MEANING when auto-widening a net *(owner, 2026-08-30)*
-`GrowInput` is function-preserving **only as an append**. Reordering or reinterpreting an existing plane keeps
-the width legal while silently feeding the transplanted weights different quantities — and **no guard catches
-it**, because both the input width and the action count still match. This is why planes 0–5 are byte-for-byte
-the M54 basis at indices 214..453, pinned by `ObservationLayout_KeepsTheM54BasisAsItsPrefix`, and why the
-warm start reproduced M54's **83,265** exactly rather than garbage.
-*Corollary worth building later: stamp a plane-layout version into the checkpoint so a mismatch fails loudly.*
+### The root cause: capacity - and the built-in remedy was never used
 
-### L9 — Warm-start from the best net; four from-scratch runs never got close
-| run | basis | peak campaign eval |
-|---|---|---|
-| tet6 (M54, shipped) | narrow | **83,265** |
-| tet9 | widened, piecewise target | 14,970 @60K |
-| tet10 | + anti-narrowing | 8,220 @60K |
-| tet11 | + RewardScale 20 | 1,589 @80K |
-| tet12 | + linear target | 9,321 @55K |
-| **tet13** | **warm-started from tet6** | **baseline 83,265 at step 0** |
+Fit quality, same trunk (256x256), each measured against its own target's variance:
 
-Every from-scratch widened run peaked around 9–15K and decayed. The warm start begins **5.6× above the best
-of them**, and keep-best means it can only ship an improvement.
+| target | variance | plateau loss | **R^2** |
+|---|---|---|---|
+| narrow (M54) | 1.448 | 0.23 | **0.841** |
+| widened (M57.5) | 2.413 | ~0.93 | **0.615** |
 
-### L10 — A refuted theory, recorded so it is not retried
-Realized reward (up to 12, lines units) was thought to be swamping the centred dense target (sd ≈1.55) and
-teaching "whatever action I sampled is good". `RewardScale` 1 → 20 measured **worse** (tet11: 1,589 where
-tet9 reached 14,970), so it removed signal rather than noise. Reverted to 1. The real defect was L6.
+The widened target is **richer and harder**, and the same net underfits it. That is the repo's own
+documented **saturation signature - a loss plateau at a high level - whose documented remedy is `--grow`**
+(`DqnGrowth`, `WidenTo`/`Deepen`). **`--grow` was never enabled in any of the five runs.**
 
-### L11 — Two testing traps found in passing
-- The env's reward assertion was **vacuous**: five pieces on a fresh board never clear a line, so a
-  `RewardScale` change slipped past it entirely. Replaced with one that drives the env until a real clear.
-- `SpikeBar_DellacherieClearsNearMaximalLines` asserted 197.4 lines and **zero** top-outs — i.e. it *enforced*
-  the flatten-and-burn behaviour this milestone removes. A test can encode the bug; changing it was correct,
-  and the replacement pins the new contract plus a stack-and-camp watchdog.
+> ### L0 - the meta-lesson (owner, 2026-08-30)
+> **Use the framework's built-in features before inventing anything.** This repo already ships `--grow`
+> (capacity growth on a plateau) and **NoisyNets** (`--noisy`, learnable parametric exploration noise).
+> Four runs were spent hand-tuning `--eps-end` and `--buffer`, and a bespoke noise-robustness spike was
+> written, while the built-in levers sat unused. Check `DqnOptions` and the Lab flags **first**.
 
-### L12 — Operational notes (cost real time)
-- **Never infer a run is dead from an empty log** — output is buffered. Check the process list. Deleting a
-  run's data directory while it lives kills it with `DirectoryNotFoundException`.
-- A running Lab.exe **locks the build outputs**, so `dotnet test` fails with MSB3027 until it is stopped. The
-  campaign checkpoints every 10 minutes and resumes cleanly, so stop → test → relaunch costs ≤10 minutes.
-- `setsid` does not exist in Git Bash; a background launcher whose parent shell exits can take the training
-  process group with it.
-- Training throughput is **not constant**: it roughly quadrupled as the policy degraded (shorter episodes ⇒
-  faster evals), so an ETA extrapolated from a strong-policy phase is badly wrong.
+### Corrections to earlier conclusions in this document
+
+- **The s7 noise spike overstated the damage, and was the wrong tool.** It injected *independent Gaussian*
+  noise per action; a trained net makes *structured, correlated* errors, which an argmax tolerates far
+  better. It predicted 141 pieces at R^2 0.80, yet tet6 achieved **455 pieces at R^2 0.841**. So
+  "R^2 0.54 is lethal" is too strong; the honest statement is **0.615 underfits, 0.841 plays well**, and
+  closing that gap is a capacity question. NoisyNets is the shipped mechanism for noise-driven
+  exploration - the spike has been removed rather than left to mislead.
+- **"The widened target is unfittable" was premature** - it was never tested with more capacity.
+- **`RewardScale` 20 remains refuted** - measured worse (tet11 1,589 vs tet9 14,970), reverted to 1.
+
+### Lessons that stand
+
+- **L1** The evaluator was the whole story for tetris rate: the `-20*dWells` sign alone bought +14.7%
+  score and 11x the tetrises; the full widened basis, +97% and 33x, with protocol B *improved*.
+- **L2** Scale ported weights to the host basis (StackRabbit prices holes -50, Dellacherie -4; copying
+  absolutes over-weighted the tetris terms ~12x and topped out 100% of episodes).
+- **L3** DIG mode is mandatory: without it, +30% on protocol A but **-52%** protocol-B survival, because
+  the burn penalty refuses the singles that dig a garbage board out.
+- **L4** *Falling eval + falling loss is ambiguous.* Distribution narrowing and a target-scale failure look
+  identical; the **absolute loss level** disambiguates (~1.0-1.5 healthy here, 14-29 = mis-scaled).
+- **L5** Centre the dense target per state - free under a dueling V head, and it makes deltas and
+  absolutes interchangeable (they differ by exactly a per-state constant).
+- **L6** Keep the dense target **linear in the planes** (emit pre-gated quantities); a piecewise target
+  forces the net to learn `ready x (1-dig)` rather than read it.
+- **L8 (owner)** **You cannot swap an input's MEANING when auto-widening a net.** `GrowInput` is
+  function-preserving *only as an append*; a reordered plane keeps the width legal while silently feeding
+  transplanted weights different quantities, and **no guard catches it** - width and action count both
+  still match. Verified both ways: with planes 0-5 held as the M54 prefix, the transplant reproduced
+  **83,265 exactly**. Pinned by `ObservationLayout_KeepsTheM54BasisAsItsPrefix`.
+  *Follow-up worth building: stamp a plane-layout version into the checkpoint so a mismatch fails loudly.*
+- **L11** Two tests were silently wrong: the env's reward assertion was **vacuous** (five pieces on a fresh
+  board never clear a line, so a `RewardScale` change slipped past), and
+  `SpikeBar_DellacherieClearsNearMaximalLines` **enforced the very flatten-and-burn behaviour** this
+  milestone removes. A test can encode the bug.
+- **L12 (operational)** Never infer a run is dead from an empty log - output is buffered; check the process
+  list, and never delete a live run's data directory (`DirectoryNotFoundException`). A running `Lab.exe`
+  locks build outputs (MSB3027) - stop, test, relaunch; the campaign resumes from its 10-minute
+  checkpoint. `setsid` does not exist in Git Bash. Training throughput is **not constant** - it roughly
+  quadrupled as the policy degraded, so ETAs from a strong-policy phase are badly wrong.
+
+### The corrected plan (M57.5, restarted from scratch)
+
+The warm-start path is sound and proven (L8), but there is no point continuing from a net that five runs
+have shown is being pulled toward an underfitted target. Start clean.
+
+1. **`--grow` on from the first step** - the diagnosed remedy for the measured plateau. Target: close
+   R^2 0.615 -> >= 0.84, the level at which the narrow basis produced a 455-piece policy.
+2. **Then `--noisy`** if exploration is still the limiter - NoisyNets is shipped and untried here, and it
+   is the framework's answer to the `--eps-end`/`--buffer` fiddling that consumed tet10.
+3. **Gate on R^2, not just score.** Fit quality is the leading indicator and score follows it; report
+   plateau loss / target variance every run.
+4. **Keep what was measured**: centred (L5) and linear/pre-gated (L6) target, `RewardScale` 1, and the M54
+   basis preserved as the observation prefix (L8).
+
+**None of this blocks M57.1.** The evaluator upgrade is independent, shipped and measured, and it is what
+delivers the tetris-rate goal today (search tier: 15.60 tetrises/ep, TRT 44%, against 0.26 before).
+
 
 ## 7. Milestones
 

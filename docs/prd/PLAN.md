@@ -2370,26 +2370,38 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
 - **M57.4 — SRS second mode.** Kick tables (JLSTZ + I), CCW, T-spin detection, duplicate-state
   canonicalization. **Gate:** NRS pin **unchanged** — `rotCount` is read by five enumerators, and
   setting it to 4 for I/O/S/Z shifts every baseline *before a single kick fires*.
-- **M57.5 — Net basis + retrain.** 🔄 IN PROGRESS 2026-08-30. Observation widened 454 → **854** (16
-  per-action planes); dense target rebuilt to reconstruct the M57.1 evaluator exactly via a shared
-  `evalAfterstate`, so the net's teacher and the search tier's evaluator cannot drift (pinned by
-  `DenseTargets_ReconstructTheEnginesOwnEvaluatorExactly`). **Twelve lessons in PRD §6.U**; load-bearing
-  ones: **(L8, owner)** *you cannot swap an input's MEANING when auto-widening a net* — `GrowInput` is
-  function-preserving only as an APPEND; a reordered plane keeps the width legal while silently feeding
-  transplanted weights different quantities and **no guard catches it** (width and action count both still
-  match). Hence planes 0–5 are byte-for-byte the M54 basis at indices 214..453, pinned by
-  `ObservationLayout_KeepsTheM54BasisAsItsPrefix`. **(L7)** spike s7: at **R² 0.54 EVERY** evaluator —
-  narrow or widened — tops out 100% of episodes, so a "decent" fit is lethal and the from-scratch runs were
-  never going to work. **(L6)** keep the target LINEAR in the planes (pre-gated quantities); piecewise only
-  fitted R² 0.54. **(L5)** centre the target per state — free under a dueling V head, and it makes deltas
-  and absolutes interchangeable. **(L4)** falling eval + falling loss is AMBIGUOUS; the loss LEVEL
-  disambiguates (≈1.0–1.5 healthy; 14–29 = mis-scaled targets). **(L3)** DIG mode mandatory: without it
-  +30% on A but **−52%** protocol-B survival. **(L2)** rescale ported weights to the host basis.
-  *Journal:* tet8 (uncentred, abandoned) · tet9 14,970@60K · tet10 8,220@60K · tet11 1,589@80K
-  (RewardScale 20 — refuted, reverted) · tet12 9,321@55K — **all four from-scratch runs peaked at 9–15K and
-  decayed**, against the shipped M54 net's **83,265**. **tet13 warm-starts from that net via `AdaptWarmNet`
-  + `GrowInput` and reproduced 83,265 EXACTLY at step 0** — the evidence the prefix rule held; keep-best
-  means it can only ship an improvement. Running.
+- **M57.5 — Net basis + retrain.** 🔄 RESTARTED 2026-08-30 after five failed runs; full post-mortem in
+  PRD §6.U. Observation widened 454 → **854** (16 per-action planes, planes 0–5 kept byte-for-byte as the
+  M54 basis) and the dense target rebuilt to reconstruct the M57.1 evaluator exactly via a shared
+  `evalAfterstate`, pinned by `DenseTargets_ReconstructTheEnginesOwnEvaluatorExactly`.
+  **THE root cause of the failures, and the meta-lesson (L0, owner): use the framework's built-in features
+  before inventing anything.** Fit quality at the same 256×256 trunk — narrow target **R² 0.841** (loss
+  0.23 / variance 1.448) vs widened **R² 0.615** (loss ~0.93 / variance 2.413): the widened target is
+  richer and the net UNDERFITS it. That is the repo's own documented saturation signature (a loss plateau
+  at a high level) whose documented remedy is **`--grow`** — and **`--grow` was never enabled in any of the
+  five runs**, while four of them were spent hand-tuning `--eps-end`/`--buffer` and a bespoke noise spike
+  was written even though **NoisyNets (`--noisy`) is already shipped here**.
+  *Corrections:* the s7 noise spike **overstated the damage and was the wrong tool** (independent Gaussian
+  noise per action, where a trained net makes structured errors — it predicted 141 pieces at R² 0.80 while
+  tet6 achieved **455 at R² 0.841**), so "R² 0.54 is lethal" is withdrawn; "the target is unfittable" was
+  premature, never having been tested with more capacity; `RewardScale` 20 stays refuted (tet11 1,589 vs
+  tet9 14,970), reverted to 1. Spike `s7` and the superseded `s0b` removed rather than left to mislead.
+  *Lessons that stand:* **L8 (owner)** you cannot swap an input's MEANING when auto-widening a net —
+  `GrowInput` is function-preserving only as an APPEND, and a reordered plane keeps the width legal while
+  silently feeding transplanted weights different quantities, which **no guard catches**; verified both
+  ways, since holding planes 0–5 as the M54 prefix reproduced **83,265 exactly** at step 0 (pinned by
+  `ObservationLayout_KeepsTheM54BasisAsItsPrefix`). **L3** DIG mode is mandatory (without it +30% on A but
+  **−52%** protocol-B survival). **L4** falling eval + falling loss is AMBIGUOUS; the loss LEVEL
+  disambiguates. **L5** centre the target per state. **L6** keep it linear in the planes. **L11** two tests
+  were silently wrong — one vacuous, one that *enforced* the flatten-and-burn behaviour this milestone
+  removes.
+  *Journal (archived to `data/_archive-m57-failed-runs/`):* tet8 abandoned · tet9 14,970@60K · tet10
+  8,220@60K · tet11 1,589@80K · tet12 9,321@55K · tet13 warm-start 83,265→799 — all against the shipped
+  **83,265**.
+  *Corrected plan:* start from scratch with **`--grow` on from step 0** (target R² ≥ 0.84), then `--noisy`
+  if exploration is still the limiter; **gate on R², not just score**; keep the centred, linear, pre-gated
+  target and `RewardScale` 1. **None of this blocks M57.1**, which is independent, shipped and measured,
+  and is what delivers the tetris-rate goal today (search tier 15.60 tetrises/ep, TRT 44%, vs 0.26).
 - **M57.5 (original plan) — Retrain.** From scratch (an action-head change forces it; nothing in the repo grows an
   action head). N=160 via `(rot, col, depth 0..3)`, obs 1174, **~5.9 h measured** — **GPU is not a
   lever** (largest GEMM 14.9M MACs vs the 256M routing threshold). **One net, tap budget applied as an
