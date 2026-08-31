@@ -2261,7 +2261,11 @@ Coverage number = the fast bucket (`Category!=Slow`), stated next to the README 
   for the existing GPR push), `.gitignore` `coverage/` entry.
 - **M56.3 — README badge** + this PLAN entry.
 
-## M57 — Tetris techniques: tetris-aware evaluator, movement-aware placements, SRS mode, technique dial  *(planned 2026-08-30; branch `m57-tetris-techniques`; see `TETRIS_TECHNIQUES_PRD.md`)* 📋
+## M57 — Tetris techniques: tetris-aware evaluator, movement-aware placements, SRS mode, technique dial  *(planned 2026-08-30; branch `m57-tetris-techniques-plan`, PR #46; see `TETRIS_TECHNIQUES_PRD.md`)* 🟡
+
+**Where it stands (2026-08-31):** M57.pre, M57.0 and M57.1 done; **M57.5 done and the net shipped**
+(tet15, held-out A 91,891 / B 225.4, G1+G2 green, G3 not). **M57.2, M57.3, M57.4 and M57.6 are not
+started** — the tetris *rate* is what they are for, and it is still 1.4% against a 50% target.
 
 **Why:** owner asks after M55 — the trained net (1) doesn't make tetrises, (2) never slides a piece
 sideways *under* existing blocks (it always goes straight down), (3) can't T-spin or tuck-spin, and
@@ -2301,8 +2305,8 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
   0.9.9-vs-0.8.1 codegen signature is `this.bag.length = 0` vs `this.bag = []` (a cheap way to prove which CLI
   ran; there is no `polyglot` on PATH and no `PolyglotTool` override here). Full record:
   `polyglot-pilot/POLYGLOT_M57_FEASIBILITY.md`. **Convention from now on: `constructor(...)`, never `init(...)`.**
-- **M57.0 — Spikes.** ✅ RUN 2026-08-30 — **and they re-scope the arc** (scripts in `docs/prd/tetris-spike/`,
-  full tables in `TETRIS_TECHNIQUES_PRD.md` §6.R). **S0 = GO, decisively:** the §0 diagnosis is confirmed —
+- **M57.0 — Spikes.** ✅ RUN 2026-08-30 — **and they re-scope the arc** (throwaway Node harnesses, not
+  committed; full tables and protocols in `TETRIS_TECHNIQUES_PRD.md` §6.R). **S0 = GO, decisively:** the §0 diagnosis is confirmed —
   splitting the `−Δwells` sign ALONE buys **+14.7% score and 11× the tetrises** with zero top-outs, and the
   widened basis reaches **156,154 ± 10,532 vs Dellacherie's 97,983 ± 3,928 (+59%, CI-separated) with 4.93
   tetrises/ep vs 0.57** on held-out seeds. **S0b:** CEM pushes the mean to 186K and TRT to 28.1% but with a
@@ -2370,7 +2374,8 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
 - **M57.4 — SRS second mode.** Kick tables (JLSTZ + I), CCW, T-spin detection, duplicate-state
   canonicalization. **Gate:** NRS pin **unchanged** — `rotCount` is read by five enumerators, and
   setting it to 4 for I/O/S/Z shifts every baseline *before a single kick fires*.
-- **M57.5 — Net basis + retrain.** 🔄 ROOT CAUSE FOUND 2026-08-30 by a 3-agent investigation; full record
+- **M57.5 — Net basis + retrain.** ✅ DONE, net SHIPPED 2026-08-31 (tet15 — see the end of this entry).
+  ROOT CAUSE FOUND 2026-08-30 by a 3-agent investigation; full record
   in PRD §6.U. Five runs failed, **three diagnoses were proposed and all three were refuted by
   measurement**. The real cause: `DqnTrainer` keeps the REALIZED reward on the sampled arm and skips that
   arm in the dense term (`DqnTrainer.cs:308-325`), so the taken action is labelled in a different unit
@@ -2441,7 +2446,8 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
 - **M57.6 — Web.** Three radios in both modes; the pilot **replays** the engine's input sequence
   instead of re-planning and silently substituting (`stuck>=2`). Browser ≤50 ms/move **at risk**:
   `dellaSearchAction(8,5)` ≈ 289·N ⇒ ~120 ms at N=160; re-tune beams.
-- **M57.7 — Ship.** One PR, including the §9 corrections.
+- **M57.7 — Ship.** 🟡 PR #46, carrying M57.pre/M57.0/M57.1/M57.5 and the §9 corrections. The spike
+  harnesses are deliberately not committed (PRD §6.R); M54's `tetris_spike.mjs` predates the arc and stays.
 
 **Gates (held-out seeds 9000+e — the tet7 lesson: 88,425 on the *selecting* seeds was a complete wash
 held-out):** no-regression A ≥80,000 / B ≥165 · B ≥200 · **TRT ≥50%** (currently ≈0.05%) ·

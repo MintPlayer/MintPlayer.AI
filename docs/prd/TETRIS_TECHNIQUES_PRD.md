@@ -1,10 +1,15 @@
 # Tetris — techniques: tetris-aware evaluator, movement-aware placements, SRS mode, technique dial
 
-**Status:** 🧪 SPIKES RUN 2026-08-30 — **M57.0 complete, and it re-scopes the arc.** S0 is a decisive **GO** (the evaluator was the whole story); S1/S2 are a **NO-GO on tucks**; **M57.1 is BUILT and measured (§6.S: +97% score, 33× tetrises, protocol B improved)**; **S3 is a GO on the tap budget** — lateral reach is decisive above L19 (at the kill screen DAS scores **0**, rolling **37,135**). All in §6.R. Feature work M57.1–M57.7 not started. Planned via a 4-agent investigation (repo/architecture map,
-NES-technique research, Tetris-AI literature survey, training feasibility + gates — findings in §2). **No spike
-has been run yet**; §6 defines four, and **S0 is decisive enough that it may cancel most of the rest**.
+**Status:** 🟡 IN PROGRESS — **M57.0 spikes complete and they re-scoped the arc; M57.1 and M57.5 are done and
+shipped; M57.2–M57.4 and M57.6 are not started.** S0 is a decisive **GO** (the evaluator was the whole story);
+S1/S2 are a **NO-GO on tucks**, which re-scopes M57.3 and puts M57.4 in question; S3 is a **GO on the tap budget** —
+lateral reach is decisive above L19 (at the kill screen DAS scores **0**, rolling **37,135**). **M57.1 is BUILT and
+measured** (§6.S: +97% score, 33× tetrises, protocol B improved). **M57.5 shipped 2026-08-31**: the tet15 net
+(max-anchored targets, obs 854) cleared the held-out gate — A 91,891, B 225.4, G1+G2 green, G3 not — and is now
+`wwwroot/models/tetris.dqn.ckpt`. Planned via a 4-agent investigation (repo/architecture map, NES-technique research,
+Tetris-AI literature survey, training feasibility + gates — findings in §2).
 **Owner:** Pieterjan
-**Milestone:** [PLAN.md](PLAN.md) M57 · branch `m57-tetris-techniques` · builds on [TETRIS_PRD.md](TETRIS_PRD.md) (M54 ship, M55 NES input).
+**Milestone:** [PLAN.md](PLAN.md) M57 · branch `m57-tetris-techniques-plan` · builds on [TETRIS_PRD.md](TETRIS_PRD.md) (M54 ship, M55 NES input).
 
 ---
 
@@ -623,12 +628,18 @@ peak RSS, written `*-state.ckpt` size, and the env-vs-learn split (re-run at `--
 
 ## 6.R Spike results (executed 2026-08-30)
 
-All four scripts are committed under `docs/prd/tetris-spike/` and run in plain Node against the generated
-TS twin — no training, no engine change, no `.pg` edit.
+Each spike was a throwaway plain-Node script run against the generated TS twin — no training, no engine
+change, no `.pg` edit. **The scripts themselves are not committed** (unlike M54's `tetris-spike/tetris_spike.mjs`,
+which predates this arc and stays): they were one-shot measurement harnesses, and what survives them is the
+numbers below plus the widened evaluator that shipped into `tetris_solver.pg`. Each subsection therefore states
+its protocol in full — seeds, episode count, cap, metric — because that protocol, not a file, is what a re-run
+has to reconstruct. The one consequence worth stating plainly: the
+CEM tuning in §S5 is **not reproducible from the repo**, so the shipped weights are a recorded result, not a
+regenerable one.
 
 ### S0 — evaluator widening: **GO, decisively**
 
-`s0_evaluator.mjs`, protocol A (uniform, no garbage, 500-piece cap), 12 eps/config, seeds 5000+.
+**S0 harness**, protocol A (uniform, no garbage, 500-piece cap), 12 eps/config, seeds 5000+.
 
 | config | score | tetris/ep | TRT | score/piece | top-out |
 |---|---|---|---|---|---|
@@ -649,8 +660,7 @@ scaled to the basis they join.**
 ### S0b — CEM on the widened basis: improves the mean, but not CI-separated
 
 CEM, pop 20 / elite 5 / 6 iters, tuned on seeds 7000+, **evaluated on held-out seeds 9000+**, 30 eps.
-*(The exploratory `s0b_cem.mjs` was superseded by `s5_tune_widened.mjs`, whose constrained fitness produced
-the weights that shipped, and has been removed.)*
+*(The exploratory S0b CEM was superseded by S5, whose constrained fitness produced the weights that shipped.)*
 
 | policy | score | tetris/ep | TRT | score/piece | top-out |
 |---|---|---|---|---|---|
@@ -666,7 +676,7 @@ seed split was disjoint by construction, per the tet7 lesson.
 
 ### S1 — reachability census: **NO-GO on tucks**
 
-`s1_reachability.mjs`, exact frame simulation (shift→rotate→gravity, NRS pivot, no kicks), 80 boards ×
+**S1 harness**, exact frame simulation (shift→rotate→gravity, NRS pivot, no kicks), 80 boards ×
 7 pieces per config. Boards with ≥1 tuck, at DAS 10 Hz / level 18:
 
 | board population | boards with ≥1 tuck | tucks/piece | mean \|reach\| vs \|hard\| |
@@ -686,7 +696,7 @@ sound; the opportunity simply is not there.
 
 ### S2 — Dellacherie over the extended set: **NO-GO**
 
-`s2_extended_set.mjs`, same evaluator over the 40 hard drops vs the frame-simulation reachable set,
+**S2 harness**, same evaluator over the 40 hard drops vs the frame-simulation reachable set,
 DAS 10 Hz, 10 eps, 600-piece cap, seeds 5000+.
 
 | | protocol B survival | protocol A survival |
@@ -709,7 +719,7 @@ Gate needed **+15% CI-separated**; measured **negative**. Tucks were chosen only
 
 ### S3 — lateral reach and the tap budget at PINNED gravity: **GO, and it corrects S1/S2's scope**
 
-`s3_lateral_reach.mjs`. **Owner hypothesis (2026-08-30):** *the model may prefer a flat field because it
+**S3 harness**. **Owner hypothesis (2026-08-30):** *the model may prefer a flat field because it
 cannot get pieces over to the side.* S0–S2 could not test this — **they all started at level 0 (48
 frames/row), where input speed binds on nothing.** Gate G7 pre-registered precisely this failure mode and
 was not honoured. This spike pins gravity instead.
@@ -813,7 +823,7 @@ retrain is forced yet.
     singles that dig a garbage board out. This was measured, not anticipated.
 
 ### Weights
-CEM-tuned (`s5_tune_widened.mjs`) under a **constrained** fitness —
+CEM-tuned (S5 harness) under a **constrained** fitness —
 `(A_score/100k + 0.6·A_tetrises/4) × min(1, B_survival/364)`. The multiplicative term means survival below
 the M54 baseline scales the whole objective down and **cannot be bought back with score**, which is the
 lesson from S0b (raw-score CEM bought 30% top-outs). Tuned on seeds 7000+, evaluated on held-out 9000+.
@@ -859,7 +869,7 @@ binds. S3 is where the dial pays, and G7's high-gravity protocol is how it will 
 
 ## 6.T G7 + G6 - the high-gravity protocol and the technique dial, on the shipped engine
 
-`s6_g7_protocol.mjs`, 16 eps, 400-piece cap, seeds 5000+, NES start levels via `setStartLevel`.
+**S6 harness**, 16 eps, 400-piece cap, seeds 5000+, NES start levels via `setStartLevel`.
 
 **Why this exists:** S0-S2 all ran from **level 0 (48 frames/row)**, where tap speed constrains nothing.
 Gate G7 pre-registered exactly that blind spot and it was not honoured, so those spikes could not see the
@@ -1096,28 +1106,37 @@ it fails silently, which is the worst property a defect can have. Fixed in
 
 ## 7. Milestones
 
-- **M57.0 — Spikes S0/S0b/S1/S1b/S2.** Gates as above. **This milestone can end the arc** with a measured
-  "the evaluator was the whole story" or "the dial is cosmetic" — both shippable results.
-- **M57.1 — Evaluator widening (LOCK A).** Widened φ in the `.pg`, mirrored into `dellaScoreFor`, the observation
+- **M57.0 — Spikes S0/S0b/S1/S1b/S2 (+S3, S6).** ✅ RUN 2026-08-30, §6.R. It did what it was allowed to do:
+  ended the tuck strand ("the evaluator was the whole story") and re-scoped M57.3.
+- **M57.1 — Evaluator widening (LOCK A).** ✅ BUILT 2026-08-30, measured in §6.S (+97% score, 33× tetrises,
+  protocol B improved). Widened φ in the `.pg`, mirrored into `dellaScoreFor`, the observation
   planes and `DenseTargetsFromObservation`; the `−Δwells` split; realized-reward term dropped; mode-switched weights.
   **Gates:** the three copies of φ agree by test (this is the M54 hazard — `TetrisDqnCampaign.cs:74` is a *hand-written
   inverse* of `.pg:689–694`, with a magic `PlaneBase = 214`); S0's tetris rate reproduced in C# within CI.
-- **M57.2 — Frame model into the `.pg` (§4.3).** `NesInput` ported, serialization widened, 11 DAS checks mirrored
+- **M57.2 — Frame model into the `.pg` (§4.3).** ⬜ Not started. `NesInput` ported, serialization widened, 11 DAS checks mirrored
   into `TetrisEngineTests`. **Gates:** the 11 frame-exact checks green in **CI**; parity pin re-established.
-- **M57.3 — Movement-aware enumeration (LOCK B) + tap dial (§4.2).** Frame-simulation enumerator, tuck spots, input
+- **M57.3 — Movement-aware enumeration (LOCK B) + tap dial (§4.2).** ⬜ Not started, **re-scoped by S1/S2**:
+  tucks are dropped, the tap-budgeted legality mask is kept (§6.R). Frame-simulation enumerator, tuck spots, input
   costs, `max4/max5TapHeight` → scare/col9/mode. Level enters the observation. **Gates:** `micro == macro` — replaying
   a placement's input sequence through `microShift`/`microRotate`/`microDropStep` reproduces the enumerated afterstate
   **for every reachable placement** on hand-drawn boards (**the highest-risk item in the arc**); new parity pin;
   S1's census reproduced in C#.
-- **M57.4 — SRS second mode (§5).** Kick tables, CCW, T-spin detection, mode setter, duplicate-state canonicalization.
+- **M57.4 — SRS second mode (§5).** ⬜ Not started (the `.pg` is still no-kicks NRS). Kick tables, CCW, T-spin detection, mode setter, duplicate-state canonicalization.
   **Gates:** NRS pin **472451993 unchanged** (proves additivity); new SRS pin; kick tables pinned by test against the
   transcribed tables; §5.3 regression test.
-- **M57.5 — Retrain (LOCK C/D).** From scratch, N per S1, 400K steps, randomized tap budget in rollouts, buffer
-  capped per S4. **Gates:** §8, on held-out seeds 9000+e.
-- **M57.6 — Web (D4).** Three radios in both modes, pilot replays the engine's input sequence, status line, stale-guard
+- **M57.5 — Retrain (LOCK C/D).** ✅ SHIPPED 2026-08-31 — **as a retrain against the widened evaluator, not the
+  full LOCK C/D scope**: tet15 ran from scratch to 195K placements on the 854-plane observation, and the decisive
+  fix was the target *anchoring* (max, not mean), not the sampling. The randomized tap budget in rollouts belongs
+  to M57.3 and is therefore still outstanding; the S4 buffer cap was not needed at this length. **Gates:** §8,
+  held-out 9000+e — **G1 and G2 green** (A 91,891 ± 8,998 vs tet6 85,199, CI-overlapping; B 225.4 ± 33.3 vs 176.2,
+  CI-separated), **G3 not** (TRT 1.4% vs the 50% target — that gate waits on the technique work).
+- **M57.6 — Web (D4).** ⬜ Not started; the only web change so far is the `tetris-director` stale-guard, which
+  now loads the 854 net instead of demoting it (a live re-verify is still owed). Three radios in both modes, pilot replays the engine's input sequence, status line, stale-guard
   hardening. **Gates:** live Playwright desktop + phone; 0 console errors; 0 `/api/tetris*`; each radio measurably
   changes the AI's legal set; browser ≤ 50 ms/move (**at risk** — see G6).
-- **M57.7 — Ship.** `ARCHITECTURE.md`, PLAN sync, PRD results, ckpt to LFS, §9 corrections. One PR.
+- **M57.7 — Ship.** 🟡 In flight as PR #46, covering what M57.0/M57.1/M57.5 produced: `ARCHITECTURE.md`, PLAN sync,
+  PRD results, ckpt to LFS, §9 corrections. One PR. The spike harnesses are deliberately **not** committed (§6.R).
+  When M57.2–M57.4 and M57.6 are built they ship the same way, on their own branch.
 
 ---
 
