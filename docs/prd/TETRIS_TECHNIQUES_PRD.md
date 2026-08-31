@@ -951,9 +951,31 @@ The sign diagnosis is therefore confirmed end-to-end: the failure was never capa
 and never the reward magnitude - it was that mean-centring put the best action's target ABOVE the realized
 label, so the one label that disagreed dragged down precisely the action the policy preferred.
 
-**NOT YET SHIPPED.** These are the campaign's own selecting seeds (5000+e). Per L9 and the tet7 precedent
-(88,425 selecting / a complete wash held-out), the ship decision needs held-out seeds 9000+e through
-`tools/tetris_head2head.mjs`. Until that runs, treat 94,688 as promising, not proven.
+The run continued to 195K placements and its final keep-best scored **99,598** on the selecting seeds
+(190.5 lines, 1.20 tetrises/ep, 2/20 top-outs, loss 0.285) — that is the checkpoint below.
+
+**Held-out result (seeds 9000+e) — SHIPPED 2026-08-31.** Unlike tet7, tet15 survives the held-out run:
+
+| protocol | tet15 | shipped tet6 |
+|---|---|---|
+| A, plain net (30 eps) | **91,891 ± 8,998**, 185.0 lines, 0.67 tetrises, 3/30 top-outs | 85,199 ± 3,519 |
+| A, net-search(8) (10 eps) | **99,904 ± 9,991**, 197.6 lines, 0/10 top-outs | — |
+| B, plain net (30 eps) | **225.4 ± 33.3** pieces | 176.2 |
+| B, net-search(8) (10 eps) | **422.5 ± 51.4** pieces | — |
+
+**G1 (no-regression) passes** — A 91,891 ≥ 80,000 and B 225.4 ≥ 165, neither CI-separated below tet6.
+**G2 (survival) passes** — B 225.4 ≥ 200, lower bound 192.1 above tet6's 176.2. Protocol A is ahead by
+7.9% but **CI-overlapping**, so the honest claim is *survival is up ~28%, score is not proven better*.
+**G3 (tetris rate) still fails**: TRT = 4·0.67/185.0 = **1.4%** against the 50% target — up from tet6's
+≈0.05%, but the technique work (M57.2–M57.5) is what that gate is waiting on, not the anchoring fix.
+
+Shipped to `src/RLDemo.Web/wwwroot/models/tetris.dqn.ckpt` (854-input, 1.15 MB, Git LFS). The browser's
+stale-guard (`tetris-director.ts`) keys off `inputSize`, so this is also what re-enables the `net` tier in
+the web app — it had been demoting the old 454 net to Dellacherie since the obs grew to 854.
+
+Note the comparison is against the **recorded** tet6 held-out baseline, not a fresh paired run: the obs is
+854 now, so the 454 net can no longer be driven through the current solver at all. Both numbers come from
+the same protocol and the same held-out seeds, but they are not paired per-seed.
 
 ### Three refuted diagnoses (recorded so they are not retried)
 
@@ -1062,11 +1084,10 @@ it fails silently, which is the worst property a defect can have. Fixed in
 
 1. **Ship M57.1 regardless.** The evaluator is independent, measured, and is what delivers the goal today:
    search tier **15.60 tetrises/ep, TRT 44%** against 0.26 before.
-2. **tet15** - max-anchored, single variable. **DONE: 94,688 at 90K, beating the shipped 83,265.**
-   Next step is the held-out run (seeds 9000+e) that gates shipping; then ship the checkpoint to
-   `wwwroot/models/` and re-verify the browser path (obs is 854 now, so the stale-guard demotes the
-   old 454 net until the new one lands).
-3. If tet15 holds, fold in the repo defects above; if it does not, the next lever is the **shared
+2. **tet15** - max-anchored, single variable. **DONE and SHIPPED 2026-08-31**: 99,598 selecting at 195K,
+   held-out A 91,891 / B 225.4, G1+G2 green. Copied to `wwwroot/models/tetris.dqn.ckpt`; the browser path
+   still needs a live re-verify (the stale-guard was demoting the old 454 net and should now load this one).
+3. tet15 held, so fold in the repo defects above. If a further lever is needed the next one is the **shared
    per-candidate scorer**: `IValueNet` only requires `Forward([B,854]) -> [B,40]`, so a net that internally
    reshapes the candidate block to `[B*40,16]` and applies a shared MLP fits the existing trainer with no
    changes - ~40x fewer parameters and 40 labelled examples per state instead of one. `TETRIS_PRD.md:76`

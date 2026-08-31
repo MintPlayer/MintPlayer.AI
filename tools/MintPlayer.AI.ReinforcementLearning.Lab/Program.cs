@@ -7,6 +7,15 @@
 //                                                [--viz [port]] ...
 // Default game: rushhour (the original Kociemba-free BFS-oracle imitation campaign, PLAN M16).
 
+// Unbuffered stdout. When the Lab's output is REDIRECTED (`> run.log`, nohup, a CI step, an agent harness)
+// .NET block-buffers it, so a live run can look completely silent for many minutes. That is not cosmetic: a
+// run was once declared dead from an empty log, relaunched over the top of the live one, and the two
+// processes silently interleaved their CSV and checkpoints. TrainingDirectoryLock now refuses the second
+// run, but the misdiagnosis it came from is worth removing at the source rather than documenting.
+// Progress appears as it happens; the cost is a flush per eval line, i.e. nothing on a 10-minute cadence.
+Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
+
 // The Lab is a development tool: default to the Development environment (unless the operator set one) so the
 // `--viz` live network viewer — gated to Development on purpose — works out of the box. Set
 // DOTNET_ENVIRONMENT=Production to run without ever exposing the viewer socket.

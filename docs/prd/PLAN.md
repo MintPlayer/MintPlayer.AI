@@ -2385,9 +2385,14 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
   changed: **score 222 → 4,149** at 10K. **RESULT: 94,688 at 90K — the first net of the arc to BEAT
   the shipped 83,265** — top-outs collapsing 20/20 → **1/20**, 489 pieces of a 500 cap, 0.65
   tetrises/ep (tet6: 0.25) and loss **0.17** (tet6: 0.23), i.e. a better fit on a richer target.
-  Confirms the sign diagnosis end-to-end. **NOT YET SHIPPED**: those are the campaign's selecting
-  seeds (5000+e); per L9 and the tet7 precedent the ship gate is held-out 9000+e via
-  `tools/tetris_head2head.mjs`.
+  Confirms the sign diagnosis end-to-end. The run went on to **99,598** at 195K (1.20 tetrises/ep),
+  and that keep-best is the shipped checkpoint. **SHIPPED 2026-08-31** after clearing the held-out
+  gate (seeds 9000+e, the tet7 precedent): protocol **A 91,891 ± 8,998** (tet6: 85,199 ± 3,519 —
+  ahead but CI-overlapping) and protocol **B 225.4 ± 33.3 pieces** (tet6: 176.2 — CI-separated ahead,
+  +28%), search tier A 99,904 / B 422.5. **G1 and G2 green; G3 (TRT 1.4% vs the 50% target) is not** —
+  that gate belongs to the technique work, not the anchoring fix. Copied to
+  `src/RLDemo.Web/wwwroot/models/tetris.dqn.ckpt` (854-input, 1.15 MB, LFS), which also re-enables the
+  web `net` tier the stale-guard had been demoting.
   *Refuted, recorded so they are not retried:* **(a)** `RewardScale` 20 — measured worse, and the mechanism
   explains it (bias moves to −1.97; the defect is the OFFSET, not the magnitude). **(b)** "the widened
   evaluator is fragile to approximate" — spike s7 injected *independent Gaussian* noise where a trained net
@@ -2418,10 +2423,10 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
   running `Lab.exe` locks the build outputs and gets killed routinely. Read-only modes (`--eval-only`,
   `--baselines`) do not take it. The failure names the holding pid and its full command line. 5 tests in
   `TrainingDirectoryLockTests`, including that an abandoned handle does not strand the directory.
-  *Next:* held-out evaluation of the tet15 net (seeds 9000+e), then ship the checkpoint to
-  `wwwroot/models/` and re-verify the browser path (obs is 854 now, so the stale guard demotes the
-  old 454 net until the new one lands). Gated on **held-out play**, never on a fit statistic — L9. If it
-  does not hold, the next lever is a **shared per-candidate scorer**, which needs no trainer change:
+  *Next:* the tet15 net passed its held-out evaluation and is now in `wwwroot/models/`; what remains is a
+  live re-verify of the browser path (the stale guard had demoted the old 454 net, and should now load the
+  854 one). Gated on **held-out play**, never on a fit statistic — L9. If more strength is needed after the
+  technique work, the next lever is a **shared per-candidate scorer**, which needs no trainer change:
   `IValueNet` only requires `Forward([B,854]) → [B,40]`, so a net that internally reshapes the candidate
   block to `[B*40,16]` and applies a shared MLP satisfies it — ~40× fewer parameters and 40 labelled
   examples per state instead of one. `TETRIS_PRD.md:76` rejected this as "doesn't fit `DqnTrainer`'s fixed
