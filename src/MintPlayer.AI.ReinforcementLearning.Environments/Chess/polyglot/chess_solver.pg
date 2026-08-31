@@ -44,7 +44,7 @@ class PgChessState {
   var enPassant: i32              // target square a pawn could capture onto, or -1
   var halfmoveClock: i32
 
-  init(squares: List<i32>, whiteToMove: bool, castling: i32, enPassant: i32, halfmoveClock: i32) {
+  constructor(squares: List<i32>, whiteToMove: bool, castling: i32, enPassant: i32, halfmoveClock: i32) {
     this.squares = squares
     this.whiteToMove = whiteToMove
     this.castling = castling
@@ -583,7 +583,7 @@ class PgConvNet {
   var vHeadB: List<f64>         // [1]
 
   // Dims only — the parser assigns the weight arrays field-by-field as it reads them (in Parameters() order).
-  init(planes: i32, boardH: i32, boardW: i32, filters: i32, blocks: i32, actions: i32) {
+  constructor(planes: i32, boardH: i32, boardW: i32, filters: i32, blocks: i32, actions: i32) {
     this.planes = planes
     this.boardH = boardH
     this.boardW = boardW
@@ -726,7 +726,7 @@ class PgPolicyValueNet {
   var valueB: List<f64>          // [1]
   var conv: PgConvNet?           // non-null ⇒ this is a conv net; forward delegates to it (the MLP fields are unused)
 
-  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, policyW: List<f64>, policyB: List<f64>, valueW: List<f64>, valueB: List<f64>) {
+  constructor(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, policyW: List<f64>, policyB: List<f64>, valueW: List<f64>, valueB: List<f64>) {
     this.inputSize = inputSize
     this.actions = actions
     this.hidden = hidden
@@ -803,7 +803,7 @@ class PgMctsNode {
   var terminal: bool
   var terminalValue: f64            // set when terminal: -1 loss (side-to-move mated) / 0 draw, mover-relative
 
-  init(moves: List<i32>, terminal: bool, terminalValue: f64) {
+  constructor(moves: List<i32>, terminal: bool, terminalValue: f64) {
     this.moves = moves
     this.terminal = terminal
     this.terminalValue = terminalValue

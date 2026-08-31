@@ -19,9 +19,15 @@ public sealed class TetrisBoard
     public const int Height = 20;
     public const int PieceCount = 7; // 0=I 1=O 2=T 3=S 4=Z 5=L 6=J
     public const int ActionCount = 40; // 4 rotations × 10 columns, hard-masked
-    // 454: 200 board cells + 7 current + 7 next one-hots + six 40-wide per-action feature planes
-    // (landing/20, eroded/8, ΔrowT/20, ΔcolT/20, Δholes/10, Δwells/20 — PRD §3.4).
-    public const int ObservationSize = Width * Height + 2 * PieceCount + 6 * ActionCount;
+    /// <summary>Per-action observation planes. M54 had 6 (the narrow anti-tetris Dellacherie basis);
+    /// M57.5c uses 16, of which planes 0-5 ARE the M54 basis in the M54 order, so the shipped M54 net transplants via GrowInput.
+    /// Must equal <c>PgTetris.ObsPlanes</c>; TetrisEnvTests pins the observation length.</summary>
+    public const int ObservationPlanes = 16;
+
+    // 814: 200 board cells + 7 current + 7 next one-hots + fifteen 40-wide per-action feature planes
+    // (M57.5 — TETRIS_TECHNIQUES_PRD §6.S). Planes are ABSOLUTE afterstate quantities, not deltas, so the
+    // dense target reconstructs the evaluator exactly rather than up to a per-state constant.
+    public const int ObservationSize = Width * Height + 2 * PieceCount + ObservationPlanes * ActionCount;
 
     private readonly PgTetris _core = new();
 
@@ -115,6 +121,17 @@ public sealed class TetrisBoard
     }
 
     /// <summary>The Dellacherie tier: argmax placement by the canonical hand-tuned evaluator.</summary>
+    /// <summary>NES start level (gate G7). Call AFTER <see cref="Reset"/> — reset clears it to 0.
+    /// Tap speed constrains nothing at level 0 (48 frames/row) and is decisive from 19 upward, so a
+    /// level-0 protocol cannot see the regime this milestone is about.</summary>
+    public void SetStartLevel(int level) => _core.setStartLevel(level);
+
+    /// <summary>Frames per one-row drop at the current level (the NES gravity curve).</summary>
+    public int GravityFrames() => _core.gravityFrames(_core.level);
+
+    /// <summary>Tap budget in frames per shift: 6 = DAS 10Hz, 5 = hypertapping 12Hz, 3 = rolling 20Hz.</summary>
+    public void SetTapRate(int framesPerShift) => _core.setTapRate(framesPerShift);
+
     public int DellacherieAction() => _core.dellacherieAction();
 
     /// <summary>Dellacherie score of placing the current piece at (rot, col); −1e18 if illegal.</summary>
@@ -147,7 +164,10 @@ public sealed class TetrisBoard
     public bool LoadNet(Stream checkpoint)
     {
         var net = ParseDuelingQCheckpoint(checkpoint);
-        if (net is null || net.inputSize != ObservationSize) return false;
+        // M57 correction: also check the ACTION head. The input-width check was only INCIDENTALLY safe —
+        // obs = 214 + planes*actions, so an action-count change happened to move the width too. A net whose
+        // head disagreed while the width matched would load and silently mis-index every action.
+        if (net is null || net.inputSize != ObservationSize || net.actions != ActionCount) return false;
         _net = net;
         return true;
     }

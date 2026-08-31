@@ -30,7 +30,7 @@ class PgTetRng {
 
   var state: i32
 
-  init(seed: i32) {
+  constructor(seed: i32) {
     var s = seed % M
     if s < 0 { s += M - 1 }
     if s == 0 { s = 1 }
@@ -62,7 +62,38 @@ class PgTetris {
   // netSearchAction's rollout reward must use the same units as training (TetrisEnv mirrors this const).
   const RewardTetrisBonus: i32 = 8
 
-  // Piece tables, built in init() (instance lists, NOT module-level lets — the module-globals-in-methods
+  // ── M57.1 tetris-aware evaluator (PRD TETRIS_TECHNIQUES §3.1, spike results §6.R) ──────────────────
+  // The Dellacherie basis is ANTI-TETRIS: its wellSum term penalises the very well a tetris needs, so a
+  // policy maximising it flattens the stack and burns singles (measured: 0.08 tetrises/episode). Splitting
+  // the well term — penalise wells everywhere EXCEPT the designated well column — plus StackRabbit's
+  // tetris-aware terms measured +59% score, CI-separated, with 9× the tetrises (spike S0/S0b).
+  // Weights must be scaled TO THIS BASIS. Copying StackRabbit's absolute values (it prices holes at −50
+  // where Dellacherie prices them at −4) over-weights the tetris terms ~12×, drowns the safety terms and
+  // tops out 100% of the time — measured, S0. Every weight below was then CEM-tuned in that scale.
+  // Weights CEM-tuned 2026-08-30 (spike S5) under a CONSTRAINED fitness — A-score and tetrises multiplied
+  // by min(1, B_survival/364), so survival below the M54 baseline scales the whole objective down and
+  // cannot be bought back with score. Held-out (seeds 9000+): A 161,902 / 6.30 tetrises per episode /
+  // TRT 13.9% / B 325.6 — against the M54 baseline of A 94,636 / 0.26 tetrises / B 363.8.
+  const WellCol: i32 = 9             // right well: the vertical I favours it, and it is 4 taps from spawn
+  const EvalHoles: f64 = -5.582      // (was the Dellacherie -4)
+  const EvalWells: f64 = -0.847      // wells OUTSIDE the well column (was -1)
+  const EvalReady: f64 = 3.402       // rows complete except the well column
+  const EvalCovered: f64 = -0.201    // the well is capped — the tetris is gone until it is dug out
+  const EvalBurn: f64 = -3.700       // per line cleared that is NOT a tetris: makes a single COST something
+  const EvalBurnDig: f64 = -0.650    // ...but on a holed board burning is SURVIVAL — relax it (DIG mode)
+  const EvalHoleDig: f64 = -0.505    // extra hole pressure while digging out
+  const EvalCol9: f64 = -0.355       // column 8 tall ⇒ the well is sealed from the 4-tap side
+  const EvalTetris: f64 = 7.047      // realised 4-line clear
+  const EvalMaxSafeCol9: i32 = 8
+  const ObsPlanes: i32 = 16          // per-action planes; 0-5 ARE the M54 basis (obs indices 214..453)
+  const EvalInaccessible: f64 = -0.975 // per row of stack above the height at which a wall is still reachable
+
+  // Tap budget (PRD §4.1): frames per shift. 6 = DAS 10Hz (the ROM auto-repeat), 5 = hypertapping 12Hz,
+  // 3 = rolling 20Hz, 2 = the 30Hz hardware ceiling. Drives BOTH the reachability terms below and (M57.3)
+  // the legality mask. Default DAS — the ROM behaviour, and the most restrictive human setting.
+  var tapFramesPerShift: i32 = 6
+
+  // Piece tables, built in constructor() (instance lists, NOT module-level lets — the module-globals-in-methods
   // fix is post-0.8.1). Rotation slot r of piece p lives at rotIdx = p·4 + r; each rotation holds 4 cells
   // at cellX/cellY[rotIdx·4 + k], bounding box rotW/rotH[rotIdx], and per-column bottom profile
   // rotBottom[rotIdx·4 + x] (max cell y in that column; −1 for x ≥ rotW).
@@ -99,7 +130,11 @@ class PgTetris {
   var score: i32                     // NES score: 40/100/300/1200 per 1/2/3/4 lines, × (level+1)
   var lines: i32                     // total lines cleared (the training-reward currency)
   var tetrises: i32                  // 4-line clears (the owner's headline metric)
-  var level: i32                     // NES progression: level = lines/10 (start level 0)
+  var level: i32                     // NES progression (see levelForLines) — honours startLevel
+  // M57 / gate G7: NES start-level selection. S3 measured that tap speed constrains NOTHING at level 0
+  // (48 frames/row) and becomes decisive at 19+ — so every metric taken from a level-0 start is blind to
+  // the regime where real play happens. Default 0 keeps every pre-M57 protocol byte-identical.
+  var startLevel: i32 = 0
   var piecesPlaced: i32
   var gameOver: bool
   var lastLinesCleared: i32          // of the most recent lock
@@ -119,7 +154,7 @@ class PgTetris {
   var simLanding: f64                // H − dropY − rotH/2 (spike's midpoint landing height)
   var simEroded: i32                 // linesCleared × piece cells inside the cleared rows
 
-  init() {
+  constructor() {
     this.useBag = false
     this.bagPos = 0
     this.current = 0
@@ -276,7 +311,28 @@ class PgTetris {
   }
 
   // ── Reset / piece stream ─────────────────────────────────────────────────────────────────────────────────
+  // NES A-TYPE level curve with a selectable start level. The first level-up arrives after
+  // min(startLevel*10 + 10, max(100, startLevel*10 - 50)) lines, then every 10 thereafter — the ROM's
+  // rule, which is why an 18-start reaches 19 at 130 lines and the 29 kill screen at 230.
+  fn levelForLines(clearedLines: i32): i32 {
+    if this.startLevel == 0 { return tetDiv(clearedLines - clearedLines % 10, 10) }
+    let a = this.startLevel * 10 + 10
+    let b0 = this.startLevel * 10 - 50
+    let b = if b0 > 100 { b0 } else { 100 }
+    let first = if a < b { a } else { b }
+    if clearedLines < first { return this.startLevel }
+    let extra = clearedLines - first
+    return this.startLevel + 1 + tetDiv(extra - extra % 10, 10)
+  }
+
+  // Set the NES start level. Call AFTER reset (reset clears it back to 0).
+  fn setStartLevel(lvl: i32) {
+    this.startLevel = lvl
+    this.level = this.levelForLines(this.lines)
+  }
+
   fn reset(seed: i32, sevenBag: bool, garbageRate: i32) {
+    this.startLevel = 0
     this.pieceRng = PgTetRng(seed)
     this.garbageRng = PgTetRng(seed + 1000003)
     this.useBag = sevenBag
@@ -417,8 +473,8 @@ class PgTetris {
   fn afterLock(cleared: i32) {
     this.lines += cleared
     if cleared == 4 { this.tetrises += 1 }
-    // NES progression: level up every 10 lines; points use the level AFTER a level-up (NES rule).
-    this.level = tetDiv(this.lines - this.lines % 10, 10)
+    // NES progression; points use the level AFTER a level-up (NES rule).
+    this.level = this.levelForLines(this.lines)
     this.score += this.lineScore(cleared) * (this.level + 1)
     this.lastLinesCleared = cleared
     this.piecesPlaced += 1
@@ -631,15 +687,118 @@ class PgTetris {
     for y2 in 0..H { this.garbageMasks[y2] = saved[H + y2] }
   }
 
-  // Dellacherie score of placing `piece` at (rot, x) on the CURRENT rows — the canonical hand-tuned
-  // evaluator: −landing + eroded − rowT − colT − 4·holes − wells, all on the afterstate (spike formula).
-  // Board restored; no RNG. Returns −1e18 for an illegal placement.
+  // ── M57.1 board-shape features the Dellacherie basis cannot express ───────────────────────────────
+  fn colHeight(c: i32): i32 {
+    for y in 0..H {
+      if ((this.rows[y] >> c) & 1) == 1 { return H - y }
+    }
+    return 0
+  }
+
+  // wellSum with the designated well column EXCLUDED — THE sign fix (spike S0: this term alone is worth
+  // +14.7% score and 11× the tetrises, because the tetris well stops being self-penalising).
+  fn wellSumExceptWell(): i32 {
+    var sum = 0
+    for c in 0..W {
+      if c == WellCol { continue }
+      for y in 0..H {
+        if ((this.rows[y] >> c) & 1) == 1 { break }
+        let leftFilled = if c == 0 { 1 } else { (this.rows[y] >> (c - 1)) & 1 }
+        let rightFilled = if c == W - 1 { 1 } else { (this.rows[y] >> (c + 1)) & 1 }
+        if leftFilled == 1 && rightFilled == 1 {
+          var yy = y
+          for _d in 0..H {
+            if yy < H && ((this.rows[yy] >> c) & 1) == 0 { sum += 1; yy += 1 } else { break }
+          }
+          break
+        }
+      }
+    }
+    return sum
+  }
+
+  // Rows that are complete except the well column — i.e. rows a single vertical I would clear.
+  fn tetrisReady(): i32 {
+    if this.colHeight(WellCol) > 16 { return 0 }
+    let wellMask = 1 << WellCol
+    var n = 0
+    for y in 0..H {
+      if (this.rows[y] | wellMask) == FullRow && (this.rows[y] & wellMask) == 0 { n += 1 }
+    }
+    return n
+  }
+
+  // Empty cells sealed underneath the topmost filled cell of the well column.
+  fn coveredWell(): i32 {
+    for y in 0..H {
+      if ((this.rows[y] >> WellCol) & 1) == 1 {
+        var d = 0
+        for yy in (y + 1)..H {
+          if ((this.rows[yy] >> WellCol) & 1) == 0 { d += 1 }
+        }
+        return d
+      }
+    }
+    return 0
+  }
+
+  // ── M57.1 tap-budget reachability (spike S3 — the owner's "can it get pieces to the side?" question) ──
+  // Rows fallen by the time `taps` shifts have been issued, then the greatest stack height at which a
+  // placement that far from spawn (x=5) still lands. Column 9 is 4 taps away, column 0 is 5.
+  // MEASURED at L29 (1 frame/row): DAS reaches height 7, hypertapping 9–11, rolling 13, 30Hz 15 — which is
+  // why DAS scores ZERO on the kill screen and rolling scores 37,135. Above these heights the wall is
+  // simply unreachable, and an agent that does not know it keeps trying to feed a well it cannot feed.
+  fn maxTapHeight(taps: i32): i32 {
+    let g = this.gravityFrames(this.level)
+    let fallen = tetDiv(taps * this.tapFramesPerShift, g)
+    return H - 3 - fallen
+  }
+
+  fn setTapRate(framesPerShift: i32) {
+    this.tapFramesPerShift = framesPerShift
+  }
+
+  // Dellacherie score of placing `piece` at (rot, x) on the CURRENT rows — WIDENED (M57.1).
+  // Baseline terms are unchanged (−landing + eroded − rowT − colT − 4·holes) but wells now exclude the
+  // well column, and the tetris-aware + reachability terms are added. Board restored; no RNG.
+  // Returns −1e18 for an illegal placement.
+  // Widened evaluator over the CURRENT (already-placed) rows. `simLanding`/`simEroded` must still be
+  // valid — i.e. call this immediately after simPlace. SHARED by dellaScoreFor (the scripted + search
+  // tiers) and by the observation planes (the net's dense target), so the teacher the net distils and
+  // the evaluator the search uses can never drift apart. That drift was a live hazard in M54, where the
+  // dense target was a hand-written inverse of the observation normalizers.
+  fn evalAfterstate(cleared: i32): f64 {
+    let holeCount = this.holes()
+    var s = 0.0 - this.simLanding + this.simEroded - this.rowTransitions() - this.colTransitions() + EvalHoles * holeCount + EvalWells * this.wellSumExceptWell()
+    let m5 = this.maxTapHeight(5)
+    let m4 = this.maxTapHeight(4)
+    let lineout = m5 < 4
+    let dig = holeCount > 0
+    if !lineout {
+      if !dig { s = s + EvalReady * this.tetrisReady() }
+      let burnW = if dig { EvalBurnDig } else { EvalBurn }
+      s = s + burnW * (if cleared > 0 && cleared < 4 { cleared } else { 0 })
+    }
+    if dig { s = s + EvalHoleDig * holeCount }
+    s = s + EvalCovered * this.coveredWell()
+    s = s + EvalTetris * (if cleared == 4 { 1 } else { 0 })
+    let col9 = this.colHeight(WellCol - 1) - EvalMaxSafeCol9
+    if col9 > 0 { s = s + EvalCol9 * col9 }
+    let overLeft = this.colHeight(0) - m5
+    if overLeft > 0 { s = s + EvalInaccessible * overLeft }
+    let overRight = this.colHeight(W - 1) - m4
+    if overRight > 0 { s = s + EvalInaccessible * overRight }
+    return s
+  }
+
+  // Widened evaluator score of placing `piece` at (rot, x) on the CURRENT rows (M57.1).
+  // Board restored; no RNG. Returns -1e18 for an illegal placement.
   fn dellaScoreFor(piece: i32, rot: i32, x: i32): f64 {
     let y = this.dropY(piece, rot, x)
     if y < 0 { return -1.0e18 }
     let saved = this.saveRows()
-    this.simPlace(piece, rot, x, y)
-    let s = 0.0 - this.simLanding + this.simEroded - this.rowTransitions() - this.colTransitions() - 4 * this.holes() - this.wellSum()
+    let cleared = this.simPlace(piece, rot, x, y)
+    let s = this.evalAfterstate(cleared)
     this.restoreRows(saved)
     return s
   }
@@ -674,10 +833,20 @@ class PgTetris {
     let preColT = this.colTransitions()
     let preHoles = this.holes()
     let preWells = this.wellSum()
+    let preWellsExc = this.wellSumExceptWell()
 
-    // Action-major scratch (6 features per action), emitted plane-major below.
+    // M57.5c — the plane layout is BACKWARD-COMPATIBLE by design. Planes 0-5 are byte-for-byte the M54
+    // basis (same quantities, same divisors, same order), so they occupy exactly observation indices
+    // 214..453 — the whole of the old 454-float observation. That lets DuelingQNet.GrowInput transplant
+    // the shipped M54 net (campaign eval 83,265) into the wider net FUNCTION-PRESERVINGLY: the old
+    // weights keep their meaning, the new planes start at zero, so training begins from the best net we
+    // have rather than from scratch. Four from-scratch runs on the widened basis all peaked around
+    // 9-15K and then decayed (training journal), which is why this re-orientation exists.
+    // Planes 6-15 carry the tetris-aware terms, ALREADY GATED so the dense target stays LINEAR in them
+    // (a piecewise target only fitted to R^2 0.54, and spike s7 showed every evaluator tops out 100% of
+    // episodes at that accuracy).
     var feat: List<f64> = List<f64>()
-    for _a in 0..(ActionCount * 6) { feat.add(0.0) }
+    for _a in 0..(ActionCount * ObsPlanes) { feat.add(0.0) }
     for a in 0..ActionCount {
       let rot = this.actionRot(a)
       let x = this.actionCol(a)
@@ -685,17 +854,42 @@ class PgTetris {
       let y = this.dropY(curPiece, rot, x)
       if y < 0 { continue }
       let saved = this.saveRows()
-      this.simPlace(curPiece, rot, x, y)
-      feat[a * 6] = this.simLanding / 20.0
-      feat[a * 6 + 1] = this.simEroded / 8.0
-      feat[a * 6 + 2] = (this.rowTransitions() - preRowT) / 20.0
-      feat[a * 6 + 3] = (this.colTransitions() - preColT) / 20.0
-      feat[a * 6 + 4] = (this.holes() - preHoles) / 10.0
-      feat[a * 6 + 5] = (this.wellSum() - preWells) / 20.0
+      let cleared = this.simPlace(curPiece, rot, x, y)
+      let holeCount = this.holes()
+      let m5 = this.maxTapHeight(5)
+      let m4 = this.maxTapHeight(4)
+      let dig = holeCount > 0
+      let lineout = m5 < 4
+      let col9 = this.colHeight(WellCol - 1) - EvalMaxSafeCol9
+      let overLeft = this.colHeight(0) - m5
+      let overRight = this.colHeight(W - 1) - m4
+      let inacc = (if overLeft > 0 { overLeft } else { 0 }) + (if overRight > 0 { overRight } else { 0 })
+      let burnLines = if cleared > 0 && cleared < 4 { cleared } else { 0 }
+      let b = a * ObsPlanes
+      // planes 0-5: the M54 basis, unchanged (deltas, original divisors)
+      feat[b] = this.simLanding / 20.0
+      feat[b + 1] = this.simEroded / 8.0
+      feat[b + 2] = (this.rowTransitions() - preRowT) / 20.0
+      feat[b + 3] = (this.colTransitions() - preColT) / 20.0
+      feat[b + 4] = (holeCount - preHoles) / 10.0
+      feat[b + 5] = (this.wellSum() - preWells) / 20.0
+      // planes 6-15: the M57 tetris-aware terms, pre-gated
+      feat[b + 6] = (if lineout || dig { 0 } else { this.tetrisReady() }) / 4.0
+      feat[b + 7] = this.coveredWell() / 10.0
+      feat[b + 8] = (if lineout || dig { 0 } else { burnLines }) / 4.0
+      feat[b + 9] = if cleared == 4 { 1.0 } else { 0.0 }
+      feat[b + 10] = (if col9 > 0 { col9 } else { 0 }) / 10.0
+      feat[b + 11] = inacc / 10.0
+      feat[b + 12] = (if lineout { 0 } else { if dig { burnLines } else { 0 } }) / 4.0
+      feat[b + 13] = (if dig { holeCount } else { 0 }) / 20.0
+      feat[b + 14] = 1.0
+      // the evaluator penalises wells OUTSIDE the well column; plane 5 keeps the M54 meaning for the
+      // warm start, so the dense target reads this one instead.
+      feat[b + 15] = (this.wellSumExceptWell() - preWellsExc) / 20.0
       this.restoreRows(saved)
     }
-    for f in 0..6 {
-      for a2 in 0..ActionCount { obs.add(feat[a2 * 6 + f]) }
+    for f in 0..ObsPlanes {
+      for a2 in 0..ActionCount { obs.add(feat[a2 * ObsPlanes + f]) }
     }
     return obs
   }
@@ -876,7 +1070,7 @@ class PgTetDuelingNet {
   var advW: List<f64>
   var advB: List<f64>
 
-  init(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, valueW: List<f64>, valueB: List<f64>, advW: List<f64>, advB: List<f64>) {
+  constructor(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, valueW: List<f64>, valueB: List<f64>, advW: List<f64>, advB: List<f64>) {
     this.inputSize = inputSize
     this.actions = actions
     this.hidden = hidden

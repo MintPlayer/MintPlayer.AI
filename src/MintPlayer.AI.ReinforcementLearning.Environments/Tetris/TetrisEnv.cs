@@ -20,15 +20,24 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.Tetris;
 /// </summary>
 public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider, IStatefulEnvironment
 {
-    public const int ObservationSize = TetrisBoard.ObservationSize; // 454
+    public const int ObservationSize = TetrisBoard.ObservationSize; // 814 since M57.5
     public const int ActionCount = TetrisBoard.ActionCount;         // 40
-    /// <summary>Reward normalization: reward IS lines cleared (0–4) — already O(1), so ÷1.</summary>
+    /// <summary>Divisor on the realized reward. Kept at 1 (the M54 value).
+    /// M57.5 tried 20, on the theory that a realized reward of up to 12 was swamping the CENTRED dense
+    /// target (sd ~1.55) and teaching "whatever action I sampled is good". MEASURED WORSE: tet11 reached
+    /// only 1,589 at 80K where tet9 (scale 1) reached 14,970 at 60K, so the theory was wrong — scaling it
+    /// down removed signal rather than noise. The real defect was that the dense target was PIECEWISE and
+    /// only fitted to R^2 0.54; see TetrisDqnCampaign and spike s7.</summary>
     public const float RewardScale = 1f;
 
     private static readonly string[] PieceNames = ["I", "O", "T", "S", "Z", "L", "J"];
+    // M57.5: the widened basis (15 planes). Absolute afterstate values, not deltas.
     private static readonly string[] FeaturePlaneNames =
-        ["landing height (÷20)", "eroded piece cells (÷8)", "Δ row transitions (÷20)",
-         "Δ column transitions (÷20)", "Δ holes (÷10)", "Δ well depth (÷20)"];
+        ["landing height (÷20)", "eroded piece cells (÷8)", "row transitions (÷40)",
+         "column transitions (÷40)", "holes (÷20)", "well depth outside the well column (÷20)",
+         "tetris-ready rows (÷4)", "covered-well depth (÷10)", "burned (non-tetris) lines (÷4)",
+         "is a tetris (1/0)", "column 9 height over safe (÷10)", "rows above reachable wall height (÷10)",
+         "DIG mode (1/0)", "LINEOUT mode (1/0)", "placement is legal (1/0)"];
 
     /// <summary>Plain-language name per observation feature, index order of <c>buildObservation</c>.</summary>
     public static readonly IReadOnlyList<string> ObservationLabels = BuildObservationLabels();

@@ -21,7 +21,7 @@ class PgMlpNet {
   var wFlat: List<f64>       // per layer, row-major [in, out], concatenated
   var bFlat: List<f64>       // per layer [out], concatenated
 
-  init(sizes: List<i32>, wFlat: List<f64>, bFlat: List<f64>) {
+  constructor(sizes: List<i32>, wFlat: List<f64>, bFlat: List<f64>) {
     this.sizes = sizes
     this.wFlat = wFlat
     this.bFlat = bFlat
@@ -83,7 +83,7 @@ class PgMountainCarEnv {
   var lastTerminated: bool
   var lastTruncated: bool
 
-  init(maxEpisodeSteps: i32, shapeReward: bool) {
+  constructor(maxEpisodeSteps: i32, shapeReward: bool) {
     this.maxEpisodeSteps = maxEpisodeSteps
     this.shapeReward = shapeReward
     this.position = 0.0

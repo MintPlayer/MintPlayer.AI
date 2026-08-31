@@ -2261,6 +2261,207 @@ Coverage number = the fast bucket (`Category!=Slow`), stated next to the README 
   for the existing GPR push), `.gitignore` `coverage/` entry.
 - **M56.3 — README badge** + this PLAN entry.
 
+## M57 — Tetris techniques: tetris-aware evaluator, movement-aware placements, SRS mode, technique dial  *(planned 2026-08-30; branch `m57-tetris-techniques-plan`, PR #46; see `TETRIS_TECHNIQUES_PRD.md`)* 🟡
+
+**Where it stands (2026-08-31):** M57.pre, M57.0 and M57.1 done; **M57.5 done and the net shipped**
+(tet15, held-out A 91,891 / B 225.4, G1+G2 green, G3 not). **M57.2, M57.3, M57.4 and M57.6 are not
+started** — the tetris *rate* is what they are for, and it is still 1.4% against a 50% target.
+
+**Why:** owner asks after M55 — the trained net (1) doesn't make tetrises, (2) never slides a piece
+sideways *under* existing blocks (it always goes straight down), (3) can't T-spin or tuck-spin, and
+(4) should know the techniques real players use (DAS / hypertapping / rolling). Planned via a 4-agent
+investigation (repo/architecture map, NES-technique research, Tetris-AI literature, training
+feasibility + gates). **No spike run yet — M57.0 gates the arc and may end it early.**
+
+**The finding that reorders everything:** the dense regression target is **anti-tetris by
+construction**. It is the Dellacherie basis, whose `−20·Δwells` term *penalizes the well a tetris
+requires* while `+8·eroded` pays for clearing lines now — the net is explicitly trained to flatten and
+burn. The measured **0.01 tetrises/episode** (M54.3) is the target function doing what it says, not
+γ=0 myopia. **A γ=0 agent builds wells fine if the evaluator says wells are good**, so ask (1) is a
+*formula change*, not a horizon change. Meanwhile `RewardTetrisBonus` is declared at
+`tetris_solver.pg:63` and **never read there**, absent from the dense target and from both rollout
+values, reaching the learner as 1/9 of the gradient — raising it cannot work.
+
+**Correction to M54:** `TETRIS_PRD.md` §1/§7 claim an `enumeratePlacements()` seam "swappable for a
+BFS pathfinder". **It does not exist** (zero grep hits); the vertical-drop assumption is inlined at
+seven `.pg` sites plus the C# facade, the dense-target reader and the browser pilot.
+
+**Owner decisions:** SRS + kicks as a **second mode** (NRS stays, pin 472451993 must survive) ·
+**human input budget as a dial**, three visitor-facing radios (DAS 10 Hz / hypertapping 12 Hz /
+rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-scratch retrain accepted**.
+**Open:** spins as a strength lever (needs Guideline scoring — under NES scoring a T-spin double pays
+**100 vs a tetris's 1200**) vs spins as a pathfinder side-effect + browser demo. PRD recommends the latter.
+
+- **M57.pre — Polyglot 0.9.9 + `constructor`.** ✅ DONE 2026-08-30. Investigated whether M57 needs compiler
+  changes: **it does not.** The long-standing "Polyglot can't express a BFS queue" constraint
+  (`snake_solver.pg:266`, TS7022) **does not reproduce** — a real worklist BFS emits
+  `let frontier: number[] = []` and passes `tsc --strict`; `while`, records and nested generics all work; every
+  M57 construct compiled on the *old* 0.8.1 pin. No upstream issue filed (nothing to request).
+  Separately, on owner decision to standardise on `constructor(`, the repo bumped **0.8.1 → 0.9.9** (published
+  mid-task) and renamed **21 `init(` sites across all 7 solvers** (one anchored `sed`; no call sites exist).
+  **All parity pins held** — Tetris 472451993, CrazyFruits 481681208/95950, DAS 11/11, **529/529** fast bucket.
+  Two gotchas recorded for next time: the CLI **writes only when content changes** (chess/draughts twins kept
+  July mtimes yet are byte-identical to a fresh transpile — verify twins by content, never mtime), and the
+  0.9.9-vs-0.8.1 codegen signature is `this.bag.length = 0` vs `this.bag = []` (a cheap way to prove which CLI
+  ran; there is no `polyglot` on PATH and no `PolyglotTool` override here). Full record:
+  `polyglot-pilot/POLYGLOT_M57_FEASIBILITY.md`. **Convention from now on: `constructor(...)`, never `init(...)`.**
+- **M57.0 — Spikes.** ✅ RUN 2026-08-30 — **and they re-scope the arc** (throwaway Node harnesses, not
+  committed; full tables and protocols in `TETRIS_TECHNIQUES_PRD.md` §6.R). **S0 = GO, decisively:** the §0 diagnosis is confirmed —
+  splitting the `−Δwells` sign ALONE buys **+14.7% score and 11× the tetrises** with zero top-outs, and the
+  widened basis reaches **156,154 ± 10,532 vs Dellacherie's 97,983 ± 3,928 (+59%, CI-separated) with 4.93
+  tetrises/ep vs 0.57** on held-out seeds. **S0b:** CEM pushes the mean to 186K and TRT to 28.1% but with a
+  3× wider CI and **30% top-out** — fitness was raw score with no death term, so don't ship it as-is.
+  **S1 = NO-GO on tucks:** on the boards a good evaluator actually produces, tucks barely exist — **0% of
+  clean boards and 1% of garbage boards** expose one at DAS/L18 (gate needed ≥20%); they are plentiful only
+  on random/messy boards (19%). A good evaluator keeps its surface flat, so it never creates anything to tuck
+  under. The frame model itself is validated (on a hand-built ledge at the kill screen: DAS/hyper find **0**
+  tucks, rolling finds **13** — the known physics, reproduced). **S2 = NO-GO:** the extended set does not
+  improve protocol-B survival; tucks are chosen 0.8–1.4×/episode. *The −47% headline is CONFOUNDED — the
+  control (same path, tucks removed) does not reproduce the baseline — so only the sign and the gate outcome
+  are trustworthy; see §6.R's caveat.* **S1b not run.** *Consequences:* M57.1 is promoted to the whole arc;
+  M57.3's movement-aware action space loses its strength case (the frame simulator belongs in the browser
+  pilot, not the action space); the N=160 retrain is not yet justified — a widened-evaluator retrain at N=40
+  is. **S3 (added after an owner challenge — "maybe it can't get pieces to the side?") CORRECTS that last
+  point and is a GO:** S0–S2 all started at **level 0 (48 f/row), where input speed binds on nothing** — gate
+  G7 pre-registered exactly this blind spot and it was not honoured. With gravity PINNED, tap speed is a
+  first-order strength factor: max stack height still reaching the wall is **DAS 7 / hyper 9–11 / rolling 13
+  / 30Hz 15 at L29** (all 16 at L9), and score at **L19 is DAS 37,135 vs rolling 79,910 (+115%)**; **at the
+  kill screen DAS scores 0** (21 pieces, 2 well-column touches/ep) **vs rolling 37,135** (224 pieces, 34.6) —
+  the real rolling revolution reproduced from first principles. *8 eps, CIs ±25–31k, so L18/L19 orderings
+  within a few thousand aren't separated; 0-vs-37,135 is not a CI question.* **Synthesis: TWO independent
+  causes of flatness** — the `−Δwells` sign trap (wrong at every level, S0 fixes it) and genuine
+  unreachability at high gravity (RIGHT for DAS, wrong for rolling). The model has no input model at all, so
+  it can't tell the regimes apart. *Revised:* M57.1 gains `inaccessibleLeft/Right` + a LINEOUT-style mode
+  switch; **M57.3 is re-scoped not cancelled** — drop tucks, keep the tap-budgeted legality MASK over the
+  existing 40 actions (N stays 40, no action-count retrain); **G7 high-gravity protocol is now mandatory**;
+  the three radios are a genuine strength control, not an authenticity feature.
+- **M57.0 (original plan) — Spikes.** S0 evaluator widening (~15 min, no training, no engine work): GO if some
+  weighting reaches ≥2.0 tetrises/ep at score ≥85,000. S0b CEM on the widened basis (the un-run M54.7,
+  on a basis that can *express* tetris play — CMA-ES on the narrow basis provably converges back to
+  Dellacherie). S1 reachability census + S1b SRS-without-lock-delay check. S2 Dellacherie over the
+  extended set: **NO-GO if protocol-B survival is flat — a perfect evaluator that can't exploit the
+  extra placements proves a distilled γ=0 net won't either, cancelling the retrain.**
+- **M57.1 — Evaluator widening.** ✅ BUILT 2026-08-30 (PRD §6.S). In `tetris_solver.pg`'s `dellaScoreFor`,
+  so it lifts BOTH scripted tiers and the search tier at once; **obs planes, net and checkpoint deliberately
+  untouched** (this changes what the evaluator WANTS, not what the net SEES — no retrain forced yet).
+  Added `wellSumExceptWell` (the sign fix), `tetrisReady`, `coveredWell`, `colHeight`, `maxTapHeight` +
+  `setTapRate` + inaccessible-wall penalties, and **two mode switches**: LINEOUT (`maxTapHeight(5) < 4`) and
+  **DIG** (`holes > 0`) — the latter discovered by measurement, not design: without it the widened evaluator
+  scored +30% on A but **lost 52% of protocol-B survival**, because it refused to clear the singles that dig
+  a garbage board out. Weights CEM-tuned under a CONSTRAINED fitness
+  (`(A_score/100k + 0.6·A_tet/4) × min(1, B/364)`) so survival below baseline scales the objective down and
+  can't be bought back with score — the fix for S0b's 30%-top-out failure. **Measured, 30 eps, seeds 5000+:
+  dellacherie A 94,636 → 186,179 (+97%), tetrises 0.26 → 8.50 (33×), TRT 0.5% → 17.9%, protocol B 363.8 →
+  430.2 (+18%); della-search A 93,678 → 218,560 (+133%), 15.60 tetrises, TRT 44.0%, B 1413 (baseline 1480
+  right-censored).** **G1 no-regression PASSES on both protocols.** Deliberate re-pins: parity checksum
+  472451993 → **765594964** (the protocol drives the evaluator; rules untouched, TS twin re-verified) and
+  `SpikeBar_Dellacherie…` rewritten — the old test asserted 197.4 lines and ZERO top-outs, i.e. exactly the
+  flatten-and-burn behaviour this milestone removes; the new one pins score ≥110k / tetrises ≥2.0 /
+  lines ≥165 plus a ≤6/20 top-out watchdog. 529/529 fast bucket green. *Not done: the NET is unchanged, so
+  the shipped browser net still plays the old way — the dense target and obs planes still carry the narrow
+  basis, and widening those is what forces the M57.5 retrain (which now has a far better teacher to distil).*
+- **M57.1 (original plan) — Evaluator widening.** `tetrisReady`/`coveredWell`/**`burn`**/`col9`/`builtOutLeft`/hole-depth/
+  `inaccessibleLeft|Right` (StackRabbit's shipped weights), the `−Δwells` sign split, realized-reward
+  term dropped, mode-switched weights (`max5TapHeight < 4` ⇒ LINEOUT). **Gate:** the three copies of φ
+  (dense target, `dellaScoreFor`, obs planes) agree by test.
+- **M57.2 — Frame model into the `.pg`.** `NesInput` ported (the rate is unsettable today —
+  `DAS_FULL`/`DAS_RESET` are module consts), serialization widened, 11 DAS checks mirrored into CI.
+- **M57.3 — Movement-aware enumeration + tap dial.** Frame-simulation enumerator (a bounded forward `for`
+  sweep — preferred on *cost*, not expressibility: **Polyglot 0.8.1 turns out to handle a real BFS queue
+  fine**, see `polyglot-pilot/POLYGLOT_M57_FEASIBILITY.md`), tuck spots, input costs, `max4/max5TapHeight`.
+  **Drops M54's "no gravity clock" convention** — reachability is `f(board, piece, level, timeline)`,
+  so level enters the observation. **Gate:** `micro == macro` over *every* reachable placement.
+- **M57.4 — SRS second mode.** Kick tables (JLSTZ + I), CCW, T-spin detection, duplicate-state
+  canonicalization. **Gate:** NRS pin **unchanged** — `rotCount` is read by five enumerators, and
+  setting it to 4 for I/O/S/Z shifts every baseline *before a single kick fires*.
+- **M57.5 — Net basis + retrain.** ✅ DONE, net SHIPPED 2026-08-31 (tet15 — see the end of this entry).
+  ROOT CAUSE FOUND 2026-08-30 by a 3-agent investigation; full record
+  in PRD §6.U. Five runs failed, **three diagnoses were proposed and all three were refuted by
+  measurement**. The real cause: `DqnTrainer` keeps the REALIZED reward on the sampled arm and skips that
+  arm in the dense term (`DqnTrainer.cs:308-325`), so the taken action is labelled in a different unit
+  system from its 39 siblings — and what matters is the **SIGN** of that disagreement. Measured:
+  **Crazy Fruits +0.82** (works), **Tetris M54 narrow +0.97** (works, 83,265), **M57.5 mean-centred
+  −1.59** (collapses). A negative bias drags down exactly the action the policy rates best, and it
+  strengthens as ε decays (−1.20 → −1.59), which mechanically predicts *"peaks early then decays in
+  lockstep with the ε schedule"* — what all five runs did. **L5's mean-centring flipped that sign.**
+  **Fix (one line): anchor on the per-state MAX over legal actions, not the mean**, so the best action's
+  target is 0, everything else negative, and the realized reward pulls the argmax UP — the configuration
+  both working recipes share. First measurement, tet15 vs tet9 at 10K steps with only the anchoring
+  changed: **score 222 → 4,149** at 10K. **RESULT: 94,688 at 90K — the first net of the arc to BEAT
+  the shipped 83,265** — top-outs collapsing 20/20 → **1/20**, 489 pieces of a 500 cap, 0.65
+  tetrises/ep (tet6: 0.25) and loss **0.17** (tet6: 0.23), i.e. a better fit on a richer target.
+  Confirms the sign diagnosis end-to-end. The run went on to **99,598** at 195K (1.20 tetrises/ep),
+  and that keep-best is the shipped checkpoint. **SHIPPED 2026-08-31** after clearing the held-out
+  gate (seeds 9000+e, the tet7 precedent): protocol **A 91,891 ± 8,998** (tet6: 85,199 ± 3,519 —
+  ahead but CI-overlapping) and protocol **B 225.4 ± 33.3 pieces** (tet6: 176.2 — CI-separated ahead,
+  +28%), search tier A 99,904 / B 422.5. **G1 and G2 green; G3 (TRT 1.4% vs the 50% target) is not** —
+  that gate belongs to the technique work, not the anchoring fix. Copied to
+  `src/RLDemo.Web/wwwroot/models/tetris.dqn.ckpt` (854-input, 1.15 MB, LFS), which also re-enables the
+  web `net` tier the stale-guard had been demoting.
+  *Refuted, recorded so they are not retried:* **(a)** `RewardScale` 20 — measured worse, and the mechanism
+  explains it (bias moves to −1.97; the defect is the OFFSET, not the magnitude). **(b)** "the widened
+  evaluator is fragile to approximate" — spike s7 injected *independent Gaussian* noise where a trained net
+  makes *structured* errors; it predicted 141 pieces at R² 0.80 while tet6 achieved 455 at R² 0.89; spike
+  removed. **(c)** "the net underfits, use `--grow`" — **fit was never the problem** (R² measured from the
+  checkpoints: tet6 **0.893**, tet14 **0.868**; the earlier 0.615 was an artefact of dividing a
+  `Huber + 8×dense` loss by the target variance), the target is **exactly linear** in the observation so
+  even `Linear(854,40)` fits it, **a net at R² 0.868 scored 1,486** (so an R² gate would have green-lit it),
+  and **`--grow` cannot deliver capacity anyway**: `DqnGrowth.Stages` tops out at `[128,128,128]`, *half*
+  the shipped `[256,256]`, and it **throws** on any off-ladder trunk (`DuelingQNet.cs:118`).
+  *Why Crazy Fruits works:* its dense target is ONE plane read back and scaled — same units, same sign as
+  the realized reward, **uncentred** — and its episodes never terminate, so a ranking error costs one move
+  rather than the game.
+  *Repo defects to fix here:* `TetrisLab` missing `if (grow) hidden = DqnGrowth.Start;` (present in Snake
+  and FruitCake — `--grow` is a landmine for every DQN game); `DqnGrowth` ceiling below the shipped trunk;
+  `--noisy` on Tetris cold-starts and shares the ε-greedy state file (no `ToNoisy`, no split `StateId`);
+  Lab defaults reproduce the known-failed tet1–tet3 recipe; `NOISYNETS_PRD.md` still says "not started"
+  (shipped M28, and measured to **match not beat** ε-greedy on FruitCake); `TETRIS_PRD.md` §3.6 documents a
+  `--garbage N` flag that does not exist; `TetrisEnv.cs:23` says obs 814 (it is 854); no checkpoint
+  plane-layout version stamp.
+  *Operational (L12):* two Lab processes silently shared `data/tet14train`, interleaving its CSV and
+  checkpoints — **verify the previous process is gone before relaunching**, and never infer a run is dead
+  from an empty log (output is buffered).
+  *Framework fix shipped (owner ask — "prevent this from happening in future trainings"):* an exclusive
+  **training-directory lock** (`Core/Checkpoints/TrainingDirectoryLock.cs`, acquired in `LabHost.Run`) so two
+  runs can never share a `--data` directory again. It is an **OS file handle** (`FileShare.None` +
+  `DeleteOnClose`), not a PID file, so it survives a hard kill without going stale — which matters because a
+  running `Lab.exe` locks the build outputs and gets killed routinely. Read-only modes (`--eval-only`,
+  `--baselines`) do not take it. The failure names the holding pid and its full command line. 5 tests in
+  `TrainingDirectoryLockTests`, including that an abandoned handle does not strand the directory.
+  *Next:* the tet15 net passed its held-out evaluation and is now in `wwwroot/models/`; what remains is a
+  live re-verify of the browser path (the stale guard had demoted the old 454 net, and should now load the
+  854 one). Gated on **held-out play**, never on a fit statistic — L9. If more strength is needed after the
+  technique work, the next lever is a **shared per-candidate scorer**, which needs no trainer change:
+  `IValueNet` only requires `Forward([B,854]) → [B,40]`, so a net that internally reshapes the candidate
+  block to `[B*40,16]` and applies a shared MLP satisfies it — ~40× fewer parameters and 40 labelled
+  examples per state instead of one. `TETRIS_PRD.md:76` rejected this as "doesn't fit `DqnTrainer`'s fixed
+  masked head"; that reason does not hold.
+  **None of this blocks M57.1**, which is independent, shipped and measured, and is what delivers the goal
+  today (search tier **15.60 tetrises/ep, TRT 44%** vs 0.26).
+- **M57.5 (original plan) — Retrain.** From scratch (an action-head change forces it; nothing in the repo grows an
+  action head). N=160 via `(rot, col, depth 0..3)`, obs 1174, **~5.9 h measured** — **GPU is not a
+  lever** (largest GEMM 14.9M MACs vs the 256M routing threshold). **One net, tap budget applied as an
+  inference-time mask** — exact at γ=0 since the target is `w·φ(afterstate)`, so the three radios cost
+  *zero* extra training (vs 35 h for six nets).
+- **M57.6 — Web.** Three radios in both modes; the pilot **replays** the engine's input sequence
+  instead of re-planning and silently substituting (`stuck>=2`). Browser ≤50 ms/move **at risk**:
+  `dellaSearchAction(8,5)` ≈ 289·N ⇒ ~120 ms at N=160; re-tune beams.
+- **M57.7 — Ship.** 🟡 PR #46, carrying M57.pre/M57.0/M57.1/M57.5 and the §9 corrections. The spike
+  harnesses are deliberately not committed (PRD §6.R); M54's `tetris_spike.mjs` predates the arc and stays.
+
+**Gates (held-out seeds 9000+e — the tet7 lesson: 88,425 on the *selecting* seeds was a complete wash
+held-out):** no-regression A ≥80,000 / B ≥165 · B ≥200 · **TRT ≥50%** (currently ≈0.05%) ·
+score-per-piece CI-separated · **tuck ablation ≥5% on B** (same net, tucks masked — no public A/B of
+this exists) · spin count reported not gated · **paired per-seed** technique sweep · a **start-level-18/19
+protocol** (at level 0 nothing is input-constrained, so without it the dial measures noise).
+
+**Corrections landing in the same PR:** the false `enumeratePlacements` claim · `TetrisLab` still
+defaults to the *failed* tet1 recipe (γ=.995/n3/128²/PBRS-on) and the campaign xmldoc asserts the
+opposite of what shipped · training CLI args recorded nowhere · **hypertap ceiling is 30.05 Hz, not
+60** (the pad is sampled once per frame and counts only newly-pressed bits — current code allows 60
+shifts/s on a 240 Hz display) · no ARE/line-clear delay (so the free DAS redirect doesn't exist) ·
+stale-ckpt guards check `inputSize` only · dead `RewardTetrisBonus` · CI runs no node harness.
+
 ## Testing strategy (cross-cutting, from research)
 
 1. **Known-solved thresholds** as integration tests (median over ≥3 seeds) — slow bucket.

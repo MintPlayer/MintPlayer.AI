@@ -32,6 +32,31 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
     protected override IReadOnlyList<string>? OutputLabels => TetrisEnv.ActionLabels;
 
     /// <summary>The Crazy Fruits recipe re-pointed at long-horizon survival (PRD §3.7 locks).</summary>
+    /// <summary>
+    /// M57.5c warm-start. The observation gained the tetris-aware planes (454 -> 854), so a net trained
+    /// before M57.5 must have its input grown to fit. This is function-preserving ONLY because planes 0-5
+    /// are still the M54 basis, in the M54 order, occupying exactly indices 214..453 — i.e. the whole of
+    /// the old observation is an unchanged PREFIX of the new one, and the added planes start at zero
+    /// weight. <c>ObservationLayout_KeepsTheM54BasisAsItsPrefix</c> pins that.
+    ///
+    /// The rule this encodes: you cannot swap an input's MEANING when auto-widening a net. Growing is
+    /// safe only as an append. Reordering or reinterpreting an existing plane would keep the width legal
+    /// while silently feeding the transplanted weights different quantities — no guard would catch it,
+    /// because both the input width and the action count would still match.
+    /// </summary>
+    protected override IValueNet AdaptWarmNet(DuelingQNet loaded)
+    {
+        if (loaded.InputSize == TetrisEnv.ObservationSize) return loaded;
+        if (loaded.InputSize > TetrisEnv.ObservationSize)
+            throw new InvalidOperationException(
+                $"warm net input {loaded.InputSize} EXCEEDS the observation {TetrisEnv.ObservationSize} — " +
+                "the observation shrank, so the old weights no longer line up. Retrain from scratch.");
+
+        Log($"growing the loaded net's input {loaded.InputSize} → {TetrisEnv.ObservationSize} " +
+            "(M54 basis preserved as the observation prefix; new planes zero-init, so the policy is unchanged at step 0)");
+        return loaded.GrowInput(TetrisEnv.ObservationSize);
+    }
+
     protected override DqnOptions BaseOptions => new()
     {
         Dueling = true,
@@ -56,23 +81,71 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
     // the canonical evaluator up to a PER-STATE constant (absolute-vs-delta transitions), which the dueling
     // V head absorbs. ÷10 into target units. A legal placement always has landing > 0 (row 19 lands at
     // 0.05·20); a zero landing plane ⇒ illegal ⇒ NaN (unsupervised).
-    private const int PlaneBase = 214; // 200 board cells + 7 + 7 piece one-hots
+    private const int PlaneBase = TetrisBoard.Width * TetrisBoard.Height + 2 * TetrisBoard.PieceCount;
     private const int A = TetrisEnv.ActionCount;
 
-    private static float[] DenseTargetsFromObservation(float[] obs)
+    // M57.5: reconstruct the WIDENED evaluator per action, exactly. The planes carry ABSOLUTE afterstate
+    // quantities plus the DIG/LINEOUT mode flags, so this applies the same branch the engine does in
+    // PgTetris.evalAfterstate — no per-state constant for the dueling V head to absorb, and no
+    // hand-written inverse of the normalizers to drift (the M54 hazard).
+    // Weights MUST match the .pg consts; TetrisEnvTests pins agreement against the engine's own scores.
+    private const float WHoles = -5.582f, WWells = -0.847f, WReady = 3.402f, WCovered = -0.201f;
+    private const float WBurn = -3.700f, WBurnDig = -0.650f, WHoleDig = -0.505f, WCol9 = -0.355f;
+    private const float WTetris = 7.047f, WInacc = -0.975f;
+
+    internal static float[] DenseTargetsFromObservation(float[] obs)
     {
         var targets = new float[A];
         for (int a = 0; a < A; a++)
         {
-            float landing = obs[PlaneBase + a];
-            if (landing <= 0f) { targets[a] = float.NaN; continue; }
-            float eroded = obs[PlaneBase + A + a];
-            float dRowT = obs[PlaneBase + 2 * A + a];
-            float dColT = obs[PlaneBase + 3 * A + a];
-            float dHoles = obs[PlaneBase + 4 * A + a];
-            float dWells = obs[PlaneBase + 5 * A + a];
-            targets[a] = (-20f * landing + 8f * eroded - 20f * dRowT - 20f * dColT - 40f * dHoles - 20f * dWells) / 10f;
+            float Plane(int i) => obs[PlaneBase + i * A + a];
+
+            if (Plane(14) < 0.5f) { targets[a] = float.NaN; continue; } // explicit legality flag
+
+            // Pure LINEAR combination — the planes are already gated, so there is no DIG/LINEOUT branch
+            // here (a piecewise target only fitted to R^2 0.54, and spike s7 showed that accuracy tops
+            // out 100% of episodes for ANY evaluator).
+            // Planes 2-5 are DELTAS (kept in the M54 form so the shipped net transplants); the target
+            // needs absolutes, but the two differ only by a per-state constant, which the centring below
+            // removes exactly. Plane 15 carries the well-column-excluded well delta the evaluator wants.
+            float s = -Plane(0) * 20f + Plane(1) * 8f - Plane(2) * 20f - Plane(3) * 20f
+                    + WHoles * Plane(4) * 10f + WWells * Plane(15) * 20f
+                    + WReady * Plane(6) * 4f + WCovered * Plane(7) * 10f
+                    + WBurn * Plane(8) * 4f + WTetris * Plane(9)
+                    + WCol9 * Plane(10) * 10f + WInacc * Plane(11) * 10f
+                    + WBurnDig * Plane(12) * 4f + WHoleDig * Plane(13) * 20f;
+            targets[a] = s;
         }
+
+        // Anchor the per-state targets on the per-state MAX over legal actions, then scale.
+        //
+        // WHY MAX AND NOT MEAN. DqnTrainer keeps the REALIZED reward on the sampled arm and skips that arm
+        // in the dense term (DqnTrainer.cs:308-325), so the taken action is labelled in a different unit
+        // system from its 39 siblings. What matters is the SIGN of that disagreement, measured over
+        // 15 eps x 400 placements:
+        //
+        //     recipe                                  bias (realized - dense) on the taken arm
+        //     Crazy Fruits (works)                                   +0.82
+        //     Tetris M54 narrow (works, 83,265)                      +0.97
+        //     Tetris M57.5 widened + MEAN-centred (fails)            -1.59
+        //
+        // A positive bias REINFORCES the argmax; a negative one drags down exactly the action the policy
+        // rates best, and it strengthens as epsilon decays (-1.20 at eps 0.5 -> -1.59 at 0.05). That is a
+        // mechanical prediction of "peaks early, then decays", which is what all five M57.5 runs did, in
+        // lockstep with the epsilon schedule. Mean-centring is what flipped that sign.
+        //
+        // Anchoring on the max puts the best action's target at exactly 0 and every other below it, so the
+        // realized reward (mean +0.39, up to 12 on a tetris) pulls the argmax arm UP again - restoring the
+        // configuration both working recipes share. Everything mean-centring was introduced for survives:
+        // the dueling V head absorbs a per-state constant either way, the huge negative offset that killed
+        // tet8 is still removed, and the RANKING is identical.
+        //
+        // Also refuted by the same measurement: RewardScale 20 (tet11) moves the bias to -1.97, i.e. WORSE
+        // - the defect is the offset, not the magnitude, which is why that run failed.
+        float max = float.NegativeInfinity;
+        for (int a = 0; a < A; a++) if (!float.IsNaN(targets[a]) && targets[a] > max) max = targets[a];
+        if (float.IsNegativeInfinity(max)) return targets;
+        for (int a = 0; a < A; a++) if (!float.IsNaN(targets[a])) targets[a] = (targets[a] - max) / 10f;
         return targets;
     }
 
