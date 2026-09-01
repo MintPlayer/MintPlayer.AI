@@ -20,8 +20,8 @@ base ref).
 
 Three sources were investigated: the `MintPlayer.Dotnet.Tools` workflows (local clone, commits
 `f69b852` and `827a945`), the coverage server itself (`C:\Repos\Coverage`, repo
-`MintPlayer/CodeCoverage` — `docs/upload-api.md` is the authoritative contract), and this
-repo's CI.
+`MintPlayer/CodeCoverage`, since archived — the action and the upload-API contract now live
+in `MintPlayer/MintPlayer.Spark` under `apps/CodeCoverage`), and this repo's CI.
 
 Findings that shape the design:
 
@@ -29,7 +29,7 @@ Findings that shape the design:
   This repo's single test project (`tests/MintPlayer.AI.ReinforcementLearning.Tests`) already
   references `coverlet.collector` 10.0.1, so no package changes are needed. Each run writes
   `coverage.cobertura.xml` into a GUID-named subdirectory of `--results-directory`.
-- **Upload** is the `MintPlayer/CodeCoverage/action@master` composite action. It gzips each
+- **Upload** is the `MintPlayer/MintPlayer.Spark/apps/CodeCoverage/action@coverage-upload-v1` composite action. It gzips each
   report, POSTs `multipart/form-data` to `/api/uploads` (repository, commitSha [PR *head* sha,
   not the merge commit], branch, runId/runAttempt, `git ls-files` output for path matching, one
   `files` part per report), and optionally POSTs `/api/uploads/finish`. Multiple reports/jobs

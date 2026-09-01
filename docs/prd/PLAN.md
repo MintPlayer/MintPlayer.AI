@@ -2245,7 +2245,7 @@ Mirror MintPlayer.Dotnet.Tools' coverage setup (`f69b852` + its `827a945` refine
 repo: `dotnet test --collect:"XPlat Code Coverage"` (coverlet.collector was already referenced)
 with a repo-root `coverlet.runsettings` (Cobertura; excludes `obj/`-generated code — Polyglot
 transpiler output + source generators — which `git ls-files` can't resolve server-side), and
-upload via `MintPlayer/CodeCoverage/action@master` in both `pull-request.yml` and
+upload via `MintPlayer/MintPlayer.Spark/apps/CodeCoverage/action@coverage-upload-v1` in both `pull-request.yml` and
 `build-master.yml`. Auth is **OIDC** (`id-token: write`) — the repo is public, so the service
 auto-provisions it and no `COVERAGE_TOKEN` secret is needed. Guards adopted from the reference:
 fork-PR skip, `hashFiles` no-report guard, `disable-search: true`, `finish: true`,
