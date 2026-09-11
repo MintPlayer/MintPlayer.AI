@@ -31,8 +31,40 @@ public class BlockDudeObservationTests
     [Fact]
     public void ObservationSize_MatchesTheDeclaredLayout()
     {
-        // 21x13 window x 4 planes + an 8x5 coarse map + 9 scalars.
-        Assert.Equal((21 * 13 * 4) + (8 * 5) + 9, BlockDudeBoard.ObservationSize);
+        // 21x13 window x 4 planes + an 8x5 coarse map x 2 channels + 9 scalars.
+        Assert.Equal((21 * 13 * 4) + (8 * 5 * 2) + 9, BlockDudeBoard.ObservationSize);
+    }
+
+    [Fact]
+    public void TheCoarseMapSeparatesWallsFromBlocks()
+    {
+        // Outside the 21x13 window the net must still be able to tell terrain from carryable material —
+        // otherwise "go fetch a block from over there" is invisible to it. Two boards with identical walls but
+        // blocks in different places must differ in the BLOCK channel while agreeing on the WALL channel.
+        const int planeFloats = 21 * 13 * 4, coarseCells = 8 * 5;
+
+        var blocksLeft = Board(
+            "..........D",
+            ".PBB.......",
+            "WWWWWWWWWWW");
+        var blocksRight = Board(
+            "..........D",
+            ".P.......BB",
+            "WWWWWWWWWWW");
+
+        var left = blocksLeft.BuildObservation();
+        var right = blocksRight.BuildObservation();
+
+        var wallLeft = left[planeFloats..(planeFloats + coarseCells)];
+        var wallRight = right[planeFloats..(planeFloats + coarseCells)];
+        Assert.Equal(wallLeft, wallRight);
+
+        var blockLeft = left[(planeFloats + coarseCells)..(planeFloats + 2 * coarseCells)];
+        var blockRight = right[(planeFloats + coarseCells)..(planeFloats + 2 * coarseCells)];
+        Assert.NotEqual(blockLeft, blockRight);
+
+        // Both boards hold the same amount of material, just in different places.
+        Assert.Equal(blockLeft.Sum(), blockRight.Sum(), 3);
     }
 
     [Fact]

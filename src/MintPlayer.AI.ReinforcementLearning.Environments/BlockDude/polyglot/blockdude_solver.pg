@@ -301,8 +301,14 @@ class PgBlockDudeBoard {
   static fn obsPlanes(): i32 => 4
   static fn obsCoarseW(): i32 => 8
   static fn obsCoarseH(): i32 => 5
+  // TWO coarse channels — wall density and block density, kept SEPARATE. Counting them together would leave the
+  // net unable to tell terrain from carryable material anywhere outside the 21x13 window, which is exactly the
+  // information "go fetch a block from over there" needs: on level 11, 42 blocks sit on a 29x19 board and most
+  // of them are outside the window at any moment.
+  static fn obsCoarseChannels(): i32 => 2
   static fn obsScalars(): i32 => 9
-  static fn obsSize(): i32 => obsWindowW() * obsWindowH() * obsPlanes() + obsCoarseW() * obsCoarseH() + obsScalars()
+  static fn obsSize(): i32 =>
+    obsWindowW() * obsWindowH() * obsPlanes() + obsCoarseW() * obsCoarseH() * obsCoarseChannels() + obsScalars()
 
   fn buildObservation(): List<f64> {
     var obs: List<f64> = List<f64>()
@@ -333,34 +339,38 @@ class PgBlockDudeBoard {
       }
     }
 
-    // Coarse solid-density map over the WHOLE board, bucketed by relative position so it is scale-invariant.
-    // This is deliberately a 2D density rather than a column-height profile: an earlier revision of the plan
-    // assumed Block Dude terrain is a 1D height profile, which is false — every original level has overhangs
-    // (18 to 68 of them), so a height profile would discard real structure.
+    // Coarse density maps over the WHOLE board, bucketed by RELATIVE position so they are scale-invariant.
+    // Channel 0 = wall density (fixed terrain), channel 1 = block density (carryable material).
+    //
+    // Deliberately a 2D density rather than a column-height profile: an earlier revision of the plan assumed
+    // Block Dude terrain is a 1D height profile, which is false — every original level has overhangs (18 to 68
+    // of them) — so a profile would discard real structure.
     let cw = obsCoarseW()
     let ch = obsCoarseH()
-    for cy in 0..ch {
-      for cx in 0..cw {
-        let x0 = cx * this.width / cw
-        let x1 = (cx + 1) * this.width / cw
-        let y0 = cy * this.height / ch
-        let y1 = (cy + 1) * this.height / ch
-        var total = 0
-        var solid = 0
-        for y in y0..y1 {
-          for x in x0..x1 {
-            total += 1
-            if this.tileAt(x, y) == bdWall() {
-              solid += 1
-            } else if this.hasBlock(x, y) {
-              solid += 1
+    for channel in 0..obsCoarseChannels() {
+      for cy in 0..ch {
+        for cx in 0..cw {
+          let x0 = cx * this.width / cw
+          let x1 = (cx + 1) * this.width / cw
+          let y0 = cy * this.height / ch
+          let y1 = (cy + 1) * this.height / ch
+          var total = 0
+          var hits = 0
+          for y in y0..y1 {
+            for x in x0..x1 {
+              total += 1
+              if channel == 0 {
+                if this.tileAt(x, y) == bdWall() { hits += 1 }
+              } else {
+                if this.hasBlock(x, y) { hits += 1 }
+              }
             }
           }
-        }
-        if total == 0 {
-          obs.add(0.0)
-        } else {
-          obs.add((f64)solid / (f64)total)
+          if total == 0 {
+            obs.add(0.0)
+          } else {
+            obs.add((f64)hits / (f64)total)
+          }
         }
       }
     }
