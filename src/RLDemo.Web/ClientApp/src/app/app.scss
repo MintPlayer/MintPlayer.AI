@@ -1,6 +1,10 @@
 .topbar {
   display: flex;
   align-items: center;
+  // The nav is now thirteen links wide. Without wrapping it forced the PAGE to ~1130px at phone width, so every
+  // page scrolled sideways — the board fitted, the site did not.
+  flex-wrap: wrap;
+  row-gap: 0.5rem;
   gap: 2rem;
   padding: 0.8rem 1.5rem;
   background: #1a1f2b;
@@ -19,6 +23,8 @@
 
   nav {
     display: flex;
+    flex-wrap: wrap;
+    row-gap: 0.4rem;
     gap: 1.25rem;
 
     a {

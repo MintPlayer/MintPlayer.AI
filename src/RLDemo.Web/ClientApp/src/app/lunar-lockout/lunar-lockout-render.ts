@@ -125,10 +125,20 @@ export class LunarLockoutRenderer {
   private nudgeDirection = 0;
   private nudgeAt = 0;
 
+  private resizeObserver: ResizeObserver | null = null;
+
   constructor(private readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D is unavailable.');
     this.ctx = ctx;
+
+    // The backing store is sized from the element, so it must follow the element. A window resize or an
+    // orientation change moves no game state, so nothing else would repaint — leaving a stale buffer for the
+    // browser to scale up, which reads as a blurry board at the wrong size.
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.kick());
+      this.resizeObserver.observe(canvas);
+    }
   }
 
   /** Honours the viewer's reduced-motion preference by collapsing every duration to zero. */
@@ -235,6 +245,8 @@ export class LunarLockoutRenderer {
   dispose(): void {
     if (this.frame) cancelAnimationFrame(this.frame);
     this.frame = 0;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
   }
 
   /** Returns true while something is still moving, so the loop knows to schedule another frame. */

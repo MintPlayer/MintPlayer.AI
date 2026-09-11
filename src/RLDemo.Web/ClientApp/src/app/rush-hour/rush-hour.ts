@@ -1,4 +1,4 @@
-import { Component, DestroyRef, ElementRef, computed, effect, inject, isDevMode, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, afterNextRender, computed, effect, inject, isDevMode, signal, viewChild } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { AnalyzeResponse, DeckLevel, RushHourApi, SolveResponse, StatusResponse, VehicleDto } from './rush-hour-api';
 import { EXIT_ROW, SIZE, canMove, canPlace, clampRange, initialPositions, isSolved, occupancy } from './rush-hour-logic';
@@ -123,10 +123,22 @@ export class RushHour {
 
   constructor() {
     effect(() => this.draw());
+
+    // The backing store is sized from the element, so it must follow the element. Without this, any layout
+    // change that does not also write a signal — switching to play mode, resizing the window, rotating a phone —
+    // leaves a stale buffer that the browser simply scales up, which looks like a blurry, wrongly-sized board.
+    const destroyRef = inject(DestroyRef);
+    afterNextRender(() => {
+      const canvas = this.canvasRef()?.nativeElement;
+      if (!canvas || typeof ResizeObserver === 'undefined') return;
+      const observer = new ResizeObserver(() => this.draw());
+      observer.observe(canvas);
+      destroyRef.onDestroy(() => observer.disconnect());
+    });
     void this.refreshAnalysis();
     void this.loadDeck();
     this.pollStatus();
-    inject(DestroyRef).onDestroy(() => this.stopPlayback());
+    destroyRef.onDestroy(() => this.stopPlayback());
 
     const replayId = inject(ActivatedRoute).snapshot.queryParamMap.get('replay');
     if (replayId) void this.loadGalleryEntry(replayId);

@@ -72,10 +72,20 @@ export class BlockDudeRenderer {
   private frame = 0;
   private wonAt = 0;
 
+  private resizeObserver: ResizeObserver | null = null;
+
   constructor(private readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D is unavailable.');
     this.ctx = ctx;
+
+    // The backing store is sized from the element, so it must follow the element. These boards vary from 19x8 to
+    // 29x19, so the stage's aspect changes per level too — without this, a resize leaves a stale buffer that the
+    // browser scales up.
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.kick());
+      this.resizeObserver.observe(canvas);
+    }
   }
 
   private get animated(): boolean {
@@ -141,6 +151,8 @@ export class BlockDudeRenderer {
   dispose(): void {
     if (this.frame) cancelAnimationFrame(this.frame);
     this.frame = 0;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
   }
 
   private draw(): boolean {

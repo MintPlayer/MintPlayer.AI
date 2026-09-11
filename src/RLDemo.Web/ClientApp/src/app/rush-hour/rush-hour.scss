@@ -27,6 +27,12 @@
 }
 
 .board-panel {
+  // A DEFINITE width, not `fit-content`. As a bare flex item this panel shrink-to-fits its content, while the
+  // canvas inside asks for `width: 100%` of the panel — circular, and the browser resolves it with the canvas's
+  // intrinsic 300px default. That is why the board rendered at 300x275 until something else forced a reflow.
+  width: min(502px, 100%);
+  flex: 0 1 auto;
+
   canvas {
     display: block;
     // The board used to be a fixed 502x460, which simply overflowed a phone. It now scales, and `draw()` sizes
