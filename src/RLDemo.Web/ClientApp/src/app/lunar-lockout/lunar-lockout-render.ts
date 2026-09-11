@@ -1,23 +1,42 @@
 /**
- * Lunar Lockout board renderer — Canvas 2D, deliberately sober (PRD §10.4).
+ * Lunar Lockout board renderer — Canvas 2D, deliberately sober (PRD §10.4, §12.3).
  *
- * Flat fills, no gradients, no shadows, no glow. Five palette tokens, every one of them carrying meaning:
- * nothing, hairline, helper robot, target robot, goal. Identity comes from POSITION, not hue — Rush Hour's
- * 16-colour vehicle ramp is explicitly not adopted here.
+ * Flat fills, no gradients, no shadows, no glow. Five palette tokens, each carrying meaning: nothing, hairline,
+ * helper robot, target robot, goal. Identity comes from POSITION, not hue — Rush Hour's 16-colour vehicle ramp is
+ * explicitly not adopted.
  *
- * The renderer owns no game state. It is handed a snapshot and a slide to animate, and parks itself when the
- * animation finishes so a resting board costs zero frames (the same structure as the snake tube renderer).
+ * Robots are rockets that point where they are aimed. The rest pose is 45 degrees; aiming rotates to an axis;
+ * an ILLEGAL aim does not rotate at all, so a rocket never looks launchable in a direction it cannot fly.
+ *
+ * TWO ENTRY POINTS, on purpose:
+ *   - `push(snapshot, slide)` — a board CHANGE. Immutable snapshot, as before.
+ *   - `hover(state)`          — transient AIM state. Mutates three fields and kicks the loop. It must never go
+ *                               through `push`, which clones the robot list and would allocate a snapshot per
+ *                               pointermove (up to 120/sec) for a board that is otherwise free.
+ *
+ * The loop parks whenever nothing is animating, so a resting board costs zero frames. Every animation here has a
+ * hard end time for exactly that reason — no springs, no decay integrators.
  */
 
 /** Robot positions as cell indices (`row * 5 + col`); index 0 is the target robot. */
 export interface LunarSnapshot {
   robots: number[];
-  /** Index of the currently selected robot, or -1. */
-  selected: number;
-  /** Landing cells for the selected robot's legal slides, for the hint overlay. */
-  hints: number[];
+  /** Robot selected by KEYBOARD, or -1. Draws the outer ring and the four-direction hints. */
+  keyboardSelected: number;
+  /** Landing cells for the keyboard selection's legal slides. Empty when aiming with a pointer. */
+  keyboardHints: number[];
   solved: boolean;
   moves: number;
+}
+
+/** Transient aim state: which robot is engaged, where it is pointing, and whether that direction can fire. */
+export interface LunarHover {
+  robot: number;
+  /** 0=up, 1=right, 2=down, 3=left, or -1 for none (rest pose). */
+  direction: number;
+  legal: boolean;
+  /** Landing cell for a legal aim, else -1. */
+  landing: number;
 }
 
 interface LunarPalette {
@@ -34,11 +53,11 @@ const DARK: LunarPalette = {
 };
 
 /**
- * Kept for when the app gains a theme, but NOT selected from `prefers-color-scheme`: the playground is
- * dark-only today — no `data-theme`, no toggle, every page hard-codes its palette. Following the OS here painted
- * a light board onto a dark page for anyone whose system is set to light.
+ * Kept for when the app gains a theme, but NOT selected from `prefers-color-scheme`: the playground is dark-only
+ * today — no `data-theme`, no toggle, every page hard-codes its palette. Following the OS painted a light board
+ * onto a dark page for anyone whose system was set to light.
  */
-const LIGHT: LunarPalette = {
+export const LUNAR_LIGHT: LunarPalette = {
   void_: '#f4f6fa', hair: '#d3d9e4', robot: '#5b6378', target: '#2563eb', goal: '#2f8f66', text: '#14171f',
 };
 
@@ -51,24 +70,44 @@ const MS_PER_CELL = 55;
 const MAX_SLIDE_MS = 220;
 const VEIL_MS = 200;
 
+/**
+ * Rotation is front-loaded easing, deliberately unlike the linear slide: a slide is a RESULT, a rotation is a
+ * RESPONSE TO THE HAND and must feel immediate. 140ms sits under the ~180ms where lag becomes perceptible and
+ * above the ~100ms where motion reads as a jump.
+ */
+const ROTATE_MS = 140;
+const REST_ANGLE = -Math.PI / 4;   // nose up-right
+const NUDGE_MS = 120;
+
+/** Direction code (0=up,1=right,2=down,3=left) to the angle whose nose points that way. */
+const DIRECTION_ANGLE = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+
 export class LunarLockoutRenderer {
   private readonly ctx: CanvasRenderingContext2D;
-  private palette: LunarPalette;
+  private palette: LunarPalette = DARK;
   private snapshot: LunarSnapshot | null = null;
+  private hovered: LunarHover | null = null;
 
-  /** In-flight slide: the robot, where it came from, and when it started. */
+  /** Per-robot rotation, tweened independently: several rockets can be returning to rest while one aims. */
+  private angle: number[] = [];
+  private angleFrom: number[] = [];
+  private angleTo: number[] = [];
+  private angleAt: number[] = [];
+
   private moving = -1;
   private fromCell = -1;
   private startedAt = 0;
   private durationMs = 0;
   private frame = 0;
   private solvedAt = 0;
+  private nudgeRobot = -1;
+  private nudgeDirection = 0;
+  private nudgeAt = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D is unavailable.');
     this.ctx = ctx;
-    this.palette = DARK;
   }
 
   /** Honours the viewer's reduced-motion preference by collapsing every duration to zero. */
@@ -80,6 +119,14 @@ export class LunarLockoutRenderer {
   push(snapshot: LunarSnapshot, slide?: { robot: number; from: number }): void {
     const wasSolved = this.snapshot?.solved ?? false;
     this.snapshot = snapshot;
+
+    // Angles survive a board change: robots keep their index, so a rocket mid-rotation is not reset by a move.
+    while (this.angle.length < snapshot.robots.length) {
+      this.angle.push(REST_ANGLE);
+      this.angleFrom.push(REST_ANGLE);
+      this.angleTo.push(REST_ANGLE);
+      this.angleAt.push(0);
+    }
 
     if (slide && this.animated) {
       const distance = cellDistance(slide.from, snapshot.robots[slide.robot]);
@@ -93,6 +140,65 @@ export class LunarLockoutRenderer {
 
     if (snapshot.solved && !wasSolved) this.solvedAt = performance.now();
     this.kick();
+  }
+
+  /** Resets every rocket to rest with no animation — for a level change or a restart. */
+  resetAngles(): void {
+    for (let i = 0; i < this.angle.length; i++) {
+      this.angle[i] = REST_ANGLE;
+      this.angleFrom[i] = REST_ANGLE;
+      this.angleTo[i] = REST_ANGLE;
+      this.angleAt[i] = 0;
+    }
+    this.hovered = null;
+    this.kick();
+  }
+
+  /**
+   * Transient aim state. Cheap by design: no snapshot, no allocation beyond the caller's small object.
+   * An illegal aim leaves the rocket at rest — refusing to point is the primary signal that it cannot fire.
+   */
+  hover(state: LunarHover | null): void {
+    const previous = this.hovered;
+    this.hovered = state;
+
+    const wanted = (robot: number) =>
+      state && state.robot === robot && state.direction >= 0 && state.legal
+        ? DIRECTION_ANGLE[state.direction]
+        : REST_ANGLE;
+
+    // Re-target only what changed, so a pointermove that does not alter the aim starts no tween.
+    const touched = new Set<number>();
+    if (state) touched.add(state.robot);
+    if (previous) touched.add(previous.robot);
+    for (const robot of touched) {
+      if (robot < 0 || robot >= this.angle.length) continue;
+      this.retarget(robot, wanted(robot));
+    }
+    this.kick();
+  }
+
+  /** A refused launch: a short nudge along the attempted axis, no rotation and no colour change. */
+  refuse(robot: number, direction: number): void {
+    if (!this.animated) return;         // the status line carries the message; motion is pure decoration here
+    this.nudgeRobot = robot;
+    this.nudgeDirection = direction;
+    this.nudgeAt = performance.now();
+    this.kick();
+  }
+
+  private retarget(robot: number, target: number): void {
+    if (Math.abs(normalise(this.angleTo[robot] - target)) < 1e-6) return;
+    if (!this.animated) {
+      this.angle[robot] = target;
+      this.angleFrom[robot] = target;
+      this.angleTo[robot] = target;
+      this.angleAt[robot] = 0;
+      return;
+    }
+    this.angleFrom[robot] = this.angle[robot];
+    this.angleTo[robot] = target;
+    this.angleAt[robot] = performance.now();
   }
 
   private kick(): void {
@@ -116,8 +222,8 @@ export class LunarLockoutRenderer {
     if (!snapshot) return false;
 
     const { ctx } = this;
+    const now = performance.now();
 
-    // Device-pixel-ratio backing store, logical coordinates on top.
     const dpr = Math.min(window.devicePixelRatio || 1, 3);
     const cssSize = this.canvas.clientWidth || LOGICAL;
     if (this.canvas.width !== Math.round(cssSize * dpr)) {
@@ -133,16 +239,30 @@ export class LunarLockoutRenderer {
     this.drawLattice();
     this.drawGoal();
 
+    // ── advance the rotation tweens ────────────────────────────────────────────────────────────────────────
     let busy = false;
-    const now = performance.now();
-    let progress = 1;
+    for (let i = 0; i < this.angle.length; i++) {
+      if (!this.angleAt[i]) continue;
+      const t = Math.min(1, (now - this.angleAt[i]) / ROTATE_MS);
+      const eased = 1 - (1 - t) * (1 - t);                 // easeOutQuad
+      this.angle[i] = this.angleFrom[i] + normalise(this.angleTo[i] - this.angleFrom[i]) * eased;
+      if (t < 1) busy = true;
+      else {
+        this.angle[i] = this.angleTo[i];
+        this.angleAt[i] = 0;
+      }
+    }
+
+    let slideProgress = 1;
     if (this.moving >= 0) {
-      progress = this.durationMs <= 0 ? 1 : Math.min(1, (now - this.startedAt) / this.durationMs);
-      if (progress < 1) busy = true;
+      slideProgress = this.durationMs <= 0 ? 1 : Math.min(1, (now - this.startedAt) / this.durationMs);
+      if (slideProgress < 1) busy = true;
       else this.moving = -1;
     }
 
-    if (snapshot.selected >= 0 && !busy) this.drawHints(snapshot);
+    // Hints are hidden only while a robot is BETWEEN cells — not merely because a frame is scheduled, or every
+    // rotation would blink them off.
+    if (this.moving < 0) busy = this.drawHints(snapshot) || busy;
 
     for (let i = 0; i < snapshot.robots.length; i++) {
       let cx = colOf(snapshot.robots[i]) * CELL + CELL / 2;
@@ -150,10 +270,25 @@ export class LunarLockoutRenderer {
       if (i === this.moving) {
         const fx = colOf(this.fromCell) * CELL + CELL / 2;
         const fy = rowOf(this.fromCell) * CELL + CELL / 2;
-        cx = fx + (cx - fx) * progress;      // linear: no easing theatrics, no overshoot
-        cy = fy + (cy - fy) * progress;
+        cx = fx + (cx - fx) * slideProgress;              // linear: no easing theatrics, no overshoot
+        cy = fy + (cy - fy) * slideProgress;
       }
-      this.drawRobot(cx, cy, i === 0, i === snapshot.selected && !busy);
+
+      if (i === this.nudgeRobot) {
+        const t = (now - this.nudgeAt) / NUDGE_MS;
+        if (t >= 1) this.nudgeRobot = -1;
+        else {
+          const swing = Math.sin(t * Math.PI) * 0.06 * CELL;
+          if (this.nudgeDirection === 0) cy -= swing;
+          else if (this.nudgeDirection === 1) cx += swing;
+          else if (this.nudgeDirection === 2) cy += swing;
+          else cx -= swing;
+          busy = true;
+        }
+      }
+
+      const engaged = this.hovered?.robot === i || snapshot.keyboardSelected === i;
+      this.drawRocket(cx, cy, this.angle[i] ?? REST_ANGLE, i === 0, engaged);
     }
 
     if (snapshot.solved) busy = this.drawSolvedVeil(snapshot, now) || busy;
@@ -195,15 +330,29 @@ export class LunarLockoutRenderer {
     ctx.stroke();
   }
 
-  /** Unobtrusive: a dashed hairline to each landing cell, and a hollow ring where the robot would stop. */
-  private drawHints(snapshot: LunarSnapshot): void {
+  /**
+   * Pointer aim draws ONE hint — the aimed direction. With a rotating rocket, four simultaneous dashes plus a
+   * turning glyph are two competing signals. Keyboard selection keeps all four, because without a pointer there
+   * is no aimed direction.
+   */
+  private drawHints(snapshot: LunarSnapshot): boolean {
     const { ctx } = this;
-    const from = snapshot.robots[snapshot.selected];
+    const aim = this.hovered;
+
+    if (aim && aim.direction >= 0 && !aim.legal) {
+      this.drawRefusalStub(snapshot.robots[aim.robot], aim.direction);
+      return false;
+    }
+
+    const from = aim && aim.landing >= 0 ? snapshot.robots[aim.robot] : snapshot.robots[snapshot.keyboardSelected];
+    const landings = aim && aim.landing >= 0 ? [aim.landing] : snapshot.keyboardHints;
+    if (from === undefined || landings.length === 0) return false;
+
     ctx.save();
     ctx.setLineDash([5, 7]);
     ctx.strokeStyle = this.palette.hair;
     ctx.lineWidth = 1;
-    for (const landing of snapshot.hints) {
+    for (const landing of landings) {
       ctx.beginPath();
       ctx.moveTo(colOf(from) * CELL + CELL / 2, rowOf(from) * CELL + CELL / 2);
       ctx.lineTo(colOf(landing) * CELL + CELL / 2, rowOf(landing) * CELL + CELL / 2);
@@ -211,38 +360,89 @@ export class LunarLockoutRenderer {
     }
     ctx.setLineDash([]);
     ctx.lineWidth = 0.03 * CELL;
-    for (const landing of snapshot.hints) {
+    for (const landing of landings) {
       ctx.beginPath();
       ctx.arc(colOf(landing) * CELL + CELL / 2, rowOf(landing) * CELL + CELL / 2, 0.34 * CELL, 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.restore();
+    return false;
   }
 
-  private drawRobot(cx: number, cy: number, isTarget: boolean, isSelected: boolean): void {
+  /** "The road ends here" — a stub capped by a bar. No red, no new token; the rocket also refuses to rotate. */
+  private drawRefusalStub(cell: number, direction: number): void {
     const { ctx } = this;
+    const cx = colOf(cell) * CELL + CELL / 2;
+    const cy = rowOf(cell) * CELL + CELL / 2;
+    const dx = direction === 1 ? 1 : direction === 3 ? -1 : 0;
+    const dy = direction === 2 ? 1 : direction === 0 ? -1 : 0;
+
+    ctx.save();
+    ctx.strokeStyle = this.palette.hair;
+    ctx.setLineDash([5, 7]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx + dx * 0.30 * CELL, cy + dy * 0.30 * CELL);
+    ctx.lineTo(cx + dx * 0.46 * CELL, cy + dy * 0.46 * CELL);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+    ctx.lineWidth = 0.03 * CELL;
+    ctx.beginPath();
+    const bx = cx + dx * 0.46 * CELL;
+    const by = cy + dy * 0.46 * CELL;
+    ctx.moveTo(bx - dy * 0.08 * CELL, by - dx * 0.08 * CELL);
+    ctx.lineTo(bx + dy * 0.08 * CELL, by + dx * 0.08 * CELL);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * A flat dart with a notched tail, authored pointing UP in local space. Fill only — the silhouette does the
+   * work, so it survives being 14px wide on a phone.
+   */
+  private drawRocket(cx: number, cy: number, angle: number, isTarget: boolean, engaged: boolean): void {
+    const { ctx } = this;
+
+    if (engaged) {
+      // Drawn in WORLD space so the ring does not spin with the hull.
+      ctx.strokeStyle = this.palette.text;
+      ctx.lineWidth = 0.04 * CELL;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 0.46 * CELL, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+
     ctx.fillStyle = isTarget ? this.palette.target : this.palette.robot;
     ctx.beginPath();
-    ctx.arc(cx, cy, 0.34 * CELL, 0, Math.PI * 2);
+    ctx.moveTo(0, -0.40 * CELL);            // nose
+    ctx.lineTo(0.185 * CELL, 0.10 * CELL);  // shoulder
+    ctx.lineTo(0.145 * CELL, 0.31 * CELL);  // tail
+    ctx.lineTo(0, 0.17 * CELL);             // notch — makes the rear unmistakable at small sizes
+    ctx.lineTo(-0.145 * CELL, 0.31 * CELL);
+    ctx.lineTo(-0.185 * CELL, 0.10 * CELL);
+    ctx.closePath();
     ctx.fill();
 
-    // The target robot is SHAPE-distinct as well as hue-distinct: under deuteranopia its blue and the goal's
-    // green can converge, so it carries an inner ring no helper has.
+    // The target keeps TWO shape cues, not just hue: with a rotating glyph a hue-only distinction gets worse
+    // under deuteranopia, not better.
     if (isTarget) {
       ctx.strokeStyle = this.palette.void_;
       ctx.lineWidth = 0.05 * CELL;
       ctx.beginPath();
-      ctx.arc(cx, cy, 0.2 * CELL, 0, Math.PI * 2);
+      ctx.arc(0, -0.06 * CELL, 0.10 * CELL, 0, Math.PI * 2);
       ctx.stroke();
-    }
 
-    if (isSelected) {
-      ctx.strokeStyle = this.palette.text;
-      ctx.lineWidth = 0.04 * CELL;
       ctx.beginPath();
-      ctx.arc(cx, cy, 0.44 * CELL, 0, Math.PI * 2);
+      ctx.moveTo(-0.145 * CELL, 0.31 * CELL);
+      ctx.lineTo(0.145 * CELL, 0.31 * CELL);
       ctx.stroke();
     }
+    ctx.restore();
   }
 
   private drawSolvedVeil(snapshot: LunarSnapshot, now: number): boolean {
@@ -271,3 +471,11 @@ export class LunarLockoutRenderer {
 const rowOf = (cell: number) => Math.floor(cell / LUNAR_SIZE);
 const colOf = (cell: number) => cell % LUNAR_SIZE;
 const cellDistance = (a: number, b: number) => Math.abs(rowOf(a) - rowOf(b)) + Math.abs(colOf(a) - colOf(b));
+
+/** Shortest arc: rotating from rest (−45°) to "left" must travel −45°, not +315°. */
+function normalise(radians: number): number {
+  let value = radians;
+  while (value <= -Math.PI) value += Math.PI * 2;
+  while (value > Math.PI) value -= Math.PI * 2;
+  return value;
+}

@@ -20,8 +20,20 @@
     display: block;
     width: 100%;
     height: 100%;
-    touch-action: manipulation; // a slow puzzle: tap-to-select, no drag gestures to protect
-    cursor: pointer;
+    // We own dragging now. `manipulation` would still let the browser claim pan-x/pan-y, so a downward drag on a
+    // rocket would scroll the page and the gesture would die with a pointercancel.
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;      // no long-press callout over the board
+    -webkit-tap-highlight-color: transparent;
+    // cursor is set from TS: `pointer` only while aiming somewhere the rocket can actually fly.
+    cursor: default;
+
+    &:focus-visible {
+      outline: 2px solid #6ea8fe;
+      outline-offset: 2px;
+    }
   }
 }
 
@@ -35,7 +47,8 @@
   color: #6ea8fe;
 }
 
-// A four-way pad, thumb-reachable on a phone. 56px clears the 44px WCAG target with room to spare.
+// Demoted to a second path: the primary input is aiming the rocket itself. Still 48px, over the 44px WCAG
+// target, because for anyone using a head-pointer or a switch device this is the ONLY pointer affordance.
 .pad {
   display: flex;
   flex-direction: column;
@@ -49,17 +62,22 @@
   }
 
   .pad-btn {
-    width: 56px;
-    height: 56px;
-    font-size: 1.25rem;
+    width: 48px;
+    height: 48px;
+    font-size: 1.15rem;
     color: #aab2c5;
     background: #232938;
     border: 1px solid #3a4154;
     border-radius: 8px;
     -webkit-tap-highlight-color: transparent;
 
-    &:hover {
+    &:hover:not(:disabled) {
       color: #e6e8ee;
+    }
+
+    &:disabled {
+      opacity: 0.35;
+      cursor: default;
     }
   }
 }

@@ -1,27 +1,28 @@
 <h1>Lunar Lockout</h1>
 
 <p class="intro">
-  Slide the <strong>blue</strong> robot onto the centre. A robot only moves if another robot lies in that
-  direction, and it travels until it rests against it — the edge of the board will not stop anything.
+  Point at the side of a rocket you want it to fly, then click. A rocket only moves if another rocket lies in
+  that direction, and it travels until it rests against it — the edge of the board will not stop anything, so a
+  rocket that refuses to turn has nothing to stop it that way.
 </p>
 
 <div class="lunar-stage">
-  <canvas #lunarCanvas (pointerdown)="onCanvasPointer($event)" aria-label="Lunar Lockout board"></canvas>
+  <canvas #lunarCanvas
+          tabindex="0"
+          role="application"
+          aria-label="Lunar Lockout board. Point at a side of a rocket to aim it, then click to launch."
+          (pointerdown)="onPointerDown($event)"
+          (pointermove)="onPointerMove($event)"
+          (pointerup)="onPointerUp($event)"
+          (pointercancel)="onPointerCancel($event)"
+          (pointerleave)="onPointerLeave()"
+          (keydown)="onKeyDown($event)"></canvas>
 </div>
 
 <p class="status" role="status">{{ status() }}</p>
 @if (hint(); as text) {
   <p class="hint">{{ text }}</p>
 }
-
-<div class="pad">
-  <button type="button" class="pad-btn" (click)="slide(0)" aria-label="Slide up">↑</button>
-  <div class="pad-row">
-    <button type="button" class="pad-btn" (click)="slide(3)" aria-label="Slide left">←</button>
-    <button type="button" class="pad-btn" (click)="slide(2)" aria-label="Slide down">↓</button>
-    <button type="button" class="pad-btn" (click)="slide(1)" aria-label="Slide right">→</button>
-  </div>
-</div>
 
 <div class="actions">
   <button type="button" [color]="colors.secondary" (click)="changeLevel(-1)" [disabled]="levelIndex() === 0">
@@ -41,8 +42,25 @@
   <span class="moves">{{ moves() }} move{{ moves() === 1 ? '' : 's' }}</span>
 </div>
 
+<!-- Kept as a second path, not the primary one: it is the only pointer affordance for anyone who can click but
+     cannot drag, and the visible discoverability surface for the arrow keys. Each direction is disabled when the
+     selected rocket has nothing to stop it that way, so it states the rule instead of refusing a click. -->
+<div class="pad">
+  <button type="button" class="pad-btn" (click)="slideSelected(0)"
+          [disabled]="!legalDirections()[0]" aria-label="Launch up">↑</button>
+  <div class="pad-row">
+    <button type="button" class="pad-btn" (click)="slideSelected(3)"
+            [disabled]="!legalDirections()[3]" aria-label="Launch left">←</button>
+    <button type="button" class="pad-btn" (click)="slideSelected(2)"
+            [disabled]="!legalDirections()[2]" aria-label="Launch down">↓</button>
+    <button type="button" class="pad-btn" (click)="slideSelected(1)"
+            [disabled]="!legalDirections()[1]" aria-label="Launch right">→</button>
+  </div>
+</div>
+
 <p class="keys">
-  Tap a robot to select it (or press its number), then use the arrow keys or the pad. <kbd>Z</kbd> undoes,
-  <kbd>R</kbd> restarts. The hint runs the exact breadth-first solver in your browser — the same search that
-  verified every level's move count.
+  On a phone, press a rocket and drag the way you want it to go, then lift to launch — drag back to the middle to
+  cancel. Tap a rocket (or press its number) to select it for the arrow keys and the pad. <kbd>Z</kbd> undoes,
+  <kbd>R</kbd> restarts, <kbd>Esc</kbd> deselects. The hint runs the exact breadth-first solver in your browser —
+  the same search that verified every level's move count.
 </p>
