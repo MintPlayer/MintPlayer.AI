@@ -1,5 +1,8 @@
 {
-  "targets": ["csharp", "typescript"],
+  "targets": [
+    "csharp",
+    "typescript"
+  ],
   "include": [
     {
       "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/Chess/polyglot/chess_solver.pg",
@@ -20,6 +23,11 @@
       "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/polyglot/fruitcake_solver.pg",
       "target": "typescript",
       "output": "src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake_solver"
+    },
+    {
+      "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/LunarLockout/polyglot/lunarlockout_solver.pg",
+      "target": "typescript",
+      "output": "src/RLDemo.Web/ClientApp/src/app/lunar-lockout/lunarlockout_solver"
     },
     {
       "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/MountainCar/polyglot/mountaincar_solver.pg",

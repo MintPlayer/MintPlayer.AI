@@ -1,0 +1,341 @@
+// lunarlockout_solver.pg — single-source Lunar Lockout engine + exact oracle (M58), transpiled to C# and TS.
+//
+// ONE source for the rules, the exact BFS oracle and (later) the net forward pass, so the C# training campaign
+// and the browser both run identical logic. Rules verified against ThinkFun's published instructions
+// (see docs/prd/WEBGAMES_RETIREMENT_PRD.md §5.2):
+//   - 5x5 grid; robots occupy one cell each.
+//   - A robot may slide up/right/down/left ONLY IF another robot lies somewhere in that direction; it travels
+//     until it rests against that robot.
+//   - The board edge is NOT a backstop: a slide with no blocking robot ahead is ILLEGAL, so robots can never
+//     leave the grid.
+//   - You win when the target (red) robot rests on the centre cell.
+//
+// Polyglot notes (PRD §8.3) — the language has NO dictionary, set or queue, and `Array<T>()` cannot be sized:
+//   - the BFS frontier is a `List<i32>` plus an integer head cursor (there is no removeFirst, so never dequeue);
+//   - the visited/index structure is the hand-rolled open-addressing `PgIntMap` below;
+//   - state keys are PACKED INTEGERS, never strings (strings have no ordering and no map, so a string key
+//     degenerates to a linear scan) and never records (record `==` compares List fields BY REFERENCE);
+//   - keys stay inside i32 (30 bits used) because i64 lowers to TypeScript `bigint` — correct but allocating.
+
+import { List } from "std.collections"
+import "std.strings"
+
+// ── Open-addressing i32 -> i32 map (Polyglot has no Dictionary/HashSet) ───────────────────────────────────────
+// Linear probing, power-of-two capacity, never resized: callers size it to ~2x the expected state count so the
+// load factor stays low. `-1` is the empty-slot sentinel, which is safe because every key we store is a packed
+// non-negative integer.
+class PgIntMap {
+  var keys: List<i32>
+  var vals: List<i32>
+  var mask: i32
+  var count: i32
+
+  constructor(capacityPow2: i32) {
+    this.keys = List<i32>()
+    this.vals = List<i32>()
+    for _i in 0..capacityPow2 {
+      this.keys.add(-1)
+      this.vals.add(0)
+    }
+    this.mask = capacityPow2 - 1
+    this.count = 0
+  }
+
+  // 32-bit integer finalizer (the classic xor-multiply-xor mix). Constants fit in i32 so the multiply wraps
+  // identically on .NET and JS (the spec masks integer overflow to the operand width on every target).
+  static fn mix(key: i32): i32 {
+    var h = key
+    h ^= h >> 16
+    h *= 0x45d9f3b
+    h ^= h >> 16
+    h *= 0x45d9f3b
+    h ^= h >> 16
+    return h
+  }
+
+  // Stored value for `key`, or -1 when absent.
+  fn get(key: i32): i32 {
+    var i = mix(key) & this.mask
+    while this.keys[i] != -1 {
+      if this.keys[i] == key { return this.vals[i] }
+      i = (i + 1) & this.mask
+    }
+    return -1
+  }
+
+  // Inserts key -> value when absent. Returns true when it inserted, false when the key was already present.
+  fn add(key: i32, value: i32): bool {
+    var i = mix(key) & this.mask
+    while this.keys[i] != -1 {
+      if this.keys[i] == key { return false }
+      i = (i + 1) & this.mask
+    }
+    this.keys[i] = key
+    this.vals[i] = value
+    this.count += 1
+    return true
+  }
+}
+
+// ── Board ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// `robots[0]` is ALWAYS the target (red) robot; robots[1..] are helpers. Helpers are functionally
+// interchangeable — they only slide and block — so the canonical key sorts them, which collapses symmetric
+// states and shrinks the graph.
+class PgLunarBoard {
+  var robots: List<i32> // cell indices, row * 5 + col
+
+  constructor(robots: List<i32>) {
+    this.robots = robots
+  }
+
+  static fn size(): i32 => 5
+  static fn cells(): i32 => 25
+  static fn centre(): i32 => 12 // row 2, col 2
+
+  // Index of the robot occupying `cell`, or -1 when the cell is empty.
+  fn occupantAt(cell: i32): i32 {
+    for i in 0..this.robots.count {
+      if this.robots[i] == cell { return i }
+    }
+    return -1
+  }
+
+  fn isSolved(): bool => this.robots[0] == centre()
+
+  // Landing cell for sliding robot `r` in direction `d` (0=up, 1=right, 2=down, 3=left), or -1 when the move is
+  // illegal — no blocking robot ahead (the edge does not stop a robot), or the robot already rests against one.
+  fn landing(r: i32, d: i32): i32 {
+    let pos = this.robots[r]
+    var dr = 0
+    var dc = 0
+    if d == 0 { dr = -1 }
+    else if d == 1 { dc = 1 }
+    else if d == 2 { dr = 1 }
+    else { dc = -1 }
+
+    var cr = pos / 5
+    var cc = pos % 5
+    var blocked = false
+    while true {
+      let nr = cr + dr
+      let nc = cc + dc
+      if nr < 0 { break }
+      if nr >= 5 { break }
+      if nc < 0 { break }
+      if nc >= 5 { break }
+      if this.occupantAt(nr * 5 + nc) >= 0 {
+        blocked = true
+        break
+      }
+      cr = nr
+      cc = nc
+    }
+    if !blocked { return -1 }
+    let land = cr * 5 + cc
+    if land == pos { return -1 }
+    return land
+  }
+
+  // Action encoding: robotIndex * 4 + direction. With at most 6 robots that is 24 actions, so an optimal-action
+  // mask fits an i32.
+  static fn actionCount(robotCount: i32): i32 => robotCount * 4
+
+  fn isLegal(action: i32): bool => this.landing(action / 4, action % 4) >= 0
+
+  fn applyAction(action: i32): PgLunarBoard {
+    let r = action / 4
+    let land = this.landing(r, action % 4)
+    var next: List<i32> = List<i32>()
+    for i in 0..this.robots.count { next.add(this.robots[i]) }
+    next[r] = land
+    return PgLunarBoard(next)
+  }
+
+  // Canonical packed key: target in the low 5 bits, then sorted helper positions 5 bits each. 1 target + up to 5
+  // helpers = 30 bits, inside i32 (so TypeScript keeps it a `number`, not a `bigint`).
+  fn key(): i32 {
+    var helpers: List<i32> = List<i32>()
+    for i in 1..this.robots.count { helpers.add(this.robots[i]) }
+
+    // Insertion sort — List has no sort, and these arrays are tiny.
+    for i in 1..helpers.count {
+      let v = helpers[i]
+      var j = i - 1
+      while j >= 0 {
+        if helpers[j] <= v { break }
+        helpers[j + 1] = helpers[j]
+        j -= 1
+      }
+      helpers[j + 1] = v
+    }
+
+    var k = this.robots[0]
+    for i in 0..helpers.count { k = k | (helpers[i] << (5 + i * 5)) }
+    return k
+  }
+
+  // Parses a 5-row grid: 'R' the target robot, '.' empty, anything else a helper. Row 0 is the TOP row, matching
+  // the level assets.
+  static fn fromGrid(rows: List<string>): PgLunarBoard {
+    var target = -1
+    var helpers: List<i32> = List<i32>()
+    for r in 0..rows.count {
+      let row = rows[r]
+      for c in 0..row.len() {
+        let ch = row.charAt(c)
+        if ch == "." { continue }
+        let cell = r * 5 + c
+        if ch == "R" { target = cell } else { helpers.add(cell) }
+      }
+    }
+    var robots: List<i32> = List<i32>()
+    robots.add(target)
+    for i in 0..helpers.count { robots.add(helpers[i]) }
+    return PgLunarBoard(robots)
+  }
+}
+
+// ── Exact oracle ──────────────────────────────────────────────────────────────────────────────────────────────
+// Labels EVERY state reachable from the start with its true distance-to-goal and the full set of optimal
+// actions. Two passes, because a Lunar Lockout slide has no general inverse (unlike a Rush Hour slide, whose
+// reversibility lets RushHourOracle treat the graph as undirected and skip straight to a backward BFS):
+//   1. forward BFS from the start, recording every edge explicitly;
+//   2. reverse those edges in memory, then multi-source BFS from every solved state.
+//
+// `truncated` reports that the graph exceeded `maxStates` and NOTHING was labelled — callers must log that as a
+// rejection rather than silently treating it as "no labels".
+class PgLunarOracle {
+  var keys: List<i32>    // state id -> packed key
+  var dist: List<i32>    // state id -> distance to goal, -1 when the goal is unreachable from it
+  var optMask: List<i32> // state id -> bitmask of every action that steps one closer to the goal
+  var index: PgIntMap    // packed key -> state id
+  var robotCount: i32
+  var truncated: bool
+
+  constructor(start: PgLunarBoard, maxStates: i32) {
+    this.keys = List<i32>()
+    this.dist = List<i32>()
+    this.optMask = List<i32>()
+    this.robotCount = start.robots.count
+    this.truncated = false
+
+    var capacity = 1024
+    while capacity < maxStates * 2 { capacity = capacity << 1 }
+    this.index = PgIntMap(capacity)
+
+    // ── pass 1: forward BFS, recording states and edges ──
+    var boards: List<PgLunarBoard> = List<PgLunarBoard>()
+    var edgeFrom: List<i32> = List<i32>()
+    var edgeTo: List<i32> = List<i32>()
+    var edgeAction: List<i32> = List<i32>()
+
+    this.index.add(start.key(), 0)
+    this.keys.add(start.key())
+    boards.add(start)
+
+    let actions = PgLunarBoard.actionCount(this.robotCount)
+    var head = 0
+    while head < boards.count {
+      let cur = boards[head]
+      let curId = head
+      head += 1
+
+      for a in 0..actions {
+        let land = cur.landing(a / 4, a % 4)
+        if land < 0 { continue }
+        let next = cur.applyAction(a)
+        let nk = next.key()
+        var nid = this.index.get(nk)
+        if nid < 0 {
+          if this.keys.count >= maxStates {
+            this.truncated = true
+            this.keys.clear()
+            this.dist.clear()
+            this.optMask.clear()
+            return
+          }
+          nid = this.keys.count
+          this.index.add(nk, nid)
+          this.keys.add(nk)
+          boards.add(next)
+        }
+        edgeFrom.add(curId)
+        edgeTo.add(nid)
+        edgeAction.add(a)
+      }
+    }
+
+    let n = this.keys.count
+    for _i in 0..n {
+      this.dist.add(-1)
+      this.optMask.add(0)
+    }
+
+    // ── pass 2: reverse adjacency as head/next linked lists over the edge arrays ──
+    var revHead: List<i32> = List<i32>()
+    for _i in 0..n { revHead.add(-1) }
+    var revNext: List<i32> = List<i32>()
+    for e in 0..edgeTo.count {
+      revNext.add(revHead[edgeTo[e]])
+      revHead[edgeTo[e]] = e
+    }
+
+    // ── pass 2b: multi-source BFS backwards from every solved state ──
+    var frontier: List<i32> = List<i32>()
+    for id in 0..n {
+      if boards[id].isSolved() {
+        this.dist[id] = 0
+        frontier.add(id)
+      }
+    }
+    var fh = 0
+    while fh < frontier.count {
+      let id = frontier[fh]
+      fh += 1
+      var e = revHead[id]
+      while e >= 0 {
+        let pred = edgeFrom[e]
+        if this.dist[pred] < 0 {
+          this.dist[pred] = this.dist[id] + 1
+          frontier.add(pred)
+        }
+        e = revNext[e]
+      }
+    }
+
+    // ── optimal-action masks: every action stepping exactly one closer to the goal ──
+    // Supervising against the full set matters: cross-entropy against one arbitrary representative penalises the
+    // other equally-optimal actions and flattens the policy (the same lesson RushHourOracle records).
+    for e in 0..edgeFrom.count {
+      let f = edgeFrom[e]
+      let t = edgeTo[e]
+      if this.dist[f] < 0 { continue }
+      if this.dist[t] < 0 { continue }
+      if this.dist[t] == this.dist[f] - 1 {
+        this.optMask[f] = this.optMask[f] | (1 << edgeAction[e])
+      }
+    }
+  }
+
+  // Optimal move count from the state the oracle was built on, or -1 when unsolvable.
+  fn optimalFromStart(): i32 {
+    if this.truncated { return -1 }
+    if this.keys.count == 0 { return -1 }
+    return this.dist[0]
+  }
+
+  fn stateCount(): i32 => this.keys.count
+
+  // Distance to goal for an arbitrary board, or -1 when unreachable/unknown.
+  fn distanceOf(board: PgLunarBoard): i32 {
+    let id = this.index.get(board.key())
+    if id < 0 { return -1 }
+    return this.dist[id]
+  }
+
+  fn optimalActionsOf(board: PgLunarBoard): i32 {
+    let id = this.index.get(board.key())
+    if id < 0 { return 0 }
+    return this.optMask[id]
+  }
+}
