@@ -379,17 +379,34 @@ These 12 are the held-out gate set (D4); a training generator must not be able t
 
 ## 6. Salvage from the redundant three
 
-### 6.1 Rush Hour levels — harvest, then dedupe
+### 6.1 Rush Hour levels — harvest ABANDONED: the source data is not decodable
 
-`C:\Repos\WebGames\RushHour\Scripts\levels.ts` holds **40 official ThinkFun levels** (ids 1–40, typed
-`{ id, difficulty: 'beginner'|'intermediate'|'advanced'|'expert', vehicles[] }`).
+`C:\Repos\WebGames\RushHour\Scripts\levels.ts` advertises **40 official ThinkFun levels**. The plan was to
+convert them to `VehicleDto[]`, run them through `RushHourDeckStore.Upsert` (which validates the board and
+computes BFS-optimal moves) and add whichever were not already among the deck's 79.
 
-This repo's committed deck (`src/RLDemo.Web/wwwroot/rushhour-deck.json`) **already holds 79 levels**, so
-the marginal gain may be small or zero. Therefore: convert the 40 boards to `VehicleDto[]`, run them
-through `RushHourDeckStore.Upsert` (which validates the board and computes BFS-optimal moves), **compare
-against the existing 79 by canonical board signature, and add only genuinely new boards**. If the overlap
-is total, record that and add nothing — the harvest is then just proof that deleting WebGames loses no
-content. The ThinkFun `difficulty` tier is metadata the current deck lacks; carry it over if boards match.
+**They do not decode into legal Rush Hour boards, under any plausible reading of their encoding.**
+
+The file's own helper says `width === 1` means *vertical* — yet the red car is declared with `width: 1`, and
+a vertical red car can never reach the exit. That contradiction prompted a systematic check rather than a
+guess: all 16 combinations of (swap the first two arguments) × (which width value means horizontal) ×
+(anchor cell is the near or far end) × (row axis flipped) were scored against hard invariants — every vehicle
+inside the 6×6 grid, no two overlapping, exactly one main car, horizontal, on the exit row.
+
+**All 16 conventions produced ZERO legal boards out of 40.** Level 1 under the plain reading has a vehicle
+running off the board edge, two overlapping pairs, and a vertical main car off the exit row. For comparison,
+the genuine card 1 is hard-coded in `RushHourImitationCampaign` as a held-out evaluation puzzle, and the
+decoded data matches it under no convention.
+
+**Consequences:**
+- Nothing is harvested; the deck keeps its 79 levels unchanged.
+- This is the **third** WebGames level pack to fail verification, after Lunar Lockout (13 of 15 grids with no
+  legal first move) and Block Dude's synthetic flat terrain. The pattern is consistent: WebGames' *code* is
+  real, but its *level data* is unreliable throughout.
+- Retiring WebGames therefore loses **no level content at all** — a stronger result than the "probably
+  redundant" this section originally anticipated.
+- The official cards this repo actually relies on (1, 38, 39, 40) already live in the campaign source and are
+  unaffected.
 
 ### 6.2 Everything else
 
@@ -454,7 +471,8 @@ beat the phase-1 baseline, phase 2 has failed and the phase-1 net ships as the b
 **M58.6 — Block Dude UI.** `app/block-dude/` + route + nav + home card, renderer per §10.3, keyboard +
 on-screen mobile controls, **undo (mandatory — the game is irreversible)**, hint, level picker, Watch-AI.
 
-**M58.7 — Rush Hour level harvest** per §6.1 (dedupe first; may be a no-op).
+**M58.7 — Rush Hour level harvest: ABANDONED.** The source data does not decode into legal boards under any
+of 16 candidate conventions (§6.1). The deck keeps its 79 levels; nothing is lost by retiring WebGames.
 
 **M58.8 — Retire the repos.** Update `docs/ARCHITECTURE.md`, `docs/prd/PLAN.md` (M58 entry) and
 `docs/ADDING_A_GAME.md`; then the owner deletes `C:\Repos\WebGames`. Leave `C:\Repos\Spelletjes` alone — it

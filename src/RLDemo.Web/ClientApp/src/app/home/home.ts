@@ -62,7 +62,8 @@ import { RouterLink } from '@angular/router';
         <h2>FruitCake</h2>
         <p>
           A Suika-style drop-and-merge physics game — aim, drop, and merge fruit from cherry to
-          watermelon. Runs entirely in your browser; no AI (yet). Play it fullscreen.
+          watermelon. Runs entirely in your browser, and so does its AI — watch it play a depth-3
+          search in a Web Worker. Play it fullscreen.
         </p>
         <span class="cta">Play →</span>
       </a>
