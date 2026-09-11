@@ -118,6 +118,37 @@ public sealed class BlockDudeBoard
             if (Inner.isLegal(a)) yield return (BlockDudeAction)a;
     }
 
+    /// <summary>
+    /// Observation width, identical for every board size — 21×13 egocentric window × 4 planes, a coarse 8×5
+    /// global density map, and 9 scalars.
+    /// </summary>
+    /// <remarks>
+    /// Constant shape is the property that makes a size curriculum possible: advancing a stage is purely a
+    /// change of data distribution, with no net surgery and no checkpoint invalidation, and the 29×19 level 11
+    /// produces the same shaped input as an 8×6 training board.
+    /// </remarks>
+    public static int ObservationSize => PgBlockDudeBoard.obsSize();
+
+    /// <summary>Builds the observation for this position. Computed in the <c>.pg</c>, so the browser's copy is
+    /// byte-identical to what training saw.</summary>
+    public float[] BuildObservation()
+    {
+        var values = Inner.buildObservation();
+        var observation = new float[values.Count];
+        for (int i = 0; i < values.Count; i++) observation[i] = (float)values[i];
+        return observation;
+    }
+
+    /// <summary>Writes the observation into <paramref name="destination"/>, which must be exactly
+    /// <see cref="ObservationSize"/> long.</summary>
+    public void WriteObservation(Span<float> destination)
+    {
+        var values = Inner.buildObservation();
+        if (destination.Length != values.Count)
+            throw new ArgumentException($"Expected a span of {values.Count}, got {destination.Length}.", nameof(destination));
+        for (int i = 0; i < values.Count; i++) destination[i] = (float)values[i];
+    }
+
     /// <summary>32-bit hash of the MOBILE state only — player pose plus the block multiset. Terrain is immutable
     /// and excluded. A hash is not an identity: use <see cref="SameStateAs"/> to compare.</summary>
     public int StateHash => Inner.stateHash();

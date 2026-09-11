@@ -41,12 +41,14 @@ class PgBlockDudeBoard {
   var blocks: List<i32>    // block cell indices, kept ASCENDING so the state hash is canonical
   var px: i32
   var py: i32
+  var doorX: i32           // cached at load: the door is immutable, and the observation needs its bearing
+  var doorY: i32
   var facingRight: bool
   var carrying: bool
   var won: bool
 
   constructor(width: i32, height: i32, tiles: List<i32>, blockAt: List<bool>, blocks: List<i32>,
-              px: i32, py: i32, facingRight: bool, carrying: bool, won: bool) {
+              px: i32, py: i32, doorX: i32, doorY: i32, facingRight: bool, carrying: bool, won: bool) {
     this.width = width
     this.height = height
     this.tiles = tiles
@@ -54,6 +56,8 @@ class PgBlockDudeBoard {
     this.blocks = blocks
     this.px = px
     this.py = py
+    this.doorX = doorX
+    this.doorY = doorY
     this.facingRight = facingRight
     this.carrying = carrying
     this.won = won
@@ -103,7 +107,7 @@ class PgBlockDudeBoard {
     var bl: List<i32> = List<i32>()
     for i in 0..this.blocks.count { bl.add(this.blocks[i]) }
     return PgBlockDudeBoard(this.width, this.height, t, ba, bl, this.px, this.py,
-                            this.facingRight, this.carrying, this.won)
+                            this.doorX, this.doorY, this.facingRight, this.carrying, this.won)
   }
 
   // ── block bookkeeping: blockAt and blocks stay in sync, blocks stays ascending ──
@@ -282,6 +286,98 @@ class PgBlockDudeBoard {
     return next
   }
 
+  // ── observation ───────────────────────────────────────────────────────────────────────────────────────────
+  // EGOCENTRIC, so the tensor shape is CONSTANT for every board size. That is what makes a size curriculum
+  // possible: advancing a stage is purely a change of data distribution — no net surgery, no GrowInput, no
+  // checkpoint invalidation — and the 29x19 level 11 produces the same shaped input as an 8x6 training board.
+  //
+  // Rejected alternatives: fixed max-size padded planes (a stage-1 board would train ~97% dead inputs, and the
+  // maximum board size would have to be committed on day one), and a fully convolutional net (needs a new
+  // pooled-head type in Core; the existing conv net bakes H*W into its parameter shapes).
+  //
+  // Layout: 4 local planes, then a coarse global map, then scalars.
+  static fn obsWindowW(): i32 => 21
+  static fn obsWindowH(): i32 => 13
+  static fn obsPlanes(): i32 => 4
+  static fn obsCoarseW(): i32 => 8
+  static fn obsCoarseH(): i32 => 5
+  static fn obsScalars(): i32 => 9
+  static fn obsSize(): i32 => obsWindowW() * obsWindowH() * obsPlanes() + obsCoarseW() * obsCoarseH() + obsScalars()
+
+  fn buildObservation(): List<f64> {
+    var obs: List<f64> = List<f64>()
+    let ww = obsWindowW()
+    let wh = obsWindowH()
+    let halfW = (ww - 1) / 2
+    let halfH = (wh - 1) / 2
+
+    // Planes 0..3 — wall, block, door, off-board — over a window centred on the player. The off-board plane
+    // matters: without it the net cannot tell open sky from solid rock beyond the edge.
+    for p in 0..obsPlanes() {
+      for dy in 0..wh {
+        for dx in 0..ww {
+          let x = this.px - halfW + dx
+          let y = this.py - halfH + dy
+          var v = 0.0
+          if !this.inBounds(x, y) {
+            if p == 3 { v = 1.0 }
+          } else if p == 0 {
+            if this.tileAt(x, y) == bdWall() { v = 1.0 }
+          } else if p == 1 {
+            if this.hasBlock(x, y) { v = 1.0 }
+          } else if p == 2 {
+            if this.tileAt(x, y) == bdDoor() { v = 1.0 }
+          }
+          obs.add(v)
+        }
+      }
+    }
+
+    // Coarse solid-density map over the WHOLE board, bucketed by relative position so it is scale-invariant.
+    // This is deliberately a 2D density rather than a column-height profile: an earlier revision of the plan
+    // assumed Block Dude terrain is a 1D height profile, which is false — every original level has overhangs
+    // (18 to 68 of them), so a height profile would discard real structure.
+    let cw = obsCoarseW()
+    let ch = obsCoarseH()
+    for cy in 0..ch {
+      for cx in 0..cw {
+        let x0 = cx * this.width / cw
+        let x1 = (cx + 1) * this.width / cw
+        let y0 = cy * this.height / ch
+        let y1 = (cy + 1) * this.height / ch
+        var total = 0
+        var solid = 0
+        for y in y0..y1 {
+          for x in x0..x1 {
+            total += 1
+            if this.tileAt(x, y) == bdWall() {
+              solid += 1
+            } else if this.hasBlock(x, y) {
+              solid += 1
+            }
+          }
+        }
+        if total == 0 {
+          obs.add(0.0)
+        } else {
+          obs.add((f64)solid / (f64)total)
+        }
+      }
+    }
+
+    // Scalars. The door bearing is the planning signal a local window cannot carry.
+    obs.add((f64)(this.doorX - this.px) / (f64)this.width)
+    obs.add((f64)(this.doorY - this.py) / (f64)this.height)
+    if this.carrying { obs.add(1.0) } else { obs.add(0.0) }
+    if this.facingRight { obs.add(1.0) } else { obs.add(0.0) }
+    obs.add((f64)this.blocks.count / 8.0)
+    obs.add((f64)this.px / (f64)this.width)
+    obs.add((f64)this.py / (f64)this.height)
+    obs.add((f64)this.width / 32.0)
+    obs.add((f64)this.height / 24.0)
+    return obs
+  }
+
   // ── state identity ────────────────────────────────────────────────────────────────────────────────────────
   // Mobile state only: terrain is immutable, so it is excluded. Two boards are the same state when the player
   // pose and the block multiset agree.
@@ -334,6 +430,8 @@ class PgBlockDudeBoard {
 
     var px = 0
     var py = 0
+    var doorX = 0
+    var doorY = 0
     for y in 0..height {
       let row = rows[y]
       for x in 0..width {
@@ -343,6 +441,8 @@ class PgBlockDudeBoard {
           tiles[cell] = bdWall()
         } else if ch == "D" {
           tiles[cell] = bdDoor()
+          doorX = x
+          doorY = y
         } else if ch == "B" {
           blockAt[cell] = true
           blocks.add(cell)
@@ -353,7 +453,7 @@ class PgBlockDudeBoard {
       }
     }
     // The original faces left on spawn.
-    return PgBlockDudeBoard(width, height, tiles, blockAt, blocks, px, py, false, false, false)
+    return PgBlockDudeBoard(width, height, tiles, blockAt, blocks, px, py, doorX, doorY, false, false, false)
   }
 }
 
