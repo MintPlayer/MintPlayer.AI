@@ -114,6 +114,13 @@ public sealed class PolicyValueNet : IPolicyValueNet
 
     // ── Checkpoint (kind supplied by the wrapper) ─────────────────────────────────────────────────────────────
     // v2: trunk widths (int[]) + every layer's floats. v1 (shipped): a single hidden int → a two-layer trunk.
+    //
+    // DELIBERATELY NOT BUMPED to carry (inputSize, actions), even though that would make a stale checkpoint
+    // self-describing. This binary layout is a CROSS-LANGUAGE contract: the transpiled `.pg` solvers parse it in
+    // the browser (chess_solver / draughts_solver, mirrored by ChessNetParityTests.LoadPg, which pins the version
+    // at 2), so any new field silently breaks the client-side readers of already-shipped .ckpt files. The
+    // exact-length check in Load gives the same protection with no format change — and unlike stored metadata it
+    // also validates v1 and v2 files that were written before the check existed.
     private const int Version = 2;
 
     public void Save(Stream destination, string kind)
@@ -128,9 +135,20 @@ public sealed class PolicyValueNet : IPolicyValueNet
         }
     }
 
-    /// <summary>Loads a policy/value net. <paramref name="inputSize"/>/<paramref name="actions"/> come from the
-    /// environment (they were never stored in the file); the trunk shape comes from the file (v1: one hidden width →
-    /// two layers; v2: an explicit widths array), so grown checkpoints round-trip and shipped v1 files still load.</summary>
+    /// <summary>
+    /// Loads a policy/value net. The trunk shape comes from the file (v1: one hidden width → two layers; v2+: an
+    /// explicit widths array), so grown checkpoints round-trip and shipped v1/v2 files still load.
+    /// </summary>
+    /// <param name="inputSize">Observation width the CALLER expects, from the environment.</param>
+    /// <param name="actions">Action count the caller expects.</param>
+    /// <exception cref="InvalidDataException">
+    /// The checkpoint's layer shapes do not match this net's — i.e. it was trained at a different observation
+    /// width or action count.
+    /// <para>This used to pass SILENTLY and corrupt the net: <c>inputSize</c> is not stored in the file, and a
+    /// shorter stored weight array still satisfied <c>Span.CopyTo</c>, so the tail of the first layer was left at
+    /// fresh random init — no exception, no warning, just a quietly broken policy that trains or serves at a
+    /// fraction of its real quality.</para>
+    /// </exception>
     public static PolicyValueNet Load(Stream source, string kind, int inputSize, int actions)
     {
         using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
@@ -141,9 +159,23 @@ public sealed class PolicyValueNet : IPolicyValueNet
         var net = new PolicyValueNet(inputSize, hidden, actions, new Xoshiro256StarStar(0));
         foreach (var layer in net.AllLayers())
         {
-            CheckpointFormat.ReadFloats(reader).CopyTo(layer.Weight.Data.AsSpan());
-            CheckpointFormat.ReadFloats(reader).CopyTo(layer.Bias.Data.AsSpan());
+            ReadExact(reader, layer.Weight.Data, kind, inputSize, actions, "weight");
+            ReadExact(reader, layer.Bias.Data, kind, inputSize, actions, "bias");
         }
         return net;
+    }
+
+    /// <summary>Reads a float array that must match <paramref name="destination"/> exactly. A length mismatch means
+    /// the checkpoint's shape differs from this net's, which <c>CopyTo</c> would silently tolerate.</summary>
+    private static void ReadExact(BinaryReader reader, float[] destination, string kind, int inputSize, int actions, string what)
+    {
+        var values = CheckpointFormat.ReadFloats(reader);
+        if (values.Length != destination.Length)
+            throw new InvalidDataException(
+                $"Stale '{kind}' checkpoint: a layer {what} holds {values.Length} floats but this net's " +
+                $"corresponding {what} needs {destination.Length}. The stored net was trained at a different shape " +
+                $"(this environment supplies observation width {inputSize} and {actions} actions). Retrain, or load " +
+                "the matching checkpoint.");
+        values.CopyTo(destination.AsSpan());
     }
 }

@@ -58,6 +58,25 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
             }
         }
         _adam = AdamState.LoadOrInit(store, CubeIds.Environment, _ids.PolicyAdam, _net.Parameters(), options.LearningRate, Log);
+
+        // Restore progress counters and the owner-thread RNG streams. Without this a restarted run replayed the
+        // same scrambles from round zero AND reset PolicyGrowth's stage target (it keys off _totalSamples).
+        // Absent sidecar = zeros, which is the pre-fix behaviour, so older stores still resume.
+        var progress = CampaignProgressState.TryLoad(store, CubeIds.Environment, ProgressId, ProgressKind, rngCount: 2, Log);
+        if (progress is not null)
+        {
+            _totalSamples = progress.Samples;
+            _round = progress.Units;
+            _totalSolves = (long)progress.LastMetric; // an exact counter below 2^53, carried in the metric slot
+            CampaignProgressState.RestoreInto(progress.Rngs[0], _rng);
+            CampaignProgressState.RestoreInto(progress.Rngs[1], _growRng);
+            Log($"resumed progress: {_totalSamples:N0} samples over {_round:N0} rounds");
+        }
+        else if (resumed)
+        {
+            Log("no progress sidecar found — the net resumed but counters restart at zero (pre-M58 checkpoint)");
+        }
+
         Log("warming the Kociemba tables…");
         CubeSolver.WarmUp();
         return resumed;
@@ -134,7 +153,14 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
     {
         store.Save(CubeIds.Environment, _ids.Policy, s => _net.Save(s));
         AdamState.Save(store, CubeIds.Environment, _ids.PolicyAdam, _adam);
+        CampaignProgressState.Save(store, CubeIds.Environment, ProgressId, ProgressKind,
+            _totalSamples, _round, _totalSolves, _rng, _growRng);
     }
+
+    // Namespaced per width rung, exactly as the net and Adam ids are, so one rung's progress never overwrites
+    // another's (CubeIds.ForWidth).
+    private string ProgressId => $"{_ids.Policy}-progress";
+    private const string ProgressKind = "cube-imitation-progress";
 
     /// <summary>`--eval-only`: per-depth eval report + the pre-registered M16 gate. No training, no checkpoint.</summary>
     public bool TryRunStandaloneEval(IModelStore store)
