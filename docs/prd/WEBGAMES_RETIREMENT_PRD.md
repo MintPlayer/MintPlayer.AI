@@ -18,8 +18,30 @@ landing everything worth keeping in this repo, so both source repos can be delet
 | M58.8 retire the repos | 🟡 docs updated; deletion is the owner's to do |
 | M58.9 stale home card | ✅ |
 | M58.10 direct manipulation | ✅ both games |
+| M58.11 responsive boards + canvas sizing | ✅ §12.4a |
 
-**Not done yet:** the full test suite has not run since the campaign work, and neither new page has tests.
+### Where to pick this up
+
+**Not done, in the order I would take them:**
+
+1. **Run the full suite.** It has not run since the campaign work landed. Last known green was 597 tests
+   (`dotnet test --filter "Category!=Slow"`); since then the Block Dude campaign, generator, curriculum, both
+   pages and the canvas fixes have all landed untested as a whole.
+2. **Tests for the two new pages.** Neither has any. Everything claimed about them rests on browser checks:
+   Lunar Lockout aim/launch/solve, Block Dude walk/blocked/carry, Rush Hour drag counting per cell, and the
+   390 px responsive pass. A renderer is awkward to unit-test, but the components' pure logic — aim resolution
+   with hysteresis, the drag clamp and re-anchor, per-cell move counting — is not.
+3. **Start a Block Dude training run.** The pipeline is complete and verified end to end on a short run (8192
+   samples, 73% policy accuracy against a 25% random baseline, 15% board accept rate). Nothing has been trained
+   to a gate yet, and no checkpoint is committed.
+   `dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --game blockdude --fresh
+   --data data/bd-s1 --seed 1 --hours 9`
+4. **Phase 2, expert iteration** (M58.5a, §8.1b) — the part that would let the net reach the big levels, and the
+   answer to "the net will never beat its teacher".
+5. **Delete `C:\Repos\WebGames`** — the owner's to do. Its four untracked projects were committed and pushed
+   first (M58.0), and §6.1 / §5.3 establish that no level content is lost.
+
+**Environment note:** the ASP.NET host was started by the assistant during this work and is running on port 5210.
 
 ---
 
@@ -1126,18 +1148,33 @@ is taken only in play mode. `touch-action` is bound to the mode so edit and play
 **not** separated by gesture — a "drag" on an empty cell in edit mode has no meaningful reading, and the mode is
 already visible in the cursor, side panel and caption.
 
-### 12.4a Prerequisite — the Rush Hour board is not responsive yet
+### 12.4a Responsive board (DONE) — and the two defects it exposed
 
-`draw()` hard-sets `canvas.style.width/height` from logical constants (`CELL = 72`, `PAD = 14`, `EXIT_W = 42`),
-giving a fixed **502 × 460** board. At a 360 px viewport that simply overflows. The drag maths below is correct at
-any scale, but shipping it without fixing this yields a board that is unusable on the phone it was built for.
+`draw()` used to hard-set `canvas.style.width/height` from logical constants (`CELL = 72`, `PAD = 14`,
+`EXIT_W = 42`), giving a fixed **502 × 460** board that simply overflowed a phone. The canvas now scales, `draw()`
+sizes its backing store from `canvas.clientWidth`, and pointer mapping goes through `getBoundingClientRect()`
+rather than reading `clientX` against the logical constants — which breaks the moment the canvas is CSS-scaled.
+At 390 px that yields ~47 px cells: below the 44 px WCAG figure for a discrete *tap*, but a drag grabs a two- or
+three-cell body (~94–140 px), so the grab target is comfortable.
 
-So, before the touch drag lands: constrain the canvas with `width: 100%; max-width: 502px; height: auto`, keep the
-DPR backing store, and have `draw()` read `canvas.clientWidth` the way the Lunar renderer already does. That gives
-~50 CSS px cells at 360 px — below the 44 px WCAG figure for a discrete *tap* target, but a drag grabs a two- or
-three-cell body (100–150 px), so the grab target is comfortable. Pointer mapping must also go through the
-`toSurface`-style `getBoundingClientRect()` idiom the other games use, rather than reading `clientX` against fixed
-constants as the current hit test does — that breaks the moment the canvas is CSS-scaled.
+Doing it surfaced two bugs that presented as one symptom — the board rendering at **300 × 275**, then staying
+300 × 275 while being *drawn larger* after entering play mode:
+
+1. **Circular sizing.** `.board-panel` is a bare flex item, so it shrink-to-fits its content — while the canvas
+   inside asks for `width: 100%` of that same panel. The browser breaks the cycle with the canvas's **intrinsic
+   300 px default**, and `aspect-ratio` derives the 275. Fixed with a definite width on the panel.
+2. **A stale backing store.** `draw()` sizes the buffer from the element but only runs when a signal changes.
+   Switching to play mode reflows the row and grows the canvas's CSS box **without writing any signal**, so the
+   old buffer was scaled up — same size, rendered larger, blurry.
+
+**The general rule, which applies to every canvas here:** a canvas sized from its element needs *both* a definite
+parent width *and* a `ResizeObserver`. The CSS alone gives a correct layout with a stale buffer; the observer
+alone cannot escape the circular sizing. All three renderers (Rush Hour, Lunar Lockout, Block Dude) now observe
+their canvas, which also covers window resizes and phone rotation — neither of which writes any game state.
+
+**Site nav overflow (fixed here too).** Verifying at 390 px showed the board fitting while the *page* still
+scrolled sideways: thirteen game links in a non-wrapping nav forced the document to ~1130 px. M58 added two of
+those links. The topbar and nav now wrap.
 
 ### 12.4b Rush Hour has no keyboard path to selection at all
 

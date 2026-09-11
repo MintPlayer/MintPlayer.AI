@@ -2729,9 +2729,21 @@ so Lunar Lockout's hint button *is* the search that verified every shipped level
 a single source of truth — canonical JSON in the Environments project, embedded for training and copied into
 `wwwroot/levels` for the browser.
 
-**Still open:** the full test suite has not run since the campaign work, the two new pages have no tests, phase-2
+**Pages and input (M58.3, M58.6, M58.10, M58.11).** Both games are fully client-side: rules and the exact oracle
+come from the same `.pg`, so Lunar Lockout's hint button *is* the search that verified every shipped level's move
+count. Making the Rush Hour board responsive then exposed two bugs behind one symptom — it rendered at 300×275,
+then stayed 300×275 while being drawn larger. **Circular sizing** (a shrink-to-fit flex parent containing a
+`width: 100%` canvas resolves to the canvas's intrinsic 300px default) and **a stale backing store** (`draw()`
+sizes from the element but only runs on a signal change, and a reflow writes no signal). The rule that falls out,
+and applies to every canvas here: **a canvas sized from its element needs both a definite parent width and a
+`ResizeObserver`** — CSS alone gives a correct layout with a stale buffer, the observer alone cannot escape the
+circular sizing. Verifying at 390px also showed the *page* scrolling sideways: thirteen non-wrapping nav links,
+two of them added by this milestone. Fixed.
+
+**Still open:** the full test suite has not run since the campaign work, the two new pages have no tests, no Block
+Dude net has been trained to a gate (the pipeline is verified end to end but no checkpoint is committed), phase-2
 expert iteration is unbuilt, and `C:\Repos\WebGames` has not yet been deleted (its four untracked projects were
-committed and pushed first — M58.0).
+committed and pushed first — M58.0). See the PRD's "Where to pick this up".
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
