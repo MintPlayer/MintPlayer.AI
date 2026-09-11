@@ -1,0 +1,48 @@
+<h1>Lunar Lockout</h1>
+
+<p class="intro">
+  Slide the <strong>blue</strong> robot onto the centre. A robot only moves if another robot lies in that
+  direction, and it travels until it rests against it — the edge of the board will not stop anything.
+</p>
+
+<div class="lunar-stage">
+  <canvas #lunarCanvas (pointerdown)="onCanvasPointer($event)" aria-label="Lunar Lockout board"></canvas>
+</div>
+
+<p class="status" role="status">{{ status() }}</p>
+@if (hint(); as text) {
+  <p class="hint">{{ text }}</p>
+}
+
+<div class="pad">
+  <button type="button" class="pad-btn" (click)="slide(0)" aria-label="Slide up">↑</button>
+  <div class="pad-row">
+    <button type="button" class="pad-btn" (click)="slide(3)" aria-label="Slide left">←</button>
+    <button type="button" class="pad-btn" (click)="slide(2)" aria-label="Slide down">↓</button>
+    <button type="button" class="pad-btn" (click)="slide(1)" aria-label="Slide right">→</button>
+  </div>
+</div>
+
+<div class="actions">
+  <button type="button" [bsButtonType]="colors.secondary" (click)="changeLevel(-1)" [disabled]="levelIndex() === 0">
+    ← Previous
+  </button>
+  <span class="level-name">{{ level()?.name }} ({{ levelIndex() + 1 }}/{{ levels().length }})</span>
+  <button type="button" [bsButtonType]="colors.secondary" (click)="changeLevel(1)"
+          [disabled]="levelIndex() >= levels().length - 1">
+    Next →
+  </button>
+</div>
+
+<div class="actions">
+  <button type="button" [bsButtonType]="colors.secondary" (click)="undo()" [disabled]="!canUndo()">Undo</button>
+  <button type="button" [bsButtonType]="colors.secondary" (click)="reset()">Restart</button>
+  <button type="button" [bsButtonType]="colors.primary" (click)="showHint()">Hint</button>
+  <span class="moves">{{ moves() }} move{{ moves() === 1 ? '' : 's' }}</span>
+</div>
+
+<p class="keys">
+  Tap a robot to select it (or press its number), then use the arrow keys or the pad. <kbd>Z</kbd> undoes,
+  <kbd>R</kbd> restarts. The hint runs the exact breadth-first solver in your browser — the same search that
+  verified every level's move count.
+</p>

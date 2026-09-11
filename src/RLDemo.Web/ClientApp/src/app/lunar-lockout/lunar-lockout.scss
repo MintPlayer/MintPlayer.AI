@@ -1,0 +1,105 @@
+// Sober by design (PRD §10.4): flat fills, one hairline border, no shadows or gradients. The stage mirrors the
+// construction used by the other canvas games so the page sits alongside them without restyling.
+
+.intro {
+  max-width: 46rem;
+  color: #aab2c5;
+}
+
+.lunar-stage {
+  position: relative;
+  width: min(520px, 100%);
+  aspect-ratio: 1;
+  margin: 0.75rem auto;
+  background: #14171f;          // = the renderer's `void_`, so frame and canvas never disagree
+  border: 1px solid #2b3245;
+  border-radius: 8px;
+  overflow: hidden;
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: manipulation; // a slow puzzle: tap-to-select, no drag gestures to protect
+    cursor: pointer;
+  }
+}
+
+.status,
+.hint {
+  text-align: center;
+  margin: 0.35rem 0;
+}
+
+.hint {
+  color: #6ea8fe;
+}
+
+// A four-way pad, thumb-reachable on a phone. 56px clears the 44px WCAG target with room to spare.
+.pad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 0.75rem 0;
+
+  .pad-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .pad-btn {
+    width: 56px;
+    height: 56px;
+    font-size: 1.25rem;
+    color: #aab2c5;
+    background: #232938;
+    border: 1px solid #3a4154;
+    border-radius: 8px;
+    -webkit-tap-highlight-color: transparent;
+
+    &:hover {
+      color: #e6e8ee;
+    }
+  }
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.level-name,
+.moves {
+  color: #aab2c5;
+}
+
+.keys {
+  max-width: 46rem;
+  margin-top: 1rem;
+  color: #8b93a7;
+  font-size: 0.9rem;
+}
+
+@media (prefers-color-scheme: light) {
+  .lunar-stage {
+    background: #f4f6fa;
+    border-color: #d3d9e4;
+  }
+
+  .intro,
+  .level-name,
+  .moves {
+    color: #5b6378;
+  }
+
+  .pad .pad-btn {
+    color: #5b6378;
+    background: #e7ebf2;
+    border-color: #d3d9e4;
+  }
+}
