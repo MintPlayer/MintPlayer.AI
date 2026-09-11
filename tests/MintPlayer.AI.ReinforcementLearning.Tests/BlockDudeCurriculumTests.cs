@@ -84,12 +84,23 @@ public class BlockDudeCurriculumTests
     [Fact]
     public void EveryStageStaysInsideTheMeasuredOracleFrontier()
     {
-        // Exact labelling dies around 6-7 blocks over ~150 free cells. A rung past that would spend the whole
-        // run generating boards the oracle then refuses.
+        // Exact labelling dies around `blocks x log10(free cells) ~ 13-15` — block count dominates, but open
+        // space compounds it. A flat free-cell cap is the wrong shape: it is arithmetically unreachable on a
+        // large board (a 26x15 grid is 390 cells, so a 150-cell ceiling rejects everything before the oracle
+        // even runs, which is exactly what the top rung did before this was measured).
         foreach (var stage in BlockDudeCurriculum.Stages)
         {
             Assert.True(stage.Spec.MaxBlocks <= 7, "a stage exceeds the measured block frontier");
-            Assert.True(stage.Spec.MaxFreeCells <= 150, "a stage exceeds the measured free-cell frontier");
+
+            double difficulty = stage.Spec.MaxBlocks * Math.Log10(stage.Spec.MaxFreeCells);
+            Assert.True(difficulty <= 15.0,
+                $"stage with {stage.Spec.MaxBlocks} blocks over {stage.Spec.MaxFreeCells} free cells scores " +
+                $"{difficulty:F1}, past the measured oracle frontier");
+
+            // And the cap must be achievable: a board cannot have fewer free cells than an all-wall board.
+            int maxArea = stage.Spec.MaxWidth * stage.Spec.MaxHeight;
+            Assert.True(stage.Spec.MaxFreeCells >= maxArea / 4,
+                $"a {stage.Spec.MaxWidth}x{stage.Spec.MaxHeight} board cannot be pruned to {stage.Spec.MaxFreeCells} free cells");
         }
     }
 

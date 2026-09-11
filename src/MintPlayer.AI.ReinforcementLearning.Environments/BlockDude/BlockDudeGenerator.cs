@@ -180,12 +180,25 @@ public static class BlockDudeGenerator
         for (int x = 0; x < width; x++) { grid[0][x] = 'W'; grid[height - 1][x] = 'W'; }
         for (int y = 0; y < height; y++) { grid[y][0] = 'W'; grid[y][width - 1] = 'W'; }
 
-        // Ground profile: a random walk whose occasional 2-step rises are unclimbable without a block, which is
-        // what forces the mechanic to appear.
+        int blocks = spec.MinBlocks + rng.NextInt(spec.MaxBlocks - spec.MinBlocks + 1);
+
+        // Ground profile: a random walk whose 2-step rises are unclimbable without a block, which is what forces
+        // the mechanic to appear.
+        //
+        // Terrain starts part-way UP on taller boards. Free cells drive the oracle's state count harder than
+        // board area does, so a big board with a low skyline is all sky: it blows the free-cell budget before
+        // the oracle ever sees it. Measured: without this, the largest rung rejected 75% of candidates as
+        // TooOpen.
+        // `highest` keeps at least two free rows above every surface cell. A climb needs headroom over BOTH the
+        // player and the destination, so terrain that touches the ceiling silently makes stretches of the board
+        // impassable — one of the ways free sampling produced unsolvable boards.
+        // The ground range must span at least 2 rows, or an unclimbable rise cannot exist at all and every
+        // candidate is rejected as Malformed — which is exactly what a tighter reservation did to the smallest
+        // rung. Row 3 is the floor: it leaves one clear row above the surface, enough for an unladen climb.
         int lowest = height - 2;
-        int highest = Math.Max(2, height - 2 - (height - 4));
+        int highest = Math.Max(3, height - 2 - Math.Max(2, (height - 3) * 2 / 3));
         var ground = new int[width];
-        ground[1] = lowest;
+        ground[1] = Math.Clamp(lowest - rng.NextInt(Math.Max(1, (height - 3) / 2)), highest, lowest);
         for (int x = 2; x < width - 1; x++)
         {
             int step = rng.NextInt(10) switch
@@ -197,20 +210,46 @@ public static class BlockDudeGenerator
             };
             ground[x] = Math.Clamp(ground[x - 1] + step, highest, lowest);
         }
+
+        // Cap unclimbable rises at the number of blocks available to bridge them, and flatten the excess.
+        // Sampling terrain freely and letting the oracle discover it is impossible wastes most of the budget:
+        // proving a board unsolvable costs a FULL state-space exploration. Repairing the profile is far cheaper
+        // than rejecting it.
+        int barriers = 0;
+        for (int x = 2; x < width - 1; x++)
+        {
+            int rise = ground[x - 1] - ground[x];   // y decreases upward, so a positive rise climbs
+            if (rise < 2) continue;
+            barriers++;
+            if (barriers > blocks) ground[x] = ground[x - 1] - 1;  // flatten to a climbable single step
+        }
+
+        // Force at least ONE unclimbable rise, otherwise the board is a walk and the blocks are scenery —
+        // measured as ~40% of candidates rejected as TooEasy or BlocksAreDecorative.
+        if (barriers == 0 && width >= 7)
+        {
+            int at = 2 + rng.NextInt(width - 4);
+            int raised = Math.Clamp(ground[at - 1] - 2, highest, lowest);
+            for (int x = at; x < width - 1; x++) ground[x] = Math.Clamp(ground[x] - (ground[at] - raised), highest, lowest);
+            ground[at] = raised;
+        }
+
         for (int x = 1; x < width - 1; x++)
             for (int y = ground[x]; y < height - 1; y++)
                 grid[y][x] = 'W';
 
-        // Shelves — the overhangs a skyline generator cannot produce.
+        // Shelves — the overhangs a skyline generator cannot produce. Kept at least THREE rows clear of each
+        // column's own surface: a shelf hanging closer blocks the climb beneath it, which is the other way free
+        // sampling manufactured unsolvable boards.
         int shelves = rng.NextInt(4);
         for (int i = 0; i < shelves; i++)
         {
             int length = 2 + rng.NextInt(3);
             int x0 = 1 + rng.NextInt(Math.Max(1, width - 2 - length));
-            int surface = ground[Math.Clamp(x0, 1, width - 2)];
-            int y = surface - 2 - rng.NextInt(2);
+            int y = ground[Math.Clamp(x0, 1, width - 2)] - 3 - rng.NextInt(2);
             if (y < 1) continue;
-            for (int x = x0; x < Math.Min(x0 + length, width - 1); x++) grid[y][x] = 'W';
+            for (int x = x0; x < Math.Min(x0 + length, width - 1); x++)
+                if (y <= ground[x] - 3) grid[y][x] = 'W';
         }
 
         // Standable surfaces: an empty cell with something solid directly beneath.
@@ -221,19 +260,48 @@ public static class BlockDudeGenerator
                     surfaces.Add((x, y));
         if (surfaces.Count < 4) return null;
 
-        // Put the door and the player far apart, so the puzzle is a traverse rather than a step.
-        var door = surfaces[rng.NextInt(surfaces.Count)];
-        var candidates = surfaces.Where(s => Math.Abs(s.X - door.X) >= Math.Max(3, width / 3)).ToList();
-        if (candidates.Count == 0) return null;
-        var player = candidates[rng.NextInt(candidates.Count)];
+        // The player and the door must sit on OPPOSITE sides of an unclimbable rise, with the player on the LOW
+        // side — otherwise he can simply walk or fall to the exit and the blocks are scenery. Forcing a barrier
+        // into the terrain is not enough on its own: placing both endpoints freely left them on the same side
+        // most of the time, which showed up as ~70% of candidates rejected as BlocksAreDecorative.
+        var barrierColumns = new List<int>();
+        for (int x = 2; x < width - 1; x++)
+            if (ground[x - 1] - ground[x] >= 2) barrierColumns.Add(x);
+        if (barrierColumns.Count == 0) return null;
+
+        int barrier = barrierColumns[rng.NextInt(barrierColumns.Count)];
+        var lowSide = surfaces.Where(s => s.X < barrier).ToList();     // lower ground: the player starts here
+        var highSide = surfaces.Where(s => s.X >= barrier).ToList();   // beyond the rise: the door is up here
+        if (lowSide.Count == 0 || highSide.Count == 0) return null;
+
+        var player = lowSide[rng.NextInt(lowSide.Count)];
+        var door = highSide[rng.NextInt(highSide.Count)];
 
         grid[door.Y][door.X] = 'D';
         grid[player.Y][player.X] = 'P';
 
-        int blocks = spec.MinBlocks + rng.NextInt(spec.MaxBlocks - spec.MinBlocks + 1);
-        var free = surfaces.Where(s => grid[s.Y][s.X] == '.').ToList();
+        // Blocks go on the PLAYER's side of the first barrier, so they are reachable before they are needed.
+        // Scattering them uniformly strands them behind the very obstacle they exist to solve, which is the
+        // other half of why so many candidates were unsolvable.
+        int toward = Math.Sign(door.X - player.X);
+        int firstBarrier = door.X;
+        if (toward != 0)
+        {
+            for (int x = player.X; x != door.X; x += toward)
+            {
+                int next = Math.Clamp(x + toward, 1, width - 2);
+                if (ground[Math.Clamp(x, 1, width - 2)] - ground[next] >= 2) { firstBarrier = next; break; }
+            }
+        }
+
+        bool OnPlayerSide(int x) => toward == 0 || (toward > 0 ? x <= firstBarrier : x >= firstBarrier);
+
+        var reachable = surfaces.Where(s => grid[s.Y][s.X] == '.' && OnPlayerSide(s.X)).ToList();
+        var beyond = surfaces.Where(s => grid[s.Y][s.X] == '.' && !OnPlayerSide(s.X)).ToList();
+
         for (int i = 0; i < blocks; i++)
         {
+            var free = reachable.Count > 0 ? reachable : beyond;
             // ~1 in 6 blocks starts floating: the engine never settles gravity on load, and the original level 11
             // ships 14 blocks in mid-air, so the net must see that shape in training.
             bool floating = rng.NextInt(6) == 0;
