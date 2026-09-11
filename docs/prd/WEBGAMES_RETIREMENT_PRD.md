@@ -83,13 +83,15 @@ that is why.
 
 | # | Decision | Outcome |
 |---|---|---|
-| **D1** | Block Dude rules: bug-compatible or corrected? | **Corrected — fix all four defects** (§4.3). Cells may hold multiple entities; a door is entered if *any* entity in the target cell is a door. |
+| **D1** | Block Dude rules: bug-compatible or corrected? | **Corrected — fix all four defects** (§4.3). **Single-occupancy cells with one exception: the player may stand in the door cell**, which is how a level is won (owner ruling, superseding the earlier shared-occupancy recommendation). |
 | **D2** | AI scope | **Two-phase: imitation from an exact BFS oracle, then expert iteration on boards the oracle cannot label** (§8.1, §8.1b). Not a scripted solver, not DQN, not scramble-reversal. |
 | **D3** | Tic Tac Toe | **Dropped** — recorded in §9 as deliberately not migrated. |
-| **D4** | Level content | **12 authored Block Dude levels, 16 Lunar Lockout**, all with BFS-verified optimal counts, all **held out of training** as the gate set. |
-| **D5** | Training-level source | **Heightmap generator + oracle rejection filter**, with bounded shelves (§4.4a). |
-| **D6** | Ship gate | Policy-guided A* solves all authored levels at ≤1.25× optimal, **and** ≥90% of 200 generated hold-out boards solved greedily (§8.4). |
-| **D7** | Lunar Lockout rules | **Verified against the published ThinkFun rules** (§5.2) — the WebGames implementation is faithful. BFS then re-verifies all 16 authored `minMoves`. |
+| **D4** | Level content | **All 11 original Block Dude levels shipped as-is** (owner: *"Ship them all… I understand that they won't be AI solvable, that's fine"*), plus a **12-level generated Lunar Lockout ladder**. See §4.4 / §5.3. |
+| **D5** | Training-level source | **Generated boards under a size curriculum** (§7.1). The original heightmap-only design is **dead** — see §4.4a. |
+| **D6** | Ship gate | §8.4. Legs 1–3 as specified; **level 11 is a stretch benchmark, not an acceptance criterion** (§8.5). |
+| **D7** | Lunar Lockout rules | **Verified against the published ThinkFun rules** (§5.2) — the WebGames implementation is faithful. Its *level pack* was not: 13 of 15 grids are unplayable (§5.3). |
+| **D9** | Curriculum + reproducibility | Train small→large, and **any run must be re-startable from a blank slate** (owner). Design in §7.1. |
+| **D10** | Level packs | **Canonical JSON, single source of truth** (owner): embedded in the Environments assembly for training, linked into `wwwroot/levels` for the browser. Same bytes both sides. |
 | **D8** | Implementation order | **Lunar Lockout end-to-end first**, then Block Dude (§7). |
 
 ### 3.1 Why D2 changed from the first draft
@@ -192,34 +194,50 @@ pass there can never find anything to do. The carried block likewise lands on th
 by the player. Applying gravity after a climb would be behaviourally identical; leave the call out (it
 matches the original and costs nothing), but do not record it as preserved-bug-compatibility.
 
-### 4.4 Shipped level content (the gate set)
+### 4.4 Shipped level content — the 11 originals (BUILT)
 
-Port the 10 WebGames ASCII levels (`W`=wall, `B`=block, `P`=player, `D`=door, `.`=empty — a good authoring
-format, keep it), re-verify each is solvable under the *corrected* rules with the oracle (§4.5), and author
-2 more for **12 total**. Store as a committed JSON/TS asset alongside the component, each level carrying
-`{ name, grid, optimalMoves }` with `optimalMoves` from BFS, mirroring how the Rush Hour deck carries a
-BFS-computed `OptimalMoves` (`src/RLDemo.Web/Services/RushHourDeckStore.cs`).
+**All 11 original levels ship as-is** (Brandon Sterner, TI-83+ PuzzPack 2001), imported by
+`tools/blockdude_levels.py` from the TI-84+CE port at `github.com/merthsoft/blockdudece` (`src/level.c`,
+Unlicense) into `…/Environments/BlockDude/levels/blockdude-levels.json`. Tile codes came from that port's
+`game.c` (`EMPTY 0 / WALL 1 / BLOCK 2 / DOOR 3`), which also independently corroborated two rules in §4.2.
 
-**These 12 are held out of training entirely** — the generator must be structurally incapable of emitting
-them, exactly as `RushHourImitationCampaign` walls off ThinkFun cards 1/38/39/40.
+Measured shape — and the reason the training plan cannot use this content:
 
-### 4.4a Training-level generator (D5)
+| level | size | blocks | overhangs | floating blocks |
+|---|---|---|---|---|
+| 1 | 20×8 | 2 | 23 | 0 |
+| 3 | 19×11 | 6 | 27 | 0 |
+| 5 | 22×14 | 10 | 25 | 0 |
+| 8 | 27×17 | 18 | 54 | 0 |
+| 10 | 27×19 | 24 | 66 | 0 |
+| 11 | 29×19 | **42** | 68 | **14** |
 
-Measured fact that makes this cheap: **Block Dude terrain is a 1D height profile.** Excluding the ceiling
-row, 8 of the 10 WebGames levels have **zero** overhangs; L9 and L10 have exactly two cells each (one small
-shelf). So a generator is a per-column `height[x]` array, a door column, and block columns — and every board
-it emits is gravity-consistent by construction, which is what made naive random 2D grids collapse.
+They carry **no `optimalMoves`**: only levels 1–3 are exactly solvable at all (§4.5). The owner accepted this
+explicitly — *"Ship them all, I understand that they won't be AI solvable, that's fine."*
 
-Pipeline, mirroring `RushHourGenerator`: sample a height profile → place the door on a ledge → scatter N
-blocks → run the oracle → **accept only** boards whose optimal length lands in a target band *and* that
-require at least one carry.
+**Not gravity-settled on load.** Level 11 ships 14 blocks floating in mid-air, which is authored content; a
+global settle pass would silently rewrite the puzzle. Pinned by `BlockDudeEngineTests`.
 
-Two requirements that are not optional:
-- **Bounded shelves (0–3 cells).** A pure heightmap generator cannot produce overhangs, but L9/L10 have
-  them — so without this the shipped levels are partly out-of-distribution relative to training, and the
-  failure shows up only at gate time as a net that solves generated boards and stumbles on level 9.
-- **Log the rejection rate, not just the accepted count.** The oracle cap (below) means deep boards yield
-  no labels; unlogged, that silently biases training toward shallow puzzles.
+### 4.4a Training-level generator — the heightmap design is DEAD
+
+**Superseded. Recorded because it was wrong in an instructive way.** An earlier revision asserted, as
+measured fact, that *"Block Dude terrain is a 1D height profile"* — 8 of 10 levels with zero overhangs — and
+built the generator, the state encoding and a family of search heuristics on top of it.
+
+That measurement was taken on the **WebGames synthetic levels**, not the originals. **All 11 originals have
+overhangs, 18 to 68 each.** The claim was a generalisation from the wrong sample, stated with unearned
+confidence, and it cost real work: it produced a generator design that cannot emit shipped-level terrain, a
+state encoding sized for a board shape that does not exist, and it misled a later investigation into
+proposing height-profile heuristics.
+
+Consequences that stand:
+- A generator **must** produce overhangs and shelves, not a `height[x]` array with bounded shelf patches.
+- **Log the rejection rate, not just the accepted count.** The oracle cap means deep boards yield no labels;
+  unlogged, that silently biases training toward shallow puzzles.
+- Generated boards must be structurally incapable of reproducing a shipped level, so the 11 stay a clean
+  hold-out — the same wall `RushHourImitationCampaign` puts around ThinkFun cards 1/38/39/40.
+
+The replacement is a **curriculum** over generated boards: see §7.1.
 
 ### 4.5 The oracle (exact supervision)
 
@@ -239,18 +257,44 @@ Supervision shape follows `RushHourImitationCampaign`: soft cross-entropy over *
 actions (never a single arbitrary representative — that flattens the policy) plus Huber on
 distance-to-goal, on a DAgger mix of on-policy and stratified samples.
 
-### 4.5a State encoding (resilient, not cheapest)
+#### 4.5.1 MEASURED reach of the exact oracle
 
-Block Dude has **no i32-sized key**. Player position needs ~7 bits, facing 1, carrying 1, and five block
-positions over ~108 interior cells need ~27 bits as a combinatorial rank — ~36 bits total.
+| level | size | free cells | blocks | states | optimal |
+|---|---|---|---|---|---|
+| 1 | 20×8 | 116 | 2 | 256 | **19** |
+| 2 | 22×10 | 174 | 5 | 55,314 | **73** |
+| 3 | 19×11 | 143 | 6 | 14,199 | **94** |
+| 4 | 24×16 | 312 | 8 | truncated at a **3M** cap (9 GB, 35 s) | — |
+| 9 | 20×16 | 242 | 9 | truncated at 3M | — |
+| 11 | 29×19 | 348 | 42 | truncated at 250k in 3.9 s | — |
 
-A per-column *block count* encoding would compress this to ~24 bits and fit one `i32`, because given a fixed
-terrain profile a block's height is determined by what is stacked beneath it. **Rejected deliberately:** it
-is correct only while no level has an overhang, and L9/L10 already violate that. Cheap but brittle.
+**Only levels 1, 2 and 3 are exactly solvable.** Cost is **memory**-bound, not CPU: ≈1.3–3.0 KB and ≈7–10 µs
+per state, so the hard wall on a 40 GB machine is ≈10–12M states. Growth is ≈×4.5–7 per extra block.
 
-**Decision: two `i32` words + a hand-rolled open-addressing `IntSet`** storing both words for exact
-comparison. See §8.3 for why this is the only shape available in `.pg`, and for the `i64`/`bigint` trap that
-rules out a single 64-bit key.
+Frontier: roughly **≤6–7 blocks over ≤150 free cells**. Note it is *not* simply board size — level 3 has
+more blocks than level 2 yet yields a quarter of the states, because tight corridors constrain the player
+while open sky explodes. Level 11 is not "hard", it is off-scale.
+
+### 4.5a State encoding (as built)
+
+Block Dude states are far too wide for an integer key: level 11 is 42 blocks over 551 cells. Two rejected
+alternatives, both recorded because each looked attractive:
+
+- **Per-column block counts** (~24 bits, one `i32`): correct only while no level has an overhang. Every
+  original violates that (§4.4a). Cheap but brittle.
+- **Two `i32` words + exact comparison**: what an earlier revision specified. Sized for ~5 blocks over ~108
+  cells — a board shape that does not exist in the shipped content.
+
+**As built: a 32-bit FNV-1a hash of the mobile state, chained.** `PgBdVisited` open-addresses on the hash
+and keeps a per-bucket chain, comparing candidates with `sameState` — so a collision costs a comparison
+rather than silently merging two positions. A hash alone is never a state identity. Terrain is excluded from
+the hash since it is immutable.
+
+Two `.pg` traps hit while implementing this (see also §8.3): the FNV offset basis `0x811c9dc5` does **not**
+fit `i32`, and spelling it as an out-of-range literal makes the transpiler widen the whole expression to
+64-bit — which lowers to TypeScript `bigint`, correct but allocating. It is written as the signed equivalent
+`-2128831035`. And `PgIntMap` could not be reused from `lunarlockout_solver.pg`: both files emit into the
+same assembly's global namespace, so shared helper names collide.
 
 ### 4.6 Visual design
 
@@ -298,21 +342,38 @@ Sources: [ThinkFun Lunar Landing instructions (PDF)](https://legacy.thinkfun.com
 · [SIAM Review](https://epubs.siam.org/doi/pdf/10.1137/S003614450139517)
 · [CodinGame exercise](https://www.codingame.com/training/medium/lunar-lockout)
 
-### 5.3 Level content and oracle
+### 5.3 Level content — the inherited pack was unplayable; the ladder is generated (BUILT)
 
-16 levels exist, typed `{ name, grid: string[], minMoves }`, with `minMoves` **authored by hand and never
-verified**. The oracle is exhaustive here — ≤5 robots on 25 cells enumerates completely, and the state key
-fits one `i32` without cleverness — so BFS **re-verifies every authored `minMoves`** as a 16-case regression
-suite.
+**Correction to earlier revisions of this document:** the WebGames pack has **15** levels, not 16. The
+sixteenth `name:` belongs to the `interface LevelData` declaration — a miscount inherited from the audit and
+propagated here unchecked.
 
-**A mismatch must not be silently "fixed".** Both the rules and the `minMoves` came from the same unverified
-source, so a disagreement cannot say which side is wrong. Any mismatch **blocks that level from the training
-set and from shipping** until the owner adjudicates — otherwise a rules bug gets laundered into the level
-data and then trained into the net. Informative shapes: a level **unsolvable** under our rules is a
-near-certain rule error; a *systematic* skew (every BFS result below the authored number) points at rules;
-scattered one-off mismatches point at sloppy authoring.
+Then the real finding. Running the oracle over all 15 revealed that **13 are unsolvable and 1 is
+mis-numbered**; only *Getting Started* is correct as authored:
 
-These 16 are the held-out gate set (D4); the generator must not be able to emit them.
+| symptom | levels |
+|---|---|
+| **no legal first move at all** (1 reachable state — no two robots share a row or column) | 4 |
+| unsolvable after some play | 9 |
+| solvable but mis-numbered (authored 7, optimal 6) | 1 |
+| correct | 1 |
+
+So `minMoves` was not merely unverified: the **grids** are synthetic filler with invented numbers.
+
+**How this was caught, and why it needed catching twice.** §5.3's own diagnostic said a *systematic* skew
+points at the rules rather than the data — and 13 of 15 failing is about as systematic as it gets. That
+diagnostic pointed the wrong way. Only re-implementing the rules from scratch in Python, independently of
+the `.pg`, and getting **exactly** the same 13 unsolvable levels and the same 6-vs-7 mismatch, distinguished
+"my engine is broken" from "the content is broken". Two independent implementations agreeing is the evidence
+that mattered; a single implementation's verdict on its own data source could not settle it.
+
+**Replacement:** `tools/lunarlockout_levels.py` generates the shipped ladder deterministically (seed 58),
+exhaustively verifying each entry and canonicalising under the 8 symmetries of the square so no two rungs
+are rotations of the same puzzle. **12 levels, optimal 1→12**, robot count ramping 3→5, difficulty ordered.
+`LunarLockoutOracleTests` re-derives every count through the `.pg` oracle, so the generator and the engine
+cross-check each other permanently.
+
+These 12 are the held-out gate set (D4); a training generator must not be able to emit them.
 
 ---
 
@@ -350,20 +411,25 @@ Single branch, single PR (`m58-webgames-retirement`), per repo convention.
 **M58.0 — Preserve before anything else.** In `C:\Repos\WebGames`: `git add` the four untracked projects,
 commit, push. Non-negotiable prerequisite; §1.1.
 
-**Lunar Lockout goes first (D8), end-to-end.** It is the de-risked game — rules externally verified, state
-space exhaustively enumerable, no dead ends, no gravity, no generator subtlety, single-`i32` key. Running it
-all the way through proves every *unproven piece of infrastructure* (the first hand-rolled `IntSet` in a
-`.pg`, the oracle→campaign label pipeline for irreversible moves, DI registration, the `.ckpt` TypeScript
-parser, the gate harness) on the easy case. Block Dude's hard parts then land on plumbing that already
-works, so a failure there is unambiguously the *game*, not the pipeline.
+**Ordering, as revised.** D8 originally put Lunar Lockout first end-to-end, on the reasoning that it is the
+de-risked game — rules externally verified, state space exhaustively enumerable, no dead ends, no gravity,
+single-`i32` key — so it would prove every unproven piece of infrastructure on the easy case before Block
+Dude's hard parts landed on it.
 
-*Accepted cost:* Block Dude is the game the owner actually asked for, and it lands second — if M58 is
-interrupted, the finished game is the less-wanted one.
+That rationale held for the *engines*, and both are now built in that order (M58.1 then M58.4), which is why
+the first hand-rolled `IntSet` in a `.pg` and the two-pass irreversible-graph oracle were both debugged on
+the simpler game. **The rest was reordered**: the owner wants an overnight training run, so Block Dude's
+generator, campaign and Lab entry come before Lunar Lockout's UI. A trainable Block Dude is worth more at
+11pm than a finished Lunar Lockout page.
+
+*Accepted cost of the original order, now largely spent:* Block Dude is the game the owner actually asked
+for, and its engine landed second.
 
 **M58.1 — Lunar Lockout engine + oracle.** `Environments/LunarLockout/polyglot/lunarlockout_solver.pg`:
 rules per §5.2, BFS oracle, `IntSet`. TS twin routed in `pgconfig.json` to
-`app/lunar-lockout/lunarlockout_solver`. C# facade + `LunarLockoutEnv.cs`. **Gate: all 16 authored
-`minMoves` re-verified** (§5.3); any mismatch surfaces for adjudication and blocks that level.
+`app/lunar-lockout/lunarlockout_solver`. C# facade + `LunarLockoutEnv.cs`. **Gate: every shipped level's
+optimal count re-derived by the `.pg` oracle** (§5.3). This gate is what caught the inherited pack as
+unplayable; the ladder is now generated and all 12 counts are BFS-proven.
 
 **M58.2 — Lunar Lockout campaign + net.** `Campaigns/LunarLockout/LunarLockoutImitationCampaign.cs`, DI
 registration in `CampaignServiceCollectionExtensions.cs` + a `CampaignRegistrationTests.cs` case, Lab
@@ -400,6 +466,69 @@ still holds Rush Hour, `RushHour.Core`, its tests and the designer PRDs, none of
 Test suites run **once**, at the end of M58.6 (after all engine, campaign and UI milestones), per the repo's
 batch-tests-at-the-end rule. Intermediate milestones are verified by reading code and type-checking. The two
 training runs are long jobs — background them and wait for the notification; never poll.
+
+---
+
+## 7.1 Curriculum + blank-slate reproducibility (D9)
+
+Owner requirement: train on very small boards first and grow them as the model improves, **and** *"be able to
+re-run the training at any time from a blank slate."* The second half is the hard one — it means a stage must
+never depend on wall-clock or on whatever checkpoint happens to be lying around.
+
+**Stage advance is a pure function of persisted state:**
+
+```
+Advance(stage, stageSamples, lastGateRate) =
+  stage + 1  iff  stage < LastStage
+               && stageSamples >= Stages[stage].MinStageSamples
+               && (lastGateRate >= Stages[stage].PromoteSolveRate
+                   || stageSamples >= Stages[stage].MaxStageSamples)   // logged as a FORCED advance
+```
+
+- The gate is refreshed **inside `TrainChunk`** on a sample cadence — **never in `Evaluate()`**, because
+  `CampaignRunner` fires that on the wall clock, which would make the trajectory machine-speed-dependent.
+- The per-stage gate set is fixed from `new Xoshiro256StarStar(4242 + stage)`, deliberately **independent of
+  `--seed`** (the same trick `RushHourImitationCampaign` uses with seed 777), so runs at different seeds stay
+  comparable and the gate never depends on training history.
+- Advance is monotone; the top rungs mix ~20% of earlier-stage boards to prevent forgetting, as a constant in
+  the stage table rather than a runtime decision.
+
+**Stage boundaries are set by §4.5.1's measured frontier** (≤6–7 blocks over ≤150 free cells). The top rungs
+will reject most boards — that rejection rate is a first-class logged metric, and it is exactly the signal
+that phase 2 (§8.1b) exists to consume.
+
+**Persisted state** — a new sidecar `blockdude.policy-state`: observation shape + action count, a
+`RunFingerprint` over (seed, obs shape, curriculum version, stage table, batch size, LR), `Stage`,
+`StageSamples`, `TotalSamples`, per-stage gate rates, `BoardAttempts` (**attempts, not accepted boards**, so
+rejections don't shift the generator stream), accept/truncate/reject counts, and the owner-thread RNG states.
+
+**Blank slate:** `--fresh` deletes the three checkpoint ids *after* taking `TrainingDirectoryLock` (so it can
+never race another run) and rotates the CSV — `CampaignCli` appends, so without rotation a fresh run silently
+continues the old log. Without `--fresh`, a `RunFingerprint` mismatch refuses loudly and starts fresh rather
+than diverging silently. A net present with no state sidecar is treated as an unlabelled warm start: stage 0,
+logged — reproducibility is a property of the state file, not the weights.
+
+**Determinism rests on an existing primitive.** `DeterministicParallel` derives item *i*'s RNG from its
+index, so output is invariant to worker count — replaying generation needs only the persisted counter. Two
+hard rules: all net-dependent work stays on the owner thread (DAgger rollouts read the net while Adam mutates
+it), and no dictionary/group enumeration order may feed an RNG.
+
+### 7.1a Observation encoding — the decision a size curriculum forces
+
+The net must accept boards from ~8×5 up to 29×19. **Egocentric 21×13 window centred on the player × 4 planes
+(wall, block, door, off-board) = 1092, plus 24 global features = 1116 floats, constant at every stage.**
+
+So advancing a stage is purely a data-distribution change: no net surgery, no `GrowInput`, no checkpoint
+invalidation, and level 11 produces the same tensor shape as an 8×6 board.
+
+Rejected: **fixed max-size padded planes** (a stage-1 board would train ~97% dead inputs, and it forces the
+max board size to be committed on day one) and **fully convolutional** (needs a new pooled-head net type in
+Core; `ConvResidualPolicyValueNet` bakes H×W into its parameter shapes and its `LayerNorm` runs over the
+whole map, so padding shifts normalisation statistics between stages).
+
+`buildObservation` goes in the `.pg` so the browser computes byte-identical inputs and its stale-checkpoint
+guard is meaningful. Actions stay absolute — `Left`/`Right` are absolute in `BlockDudeAction`, and mirroring
+by facing would desynchronise action semantics from the observation.
 
 ---
 
@@ -509,7 +638,10 @@ Three traps to avoid:
    `<`/`>` on strings is a hard compile error — so there is no ordering and no map, and a string-keyed
    visited set degenerates to a linear scan.
 2. **Avoid `i64` keys.** `i64`/`u64` lower to TypeScript **`bigint`** — correct but allocating and
-   materially slower at 10⁶ probes. Stay ≤31 bits, or use two `i32` words (which is why §4.5a does).
+   materially slower at 10⁶ probes. Stay ≤31 bits (Lunar Lockout packs into 30), or — where the state is far
+   too wide for that, as Block Dude's is — hash into an `i32` and **chain**, comparing candidates exactly
+   (§4.5a). Note the related literal trap: an offset basis like `0x811c9dc5` does not fit `i32`, and writing it
+   as an out-of-range literal silently widens the whole expression to 64-bit.
 3. **Never key on a record.** Record `==` is structural, but `List<T>`/array/class fields compare **by
    reference** — so `record State(board: List<i32>, …)` silently fails to compare structurally.
 
@@ -524,8 +656,11 @@ was Polyglot issue **#27, since fixed**, so a proper frontier queue is safe toda
 Mirrors `RushHourImitationCampaign`, which evaluates held-out ThinkFun cards under **both** reactive play and
 policy-guided A*, plus a random hold-out set. Per game:
 
-1. **All authored levels** (12 Block Dude / 16 Lunar Lockout) solved by **policy-guided A*** — the net's
-   distance head as the heuristic — within **1.25× optimal**.
+1. **All shipped levels solved** by **policy-guided A*** — the net's distance head as the heuristic. The
+   **≤1.25× optimal** bound applies only where an optimal count exists: all 12 Lunar Lockout levels and Block
+   Dude levels 1–3. For Block Dude 4–11 the criterion is *solved at all*, with move count tracked as a
+   regression baseline rather than compared to an unknown optimum (§4.5.1), and **level 11 excluded from the
+   gate entirely** (§8.5).
 2. **≥90% of 200 generated hold-out boards** solved by **greedy argmax**.
 3. Report a **stuck rate** (episodes reaching an unsolvable state) as a first-class metric, not just
    solve-rate — it is the number that exposes §8.1a.
@@ -539,6 +674,70 @@ green, and forcing it would mean either far more training or shipping occasional
 
 ---
 
+### 8.5 Level 11 is a stretch benchmark, not an acceptance criterion
+
+Level 11 will be **implemented and playable** — it already is, floating blocks and all — but it will not be
+*exactly* solved, and it should not gate the milestone.
+
+- **Exact optimality is impossible**, not merely expensive: proving no shorter solution exists means
+  exhausting the reachable space, and 42 blocks over 348 free cells is off-scale by dozens of orders of
+  magnitude (§4.5.1). *Finding* a solution is a different and much easier problem than *proving it minimal*.
+- **Depth is the real obstacle for search.** Level 3 already needs 94 optimal moves; level 11 plausibly needs
+  600–1500. The cube's beam search succeeds partly *because* its horizon is ≤40 moves — failure probability
+  compounds per step, so a beam that is right 99.9% of the time per step still fails often over 1000 steps.
+- **And the cube has no dead ends.** Every cube state is ≤20 moves from solved, so a wandering beam is merely
+  slow. Block Dude states can be **terminally lost**, so all 2000 nodes of a beam can be dead at once — a
+  failure mode the cube literally cannot have. **Dead-end detection is therefore a precondition for search to
+  work at all, not an optimisation.**
+- Realistic shape of success: **subgoal decomposition** — one terrain obstacle at a time, each a short-horizon
+  search with an irrecoverability check gating every commit — not one monolithic 1000-move beam. Levels 4, 5
+  and 9 (8–10 blocks) look reachable; 6, 7 and 8 (14–18) are a genuine research push.
+
+### 8.6 Reuse `Core\Planning`, don't write another search
+
+Contrary to an earlier assumption in this document that every game's search is bespoke, `Core\Planning`
+already holds a **game-agnostic single-agent planning layer**: `IDeterministicModel` (`ActionCount`,
+`IsGoal`, `Apply`, `StateKey`), `BreadthFirstPlanner`, `GreedyValuePlanner`, and `ValueGuidedSearch` —
+weighted A* plus a batched DeepCubeA-style variant that scores a whole expansion front in one forward call.
+Core carries no NN dependency: the net always enters as a delegate.
+
+`BlockDudeBoard` already satisfies the contract (immutable `Apply`, `Won`, `ActionCount = 4`) apart from
+`StateKey`, since `StateHash` is explicitly not an identity. `CubeValueSearch.cs` is a ~90-line adapter to
+mirror. Beam search is the one piece *not* yet generic — it lives typed to `FaceletCube` in
+`CubePolicySearch.BeamSearch`, whose dedupe-by-key-keeping-best-route and log-prob pruning are the parts to
+lift.
+
+Two measured warnings from elsewhere in the repo: Snake found that **per-node net scoring made its search
+weaker** (the net is a root-move tiebreak there, not a per-node score), and turn-as-a-move inflates Block
+Dude's branching with near-duplicate states, so move-redundancy pruning (never turn twice, never
+grab-then-ungrab in place) is needed the way the cube masks no-undo moves.
+
+### 8.7 Two latent bugs fixed en route (FIXED)
+
+Found while designing §7.1, both pre-existing and unrelated to the new games:
+
+1. **`PolicyValueNet.Load` silently corrupted a stale checkpoint.** `inputSize` is not stored in the file, and
+   a shorter stored weight array still satisfied `Span.CopyTo`, so loading a net trained at a different
+   observation width left the tail of layer 0 at fresh random init — no exception, no warning, a quietly
+   broken policy. Now every layer's float count must match exactly.
+
+   **Deliberately fixed without bumping the checkpoint format.** Storing `(inputSize, actions)` would be more
+   self-describing, but the binary layout is a **cross-language contract** — the transpiled `.pg` solvers parse
+   it in the browser, and `ChessNetParityTests.LoadPg` pins the version at 2. Bumping to v3 broke exactly those
+   two tests, and would have broken the shipped chess and draughts net readers. The exact-length check needs no
+   format change and, unlike stored metadata, also validates the v1/v2 files written before it existed.
+
+2. **Imitation and self-play campaigns persisted no progress.** `RushHourImitationCampaign`,
+   `CubeImitationCampaign` and `SelfPlayCampaign` saved net and Adam state but re-derived every counter and
+   owner-thread RNG from the seed on each `Resume`. A restarted run replayed the same generated data *and*
+   reset `PolicyGrowth`'s stage target, which keys off the sample counter — so a repeatedly-interrupted run
+   kept re-growing its trunk from the first stage. Self-play was hit twice: `MaybePromoteDifficulty` reads
+   `_lastWinRate`, unpersisted, so ladder promotion depended on whether the run had evaluated since the last
+   restart. Fixed with an additive `CampaignProgressState` sidecar; a store without it starts at zero, i.e. the
+   old behaviour, so existing checkpoints keep resuming.
+
+---
+
 ## 9. Out of scope (genuinely not being done)
 
 - **Tic Tac Toe — dropped (D3).** A solved, AI-less 158-line game. Perfect play is a draw from every
@@ -548,6 +747,11 @@ green, and forcing it would mean either far more training or shipping occasional
 - **A light theme for the app.** The app is dark-only today (§10.1). The new renderers carry their own light
   palettes, but introducing app-wide theming is not M58 work.
 - **The per-column block-count state encoding.** Rejected on brittleness grounds, not cost — see §4.5a.
+- **Exact optimal solutions for Block Dude levels 4–11.** Not deferred — *impossible*, and measured as such
+  (§4.5.1). Levels 1–3 get proven optimal counts; the rest get solutions whose length is observed, never
+  claimed minimal.
+- **A 1D height-profile terrain model**, and every heuristic built on it. The premise was false for the
+  shipped levels (§4.4a).
 - **The Block Dude level designer.** Spelletjes has a full WinForms designer (`Form2` + context-menu
   placement). Not migrating it: the ASCII grid format is editable in any text editor, which is the whole
   point of keeping it.
@@ -730,20 +934,34 @@ pointer gestures from `app/tetris/tetris.ts:227-273`; DOM move buttons from
 
 ## 11. Open questions
 
-**None blocking.** All eight decisions are resolved (§3) and every question raised during planning closed:
+**None blocking.** All ten decisions are resolved (§3). Every question raised during planning closed — two of
+them by being answered *wrongly first*, which is recorded here rather than quietly overwritten:
 
 | question | resolution |
 |---|---|
-| D1–D4, plus D5–D8 raised while planning | §3 decision table |
+| D1–D10 | §3 decision table |
 | Is anything deployed from WebGames? | **No** — owner, 2026-09-11 (§6.2) |
-| Lunar Lockout rules unverified | **Verified** against ThinkFun's published instructions (§5.2) |
+| Lunar Lockout *rules* unverified | **Verified** against ThinkFun's published instructions (§5.2) |
+| Lunar Lockout *levels* | **13 of 15 unplayable**; ladder regenerated (§5.3) |
 | Can a BFS with a visited set be written in `.pg`? | **Yes, no compiler change needed** (§8.3) |
-| Is the Block Dude state space BFS-tractable? | Yes for the shipped 20×7 / ≤5-block levels; the oracle caps and logs rejections regardless (§4.5) |
-| Is Block Dude terrain arbitrary 2D or a height profile? | **Height profile** — 0 overhangs in 8 of 10 levels, 2 cells each in L9/L10 (§4.4a) |
+| Is the Block Dude state space BFS-tractable? | **Only levels 1–3.** Frontier ≈ ≤6–7 blocks over ≤150 free cells; memory-bound (§4.5.1) |
+| Is Block Dude terrain a height profile? | **No — every original level has overhangs (18–68).** The earlier "yes" was measured on the WebGames synthetic levels and was wrong (§4.4a) |
+| Can level 11 be solved exactly? | **No, impossible** — implemented and playable, but a stretch benchmark only (§8.5) |
+| Is a new search engine needed? | **No** — `Core\Planning` is already game-agnostic (§8.6) |
+| Cell occupancy model | **Single-occupancy, player-in-door the sole exception** — owner ruling, superseding my shared-occupancy recommendation (D1) |
 
-Two items need the owner's eye *during* implementation rather than before it:
+### 11.1 Two claims this document got wrong, and what they cost
 
-1. **Any `minMoves` mismatch in Lunar Lockout** blocks that level pending adjudication (§5.3) — by
-   construction it cannot be auto-resolved.
-2. **Shared-occupancy cells** (D1) were chosen on my recommendation, not an explicit owner ruling. Cheap to
-   revisit until `blockdude_solver.pg` exists; expensive after the net trains on it.
+Kept deliberately, because both were stated with more confidence than the evidence supported:
+
+1. **"Block Dude terrain is a 1D height profile."** Measured on the wrong sample (WebGames synthetic, not the
+   originals). It produced a generator design that cannot emit shipped-level terrain, a state encoding sized
+   for a nonexistent board shape, and it misled a later investigation into proposing height-profile
+   heuristics. §4.4a.
+2. **"Defect 5: gravity is never applied after a climb."** Listed as a defect, then justified as
+   *load-bearing* — "it is how you climb a stack you just built." Both wrong: the climb lands the player
+   directly on the cell whose solidity it just required, so he is supported by construction and a gravity pass
+   there could never do anything. Reclassified as a vacuous non-issue. §4.3.
+
+The general lesson, worth keeping: a measurement is only as good as the sample it was taken on, and a *reason*
+invented after the fact for an observed behaviour is not evidence that the behaviour matters.
