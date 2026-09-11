@@ -1,8 +1,25 @@
 # WebGames retirement + Block Dude / Lunar Lockout migration — PRD
 
-**Status:** planned 2026-09-11 · **Milestone:** M58 · **Branch:** `m58-webgames-retirement`
+**Status:** in progress, 2026-09-11 · **Milestone:** M58 · **Branch:** `m58-webgames-retirement`
 **Goal:** retire `C:\Repos\WebGames` (and the two salvageable corners of `C:\Repos\Spelletjes`) by
 landing everything worth keeping in this repo, so both source repos can be deleted without loss.
+
+| Milestone | State |
+|---|---|
+| M58.0 preserve WebGames | ✅ committed and pushed |
+| M58.1 Lunar Lockout engine + oracle | ✅ 12-level ladder, BFS-verified |
+| M58.2 Lunar Lockout campaign | ⛔ dropped — the game is exhaustively solvable, so it ships the exact oracle rather than a trained net |
+| M58.3 Lunar Lockout page | ✅ |
+| M58.4 Block Dude engine + oracle | ✅ 11 original levels |
+| M58.5 Block Dude generator + campaign | ✅ trainable; no run completed yet |
+| M58.5a Block Dude expert iteration | ⬜ not started |
+| M58.6 Block Dude page | ✅ |
+| M58.7 Rush Hour level harvest | ⛔ abandoned — source data does not decode (§6.1) |
+| M58.8 retire the repos | 🟡 docs updated; deletion is the owner's to do |
+| M58.9 stale home card | ✅ |
+| M58.10 direct manipulation | ✅ both games |
+
+**Not done yet:** the full test suite has not run since the campaign work, and neither new page has tests.
 
 ---
 
@@ -427,7 +444,7 @@ need no migration.
 
 Single branch, single PR (`m58-webgames-retirement`), per repo convention.
 
-**M58.0 — Preserve before anything else.** In `C:\Repos\WebGames`: `git add` the four untracked projects,
+**✅ M58.0 — Preserve before anything else.** In `C:\Repos\WebGames`: `git add` the four untracked projects,
 commit, push. Non-negotiable prerequisite; §1.1.
 
 **Ordering, as revised.** D8 originally put Lunar Lockout first end-to-end, on the reasoning that it is the
@@ -444,7 +461,7 @@ generator, campaign and Lab entry come before Lunar Lockout's UI. A trainable Bl
 *Accepted cost of the original order, now largely spent:* Block Dude is the game the owner actually asked
 for, and its engine landed second.
 
-**M58.1 — Lunar Lockout engine + oracle.** `Environments/LunarLockout/polyglot/lunarlockout_solver.pg`:
+**✅ M58.1 — Lunar Lockout engine + oracle.** `Environments/LunarLockout/polyglot/lunarlockout_solver.pg`:
 rules per §5.2, BFS oracle, `IntSet`. TS twin routed in `pgconfig.json` to
 `app/lunar-lockout/lunarlockout_solver`. C# facade + `LunarLockoutEnv.cs`. **Gate: every shipped level's
 optimal count re-derived by the `.pg` oracle** (§5.3). This gate is what caught the inherited pack as
@@ -454,15 +471,15 @@ unplayable; the ladder is now generated and all 12 counts are BFS-proven.
 registration in `CampaignServiceCollectionExtensions.cs` + a `CampaignRegistrationTests.cs` case, Lab
 `--game lunarlockout`, level generator, training run, checkpoint to `wwwroot/models/`.
 
-**M58.3 — Lunar Lockout UI.** `app/lunar-lockout/` + route + nav + home card, renderer per §10.4,
+**✅ M58.3 — Lunar Lockout UI.** `app/lunar-lockout/` + route + nav + home card, renderer per §10.4,
 `lunarlockout-net.ts` `.ckpt` parser + director with the stale-checkpoint guard.
 
-**M58.4 — Block Dude engine + oracle.** `Environments/BlockDude/polyglot/blockdude_solver.pg` — rules per
+**✅ M58.4 — Block Dude engine + oracle.** `Environments/BlockDude/polyglot/blockdude_solver.pg` — rules per
 §4.2 (corrected per D1), oracle per §4.5, two-word key + `IntSet` per §4.5a. Tests:
 `BlockDudeEngineTests.cs` (every rule in §4.2 as a case, including fall-through-door and
 block-supported-by-door), `BlockDudeParityTests.cs`, and an oracle test asserting `optimalMoves` per level.
 
-**M58.5 — Block Dude generator + campaign + net (phase 1).** Heightmap generator with bounded shelves per
+**✅ M58.5 — Block Dude generator + campaign + net (phase 1).** Heightmap generator with bounded shelves per
 §4.4a, imitation campaign, Lab `--game blockdude`, training run to the §8.4 gate legs 1–3, checkpoint.
 
 **M58.5a — Block Dude expert iteration (phase 2).** Per §8.1b: oversized-board generator tier, A*/beam
@@ -470,13 +487,13 @@ self-solving loop, distinct checkpoint ids (`blockdude.policy-xit*`) leaving the
 §8.4 gate leg 4. **This is the milestone that answers the imitation-ceiling objection** — if leg 4 does not
 beat the phase-1 baseline, phase 2 has failed and the phase-1 net ships as the browser tier.
 
-**M58.6 — Block Dude UI.** `app/block-dude/` + route + nav + home card, renderer per §10.3, keyboard +
+**✅ M58.6 — Block Dude UI.** `app/block-dude/` + route + nav + home card, renderer per §10.3, keyboard +
 on-screen mobile controls, **undo (mandatory — the game is irreversible)**, hint, level picker, Watch-AI.
 
 **M58.7 — Rush Hour level harvest: ABANDONED.** The source data does not decode into legal boards under any
 of 16 candidate conventions (§6.1). The deck keeps its 79 levels; nothing is lost by retiring WebGames.
 
-**M58.10 — Direct manipulation in both games** (§12). Lunar Lockout: rocket glyph, hover-to-aim, press-and-drag on
+**✅ M58.10 — Direct manipulation in both games** (§12). Lunar Lockout: rocket glyph, hover-to-aim, press-and-drag on
 touch, retargeted hints, renderer `hover()` entry point. Rush Hour: axis-locked sub-cell drag with anchor
 re-coupling, settle animation, per-cell move counting, `touch-action: none`, mode-guarded editor coexistence.
 Includes the two pre-existing defects in §12.6.
@@ -485,7 +502,7 @@ Includes the two pre-existing defects in §12.6.
 `docs/ADDING_A_GAME.md`; then the owner deletes `C:\Repos\WebGames`. Leave `C:\Repos\Spelletjes` alone — it
 still holds Rush Hour, `RushHour.Core`, its tests and the designer PRDs, none of which are in scope here.
 
-**M58.9 — Fix the stale home card** noted in the audit: `app/home/home.ts:65` still says FruitCake has
+**✅ M58.9 — Fix the stale home card** noted in the audit: `app/home/home.ts:65` still says FruitCake has
 "no AI (yet)", untrue since M32. One-line fix, lands in the same PR.
 
 Test suites run **once**, at the end of M58.6 (after all engine, campaign and UI milestones), per the repo's
