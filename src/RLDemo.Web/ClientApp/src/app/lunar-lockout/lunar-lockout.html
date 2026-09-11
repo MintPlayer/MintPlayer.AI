@@ -24,20 +24,20 @@
 </div>
 
 <div class="actions">
-  <button type="button" [bsButtonType]="colors.secondary" (click)="changeLevel(-1)" [disabled]="levelIndex() === 0">
+  <button type="button" [color]="colors.secondary" (click)="changeLevel(-1)" [disabled]="levelIndex() === 0">
     ← Previous
   </button>
   <span class="level-name">{{ level()?.name }} ({{ levelIndex() + 1 }}/{{ levels().length }})</span>
-  <button type="button" [bsButtonType]="colors.secondary" (click)="changeLevel(1)"
+  <button type="button" [color]="colors.secondary" (click)="changeLevel(1)"
           [disabled]="levelIndex() >= levels().length - 1">
     Next →
   </button>
 </div>
 
 <div class="actions">
-  <button type="button" [bsButtonType]="colors.secondary" (click)="undo()" [disabled]="!canUndo()">Undo</button>
-  <button type="button" [bsButtonType]="colors.secondary" (click)="reset()">Restart</button>
-  <button type="button" [bsButtonType]="colors.primary" (click)="showHint()">Hint</button>
+  <button type="button" [color]="colors.secondary" (click)="undo()" [disabled]="!canUndo()">Undo</button>
+  <button type="button" [color]="colors.secondary" (click)="reset()">Restart</button>
+  <button type="button" [color]="colors.primary" (click)="showHint()">Hint</button>
   <span class="moves">{{ moves() }} move{{ moves() === 1 ? '' : 's' }}</span>
 </div>
 

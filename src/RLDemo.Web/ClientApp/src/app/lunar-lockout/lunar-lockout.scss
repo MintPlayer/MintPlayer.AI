@@ -85,21 +85,5 @@
   font-size: 0.9rem;
 }
 
-@media (prefers-color-scheme: light) {
-  .lunar-stage {
-    background: #f4f6fa;
-    border-color: #d3d9e4;
-  }
-
-  .intro,
-  .level-name,
-  .moves {
-    color: #5b6378;
-  }
-
-  .pad .pad-btn {
-    color: #5b6378;
-    background: #e7ebf2;
-    border-color: #d3d9e4;
-  }
-}
+// No prefers-color-scheme block on purpose: the playground is dark-only, so honouring the OS preference here
+// would light this page alone and leave the canvas disagreeing with the rest of the site.

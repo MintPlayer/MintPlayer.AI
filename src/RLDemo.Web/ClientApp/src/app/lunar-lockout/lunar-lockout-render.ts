@@ -33,6 +33,11 @@ const DARK: LunarPalette = {
   void_: '#14171f', hair: '#3a4154', robot: '#aab2c5', target: '#6ea8fe', goal: '#4caf82', text: '#e6e8ee',
 };
 
+/**
+ * Kept for when the app gains a theme, but NOT selected from `prefers-color-scheme`: the playground is
+ * dark-only today — no `data-theme`, no toggle, every page hard-codes its palette. Following the OS here painted
+ * a light board onto a dark page for anyone whose system is set to light.
+ */
 const LIGHT: LunarPalette = {
   void_: '#f4f6fa', hair: '#d3d9e4', robot: '#5b6378', target: '#2563eb', goal: '#2f8f66', text: '#14171f',
 };
@@ -63,7 +68,7 @@ export class LunarLockoutRenderer {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D is unavailable.');
     this.ctx = ctx;
-    this.palette = matchMedia('(prefers-color-scheme: light)').matches ? LIGHT : DARK;
+    this.palette = DARK;
   }
 
   /** Honours the viewer's reduced-motion preference by collapsing every duration to zero. */
@@ -110,7 +115,6 @@ export class LunarLockoutRenderer {
     const snapshot = this.snapshot;
     if (!snapshot) return false;
 
-    this.palette = matchMedia('(prefers-color-scheme: light)').matches ? LIGHT : DARK;
     const { ctx } = this;
 
     // Device-pixel-ratio backing store, logical coordinates on top.
@@ -257,7 +261,8 @@ export class LunarLockoutRenderer {
       ctx.font = `bold ${0.06 * LOGICAL}px system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`Solved · ${snapshot.moves} moves`, LOGICAL / 2, LOGICAL / 2);
+      const plural = snapshot.moves === 1 ? 'move' : 'moves';
+      ctx.fillText(`Solved · ${snapshot.moves} ${plural}`, LOGICAL / 2, LOGICAL / 2);
     }
     return progress < 1;
   }
