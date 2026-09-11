@@ -23,9 +23,12 @@ public class LunarLockoutOracleTests
             var oracle = new LunarLockoutOracle(Board(level.Grid));
             Assert.False(oracle.Truncated, $"'{level.Name}': a 5x5 board must never exceed the oracle cap.");
 
+            Assert.True(level.OptimalMoves.HasValue,
+                $"'{level.Name}': the Lunar Lockout pack must carry a verified optimal move count.");
+
             int optimal = oracle.OptimalFromStart;
             if (optimal < 0) unsolvable.Add(level.Name);
-            else if (optimal != level.OptimalMoves)
+            else if (optimal != level.OptimalMoves!.Value)
                 mismatches.Add($"'{level.Name}': stored {level.OptimalMoves}, BFS-optimal {optimal}");
         }
 
@@ -44,7 +47,7 @@ public class LunarLockoutOracleTests
         Assert.NotEmpty(levels);
 
         for (int i = 1; i < levels.Length; i++)
-            Assert.True(levels[i].OptimalMoves > levels[i - 1].OptimalMoves,
+            Assert.True(levels[i].OptimalMoves!.Value > levels[i - 1].OptimalMoves!.Value,
                 $"'{levels[i].Name}' ({levels[i].OptimalMoves}) does not exceed '{levels[i - 1].Name}' ({levels[i - 1].OptimalMoves}).");
 
         var keys = levels.Select(l => Board(l.Grid).Key).ToList();

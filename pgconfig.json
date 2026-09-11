@@ -5,6 +5,11 @@
   ],
   "include": [
     {
+      "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/BlockDude/polyglot/blockdude_solver.pg",
+      "target": "typescript",
+      "output": "src/RLDemo.Web/ClientApp/src/app/block-dude/blockdude_solver"
+    },
+    {
       "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/Chess/polyglot/chess_solver.pg",
       "target": "typescript",
       "output": "src/RLDemo.Web/ClientApp/src/app/chess/chess_solver"

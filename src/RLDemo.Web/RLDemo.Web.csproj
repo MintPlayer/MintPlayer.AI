@@ -30,6 +30,17 @@
 		<ProjectReference Include="..\MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting\MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting.csproj" />
 	</ItemGroup>
 
+	<!-- Level content, single source of truth: these JSON packs live in the Environments project (embedded there
+	     for training) and are LINKED — not copied — into wwwroot/levels, so the Angular app fetches the exact
+	     same bytes the C# campaign trains against. Regenerate with `python tools/blockdude_levels.py` /
+	     `python tools/lunarlockout_levels.py`; never hand-edit, and never duplicate a pack into wwwroot. -->
+	<ItemGroup>
+		<Content Include="..\MintPlayer.AI.ReinforcementLearning.Environments\BlockDude\levels\blockdude-levels.json"
+		         Link="wwwroot\levels\blockdude-levels.json" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="..\MintPlayer.AI.ReinforcementLearning.Environments\LunarLockout\levels\lunarlockout-levels.json"
+		         Link="wwwroot\levels\lunarlockout-levels.json" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
 	<!-- Angular production build during publish (dev uses the SPA dev-server middleware).
 	     The Dockerfile builds the SPA in a dedicated Node stage and sets SkipAngularPublish. -->
 	<Target Name="PublishAngular" AfterTargets="ComputeFilesToPublish" Condition="'$(SkipAngularPublish)' != 'true'">

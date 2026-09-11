@@ -1,0 +1,141 @@
+{
+  "_generator": "tools/lunarlockout_levels.py (deterministic, seed 58) — do not hand-edit; re-run the tool.",
+  "_format": "Five rows, top row first. R = target robot, . = empty, any other letter = helper robot.",
+  "_verified": "Every optimalMoves is an exhaustive-BFS result, not a hand-authored guess. LunarLockoutOracleTests re-derives all of them through the .pg oracle as a cross-check.",
+  "_provenance": "The level pack inherited from the WebGames port was unusable — 13 of its 15 grids had no legal first move at all, because no two robots shared a row or column — so this ladder is authored here instead. See docs/prd/WEBGAMES_RETIREMENT_PRD.md section 5.3.",
+  "version": 1,
+  "levels": [
+    {
+      "name": "Level 1",
+      "grid": [
+        ".....",
+        "B.G..",
+        ".....",
+        "..R..",
+        "....."
+      ],
+      "optimalMoves": 1
+    },
+    {
+      "name": "Level 2",
+      "grid": [
+        ".....",
+        ".....",
+        "R.B.G",
+        ".....",
+        "....."
+      ],
+      "optimalMoves": 2
+    },
+    {
+      "name": "Level 3",
+      "grid": [
+        ".R.B.",
+        ".....",
+        ".....",
+        ".G.Y.",
+        "....."
+      ],
+      "optimalMoves": 3
+    },
+    {
+      "name": "Level 4",
+      "grid": [
+        ".B...",
+        "...G.",
+        ".....",
+        ".R.Y.",
+        "....."
+      ],
+      "optimalMoves": 4
+    },
+    {
+      "name": "Level 5",
+      "grid": [
+        ".....",
+        "B.R.G",
+        ".....",
+        ".....",
+        ".Y.P."
+      ],
+      "optimalMoves": 5
+    },
+    {
+      "name": "Level 6",
+      "grid": [
+        "B....",
+        "....G",
+        "R....",
+        "....Y",
+        "P...."
+      ],
+      "optimalMoves": 6
+    },
+    {
+      "name": "Level 7",
+      "grid": [
+        ".B.G.",
+        ".....",
+        ".R...",
+        ".....",
+        ".Y.P."
+      ],
+      "optimalMoves": 7
+    },
+    {
+      "name": "Level 8",
+      "grid": [
+        ".B...",
+        "....R",
+        ".G...",
+        ".....",
+        ".Y..P"
+      ],
+      "optimalMoves": 8
+    },
+    {
+      "name": "Level 9",
+      "grid": [
+        ".B..G",
+        ".....",
+        "....Y",
+        ".R...",
+        "....P"
+      ],
+      "optimalMoves": 9
+    },
+    {
+      "name": "Level 10",
+      "grid": [
+        ".BG.Y",
+        ".....",
+        ".....",
+        ".....",
+        ".R..P"
+      ],
+      "optimalMoves": 10
+    },
+    {
+      "name": "Level 11",
+      "grid": [
+        "B..R.",
+        ".....",
+        ".....",
+        ".....",
+        "G.Y.P"
+      ],
+      "optimalMoves": 11
+    },
+    {
+      "name": "Level 12",
+      "grid": [
+        "B....",
+        "....R",
+        "G....",
+        ".....",
+        "Y..P."
+      ],
+      "optimalMoves": 12
+    }
+  ]
+}

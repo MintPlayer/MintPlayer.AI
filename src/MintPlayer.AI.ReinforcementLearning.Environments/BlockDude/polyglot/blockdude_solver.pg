@@ -1,0 +1,537 @@
+// blockdude_solver.pg — single-source Block Dude engine + exact oracle (M58), transpiled to C# and TS.
+//
+// ONE source for the rules, so the C# training campaign and the browser run identical logic. Rules recovered
+// from the WinForms implementation at C:\Repos\Spelletjes\Block Dude\SpeelVeld.cs and corroborated
+// independently by the TI-84+CE port's game.c (see docs/prd/WEBGAMES_RETIREMENT_PRD.md §4.2).
+//
+// COORDINATES: row-major, row 0 at the TOP, y increasing DOWNWARD, so gravity is +y. The original used 1-based
+// Y-up; the rules here are identical, only the axis is flipped, which keeps the engine aligned with the
+// top-first ASCII level assets and with the TI port.
+//
+// OCCUPANCY: one entity per cell, with exactly ONE exception — the player may stand in the door cell, which is
+// how you win. Terrain (wall/door) is immutable; blocks and the player are the only mobile things. This is
+// deliberately stricter than the WinForms original, whose multi-occupancy is the root cause of its
+// order-dependent door detection (PRD §4.3 defect 2).
+//
+// GRAVITY is applied ONLY to the walking player and to a dropped block — never as a global settle pass. That is
+// load-bearing content, not an oversight: the original level 11 ships 14 blocks floating in mid-air.
+//
+// Polyglot notes (PRD §8.3): no dictionary/set/queue exists, and `PgIntMap` is already defined by
+// lunarlockout_solver.pg — both emit into the same assembly's global namespace, so the visited structure here is
+// uniquely named. Block Dude states are far too wide to pack into an integer (level 11 is 42 blocks on 551
+// cells), so the key is a HASH with exact verification by chaining, never a lossy hash alone.
+
+import { List } from "std.collections"
+import "std.strings"
+
+// ── Tiles ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// 0 empty · 1 wall (immovable, climbable, never carryable) · 2 door (passable; the win cell)
+fn bdEmpty(): i32 => 0
+fn bdWall(): i32 => 1
+fn bdDoor(): i32 => 2
+
+// Actions: 0 left · 1 right · 2 up (climb) · 3 down (pick up / put down)
+fn bdActionCount(): i32 => 4
+
+class PgBlockDudeBoard {
+  var width: i32
+  var height: i32
+  var tiles: List<i32>     // immutable terrain, length width*height
+  var blockAt: List<bool>  // O(1) block occupancy, parallel to tiles
+  var blocks: List<i32>    // block cell indices, kept ASCENDING so the state hash is canonical
+  var px: i32
+  var py: i32
+  var facingRight: bool
+  var carrying: bool
+  var won: bool
+
+  constructor(width: i32, height: i32, tiles: List<i32>, blockAt: List<bool>, blocks: List<i32>,
+              px: i32, py: i32, facingRight: bool, carrying: bool, won: bool) {
+    this.width = width
+    this.height = height
+    this.tiles = tiles
+    this.blockAt = blockAt
+    this.blocks = blocks
+    this.px = px
+    this.py = py
+    this.facingRight = facingRight
+    this.carrying = carrying
+    this.won = won
+  }
+
+  fn idx(x: i32, y: i32): i32 => y * this.width + x
+
+  fn inBounds(x: i32, y: i32): bool {
+    if x < 0 { return false }
+    if y < 0 { return false }
+    if x >= this.width { return false }
+    if y >= this.height { return false }
+    return true
+  }
+
+  fn tileAt(x: i32, y: i32): i32 => this.tiles[this.idx(x, y)]
+
+  fn hasBlock(x: i32, y: i32): bool => this.blockAt[this.idx(x, y)]
+
+  // Walls and blocks stop the player. A door does NOT: walking into it is how you win.
+  fn blocksPlayer(x: i32, y: i32): bool {
+    if this.tileAt(x, y) == bdWall() { return true }
+    return this.hasBlock(x, y)
+  }
+
+  // What the player can stand on. A door does NOT support the player — he falls straight through it, which the
+  // TI port states outright (`while ((floor == EMPTY || floor == DOOR) ...)`).
+  fn supportsPlayer(x: i32, y: i32): bool {
+    if this.tileAt(x, y) == bdWall() { return true }
+    return this.hasBlock(x, y)
+  }
+
+  // What a falling BLOCK rests on — walls, other blocks, AND doors. So a block above a door stays put, while
+  // the player standing on the same cell would fall.
+  fn supportsBlock(x: i32, y: i32): bool {
+    let t = this.tileAt(x, y)
+    if t == bdWall() { return true }
+    if t == bdDoor() { return true }
+    return this.hasBlock(x, y)
+  }
+
+  fn clone(): PgBlockDudeBoard {
+    var t: List<i32> = List<i32>()
+    for i in 0..this.tiles.count { t.add(this.tiles[i]) }
+    var ba: List<bool> = List<bool>()
+    for i in 0..this.blockAt.count { ba.add(this.blockAt[i]) }
+    var bl: List<i32> = List<i32>()
+    for i in 0..this.blocks.count { bl.add(this.blocks[i]) }
+    return PgBlockDudeBoard(this.width, this.height, t, ba, bl, this.px, this.py,
+                            this.facingRight, this.carrying, this.won)
+  }
+
+  // ── block bookkeeping: blockAt and blocks stay in sync, blocks stays ascending ──
+  fn addBlock(x: i32, y: i32) {
+    let cell = this.idx(x, y)
+    this.blockAt[cell] = true
+    var at = this.blocks.count
+    for i in 0..this.blocks.count {
+      if this.blocks[i] > cell {
+        at = i
+        break
+      }
+    }
+    this.blocks.add(cell)
+    var j = this.blocks.count - 1
+    while j > at {
+      this.blocks[j] = this.blocks[j - 1]
+      j -= 1
+    }
+    this.blocks[at] = cell
+  }
+
+  fn removeBlock(x: i32, y: i32) {
+    let cell = this.idx(x, y)
+    this.blockAt[cell] = false
+    for i in 0..this.blocks.count {
+      if this.blocks[i] == cell {
+        this.blocks.removeAt(i)
+        return
+      }
+    }
+  }
+
+  // ── gravity ──
+  fn dropPlayer() {
+    while true {
+      if !this.inBounds(this.px, this.py + 1) { return }
+      if this.supportsPlayer(this.px, this.py + 1) { return }
+      this.py += 1
+    }
+  }
+
+  fn dropBlock(x: i32, y: i32) {
+    var cy = y
+    while true {
+      if !this.inBounds(x, cy + 1) { break }
+      if this.supportsBlock(x, cy + 1) { break }
+      cy += 1
+    }
+    this.addBlock(x, cy)
+  }
+
+  fn facingDx(): i32 {
+    if this.facingRight { return 1 }
+    return -1
+  }
+
+  // Win is evaluated AFTER gravity: walking into a door with empty space beneath it drops you through instead of
+  // finishing the level, exactly as the original behaves.
+  fn checkWon() {
+    if this.tileAt(this.px, this.py) == bdDoor() { this.won = true }
+  }
+
+  // ── moves ─────────────────────────────────────────────────────────────────────────────────────────────────
+  // Returns true when the board actually changed. Turning to face a new direction COUNTS as a change (and as a
+  // move), which is faithful to the original.
+  fn step(action: i32): bool {
+    if this.won { return false }
+    if action == 0 { return this.walk(false) }
+    if action == 1 { return this.walk(true) }
+    if action == 2 { return this.climb() }
+    return this.updown()
+  }
+
+  fn walk(right: bool): bool {
+    var turned = false
+    if this.facingRight != right {
+      this.facingRight = right
+      turned = true
+    }
+    let dx = this.facingDx()
+    let tx = this.px + dx
+    if !this.inBounds(tx, this.py) { return turned }
+    if this.blocksPlayer(tx, this.py) { return turned }
+
+    // The carried block rides above the player's head; it needs somewhere to be at the destination.
+    let hadBlock = this.carrying
+    this.px = tx
+    this.dropPlayer()
+
+    if hadBlock {
+      let hy = this.py - 1
+      if !this.inBounds(this.px, hy) {
+        // Nowhere above the destination: the block is knocked out of his hands and falls where it stood.
+        this.carrying = false
+        this.dropBlock(this.px - dx, this.py - 1)
+      } else if this.blocksPlayer(this.px, hy) {
+        this.carrying = false
+        this.dropBlock(this.px - dx, this.py - 1)
+      }
+    }
+
+    this.checkWon()
+    return true
+  }
+
+  fn climb(): bool {
+    let dx = this.facingDx()
+    let ax = this.px + dx
+    if !this.inBounds(ax, this.py) { return false }
+
+    // Must be climbing something solid — never a door, never thin air.
+    var solid = false
+    if this.tileAt(ax, this.py) == bdWall() { solid = true }
+    if this.hasBlock(ax, this.py) { solid = true }
+    if !solid { return false }
+
+    // Headroom above the player, and a free destination.
+    if !this.inBounds(this.px, this.py - 1) { return false }
+    if this.blocksPlayer(this.px, this.py - 1) { return false }
+    if !this.inBounds(ax, this.py - 1) { return false }
+    if this.blocksPlayer(ax, this.py - 1) { return false }
+    if this.carrying {
+      if !this.inBounds(ax, this.py - 2) { return false }
+      if this.blocksPlayer(ax, this.py - 2) { return false }
+    }
+
+    this.px = ax
+    this.py = this.py - 1
+    // No gravity after a climb: the destination sits directly on the cell whose solidity the climb required, so
+    // it is always supported and a fall could never find anywhere to go (PRD §4.3).
+    this.checkWon()
+    return true
+  }
+
+  fn updown(): bool {
+    let dx = this.facingDx()
+    if !this.carrying { return this.pickUp(dx) }
+    return this.putDown(dx)
+  }
+
+  fn pickUp(dx: i32): bool {
+    let bx = this.px + dx
+    if !this.inBounds(bx, this.py) { return false }
+    if !this.hasBlock(bx, this.py) { return false }        // strictly a block — a wall can never be picked up
+    if !this.inBounds(this.px, this.py - 1) { return false } // headroom to hold it
+    if this.blocksPlayer(this.px, this.py - 1) { return false }
+    if this.inBounds(bx, this.py - 1) {
+      if this.blocksPlayer(bx, this.py - 1) { return false } // it has to be liftable out
+    }
+    this.removeBlock(bx, this.py)
+    this.carrying = true
+    return true
+  }
+
+  fn putDown(dx: i32): bool {
+    // The block is placed diagonally up-ahead and then falls — you cannot set it down at your own level.
+    let tx = this.px + dx
+    let ty = this.py - 1
+    if !this.inBounds(tx, ty) { return false }
+    if this.blocksPlayer(tx, ty) { return false }
+    if this.tileAt(tx, ty) == bdDoor() { return false }    // single occupancy: only the player may enter a door
+    this.carrying = false
+    this.dropBlock(tx, ty)
+    return true
+  }
+
+  fn isLegal(action: i32): bool {
+    let probe = this.clone()
+    return probe.step(action)
+  }
+
+  fn applyAction(action: i32): PgBlockDudeBoard {
+    let next = this.clone()
+    next.step(action)
+    return next
+  }
+
+  // ── state identity ────────────────────────────────────────────────────────────────────────────────────────
+  // Mobile state only: terrain is immutable, so it is excluded. Two boards are the same state when the player
+  // pose and the block multiset agree.
+  fn sameState(other: PgBlockDudeBoard): bool {
+    if this.px != other.px { return false }
+    if this.py != other.py { return false }
+    if this.facingRight != other.facingRight { return false }
+    if this.carrying != other.carrying { return false }
+    if this.won != other.won { return false }
+    if this.blocks.count != other.blocks.count { return false }
+    for i in 0..this.blocks.count {
+      if this.blocks[i] != other.blocks[i] { return false }
+    }
+    return true
+  }
+
+  // 32-bit FNV-1a over the mobile state. A hash ALONE is not a state identity — PgBdVisited chains and then
+  // compares with sameState, so a collision costs a comparison rather than silently merging two positions.
+  fn stateHash(): i32 {
+    // FNV-1a, kept in SIGNED i32 arithmetic on purpose: the usual 0x811c9dc5 offset basis does not fit i32, and
+    // spelling it as an out-of-range literal makes the transpiler widen the whole expression to 64-bit (which
+    // then lowers to TypeScript `bigint`). -2128831035 is the same bit pattern read as a signed int, and
+    // 0x01000193 fits, so every step stays a wrapping 32-bit multiply on both targets.
+    var h: i32 = -2128831035
+    h = (h ^ this.px) * 0x01000193
+    h = (h ^ this.py) * 0x01000193
+    var flags: i32 = 0
+    if this.facingRight { flags = flags | 1 }
+    if this.carrying { flags = flags | 2 }
+    if this.won { flags = flags | 4 }
+    h = (h ^ flags) * 0x01000193
+    for i in 0..this.blocks.count {
+      h = (h ^ this.blocks[i]) * 0x01000193
+    }
+    h ^= h >> 16
+    return h & 0x7fffffff
+  }
+
+  // Parses an ASCII grid, top row first: W wall · B block · P player start · D door · . empty.
+  static fn fromGrid(rows: List<string>): PgBlockDudeBoard {
+    let height = rows.count
+    let width = rows[0].len()
+    var tiles: List<i32> = List<i32>()
+    var blockAt: List<bool> = List<bool>()
+    var blocks: List<i32> = List<i32>()
+    for _i in 0..(width * height) {
+      tiles.add(bdEmpty())
+      blockAt.add(false)
+    }
+
+    var px = 0
+    var py = 0
+    for y in 0..height {
+      let row = rows[y]
+      for x in 0..width {
+        let ch = row.charAt(x)
+        let cell = y * width + x
+        if ch == "W" {
+          tiles[cell] = bdWall()
+        } else if ch == "D" {
+          tiles[cell] = bdDoor()
+        } else if ch == "B" {
+          blockAt[cell] = true
+          blocks.add(cell)
+        } else if ch == "P" {
+          px = x
+          py = y
+        }
+      }
+    }
+    // The original faces left on spawn.
+    return PgBlockDudeBoard(width, height, tiles, blockAt, blocks, px, py, false, false, false)
+  }
+}
+
+// ── Visited set: hash -> chained state ids, with exact verification ──────────────────────────────────────────
+// Open addressing on the hash, plus a per-bucket chain through `chainNext` so two different states sharing a
+// hash are compared with sameState instead of being silently merged.
+class PgBdVisited {
+  var slotHash: List<i32>
+  var slotFirst: List<i32>
+  var chainNext: List<i32>
+  var mask: i32
+
+  constructor(capacityPow2: i32) {
+    this.slotHash = List<i32>()
+    this.slotFirst = List<i32>()
+    this.chainNext = List<i32>()
+    for _i in 0..capacityPow2 {
+      this.slotHash.add(-1)
+      this.slotFirst.add(-1)
+    }
+    this.mask = capacityPow2 - 1
+  }
+
+  // State id for a board already present, or -1.
+  fn find(board: PgBlockDudeBoard, states: List<PgBlockDudeBoard>): i32 {
+    let h = board.stateHash()
+    var i = h & this.mask
+    while this.slotHash[i] != -1 {
+      if this.slotHash[i] == h {
+        var id = this.slotFirst[i]
+        while id >= 0 {
+          if states[id].sameState(board) { return id }
+          id = this.chainNext[id]
+        }
+        return -1
+      }
+      i = (i + 1) & this.mask
+    }
+    return -1
+  }
+
+  // Registers an already-appended state (its id indexes `states`).
+  fn insert(id: i32, board: PgBlockDudeBoard) {
+    let h = board.stateHash()
+    var i = h & this.mask
+    while this.slotHash[i] != -1 {
+      if this.slotHash[i] == h { break }
+      i = (i + 1) & this.mask
+    }
+    while this.chainNext.count <= id { this.chainNext.add(-1) }
+    if this.slotHash[i] == -1 {
+      this.slotHash[i] = h
+      this.slotFirst[i] = id
+      this.chainNext[id] = -1
+    } else {
+      this.chainNext[id] = this.slotFirst[i]
+      this.slotFirst[i] = id
+    }
+  }
+}
+
+// ── Exact oracle ─────────────────────────────────────────────────────────────────────────────────────────────
+// Same two-pass shape as the Lunar Lockout oracle — forward BFS recording every edge, then a multi-source
+// backward BFS from the won states — because gravity is irreversible and the graph cannot be walked backwards.
+//
+// This is viable ONLY for small boards. The shipped level 11 has 42 blocks on 551 cells; nothing exact will ever
+// label it. Training data therefore comes from GENERATED small boards, and `truncated` must be logged as a
+// rejection so the accepted set's bias stays visible (PRD §4.5).
+class PgBlockDudeOracle {
+  var dist: List<i32>
+  var optMask: List<i32>
+  var states: List<PgBlockDudeBoard>
+  var truncated: bool
+
+  constructor(start: PgBlockDudeBoard, maxStates: i32) {
+    this.dist = List<i32>()
+    this.optMask = List<i32>()
+    this.states = List<PgBlockDudeBoard>()
+    this.truncated = false
+
+    var capacity = 1024
+    while capacity < maxStates * 2 { capacity = capacity << 1 }
+    var visited = PgBdVisited(capacity)
+
+    var edgeFrom: List<i32> = List<i32>()
+    var edgeTo: List<i32> = List<i32>()
+    var edgeAction: List<i32> = List<i32>()
+
+    this.states.add(start)
+    visited.insert(0, start)
+
+    var head = 0
+    while head < this.states.count {
+      let curId = head
+      let cur = this.states[head]
+      head += 1
+      if cur.won { continue } // terminal: nothing follows a finished level
+
+      for a in 0..bdActionCount() {
+        let next = cur.applyAction(a)
+        if next.sameState(cur) { continue } // refused move
+        var nid = visited.find(next, this.states)
+        if nid < 0 {
+          if this.states.count >= maxStates {
+            this.truncated = true
+            this.dist.clear()
+            this.optMask.clear()
+            this.states.clear()
+            return
+          }
+          nid = this.states.count
+          this.states.add(next)
+          visited.insert(nid, next)
+        }
+        edgeFrom.add(curId)
+        edgeTo.add(nid)
+        edgeAction.add(a)
+      }
+    }
+
+    let n = this.states.count
+    for _i in 0..n {
+      this.dist.add(-1)
+      this.optMask.add(0)
+    }
+
+    var revHead: List<i32> = List<i32>()
+    for _i in 0..n { revHead.add(-1) }
+    var revNext: List<i32> = List<i32>()
+    for e in 0..edgeTo.count {
+      revNext.add(revHead[edgeTo[e]])
+      revHead[edgeTo[e]] = e
+    }
+
+    var frontier: List<i32> = List<i32>()
+    for id in 0..n {
+      if this.states[id].won {
+        this.dist[id] = 0
+        frontier.add(id)
+      }
+    }
+    var fh = 0
+    while fh < frontier.count {
+      let id = frontier[fh]
+      fh += 1
+      var e = revHead[id]
+      while e >= 0 {
+        let pred = edgeFrom[e]
+        if this.dist[pred] < 0 {
+          this.dist[pred] = this.dist[id] + 1
+          frontier.add(pred)
+        }
+        e = revNext[e]
+      }
+    }
+
+    // Supervise against EVERY optimal action, not one representative: cross-entropy against a single choice
+    // penalises the equally-optimal alternatives and flattens the policy.
+    for e in 0..edgeFrom.count {
+      let f = edgeFrom[e]
+      let t = edgeTo[e]
+      if this.dist[f] < 0 { continue }
+      if this.dist[t] < 0 { continue }
+      if this.dist[t] == this.dist[f] - 1 {
+        this.optMask[f] = this.optMask[f] | (1 << edgeAction[e])
+      }
+    }
+  }
+
+  fn stateCount(): i32 => this.states.count
+
+  fn optimalFromStart(): i32 {
+    if this.truncated { return -1 }
+    if this.states.count == 0 { return -1 }
+    return this.dist[0]
+  }
+
+  fn distanceOfId(id: i32): i32 => this.dist[id]
+
+  fn optimalActionsOfId(id: i32): i32 => this.optMask[id]
+}
