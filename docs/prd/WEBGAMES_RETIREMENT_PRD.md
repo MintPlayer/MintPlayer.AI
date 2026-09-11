@@ -92,6 +92,8 @@ that is why.
 | **D7** | Lunar Lockout rules | **Verified against the published ThinkFun rules** (§5.2) — the WebGames implementation is faithful. Its *level pack* was not: 13 of 15 grids are unplayable (§5.3). |
 | **D9** | Curriculum + reproducibility | Train small→large, and **any run must be re-startable from a blank slate** (owner). Design in §7.1. |
 | **D10** | Level packs | **Canonical JSON, single source of truth** (owner): embedded in the Environments assembly for training, linked into `wwwroot/levels` for the browser. Same bytes both sides. |
+| **D11** | Input model | **Direct manipulation, replacing select-then-press-a-button in BOTH games** (owner). Lunar Lockout = point-and-launch with a rotating rocket; Rush Hour = grab-and-slide with sub-cell motion. §12. |
+| **D12** | Mouse vs touch | Branch the **behaviour** by input type, via ONE Pointer Events stream discriminated on `pointerType`, not separate `mousemove`/`touchstart` handlers (§12.2). |
 | **D8** | Implementation order | **Lunar Lockout end-to-end first**, then Block Dude (§7). |
 
 ### 3.1 Why D2 changed from the first draft
@@ -473,6 +475,11 @@ on-screen mobile controls, **undo (mandatory — the game is irreversible)**, hi
 
 **M58.7 — Rush Hour level harvest: ABANDONED.** The source data does not decode into legal boards under any
 of 16 candidate conventions (§6.1). The deck keeps its 79 levels; nothing is lost by retiring WebGames.
+
+**M58.10 — Direct manipulation in both games** (§12). Lunar Lockout: rocket glyph, hover-to-aim, press-and-drag on
+touch, retargeted hints, renderer `hover()` entry point. Rush Hour: axis-locked sub-cell drag with anchor
+re-coupling, settle animation, per-cell move counting, `touch-action: none`, mode-guarded editor coexistence.
+Includes the two pre-existing defects in §12.6.
 
 **M58.8 — Retire the repos.** Update `docs/ARCHITECTURE.md`, `docs/prd/PLAN.md` (M58 entry) and
 `docs/ADDING_A_GAME.md`; then the owner deletes `C:\Repos\WebGames`. Leave `C:\Repos\Spelletjes` alone — it
@@ -947,6 +954,181 @@ New: `app/block-dude/{block-dude-render.ts, block-dude.ts, .html, .scss}` and
 stage/fullscreen SCSS from `app/fruit-cake/fruit-cake.scss:22-75` and `app/tetris/tetris.scss:32-93`;
 pointer gestures from `app/tetris/tetris.ts:227-273`; DOM move buttons from
 `app/rush-hour/rush-hour.html:121-132`.
+
+---
+
+## 12. Direct manipulation — Lunar Lockout and Rush Hour (D11)
+
+Owner request, 2026-09-11: both games currently use *select a piece, then press a direction button*, which is a poor
+fit for direct-manipulation puzzles. Replace it. Lunar Lockout should mirror the Windows desktop original — the
+rocket rests at 45°, points toward the hovered side, and clicking launches it. Rush Hour should let the player
+"tap and drag the car forward/backward until it's road-blocked", with **smooth sub-cell motion, not snap-to-grid**.
+Both must be playable on a phone.
+
+### 12.1 One gesture vocabulary, two verbs
+
+The two games deliberately differ in what a move *is*, so the vocabulary is shared but the verb is not:
+
+- **Lunar Lockout = point-and-launch.** The player chooses a *direction*; the rules decide the distance.
+- **Rush Hour = grab-and-slide.** The player chooses the *distance*; the axis is a property of the vehicle.
+
+Shared rules, binding on both:
+
+| Concept | Rule |
+|---|---|
+| Engage | `pointerdown` on a piece, always with `setPointerCapture(pointerId)` |
+| Preview | Continuous and non-committing — rocket rotation / the car under the finger |
+| **Commit** | **`pointerup`, never `pointerdown`** — so a started gesture can always be abandoned |
+| Abort | `pointercancel`, or `pointerup` in a neutral state: no move, no counter change |
+| Tap vs drag | Under the threshold it is a *tap* (selects); above it is a *drag* and never also selects |
+| Threshold unit | A fraction of a cell scaled to CSS px, never raw px — the existing convention |
+| `touch-action` | **`none`** on both canvases |
+| Illegal feedback | Never silent: the piece visibly refuses **and** the status line explains why |
+
+### 12.2 Input branching — one Pointer Events stream (D12)
+
+Owner: *"when on desktop: process mouse-events; when on mobile: process touch-events."* Implemented as a
+requirement on **behaviour**, through a single Pointer Events stream rather than separate `mousemove`/`touchstart`
+handlers:
+
+- `event.pointerType === 'touch'` selects the flick path; `'mouse'`/`'pen'` select the hover path.
+- `matchMedia('(hover: hover) and (pointer: fine)')` decides whether hover tracking is bound at all.
+
+Three reasons, recorded so this is not re-litigated:
+1. **Touch devices synthesise mouse events.** Binding both sets double-fires every tap, and the usual remedy is a
+   tangle of `preventDefault` and timers.
+2. **Desktop-versus-mobile is not binary.** Touchscreen laptops and 2-in-1s are both, and switch mid-session.
+   Per-event capability handles that; a device guess does not.
+3. **The repo already standardises on Pointer Events** — Tetris and Crazy Fruits both use them with
+   `setPointerCapture`, and no game reads `mousemove` or `touchstart`.
+
+On a hybrid device both paths coexist: hover tracking is bound because `(hover: hover)` matches, but an individual
+`pointerType === 'touch'` event still takes the flick path, so picking up the pen or touching the screen gets the
+right model for *that* interaction with no mode switch.
+
+**Three non-negotiable implementation details**, which are the real source of "pointer events are flaky on mobile":
+`touch-action: none` (or the browser claims the gesture and fires `pointercancel` mid-drag), handling
+`pointercancel` (the browser can revoke a gesture at any time), and `setPointerCapture` (or a drag dies the moment
+the pointer leaves the element).
+
+### 12.3 Lunar Lockout — aim and launch
+
+**Hover model: edge-zones with a dead core, not quadrants.** Quadrants have no rest state — the rocket would snap
+to a direction the instant the pointer entered the cell, and the diagonal boundaries run through the glyph itself,
+so jitter over the body flickers. The 45° rest pose must be reachable while the pointer is still on the piece.
+
+Two-axis hysteresis, in cell units from the cell centre:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `HYST_IN` / `HYST_OUT` | 0.16 / 0.11 | radius to acquire a direction / to fall back to rest |
+| `ANGLE_IN` / `ANGLE_OUT` | 40° / 50° | wedge half-width when acquiring / when holding |
+| touch `ARM_R` / `RELEASE_R` | 0.22 / 0.15 | fat-finger equivalents (~16 px / ~11 px at a 72 px cell) |
+| touch `LATCH_R` | 0.75 | past this the direction latches and the wedge test stops |
+| `TAP_MAX_R` / `TAP_MAX_MS` | 0.20 / 250 ms | below both on release it was a tap, not a drag |
+
+Both boundaries are sticky toward "keep what you have", so a pointer parked on a boundary never oscillates.
+
+**Illegal directions teach by absence.** If the aimed direction has no blocker, the rocket **does not rotate** — it
+stays at 45°, so it never *looks* launchable — the cursor drops to `default`, and a dashed refusal stub is drawn
+(a hairline 0.30C in the aimed direction, capped by a perpendicular bar, in `hair`; no red, no new token). Since
+the edge is not a backstop, most directions are illegal most of the time, so this carries much of the rules
+teaching. Hover never writes the status line: it is `role="status"`, so every write is announced.
+
+**The rocket glyph** is a flat dart with a notched tail, drawn in code, filled with the existing `robot`/`target`
+tokens — no gradients, no second colour. Bounding radius 0.40C, so the board's visual density is unchanged from the
+circles. The target robot keeps two *shape* cues (a porthole and a tail bar in `void_`), because with a rotating
+glyph a hue-only distinction gets worse, not better, under deuteranopia.
+
+Rest angle **−45°** for every robot. Rotation is **shortest-arc, 140 ms, `easeOutQuad`** — deliberately not the
+linear curve used for slides, because a slide is a *result* while a rotation is a *response to the hand* and must
+feel front-loaded. On launch the rocket holds its aimed angle for the whole flight and returns to rest afterwards.
+Reduced motion snaps the angle, reusing the renderer's existing `animated` predicate.
+
+**Landing hints are retargeted, not kept as-is.** Today all four legal landings are drawn for the selected robot.
+With a rotating rocket that is two competing signals, so the pointer path draws **only the aimed direction's** hint.
+The keyboard path keeps all four, because without a pointer there is no aimed direction.
+
+**Mobile: press-and-drag from the rocket, release to launch** — the same code path as the mouse, no branches. The
+finger is on the piece, and the aiming feedback lives in the rocket plus the dashed hint *ahead* of it, outside the
+thumb. Dragging back into the dead core before releasing cancels. Rejected alternatives: tap-then-tap-a-zone (two
+identical-looking taps invite double-fires, and the thumb covers the zone being chosen), and tap-then-swipe-anywhere
+(breaks the direct-manipulation premise and relies on invisible selection state).
+
+### 12.4 Rush Hour — grab and slide
+
+**Axis-locked continuous drag.** A horizontal vehicle tracks pointer X only, vertical tracks Y only; cross-axis
+drift is ignored entirely, because the finger wanders and the car should not stop. Clamp bounds are computed **once**
+on `pointerdown` from the occupancy grid with the dragged vehicle removed — nothing else moves during a drag, so
+per-frame recomputation would be waste.
+
+**The drift fix, which is what makes a hand-rolled drag feel broken if omitted.** With a naive `pos0 + delta`, a
+pointer that overshoots a blocker by three cells must travel three cells back before the car responds — the control
+feels dead. Instead, whenever the raw position is clamped, the **anchor is rewritten** so the pointer is
+re-referenced to the clamp, and the car starts moving on the first pixel of return travel. The finger's absolute
+position no longer maps to the car after an overshoot, which is exactly what a physically blocked object should do.
+
+**Settle on release**: round to the nearest legal cell over **60–90 ms**, `easeOutQuad`, no bounce or overshoot;
+instant under reduced motion.
+
+**Move counting — verified, and load-bearing.** `RushHourOracle` enumerates **one-cell edges**
+(`RushHourOracle.cs:41-52`), and the whole backward-BFS distance labelling is in those units — which is what both
+`analysis().optimalMoves` and `DeckLevel.optimalMoves` report. Therefore a three-cell drag **must count as three
+moves**. Counting it as one would let a player "beat the optimum" and make the page's "Solved in N (optimal M)"
+line read as a bug. Caption copy becomes "Moves: N (one per square)" so the counter is not mistaken for a drag
+count.
+
+**The two games count moves differently, by design.** Lunar Lockout's `applyAction` teleports a robot to its
+landing cell in a single action, so one slide is one move regardless of distance. This mirrors each game's own
+solver and must not be "harmonised".
+
+**`touch-action: manipulation` is the single most important line to change.** It disables double-tap zoom but still
+lets the browser claim pan-x and pan-y — so a vertical drag on a vertical truck scrolls the page, the car never
+moves, and the browser fires `pointercancel` mid-stroke. `pan-y` is not sufficient; vertical trucks are half the
+board. It must become `none`, matching Tetris and Crazy Fruits.
+
+**Editor coexistence is by mode**, using the `mode` signal that already exists. Edit mode keeps committing on
+`pointerdown` (placing is a discrete act with nothing to preview) and never enters the drag path; `setPointerCapture`
+is taken only in play mode. `touch-action` is bound to the mode so edit and playback keep page panning.
+
+### 12.5 Accessibility — the button paths stay, demoted
+
+Both games keep their direction buttons, shrunk and **disabled per illegal direction** rather than accepting a
+click and then refusing it. They are the only pointer affordance for someone who can click but cannot drag —
+head-pointer and switch users — and the visible discoverability surface for the keyboard path. Removing them would
+strand exactly the users the hover model already excludes.
+
+Keyboard is unchanged and gains focusability: `tabindex="0"` plus `role="application"` on both canvases, so the
+keyboard path no longer depends on a window-level listener.
+
+### 12.6 Two pre-existing defects this work must fix
+
+1. **Lunar Lockout hijacks page scrolling for every visitor.** The component binds `keydown` on `window` and calls
+   `preventDefault()` on the arrow keys, so arrow-key scrolling is dead on that route whether or not anyone is
+   playing. It moves onto the focusable canvas. *(Introduced by M58.3 — mine.)*
+2. **Rush Hour reallocates its canvas backing store on every `draw()`.** `canvas.width`/`height` are assigned
+   unconditionally, which clears and reallocates the buffer each call. Harmless while repaints were rare; with a
+   drag repainting per pointer move it will visibly stutter on low-end devices. Guard the assignment on change, as
+   the Lunar renderer already does.
+
+### 12.7 Evidence behind the two contested choices
+
+**Release-in-the-dead-zone cancels, and commit is on `pointerup`.** The best-documented analogue for
+select-then-commit on a grid is chess apps, where there are years of first-person reports of drag-and-drop causing
+**accidental commits on the wrong square** under time pressure. A pure swipe-to-fire has no cancel path: the finger
+is over the piece at the exact moment of commit.
+
+**Quadrant tap targets were rejected on measurement.** A 5×5 board at a 360 px viewport gives ~64–72 px cells;
+quartering a piece yields ~32 px zones, which clears WCAG 2.5.8 AA (24 px) but fails Apple's 44 pt and Material's
+48 dp — and a fingertip covers roughly a whole cell, with no hover to disambiguate.
+
+**Threshold reconciliation.** The interaction design proposed latching a direction at 0.35 cell (≈24 px, reused from
+Crazy Fruits); the mobile research recommended 12 px, between Android's `TOUCH_SLOP` (8 dp) and `PAGING_TOUCH_SLOP`
+(16 dp). They measure different things and both are right: **preview early, commit on release**. The adopted
+`ARM_R` of 0.22 cell (~16 px) sits between them, with a larger radius required to *switch* direction. Requiring
+24 px before any feedback appears would mean a third of a cell of dead travel. Note also that the 100–200 px swipe
+thresholds found in some gesture libraries target full-screen page swipes and are wrong by an order of magnitude
+for a gesture inside a 64 px cell.
 
 ---
 
