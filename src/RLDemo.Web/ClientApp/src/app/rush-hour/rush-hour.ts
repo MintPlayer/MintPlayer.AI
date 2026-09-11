@@ -21,6 +21,16 @@ const DRAG_MIN = 0.18;
 /** Settling to the nearest cell covers at most half a cell, so a fixed duration beats a per-distance formula. */
 const SETTLE_MS = 90;
 
+// Playback glides, unlike a settle, cover whole cells — a solver move can travel four of them — so the duration
+// is per-cell, and a long move reads as a longer slide rather than a faster one. Capped so the rare long move
+// does not stall the replay.
+const GLIDE_PER_CELL_MS = 130;
+const GLIDE_MAX_MS = 420;
+/** Beat between one move landing and the next starting, so consecutive moves stay countable by eye. */
+const PLAYBACK_GAP_MS = 90;
+/** Per-move cadence when motion is suppressed — the fixed interval this replay ran at before it animated. */
+const SNAP_STEP_MS = 380;
+
 /** A vehicle being dragged along its own axis. Plain fields, never signals — see `kick()`. */
 interface Drag {
   pointerId: number;
@@ -83,13 +93,18 @@ export class RushHour {
   protected readonly deckMessage = signal<string | null>(null);
   protected readonly canEditDeck = isDevMode(); // authoring UI shows only under `ng serve`
 
-  private playbackTimer: ReturnType<typeof setInterval> | null = null;
+  private playbackTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Drag state is deliberately NOT signals. `effect(() => this.draw())` repaints the whole board on every signal
   // write, and a pointermove can fire far faster than a frame — so per-frame state lives in plain fields and a
   // local rAF drives the repaint. Signals are written exactly once, when the move commits.
   private drag: Drag | null = null;
-  private settle: { vehicle: number; from: number; to: number; startedAt: number } | null = null;
+  // One vehicle interpolating toward a target cell. Serves BOTH a drag settling to its nearest cell and a
+  // playback move gliding to where the solver put it. `commit` is set only for playback: it is the trajectory
+  // index this glide is animating INTO, so a playback stopped mid-glide can land the move instead of snapping
+  // the vehicle back to where it started.
+  private settle:
+    { vehicle: number; from: number; to: number; startedAt: number; durationMs: number; commit?: number } | null = null;
   private frame = 0;
 
   protected readonly initialPos = computed(() => initialPositions(this.vehicles()));
@@ -332,7 +347,10 @@ export class RushHour {
     }
 
     if (Math.abs(drag.posF - target) > 1e-3 && !this.reducedMotion()) {
-      this.settle = { vehicle: drag.vehicle, from: drag.posF, to: target, startedAt: performance.now() };
+      this.settle = {
+        vehicle: drag.vehicle, from: drag.posF, to: target,
+        startedAt: performance.now(), durationMs: SETTLE_MS,
+      };
     }
     this.kick();
   }
@@ -520,21 +538,68 @@ export class RushHour {
     }
     if (this.playbackIndex() >= this.activeTrajectory().length) this.playbackIndex.set(0);
     this.playing.set(true);
-    this.playbackTimer = setInterval(() => {
-      const next = this.playbackIndex() + 1;
-      if (next > this.activeTrajectory().length) {
-        this.stopPlayback();
-        return;
-      }
-      this.playbackIndex.set(next);
-      if (next === this.activeTrajectory().length) this.stopPlayback();
-    }, 380);
+    this.playbackStep();
+  }
+
+  /**
+   * Animates ONE solver move, then chains to the next. The index is advanced when the glide lands, not when it
+   * starts, so `displayPositions` keeps reporting the pre-move board while the vehicle is in flight and the
+   * fractional position comes from `settle` — the same split the manual drag uses.
+   */
+  private playbackStep(): void {
+    const trajectory = this.activeTrajectory();
+    const index = this.playbackIndex();
+    if (index >= trajectory.length) {
+      this.stopPlayback();
+      return;
+    }
+
+    const step = trajectory[index];
+    const from = index === 0 ? this.initialPos() : trajectory[index - 1].positions;
+    const distance = Math.abs(step.positions[step.vehicle] - from[step.vehicle]);
+
+    // Reduced motion, or a step that somehow moves nothing: snap, on the cadence this replay used before it
+    // animated. Dropping to the inter-move gap here would race the whole solution past in a blur.
+    if (this.reducedMotion() || distance === 0) {
+      this.playbackTimer = setTimeout(() => this.advancePlayback(index + 1), SNAP_STEP_MS);
+      return;
+    }
+
+    const duration = Math.min(GLIDE_MAX_MS, GLIDE_PER_CELL_MS * distance);
+    this.settle = {
+      vehicle: step.vehicle,
+      from: from[step.vehicle],
+      to: step.positions[step.vehicle],
+      startedAt: performance.now(),
+      durationMs: duration,
+      commit: index + 1,
+    };
+    this.kick();
+    this.playbackTimer = setTimeout(() => this.advancePlayback(index + 1), duration);
+  }
+
+  /** Lands the move: the board snaps to `next`, and the following move starts after a beat. */
+  private advancePlayback(next: number): void {
+    this.settle = null;
+    this.playbackIndex.set(next);
+    if (!this.playing()) return;
+    if (next >= this.activeTrajectory().length) {
+      this.stopPlayback();
+      return;
+    }
+    this.playbackTimer = setTimeout(() => this.playbackStep(), PLAYBACK_GAP_MS);
   }
 
   protected stopPlayback(): void {
     if (this.playbackTimer) {
-      clearInterval(this.playbackTimer);
+      clearTimeout(this.playbackTimer);
       this.playbackTimer = null;
+    }
+    // A glide caught in flight has already visually delivered most of its move, and the board state it animates
+    // into is the one the trajectory says comes next — so land it rather than snapping the vehicle backwards.
+    if (this.settle?.commit !== undefined) {
+      this.playbackIndex.set(this.settle.commit);
+      this.settle = null;
     }
     this.playing.set(false);
   }
@@ -577,7 +642,7 @@ export class RushHour {
     if (this.drag) {
       animated = { vehicle: this.drag.vehicle, pos: this.drag.posF };
     } else if (this.settle) {
-      const t = Math.min(1, (performance.now() - this.settle.startedAt) / SETTLE_MS);
+      const t = Math.min(1, (performance.now() - this.settle.startedAt) / this.settle.durationMs);
       animated = { vehicle: this.settle.vehicle, pos: this.settle.from + (this.settle.to - this.settle.from) * t };
       if (t >= 1) this.settle = null;     // linear, no overshoot — the same policy as Lunar Lockout's slide
     }
@@ -610,8 +675,11 @@ export class RushHour {
     ctx.fillText('EXIT →', PAD + SIZE * CELL + 7, exitY + CELL / 2);
 
     // Vehicles.
-    const lastStep = this.mode() === 'playback' && this.playbackIndex() > 0
-      ? this.activeTrajectory()[this.playbackIndex() - 1]
+    // While a glide is in flight the index still points at the PREVIOUS move, so highlight the vehicle actually
+    // in motion — otherwise the marker lags a move behind everything the eye is following.
+    const lastStep = this.mode() !== 'playback' ? null
+      : this.settle?.commit !== undefined ? { vehicle: this.settle.vehicle }
+      : this.playbackIndex() > 0 ? this.activeTrajectory()[this.playbackIndex() - 1]
       : null;
 
     vehicles.forEach((v, i) => {
