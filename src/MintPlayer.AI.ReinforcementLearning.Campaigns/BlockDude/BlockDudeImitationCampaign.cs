@@ -220,9 +220,14 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign
             var observation = new float[BlockDudeBoard.ObservationSize];
             pick.Board.WriteObservation(observation);
 
+            // A large FINITE penalty, not -inf. An illegal action's log-probability would be -inf, and its
+            // supervision weight is 0, so the cross-entropy term becomes 0 * -inf = NaN — which silently poisons
+            // the reported loss for the rest of the run. exp(-1e9) is 0 in float, so the masking is just as
+            // absolute, and the logged CE stays a real number that divergence can actually be spotted in.
+            const float illegal = -1e9f;
             var maskOffsets = new float[BlockDudeBoard.ActionCount];
             for (int a = 0; a < BlockDudeBoard.ActionCount; a++)
-                maskOffsets[a] = pick.Board.IsLegal((BlockDudeAction)a) ? 0f : float.NegativeInfinity;
+                maskOffsets[a] = pick.Board.IsLegal((BlockDudeAction)a) ? 0f : illegal;
 
             into.Add(new Sample(observation, maskOffsets, (uint)pick.Mask, pick.Distance));
         }
