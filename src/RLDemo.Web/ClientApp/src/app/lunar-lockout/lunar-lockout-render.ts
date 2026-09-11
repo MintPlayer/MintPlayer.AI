@@ -42,14 +42,31 @@ export interface LunarHover {
 interface LunarPalette {
   void_: string;
   hair: string;
+  /** Helper hull + the darker shade its fins and nozzle are drawn in. */
   robot: string;
+  robotAccent: string;
+  /** Target hull + accent. */
   target: string;
+  targetAccent: string;
+  glass: string;
   goal: string;
   text: string;
 }
 
+/**
+ * Hull colours follow the original Windows game, which drew ONE rocket bitmap and recoloured it through a GDI+
+ * colour map: the target flies red, the helpers yellow. Muted a little from the original's pure #ff0000 / #ffff00
+ * so they sit on a dark board without glaring.
+ *
+ * Red and yellow converge under protanopia and deuteranopia, so hue alone cannot carry "which one must reach the
+ * centre" — the target also wears a band across its hull that no helper has.
+ */
 const DARK: LunarPalette = {
-  void_: '#14171f', hair: '#3a4154', robot: '#aab2c5', target: '#6ea8fe', goal: '#4caf82', text: '#e6e8ee',
+  void_: '#14171f', hair: '#3a4154',
+  robot: '#ffd23f', robotAccent: '#c8871f',
+  target: '#f0544f', targetAccent: '#a8322e',
+  glass: '#bfe6ff',
+  goal: '#4caf82', text: '#e6e8ee',
 };
 
 /**
@@ -58,7 +75,11 @@ const DARK: LunarPalette = {
  * onto a dark page for anyone whose system was set to light.
  */
 export const LUNAR_LIGHT: LunarPalette = {
-  void_: '#f4f6fa', hair: '#d3d9e4', robot: '#5b6378', target: '#2563eb', goal: '#2f8f66', text: '#14171f',
+  void_: '#f4f6fa', hair: '#d3d9e4',
+  robot: '#e0a800', robotAccent: '#9a6b10',
+  target: '#d63a34', targetAccent: '#8f2420',
+  glass: '#2563eb',
+  goal: '#2f8f66', text: '#14171f',
 };
 
 export const LUNAR_SIZE = 5;
@@ -413,33 +434,65 @@ export class LunarLockoutRenderer {
       ctx.stroke();
     }
 
+    const hull = isTarget ? this.palette.target : this.palette.robot;
+    const accent = isTarget ? this.palette.targetAccent : this.palette.robotAccent;
+    const u = CELL;   // local units are cell fractions
+
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(angle);
 
-    ctx.fillStyle = isTarget ? this.palette.target : this.palette.robot;
+    // Fins and nozzle first, so the hull overlaps them the way the original artwork does.
+    ctx.fillStyle = accent;
+    for (const side of [1, -1]) {
+      ctx.beginPath();
+      ctx.moveTo(side * 0.155 * u, 0.08 * u);
+      ctx.lineTo(side * 0.300 * u, 0.24 * u);
+      ctx.lineTo(side * 0.280 * u, 0.32 * u);
+      ctx.lineTo(side * 0.145 * u, 0.24 * u);
+      ctx.closePath();
+      ctx.fill();
+    }
     ctx.beginPath();
-    ctx.moveTo(0, -0.40 * CELL);            // nose
-    ctx.lineTo(0.185 * CELL, 0.10 * CELL);  // shoulder
-    ctx.lineTo(0.145 * CELL, 0.31 * CELL);  // tail
-    ctx.lineTo(0, 0.17 * CELL);             // notch — makes the rear unmistakable at small sizes
-    ctx.lineTo(-0.145 * CELL, 0.31 * CELL);
-    ctx.lineTo(-0.185 * CELL, 0.10 * CELL);
+    ctx.moveTo(-0.055 * u, 0.27 * u);
+    ctx.lineTo(0.055 * u, 0.27 * u);
+    ctx.lineTo(0.045 * u, 0.38 * u);
+    ctx.lineTo(-0.045 * u, 0.38 * u);
     ctx.closePath();
     ctx.fill();
 
-    // The target keeps TWO shape cues, not just hue: with a rotating glyph a hue-only distinction gets worse
-    // under deuteranopia, not better.
+    // Ogive hull: a pointed nose, sides bulging to their widest around two-thirds down, and a rounded base.
+    ctx.fillStyle = hull;
+    ctx.beginPath();
+    ctx.moveTo(0, -0.40 * u);
+    ctx.quadraticCurveTo(0.190 * u, -0.08 * u, 0.175 * u, 0.14 * u);
+    ctx.lineTo(0.145 * u, 0.26 * u);
+    ctx.quadraticCurveTo(0, 0.31 * u, -0.145 * u, 0.26 * u);
+    ctx.lineTo(-0.175 * u, 0.14 * u);
+    ctx.quadraticCurveTo(-0.190 * u, -0.08 * u, 0, -0.40 * u);
+    ctx.closePath();
+    ctx.fill();
+
+    // Porthole: a dark ring around pale glass. The ring is the board colour, which reads as the heavy outline
+    // does on the original's white background.
+    ctx.fillStyle = this.palette.glass;
+    ctx.beginPath();
+    ctx.arc(0, -0.10 * u, 0.075 * u, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = this.palette.void_;
+    ctx.lineWidth = 0.045 * u;
+    ctx.beginPath();
+    ctx.arc(0, -0.10 * u, 0.100 * u, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // The target's hull band. Red and yellow converge for the most common colour-vision deficiencies, so the
+    // robot that must reach the centre carries a cue that does not depend on hue at all.
     if (isTarget) {
       ctx.strokeStyle = this.palette.void_;
-      ctx.lineWidth = 0.05 * CELL;
+      ctx.lineWidth = 0.050 * u;
       ctx.beginPath();
-      ctx.arc(0, -0.06 * CELL, 0.10 * CELL, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(-0.145 * CELL, 0.31 * CELL);
-      ctx.lineTo(0.145 * CELL, 0.31 * CELL);
+      ctx.moveTo(-0.150 * u, 0.05 * u);
+      ctx.lineTo(0.150 * u, 0.05 * u);
       ctx.stroke();
     }
     ctx.restore();

@@ -25,7 +25,7 @@ import { RouterLink } from '@angular/router';
       <a class="card" routerLink="/lunarlockout">
         <h2>Lunar Lockout</h2>
         <p>
-          Robots slide until they hit each other — the board edge will not stop them. Park the blue one on
+          Rockets slide until they hit each other — the board edge will not stop them. Park the red one on
           the centre. Every level's minimum is proven by an exact solver that also runs in your browser as
           the hint button.
         </p>
