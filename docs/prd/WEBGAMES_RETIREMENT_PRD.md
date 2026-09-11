@@ -1068,8 +1068,24 @@ feels dead. Instead, whenever the raw position is clamped, the **anchor is rewri
 re-referenced to the clamp, and the car starts moving on the first pixel of return travel. The finger's absolute
 position no longer maps to the car after an overshoot, which is exactly what a physically blocked object should do.
 
-**Settle on release**: round to the nearest legal cell over **60–90 ms**, `easeOutQuad`, no bounce or overshoot;
-instant under reduced motion.
+**Settle on release**: round to the **nearest** legal cell over a fixed **90 ms, linear** — no easing, no bounce,
+no overshoot, matching Lunar Lockout's slide policy exactly. (An earlier draft of this section said 60–90 ms with
+`easeOutQuad`; that was wrong and is corrected here — the whole family is linear, and the settle distance is at
+most half a cell, so a per-distance formula buys nothing.) "Nearest" and "the cell it has travelled most of the way
+into" are the same rule at a 0.5 threshold, and *nearest* is the one a player can predict without being told.
+Instant under reduced motion — but note the **drag itself is never suppressed** by reduced-motion, because it is
+direct manipulation rather than decoration; only the release settle collapses.
+
+**`pointercancel` reverts to the grab position**, it does not settle to the nearest cell: a cancelled gesture is a
+cancelled move, and the browser can revoke a gesture for reasons that have nothing to do with intent.
+
+**A settle in flight must not be interruptible** by a fresh grab on the same vehicle, or `startPos` is read
+mid-animation and the clamp is computed against a fractional position. Snap the settle to its target first, then
+grab.
+
+**Show the whole legal interval while dragging**: a hairline rectangle spanning `[lo, hi + length]` along the axis,
+in the lattice hue. It is the Rush Hour analogue of Lunar's landing hints, it is strictly more information than the
+two arrow buttons ever conveyed, and it costs one `strokeRect`.
 
 **Move counting — verified, and load-bearing.** `RushHourOracle` enumerates **one-cell edges**
 (`RushHourOracle.cs:41-52`), and the whole backward-BFS distance labelling is in those units — which is what both
@@ -1089,7 +1105,41 @@ board. It must become `none`, matching Tetris and Crazy Fruits.
 
 **Editor coexistence is by mode**, using the `mode` signal that already exists. Edit mode keeps committing on
 `pointerdown` (placing is a discrete act with nothing to preview) and never enters the drag path; `setPointerCapture`
-is taken only in play mode. `touch-action` is bound to the mode so edit and playback keep page panning.
+is taken only in play mode. `touch-action` is bound to the mode so edit and playback keep page panning. Deliberately
+**not** separated by gesture — a "drag" on an empty cell in edit mode has no meaningful reading, and the mode is
+already visible in the cursor, side panel and caption.
+
+### 12.4a Prerequisite — the Rush Hour board is not responsive yet
+
+`draw()` hard-sets `canvas.style.width/height` from logical constants (`CELL = 72`, `PAD = 14`, `EXIT_W = 42`),
+giving a fixed **502 × 460** board. At a 360 px viewport that simply overflows. The drag maths below is correct at
+any scale, but shipping it without fixing this yields a board that is unusable on the phone it was built for.
+
+So, before the touch drag lands: constrain the canvas with `width: 100%; max-width: 502px; height: auto`, keep the
+DPR backing store, and have `draw()` read `canvas.clientWidth` the way the Lunar renderer already does. That gives
+~50 CSS px cells at 360 px — below the 44 px WCAG figure for a discrete *tap* target, but a drag grabs a two- or
+three-cell body (100–150 px), so the grab target is comfortable. Pointer mapping must also go through the
+`toSurface`-style `getBoundingClientRect()` idiom the other games use, rather than reading `clientX` against fixed
+constants as the current hit test does — that breaks the moment the canvas is CSS-scaled.
+
+### 12.4b Rush Hour has no keyboard path to selection at all
+
+Selecting a vehicle currently *requires* a `pointerdown`, so a keyboard-only user cannot select one, and therefore
+cannot move anything — the arrow keys work, but only on a selection they have no way to make. That is a
+pre-existing accessibility hole, and this work should close it rather than widen it: add vehicle cycling
+(`[`/`]` or Tab), mirroring Lunar's number keys, plus `Home`/`End` to slide to the clamp bounds in one press
+(counting `|Δ|` moves, consistent with §12.4's per-cell rule).
+
+### 12.4c Where the clamp logic belongs
+
+`clampRange(vehicles, positions, index)` goes in `rush-hour-logic.ts`, not the component: that file is the browser
+mirror of `RushHourBoard` and is where legality already lives, and the multi-cell scan is the natural
+generalisation of its existing single-step `canMove`. A unit test can then assert the two agree — `clampRange`
+must return exactly the interval reachable by iterating `canMove`.
+
+It must also be computed **once per grab**, not per frame: `canMove` rebuilds the whole 36-cell occupancy grid on
+every call, so calling it per `pointermove` would mean ~120 grid rebuilds a second for a value that cannot change
+while a drag is in flight.
 
 ### 12.5 Accessibility — the button paths stay, demoted
 
