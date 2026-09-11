@@ -22,6 +22,15 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
+      <a class="card" routerLink="/blockdude">
+        <h2>Block Dude</h2>
+        <p>
+          Carry blocks to build your way up to the door. All eleven original levels, rules recovered from the
+          1990s calculator game — including the one that starts with blocks floating in mid-air.
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
       <a class="card" routerLink="/lunarlockout">
         <h2>Lunar Lockout</h2>
         <p>
