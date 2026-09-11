@@ -19,7 +19,9 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 public sealed class BlockDudeTrainingState
 {
     public const string Kind = "blockdude-imitation-state";
-    private const int Version = 1;
+    /// <summary>2 added the save-best cursor. A version-1 sidecar is refused, not upgraded — it carries no record
+    /// of which net was best, so continuing one would ship whichever net the next eval happened to land on.</summary>
+    private const int Version = 2;
 
     public int ObservationSize { get; set; }
     public int ActionCount { get; set; }
@@ -35,6 +37,20 @@ public sealed class BlockDudeTrainingState
 
     /// <summary>Most recent greedy solve rate per rung; -1 where a rung has not been gated yet.</summary>
     public double[] GateRates { get; set; } = [];
+
+    // ── save-best cursor ──────────────────────────────────────────────────────────────────────────────────────
+    // Ordered by (stage, gate), never by gate alone: a 61% gate on stage 3 beats a 78% on stage 1, because each
+    // rung gates on its OWN boards and the rungs are not equally hard. Comparing the raw rates across stages
+    // would pin the shippable net to the easiest rung the run ever trained at.
+
+    /// <summary>Stage the best net was gated at; -1 before any eval has run.</summary>
+    public int BestStage { get; set; } = -1;
+
+    /// <summary>Gate rate the best net scored at <see cref="BestStage"/>; -1 before any eval has run.</summary>
+    public double BestGate { get; set; } = -1;
+
+    /// <summary>Total samples the best net had trained on, for the record — never a tie-break.</summary>
+    public long BestSamples { get; set; }
 
     /// <summary>Candidate boards DRAWN, accepted or not. This is the generator's stream position.</summary>
     public long BoardAttempts { get; set; }
@@ -78,6 +94,9 @@ public sealed class BlockDudeTrainingState
         writer.Write(SamplesAtLastGate);
         writer.Write(GateRates.Length);
         foreach (double rate in GateRates) writer.Write(rate);
+        writer.Write(BestStage);
+        writer.Write(BestGate);
+        writer.Write(BestSamples);
         writer.Write(BoardAttempts);
         writer.Write(AcceptedBoards);
         writer.Write(TruncatedBoards);
@@ -114,6 +133,9 @@ public sealed class BlockDudeTrainingState
             state.GateRates = new double[rates];
             for (int i = 0; i < rates; i++) state.GateRates[i] = reader.ReadDouble();
 
+            state.BestStage = reader.ReadInt32();
+            state.BestGate = reader.ReadDouble();
+            state.BestSamples = reader.ReadInt64();
             state.BoardAttempts = reader.ReadInt64();
             state.AcceptedBoards = reader.ReadInt64();
             state.TruncatedBoards = reader.ReadInt64();

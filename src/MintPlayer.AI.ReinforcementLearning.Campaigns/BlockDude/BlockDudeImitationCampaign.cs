@@ -42,6 +42,12 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign
     private List<BlockDudeBoard> _gateBoards = [];
     private int _gateBoardsStage = -1;
 
+    // Held from Resume so a new best can be written the INSTANT the gate improves. Gating runs on a sample
+    // cadence inside training while Checkpoint runs on the runner's wall clock — roughly 1.3M samples apart at
+    // the observed throughput — so deferring the save to Checkpoint would persist a net that is not the one the
+    // gate measured, which defeats the point of keeping a best at all.
+    private IModelStore? _store;
+
     private double _liveLoss = double.NaN, _liveAcc = double.NaN;
     private double _windowCe, _windowHuber, _windowAcc;
     private int _windowBatches;
@@ -62,11 +68,14 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign
 
     public bool Resume(IModelStore store)
     {
+        _store = store;
+
         if (_options.Fresh)
         {
-            // Blank slate. Deleting all three ids together matters: a net without its progress sidecar resumes
-            // as an unlabelled warm start at stage 0, which is a different run than the operator asked for.
-            foreach (string id in new[] { _ids.Policy, _ids.PolicyAdam, _ids.State })
+            // Blank slate. Deleting all four ids together matters: a net without its progress sidecar resumes
+            // as an unlabelled warm start at stage 0, which is a different run than the operator asked for — and
+            // a surviving best net would let a blank-slate run ship weights it never trained.
+            foreach (string id in new[] { _ids.Policy, _ids.PolicyAdam, _ids.State, _ids.PolicyBest })
                 if (store.Delete(BlockDudeIds.Environment, id)) Log($"--fresh: deleted {BlockDudeIds.Environment}.{id}");
         }
 
@@ -253,6 +262,18 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign
         double rate = GateSolveRate(stage);
         _state.GateRates[stage] = rate;
 
+        // Flag a new best for the next Checkpoint. Ordered by (stage, gate): reaching a harder rung always wins,
+        // and within a rung the higher solve rate wins. Measured 2026-09-11, the gate swings ~10 points between
+        // consecutive evals on a 64-board hold-out (61% -> 50% -> 52% with loss falling throughout), so without
+        // this the shipped net is close to a random draw from the last few evals.
+        if (stage > _state.BestStage || (stage == _state.BestStage && rate > _state.BestGate))
+        {
+            _state.BestStage = stage;
+            _state.BestGate = rate;
+            _state.BestSamples = _state.TotalSamples;
+            SaveBestNet();
+        }
+
         int next = BlockDudeCurriculum.Advance(stage, _state.StageSamples, rate, out bool forced);
         next = Math.Min(next, _options.MaxStage);
         if (next == stage) return;
@@ -284,24 +305,7 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign
     }
 
     private bool GreedySolves(BlockDudeBoard start)
-    {
-        var current = start;
-        var seen = new HashSet<int>();
-        int budget = BlockDudeCurriculum.Stages[CurrentStage].Spec.MaxOptimal * 3;
-
-        for (int step = 0; step < budget; step++)
-        {
-            if (current.Won) return true;
-            var action = _net.Greedy(current);
-            if (action is null) return false;
-
-            var next = current.Apply(action.Value);
-            if (next.SameStateAs(current)) return false;          // refused move: stuck
-            if (!seen.Add(next.StateHash) && seen.Count > budget) return false;
-            current = next;
-        }
-        return current.Won;
-    }
+        => BlockDudeGreedy.Run(_net, start, BlockDudeCurriculum.Stages[CurrentStage].Spec.MaxOptimal * 3).Solved;
 
     public CampaignEval Evaluate()
     {
@@ -348,9 +352,20 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign
 
     public void Checkpoint(IModelStore store)
     {
+        // The RESUME net is always the latest weights, so a continuation stays consistent with the Adam moments
+        // written beside it.
         store.Save(BlockDudeIds.Environment, _ids.Policy, s => _net.Save(s));
         AdamState.Save(store, BlockDudeIds.Environment, _ids.PolicyAdam, _adam);
         store.Save(BlockDudeIds.Environment, _ids.State, s => _state.Save(s));
+    }
+
+    /// <summary>Writes the deployable net, at the exact moment its gate was measured.</summary>
+    private void SaveBestNet()
+    {
+        if (_store is null) return;
+        _store.Save(BlockDudeIds.Environment, _ids.PolicyBest, s => _net.Save(s));
+        Log($"new best: stage {_state.BestStage} gate {_state.BestGate:P0} at {_state.BestSamples:N0} samples " +
+            $"-> saved deployable net '{_ids.PolicyBest}'");
     }
 
     public void Dispose() { }

@@ -18,6 +18,10 @@ internal static class BlockDudeLab
     public static void Run(string[] args)
     {
         var a = new CliArgs(args);
+
+        // Read-only benchmark against the shipped levels; no training, no checkpoint writes.
+        if (a.Has("--eval-levels")) { BlockDudeLevelBench.Run(args); return; }
+
         double hours = a.Dbl("--hours", 9);
         string dataDir = a.Str("--data", "data");
         ulong seed = a.ULong("--seed", 1);
