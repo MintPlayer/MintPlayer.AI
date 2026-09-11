@@ -32,6 +32,7 @@ for (int i = 0; i < args.Length; i++)
         if (game.Equals("cube-policy", StringComparison.OrdinalIgnoreCase)) { CubePolicyLab.Run(args); return; }
         if (game.Equals("cube", StringComparison.OrdinalIgnoreCase)) { CubeLab.Run(args); return; }
         if (game.Equals("rushhour", StringComparison.OrdinalIgnoreCase)) { RushHourLab.Run(args); return; }
+        if (game.Equals("blockdude", StringComparison.OrdinalIgnoreCase)) { BlockDudeLab.Run(args); return; }
         if (game.Equals("snake", StringComparison.OrdinalIgnoreCase)) { SnakeLab.Run(args); return; }
         if (game.Equals("fruitcake", StringComparison.OrdinalIgnoreCase)) { FruitCakeLab.Run(args); return; }
         if (game.Equals("crazyfruits", StringComparison.OrdinalIgnoreCase)) { CrazyFruitsLab.Run(args); return; }

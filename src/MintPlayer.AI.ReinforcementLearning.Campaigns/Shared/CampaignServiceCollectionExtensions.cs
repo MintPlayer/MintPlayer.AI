@@ -103,6 +103,10 @@ public static class CampaignServiceCollectionExtensions
     public static IServiceCollection AddRushHourImitationCampaign(this IServiceCollection services, RushHourImitationOptions options)
         => services.AddSingleton<ITrainingCampaign>(_ => new RushHourImitationCampaign(options));
 
+    /// <summary>Block Dude: a size curriculum over generated boards labelled exactly by the BFS oracle.</summary>
+    public static IServiceCollection AddBlockDudeImitationCampaign(this IServiceCollection services, BlockDudeImitationOptions options)
+        => services.AddSingleton<ITrainingCampaign>(_ => new BlockDudeImitationCampaign(options));
+
     // Resolve a --gpus-style spec (M45): pick which detected GPUs to shard generation across. "all" (default) →
     // every detected GPU; an integer → the first N; explicit ordinals ("0,2") → those devices. Empty when no GPU
     // is available. A spec that matches nothing falls back to all, so a typo never silently drops to CPU.
