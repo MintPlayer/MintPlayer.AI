@@ -28,8 +28,20 @@
 
 .board-panel {
   canvas {
+    display: block;
+    // The board used to be a fixed 502x460, which simply overflowed a phone. It now scales, and `draw()` sizes
+    // its backing store from the measured element rather than from the logical constants.
+    width: 100%;
+    max-width: 502px;
+    height: auto;
+    aspect-ratio: 502 / 460;
     border-radius: 12px;
-    touch-action: manipulation;
+    // We own dragging. `manipulation` still lets the browser claim pan-x/pan-y, so a downward drag on a vertical
+    // truck would scroll the page and the gesture would die with a pointercancel — the classic failure.
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
     cursor: pointer;
   }
 
