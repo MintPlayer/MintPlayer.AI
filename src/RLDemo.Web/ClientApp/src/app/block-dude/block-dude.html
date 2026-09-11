@@ -7,11 +7,8 @@
 
 <div class="bd-stage" [style.aspect-ratio]="aspect()">
   <canvas #bdCanvas
-          tabindex="0"
-          role="application"
           aria-label="Block Dude level. Tap left or right of the figure to walk, tap his column to climb."
-          (pointerdown)="onPointerDown($event)"
-          (keydown)="onKeyDown($event)"></canvas>
+          (pointerdown)="onPointerDown($event)"></canvas>
 </div>
 
 <p class="status" role="status">{{ status() }}</p>

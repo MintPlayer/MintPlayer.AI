@@ -2,6 +2,7 @@ import { Component, DestroyRef, ElementRef, afterNextRender, computed, inject, s
 import { Color } from '@mintplayer/ng-bootstrap';
 import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 import { BlockDudeRenderer, BlockDudeSnapshot, FallingBlock } from './block-dude-render';
+import { isTypingTarget } from '../keyboard-target';
 import { PgBlockDudeBoard } from './blockdude_solver';
 
 interface BlockDudeLevel {
@@ -27,6 +28,7 @@ const GRAB = 3;
   templateUrl: './block-dude.html',
   styleUrl: './block-dude.scss',
   imports: [BsButtonTypeDirective],
+  host: { '(document:keydown)': 'onKeyDown($event)' },
 })
 export class BlockDude {
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('bdCanvas');
@@ -102,7 +104,14 @@ export class BlockDude {
     this.renderer?.reset(this.snapshot());
   }
 
+  /**
+   * Bound at DOCUMENT level so the board is playable the moment the page loads, with no click to focus it
+   * first. `preventDefault` fires only for keys this page acts on, and never while the caret is in a text
+   * field — otherwise arrow keys would be stolen from any input on the page.
+   */
   protected onKeyDown(event: KeyboardEvent): void {
+    if (isTypingTarget(event.target)) return;
+
     const map: Record<string, number | undefined> = {
       ArrowLeft: LEFT,
       ArrowRight: RIGHT,

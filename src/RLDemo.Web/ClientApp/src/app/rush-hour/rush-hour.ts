@@ -3,6 +3,7 @@ import { ActivatedRoute } from '@angular/router';
 import { AnalyzeResponse, DeckLevel, RushHourApi, SolveResponse, StatusResponse, VehicleDto } from './rush-hour-api';
 import { EXIT_ROW, SIZE, canMove, canPlace, clampRange, initialPositions, isSolved, occupancy } from './rush-hour-logic';
 import { pollModelStatus } from '../model-status';
+import { isTypingTarget } from '../keyboard-target';
 import { Color } from '@mintplayer/ng-bootstrap';
 import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 
@@ -428,7 +429,10 @@ export class RushHour {
     this.playPositions.set(this.initialPos());
     this.movesUsed.set(0);
     this.playWon.set(false);
-    this.selected.set(null);
+    // Select the RED car by default. The arrow keys act on the selection, so starting with nothing selected made
+    // the keyboard silently dead until the player happened to click a vehicle — and the red car is the one the
+    // puzzle is about. Clicking or dragging any other vehicle still re-selects as before.
+    this.selected.set(this.vehicles().length > 0 ? 0 : null);
   }
 
   protected backToEdit(): void {
@@ -452,6 +456,7 @@ export class RushHour {
   }
 
   protected onKey(event: KeyboardEvent): void {
+    if (isTypingTarget(event.target)) return;
     if (this.mode() !== 'play' || this.selected() === null) return;
     const horizontal = this.vehicles()[this.selected()!].horizontal;
     const map: Record<string, number | undefined> = horizontal

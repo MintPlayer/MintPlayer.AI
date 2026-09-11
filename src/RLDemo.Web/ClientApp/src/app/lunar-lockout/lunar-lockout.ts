@@ -2,6 +2,7 @@ import { Component, DestroyRef, ElementRef, afterNextRender, computed, inject, s
 import { Color } from '@mintplayer/ng-bootstrap';
 import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 import { LUNAR_SIZE, LunarLockoutRenderer, LunarSnapshot } from './lunar-lockout-render';
+import { isTypingTarget } from '../keyboard-target';
 import { PgLunarBoard, PgLunarOracle } from './lunarlockout_solver';
 
 interface LunarLevel {
@@ -31,7 +32,6 @@ const ANGLE_OUT = (50 * Math.PI) / 180;  // wedge half-width when holding
 const LATCH_R = 0.75;        // past this the direction latches and the wedge test stops
 const TAP_MAX_R = 0.20;      // below this on release it was a tap, not a drag
 const TAP_MAX_MS = 250;
-const HIT_R = 0.46;          // the rocket's own radius plus slop
 
 /** Angle from the cell centre to each direction, in the same frame as the aim test. 0=up,1=right,2=down,3=left. */
 const DIRECTION_BEARING = [Math.PI / 2, 0, -Math.PI / 2, Math.PI];
@@ -50,6 +50,7 @@ const DIRECTION_BEARING = [Math.PI / 2, 0, -Math.PI / 2, Math.PI];
   templateUrl: './lunar-lockout.html',
   styleUrl: './lunar-lockout.scss',
   imports: [BsButtonTypeDirective],
+  host: { '(document:keydown)': 'onKeyDown($event)' },
 })
 export class LunarLockout {
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('lunarCanvas');
@@ -116,7 +117,10 @@ export class LunarLockout {
     this.history.set([]);
     this.moves.set(0);
     this.solved.set(false);
-    this.keyboardSelected.set(-1);
+    // Arm the TARGET rocket by default. Arrow keys act on the armed rocket, so leaving nothing armed made the
+    // keyboard silently dead on arrival — and the red one is the rocket a player moves most anyway. Pressing a
+    // number still switches, and the pointer path ignores this entirely.
+    this.keyboardSelected.set(0);
     this.clearAim();
     this.hint.set(null);
     this.renderer?.resetAngles();
@@ -309,10 +313,13 @@ export class LunarLockout {
   }
 
   // ── keyboard ──────────────────────────────────────────────────────────────────────────────────────────────
-  // Bound to the CANVAS, not to window: a window-level handler that preventDefaults the arrow keys kills page
-  // scrolling for every visitor on this route, whether or not they are playing.
+  // Bound at DOCUMENT level so the board is playable the moment the page loads, with no click to focus it
+  // first. `preventDefault` is called only for keys this page actually acts on, and never while the caret is in
+  // a text field — otherwise arrow keys would be stolen from any input on the page.
 
   protected onKeyDown(event: KeyboardEvent): void {
+    if (isTypingTarget(event.target)) return;
+
     const directions: Record<string, number> = { ArrowUp: 0, ArrowRight: 1, ArrowDown: 2, ArrowLeft: 3 };
     if (event.key in directions) {
       event.preventDefault();
@@ -400,3 +407,4 @@ function normalise(radians: number): number {
   while (value > Math.PI) value -= Math.PI * 2;
   return value;
 }
+

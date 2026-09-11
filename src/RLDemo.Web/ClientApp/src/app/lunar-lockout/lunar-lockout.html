@@ -8,15 +8,12 @@
 
 <div class="lunar-stage">
   <canvas #lunarCanvas
-          tabindex="0"
-          role="application"
           aria-label="Lunar Lockout board. Point at a side of a rocket to aim it, then click to launch."
           (pointerdown)="onPointerDown($event)"
           (pointermove)="onPointerMove($event)"
           (pointerup)="onPointerUp($event)"
           (pointercancel)="onPointerCancel($event)"
-          (pointerleave)="onPointerLeave()"
-          (keydown)="onKeyDown($event)"></canvas>
+          (pointerleave)="onPointerLeave()"></canvas>
 </div>
 
 <p class="status" role="status">{{ status() }}</p>
