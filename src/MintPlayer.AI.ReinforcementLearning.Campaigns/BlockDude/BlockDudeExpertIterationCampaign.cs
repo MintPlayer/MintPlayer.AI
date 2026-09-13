@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.BlockDude;
 using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
@@ -35,7 +36,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// <para><b>Distinct checkpoint ids</b> (<c>policy-xit*</c>), so the phase-1 net is never touched and stays
 /// available as a fallback tier.</para>
 /// </remarks>
-public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign
+public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetworkTelemetrySource
 {
     private const int BatchSize = 128;
 
@@ -346,4 +347,64 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign
         => string.Join(", ", frontier.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}={kv.Value}"));
 
     private void Log(string message) => _logger?.LogInformation("[blockdude-xit] {Message}", message);
+
+    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
+    string INetworkTelemetrySource.NetKind => "blockdude-policy-xit";
+
+    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
+        => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
+
+    /// <summary>
+    /// Eval is the share of the shipped levels whose frontier has reached the whole level — this phase's actual
+    /// objective. Not the search success rate, which is held near the advance threshold BY the curriculum and so
+    /// says more about how fast the frontier is moving than about how good the net is.
+    /// </summary>
+    NetworkMetrics INetworkTelemetrySource.Sample()
+    {
+        double whole = _frontier.Count == 0
+            ? double.NaN
+            : _frontier.Count(kv => kv.Value >= (BlockDudeSolutions.For(kv.Key)?.Moves.Length ?? int.MaxValue))
+              / (double)_frontier.Count;
+
+        return new(_totalSamples, _options.TargetSamples, _liveLoss, whole, double.NaN);
+    }
+
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => ["Left", "Right", "Climb", "Grab"];
+
+    // The probe is the start of shipped level 1 — the same board phase 1 uses, so the two phases' viewers show
+    // the same position and their policies can be compared by eye.
+    private float[]? _probeObs;
+    private float[] ProbeObs()
+    {
+        if (_probeObs is null)
+        {
+            var obs = new float[BlockDudeBoard.ObservationSize];
+            BlockDudeLevels.Load(0).WriteObservation(obs);
+            _probeObs = obs;
+        }
+        return _probeObs;
+    }
+
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo()
+    {
+        if (ReferenceEquals(_net, null)) return null;
+        try
+        {
+            var obs = ProbeObs();
+            var (logits, _) = _net.Forward(new Tensor((float[])obs.Clone(), 1, obs.Length));
+            return ((float[])obs.Clone(), [.. logits.Data]);
+        }
+        catch { return null; }
+    }
+
+    float[][]? INetworkTelemetrySource.SampleActivations()
+    {
+        if (ReferenceEquals(_net, null)) return null;
+        try
+        {
+            var obs = ProbeObs();
+            return _net.LayerActivations(new Tensor((float[])obs.Clone(), 1, obs.Length));
+        }
+        catch { return null; }
+    }
 }
