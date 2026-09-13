@@ -52,8 +52,34 @@ internal static class BlockDudeLab
         int pinned = a.Int("--stage", -1);
         int phase = a.Int("--phase", 1);
 
-        string csv = Path.Combine(dataDir, "logs", "blockdude.csv");
+        string csv = Path.Combine(dataDir, "logs", phase >= 2 ? "blockdude-xit.csv" : "blockdude.csv");
         if (fresh) RotateLog(csv);
+
+        // Phase 2 is a different campaign, not a flag on the first: it trains on the SHIPPED levels via the
+        // human demonstrations rather than on generated boards, so it shares neither the curriculum, the gate,
+        // nor the checkpoint ids.
+        if (phase >= 2)
+        {
+            LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
+                services => services.AddBlockDudeExpertIterationCampaign(new BlockDudeExpertIterationOptions
+                {
+                    Seed = seed,
+                    LearningRate = learningRate,
+                    Fresh = fresh,
+                    WarmStart = !a.Has("--no-warm-start"),
+                    TargetSamples = targetSamples,
+                    AttemptsPerLevel = a.Int("--attempts", 4),
+                    Expansions = a.Int("--expansions", 40_000),
+                    SearchSeconds = a.Int("--search-seconds", 6),
+                    Weight = a.Flt("--weight", 2f),
+                    InitialFrontier = a.Int("--frontier", 20),
+                    FrontierGrowth = a.Dbl("--frontier-growth", 1.5),
+                    AdvanceRate = a.Dbl("--advance-rate", 0.75),
+                    DemoShare = a.Dbl("--demo-share", 0.25),
+                }),
+                CampaignCli.ConsoleAndCsv(csv));
+            return;
+        }
 
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             services => services.AddBlockDudeImitationCampaign(new BlockDudeImitationOptions
