@@ -1,0 +1,104 @@
+// Sober by design (PRD §10.3): flat fills, one hairline border, no shadows or gradients. The stage mirrors the
+// construction used by the other canvas games, so the page sits alongside them without restyling.
+
+.intro {
+  max-width: 46rem;
+  color: #aab2c5;
+}
+
+.bd-stage {
+  position: relative;
+  width: min(960px, 100%);
+  // aspect-ratio is bound from the level: these boards run from 19x8 to 29x19, so a fixed ratio would letterbox
+  // most of them.
+  margin: 0.75rem auto;
+  background: #14171f;       // = the renderer's void, so frame and canvas never disagree
+  border: 1px solid #2b3245;
+  border-radius: 8px;
+  overflow: hidden;
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    // Taps are the whole pointer vocabulary here, but `none` keeps the browser from treating a quick tap on the
+    // board as the start of a pan.
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+  }
+}
+
+.status {
+  text-align: center;
+  margin: 0.35rem 0;
+}
+
+// One compact row, 48px targets: over the 44px WCAG figure, and reachable with a thumb without covering the
+// board the way a floating d-pad would.
+// A D-pad, not a toolbar: the two walk keys are the ones held down, so they get the tall outer columns and the
+// thumb never has to hunt for them. Climb sits above put-down in the middle because that is the pair you
+// alternate while building a staircase.
+//
+//   +---+-------+---+
+//   |   |   ↑   |   |
+//   + ← +-------+ → +
+//   |   | drop  |   |
+//   +---+-------+---+
+.controls {
+  display: grid;
+  grid-template-columns: 48px 104px 48px;
+  grid-template-rows: 48px 48px;
+  justify-content: center;
+  gap: 8px;
+  margin: 0.75rem 0;
+
+  // DOM order stays ← ↑ drop → so tab order follows reading order; placement is explicit.
+  .left  { grid-column: 1; grid-row: 1 / span 2; }
+  .up    { grid-column: 2; grid-row: 1; }
+  .grab  { grid-column: 2; grid-row: 2; font-size: 0.95rem; }
+  .right { grid-column: 3; grid-row: 1 / span 2; }
+
+  .ctl {
+    width: 100%;
+    height: 100%;
+    font-size: 1.15rem;
+    color: #aab2c5;
+    background: #232938;
+    border: 1px solid #3a4154;
+    border-radius: 8px;
+    -webkit-tap-highlight-color: transparent;
+
+    &.active {
+      color: #14171f;
+      background: #aab2c5;
+    }
+
+    &:hover:not(:disabled) {
+      color: #e6e8ee;
+    }
+  }
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.level-name,
+.moves {
+  color: #aab2c5;
+}
+
+.keys {
+  max-width: 46rem;
+  margin-top: 1rem;
+  color: #8b93a7;
+  font-size: 0.9rem;
+}

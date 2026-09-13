@@ -1,0 +1,74 @@
+using MintPlayer.AI.ReinforcementLearning.Environments.BlockDude;
+
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
+/// <summary>
+/// Runs a Block Dude policy greedily to a terminal state.
+/// </summary>
+/// <remarks>
+/// <para>Greedy, never search. Block Dude is irreversible — a block set down in the wrong place can make a level
+/// unsolvable with no way back — so a policy that only succeeds with search in front of it has not learned the
+/// game. Both the training gate and the shipped-level benchmark measure the policy itself, and they share this
+/// code so the two numbers can never drift apart.</para>
+/// </remarks>
+public static class BlockDudeGreedy
+{
+    /// <summary>Why a rollout stopped. Anything but <see cref="Won"/> is a loss.</summary>
+    public enum Ending
+    {
+        /// <summary>Reached the door.</summary>
+        Won,
+        /// <summary>The policy chose a move the rules refused, leaving the board unchanged — it is stuck.</summary>
+        Refused,
+        /// <summary>The policy had no legal move to offer at all.</summary>
+        NoMove,
+        /// <summary>Revisited states past the budget: walking in circles.</summary>
+        Loop,
+        /// <summary>Still playing when the step budget ran out.</summary>
+        Budget,
+    }
+
+    /// <param name="DistinctStates">How many distinct board states the rollout touched. Read it against
+    /// <paramref name="Steps"/>: far fewer distinct states than steps means the policy is cycling, which a
+    /// <see cref="Ending.Budget"/> ending alone does not tell you.</param>
+    public readonly record struct Outcome(Ending Ending, int Steps, int DistinctStates)
+    {
+        public bool Solved => Ending == Ending.Won;
+    }
+
+    /// <summary>Plays <paramref name="start"/> greedily under <paramref name="net"/> until it ends.</summary>
+    /// <param name="stepBudget">Hard cap on moves. The training gate derives this from the rung's optimal length;
+    /// the shipped levels carry no optimal count, so their benchmark passes an explicit ceiling.</param>
+    public static Outcome Run(BlockDudePolicyNet net, BlockDudeBoard start, int stepBudget)
+    {
+        var current = start;
+        var seen = new HashSet<int>();
+
+        for (int step = 0; step < stepBudget; step++)
+        {
+            if (current.Won) return new(Ending.Won, step, seen.Count);
+
+            var action = net.Greedy(current);
+            if (action is null) return new(Ending.NoMove, step, seen.Count);
+
+            var next = current.Apply(action.Value);
+            if (next.SameStateAs(current)) return new(Ending.Refused, step, seen.Count);
+
+            // Exit on the FIRST revisit. The original guard also required `seen.Count > stepBudget`, which can
+            // never hold when at most `stepBudget` states are ever added — so it was inert and a cycling policy
+            // burned the whole budget. Ending here is outcome-identical, not a relaxation: the greedy policy is a
+            // deterministic function of the board, so a repeated state means the trajectory is periodic from that
+            // point on and can never reach the door. It only ends such a rollout sooner.
+            //
+            // `StateHash` is a 32-bit hash, so a collision could in principle end a live rollout early. At these
+            // trajectory lengths that is well under a tenth of a percent, and the affected rollout was already
+            // being counted as unsolved.
+            if (!seen.Add(next.StateHash)) return new(Ending.Loop, step, seen.Count);
+            current = next;
+        }
+
+        return current.Won
+            ? new(Ending.Won, stepBudget, seen.Count)
+            : new(Ending.Budget, stepBudget, seen.Count);
+    }
+}

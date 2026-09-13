@@ -27,6 +27,15 @@
     <InternalsVisibleTo Include="MintPlayer.AI.ReinforcementLearning.Tests" />
   </ItemGroup>
 
+  <!-- Level content is a SINGLE source of truth shared by training and the browser: embedded here so the
+       campaign/Lab/tests read it with no file paths, and linked into RLDemo.Web's wwwroot/levels (see that
+       project's csproj) so the Angular app fetches the very same bytes. Regenerate with
+       `python tools/blockdude_levels.py` / `python tools/lunarlockout_levels.py` — never hand-edit. -->
+  <ItemGroup>
+    <EmbeddedResource Include="BlockDude\levels\blockdude-levels.json" />
+    <EmbeddedResource Include="LunarLockout\levels\lunarlockout-levels.json" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>MintPlayer.AI.ReinforcementLearning.Environments</RootNamespace>

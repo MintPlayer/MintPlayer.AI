@@ -178,6 +178,21 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
             Log($"starting fresh {_environmentId} self-play ({_net.Describe()}, {_selfPlayCfg.Simulations} sims/move)");
         }
         _adam = AdamState.LoadOrInit(store, _environmentId, AdamId, _net.Parameters(), _learningRate, Log);
+
+        // Restore progress counters, the arena RNG, and _lastWinRate. That last one matters most here:
+        // MaybePromoteDifficulty reads it to decide a ladder promotion, so leaving it unpersisted made
+        // promotion depend on whether the run had happened to evaluate since the last restart.
+        // _totalGames also feeds DeterministicParallel's baseIndex, so replaying it from zero regenerated
+        // already-seen games. Absent sidecar = zeros, i.e. the pre-fix behaviour.
+        var progress = CampaignProgressState.TryLoad(store, _environmentId, ProgressId, ProgressKind, rngCount: 1, Log);
+        if (progress is not null)
+        {
+            _totalSamples = progress.Samples;
+            _totalGames = progress.Units;
+            _lastWinRate = progress.LastMetric == 0 ? double.NaN : progress.LastMetric;
+            CampaignProgressState.RestoreInto(progress.Rngs[0], _arenaRng);
+            Log($"resumed progress: {_totalSamples:N0} samples over {_totalGames:N0} games");
+        }
         _forwards = _forwardFactory?.Invoke(_net) ?? [new AutogradPolicyValueForward(_net, _game.ObservationSize)];
         _trainStep = _trainStepFactory?.Invoke(_net, _adam)
             ?? new AutogradPolicyValueTrainStep(_net, _adam, _game.ObservationSize, _game.PolicySize, _valueWeight, _gradClipNorm);
@@ -278,7 +293,15 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
         store.Save(_environmentId, NetId, s => _net.Save(s, _checkpointKind));
         AdamState.Save(store, _environmentId, AdamId, _adam);
         if (_ladder is not null) MaybePromoteDifficulty();
+
+        // Saved AFTER promotion so the sidecar captures both the arena RNG draws it made and the win rate it
+        // decided on.
+        CampaignProgressState.Save(store, _environmentId, ProgressId, ProgressKind,
+            _totalSamples, _totalGames, double.IsNaN(_lastWinRate) ? 0 : _lastWinRate, _arenaRng);
     }
+
+    private const string ProgressId = "az-progress";
+    private const string ProgressKind = "selfplay-progress";
 
     public void Dispose() { }
 

@@ -2644,6 +2644,134 @@ curriculum + lighter eval) and **✅ P.9** (LR scaling + ε-loss target sync). F
    scaffolding, Dueling head, tensor pooling, PPO masking, importing puzzles from the
    owner's original Rush Hour app.
 
+---
+
+## M58 — Retire WebGames: Block Dude + Lunar Lockout, and direct manipulation  *(2026-09-11; branch `m58-webgames-retirement`; see `WEBGAMES_RETIREMENT_PRD.md`)* 🟡
+
+**Why:** the owner wanted `C:\Repos\WebGames` gone, and asked what would actually be lost. Answer: **three
+games, not six** — 2048, Rubiksolver and RushHour are all strictly weaker duplicates of what this repo already
+has. Tic Tac Toe was dropped deliberately (a solved, AI-less game dilutes a playground whose pitch is games
+backed by trained models). Block Dude and Lunar Lockout were migrated.
+
+**Two premises going in were wrong, and both changed the plan.** Block Dude was *not* "still fully blank" —
+`WebGames/BlockDude` is 504 lines of working TypeScript. And Spelletjes' Lunar Lockout has **zero** game logic,
+a 64-line WinForms scaffold whose only live code draws one rocket and pops a MessageBox inside `Paint`. So the
+rules came from Spelletjes' Block Dude (619-line `SpeelVeld.cs`, which ships no levels) and Lunar Lockout came
+from WebGames instead.
+
+**All three WebGames level packs failed verification**, which is the strongest result of the milestone —
+retiring the repo loses **no level content at all**:
+- **Lunar Lockout**: 15 grids, not the 16 first counted (the 16th `name:` was an interface declaration). **13
+  are unsolvable** — four have no legal first move whatsoever, because no two robots share a row or column —
+  and one more is mis-numbered. Caught only by re-implementing the rules from scratch in Python and getting
+  *exactly* the same 13; a single implementation's verdict on its own data source could not settle it.
+- **Rush Hour**: the "40 official ThinkFun boards" **do not decode into legal boards under any of 16 candidate
+  conventions** — the file's own helper says `width === 1` means vertical, yet the red car is declared that way
+  and a vertical red car can never exit. Level 1 alone has a vehicle off the board edge and two overlapping
+  pairs. Harvest abandoned; the deck keeps its 79.
+- **Block Dude**: WebGames' levels are synthetic flat terrain. The **11 originals** were imported instead, from
+  the TI-84+CE port (Unlicense), whose `game.c` independently corroborated two recovered rules. **4 bonus
+  levels** followed, decoded from the vendored `BLOCKLV2` appvar of the CSE release (PRD §4.4b) — the pack is
+  now 15. Importing them retired the one-door-per-level assumption: `FromGrid` requires at least one door, not
+  exactly one.
+
+**Measured, and it reshaped the AI plan:** only Block Dude levels **1–3 are exactly solvable**. Level 4 truncates
+even at a 3M-state cap costing 9 GB; the frontier is ≈6–7 blocks over ≈150 free cells, and cost is memory-bound
+at 1.3–3 KB per state. Level 11 (42 blocks, 551 cells) is off-scale by dozens of orders of magnitude — it ships
+**playable but not exactly solvable**, a stretch benchmark rather than an acceptance criterion.
+
+**Engines (M58.1, M58.4).** Both games are one `.pg` each — rules **and** exact BFS oracle — transpiled to C# for
+training and TypeScript for the browser. Polyglot has no dictionary, set or queue, so this added the first
+hand-rolled open-addressing map in a `.pg`; **no compiler change was needed**. Lunar Lockout packs its state into
+a 30-bit `i32`; Block Dude is far too wide (level 11 is 42 blocks over 551 cells) so it hashes and **chains**,
+comparing candidates exactly. Two `.pg` traps recorded: an FNV offset basis that does not fit `i32` silently
+widens the expression to 64-bit (→ TS `bigint`), and helper class names collide across `.pg` files because they
+share one assembly namespace.
+
+**Rules recovered and corrected (D1).** Cells are single-occupancy with exactly one exception — the player may
+stand in the door cell, which is how a level is won (owner ruling). Four genuine defects fixed; a fifth,
+"gravity is never applied after a climb", turned out to be **vacuous**: the climb lands the player directly on
+the cell whose solidity it just required, so a gravity pass there could never do anything. Gravity is never
+settled on load, which is what lets level 11 ship with **14 blocks floating in mid-air**.
+
+**The carried block: one real defect, two rules confirmed (2026-09-13, owner reports, PRD §4.3).** The
+follow-up must be judged from the cell diagonally forward-and-up from the OLD position, before the step and
+before gravity; the `.pg` judged it AFTER gravity, so walking off a ledge carried the block diagonally
+**through a wall**. Fixed. Two adjacent behaviours were then confirmed as correct rather than changed: a climb
+carries the block diagonally, so a ceiling directly above it is never on its path and carrying survives; and a
+**blocked** move keeps the block — the recovered rule text's "even when the move was blocked" was wrong, and
+the TI-84+CE port disagrees with both. All three are pinned by tests, one of them on real shipped content
+(level 10: the same block survives a climb under a wall and is knocked off by that wall one move later).
+
+**Training (M58.5, D2/D9).** Two-phase by design: imitation from the exact oracle, then expert iteration on
+boards the oracle cannot label. The owner's objection — *"the net will never be stronger than the teacher"* —
+is right in general but vacuous for phase 1, because BFS is *optimal* where Kociemba (the cube's teacher) was
+not; the headroom here is **scale**, not move count. Observation is **egocentric and constant-width** (21×13
+window + coarse 2-channel density map + scalars = 1181), so advancing a curriculum stage is purely a change of
+data distribution — no net surgery, no checkpoint invalidation, and level 11 produces the same tensor shape as
+an 8×6 board. Curriculum advance is a **pure function of persisted state**, evaluated on a sample cadence and
+never in `Evaluate()` (the runner fires that on the wall clock). `--fresh` plus a run fingerprint make a
+blank-slate re-run reproducible; six determinism tests pin it, including that an **interrupted run produces
+byte-identical checkpoints** to an uninterrupted one.
+
+**The generator needed four fixes, all found by measuring rather than reasoning** — accept rate went from 1–7%
+to 16–22%. The unit tests had hidden it by running at one small stage and asserting only that *some* board was
+accepted, so a 1% yield passed in a second and looked healthy.
+
+**Capacity now grows on saturation, not on a clock (2026-09-13, PRD §7.1b).** `--grow` used to step the
+architecture every `--grow-every` samples whether or not the net needed it; it now climbs one rung when the
+**gate** stops producing new highs (`GrowthPlateau`: running maximum + patience, `--grow-patience` 6,
+`--grow-min-improvement` 0.04). The gate, not the loss — falling loss with a flat gate *is* the saturation
+signature, and a loss-driven trigger reads that as healthy progress and never fires. A running maximum rather
+than consecutive values, because the gate swings ~10 points between evaluations; the window resets on stage
+promotion (a harder rung legitimately drops the rate) and after growing. **Two defects found en route:** the
+shared `DqnGrowth` ladder tops out at `[128,128,128]`, *below* Block Dude's default `[512,512]`, so `--grow`
+was a capacity **downgrade** for this game (it now has its own ladder, rung 0 = the default trunk); and the
+rung was recovered by matching the live trunk with a silent fall-back to rung 0, so resuming a non-growing net
+with `--grow` would have jumped it to the top of the ladder in one step (the rung is now persisted, sidecar
+v3, and a mismatch refuses to grow). Tests: `GrowthPlateauTests`, `BlockDudeGrowthTests`.
+
+**Two latent bugs fixed en route**, both pre-existing and unrelated to the new games:
+1. `PolicyValueNet.Load` **silently corrupted a stale checkpoint** — `inputSize` is not stored, and a shorter
+   stored array still satisfied `Span.CopyTo`, leaving the tail of layer 0 at fresh random init. Fixed by exact
+   length validation, deliberately **without** bumping the format: the layout is a cross-language contract that
+   the browser's `.pg` twins parse, and bumping it broke two chess parity tests.
+2. The imitation and self-play campaigns **persisted no progress** — counters and RNG were re-derived from the
+   seed on every `Resume`, so a restarted run replayed its data *and* reset `PolicyGrowth`'s stage. Self-play was
+   hit twice: ladder promotion read an unpersisted `_lastWinRate`.
+
+**Direct manipulation (M58.10, D11/D12).** Both puzzle games dropped select-then-press-a-button. Lunar Lockout
+aims a rocket by where you point at it and launches on release; **an illegal direction never rotates the glyph**,
+which is the primary teaching of "the board edge is not a backstop". Rush Hour drags a vehicle along its lane
+with sub-cell motion, re-anchoring at the clamp so a pointer that overshoots a blocker does not bank phantom
+distance. One Pointer Events stream serves mouse, pen and touch, discriminated by `pointerType` — binding
+`mousedown` and `touchstart` together double-fires every tap. Rush Hour's board was also a fixed 502×460 canvas
+that simply overflowed a phone; it is responsive now. Move counting is **per cell**, matching
+`RushHourSolver`'s single-cell BFS depth, or the "optimal: N" figure shown to the player becomes a lie.
+
+**Pages (M58.3, M58.6).** Both games are fully client-side: rules and the exact oracle come from the same `.pg`,
+so Lunar Lockout's hint button *is* the search that verified every shipped level's move count. Level packs are
+a single source of truth — canonical JSON in the Environments project, embedded for training and copied into
+`wwwroot/levels` for the browser.
+
+**Pages and input (M58.3, M58.6, M58.10, M58.11).** Both games are fully client-side: rules and the exact oracle
+come from the same `.pg`, so Lunar Lockout's hint button *is* the search that verified every shipped level's move
+count. Making the Rush Hour board responsive then exposed two bugs behind one symptom — it rendered at 300×275,
+then stayed 300×275 while being drawn larger. **Circular sizing** (a shrink-to-fit flex parent containing a
+`width: 100%` canvas resolves to the canvas's intrinsic 300px default) and **a stale backing store** (`draw()`
+sizes from the element but only runs on a signal change, and a reflow writes no signal). The rule that falls out,
+and applies to every canvas here: **a canvas sized from its element needs both a definite parent width and a
+`ResizeObserver`** — CSS alone gives a correct layout with a stale buffer, the observer alone cannot escape the
+circular sizing. Verifying at 390px also showed the *page* scrolling sideways: thirteen non-wrapping nav links,
+two of them added by this milestone. Fixed.
+
+**Still open (2026-09-13):** the two new pages have no tests; **no Block Dude net is committed** — the pipeline is
+verified end to end and an 11-hour run on the corrected engine with saturation growth is in flight (`data/bd4`),
+but its result is not in yet; phase-2 expert iteration is unbuilt; and `C:\Repos\WebGames` has not yet been
+deleted (its four untracked projects were committed and pushed first — M58.0). The **full test suite has not
+completed locally** — it repeatedly failed to finish on the dev machine — so **PR #50's CI is the check**,
+particularly for the Cube and Rush Hour growth-ladder changes. See the PRD's "Where to pick this up".
+
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
 `dotnet run --project src/RLDemo.Console -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour|cube]

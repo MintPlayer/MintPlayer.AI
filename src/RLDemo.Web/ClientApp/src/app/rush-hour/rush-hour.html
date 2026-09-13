@@ -13,7 +13,11 @@
 
 <div class="layout">
   <div class="board-panel">
-    <canvas #board (pointerdown)="onCanvasClick($event)"></canvas>
+    <canvas #board
+            (pointerdown)="onPointerDown($event)"
+            (pointermove)="onPointerMove($event)"
+            (pointerup)="onPointerUp($event)"
+            (pointercancel)="onPointerCancel($event)"></canvas>
 
     @if (mode() === 'edit' && analysis(); as a) {
       <div class="board-caption">
@@ -33,7 +37,7 @@
         @if (playWon()) {
           <span class="good">🎉 Solved in {{ movesUsed() }} moves (optimal: {{ analysis()?.optimalMoves }})</span>
         } @else {
-          <span>Moves: {{ movesUsed() }} — click a vehicle, then use the arrow keys or buttons.</span>
+          <span>Moves: {{ movesUsed() }} — drag a vehicle along its lane; each square counts as one move.</span>
         }
       </div>
     }
@@ -117,7 +121,10 @@
       }
       @case ('play') {
         <h3>Play it yourself</h3>
-        <p class="hint">Click a vehicle to select it, then move it with the arrow keys or these buttons.</p>
+        <p class="hint">
+          Drag a vehicle along its lane — it stops where the traffic does. Or tap one to select it and use the
+          arrow keys or these buttons.
+        </p>
         @if (selected() !== null) {
           <div class="actions move-buttons">
             <button [color]="colors.secondary" (click)="tryMove(0)" [disabled]="!selectedCanMove().back">

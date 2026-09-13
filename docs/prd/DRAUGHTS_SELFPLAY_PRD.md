@@ -111,6 +111,14 @@ batches are modest — expect a real but unspectacular generation speedup, which
 cheap movegen makes CPU generation fast anyway.
 
 ### 4.2 Net growth (owner Q 2026-07-15: "does the net auto-widen when saturated?" — no)
+
+> **Update 2026-09-13 — partly superseded.** The owner asked again, and saturation-driven growth now EXISTS,
+> but only for Block Dude: see `WEBGAMES_RETIREMENT_PRD.md` §7.1b (`GrowthPlateau` — running maximum over the
+> held-out gate plus a patience counter, deliberately not the loss). Everything below still holds for the
+> **self-play** path draughts uses: there is no growth seam there at all, `ConvResidualPolicyValueNet` does not
+> implement `IGrowableTrunkNet`, and the lever remains a relaunch with bigger `--filters`/`--blocks`. Note also
+> that adopting the new trigger elsewhere needs a per-game ladder: the shared `DqnGrowth` schedule tops out
+> below some games' default nets, which made `--grow` a capacity downgrade for Block Dude until it got its own.
 The SDK's Net2Net toolkit (`WidenTo`/`Deepen` on MLP-trunk nets, driven by `DqnGrowth`/`PolicyGrowth`/the
 cube-DAVI width ladder) is wired into the DQN and imitation campaign families only — and it grows on a fixed
 sample cadence (`GrowEvery`, opt-in), not on a saturation signal. The self-play path draughts uses has no

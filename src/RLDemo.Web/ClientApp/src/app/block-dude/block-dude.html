@@ -1,0 +1,46 @@
+<h1>Block Dude</h1>
+
+<p class="intro">
+  Reach the door. You can climb a single step, but anything taller needs a block carried over and set down —
+  and a block dropped somewhere unreachable stays there, so think before you put one down.
+</p>
+
+<div class="bd-stage" [style.aspect-ratio]="aspect()">
+  <canvas #bdCanvas
+          aria-label="Block Dude level. Tap left or right of the figure to walk, tap his column to climb."
+          (pointerdown)="onPointerDown($event)"></canvas>
+</div>
+
+<p class="status" role="status">{{ status() }}</p>
+
+<div class="controls">
+  <button type="button" class="ctl left" (click)="act(0)" aria-label="Walk left">←</button>
+  <button type="button" class="ctl up" (click)="act(2)" aria-label="Climb">↑</button>
+  <button type="button" class="ctl grab" (click)="act(3)" [class.active]="carrying()">
+    {{ carrying() ? 'Put down' : 'Pick up' }}
+  </button>
+  <button type="button" class="ctl right" (click)="act(1)" aria-label="Walk right">→</button>
+</div>
+
+<div class="actions">
+  <button type="button" [color]="colors.secondary" (click)="changeLevel(-1)" [disabled]="levelIndex() === 0">
+    ← Previous
+  </button>
+  <span class="level-name">{{ level()?.name }} ({{ levelIndex() + 1 }}/{{ levels().length }})</span>
+  <button type="button" [color]="colors.secondary" (click)="changeLevel(1)"
+          [disabled]="levelIndex() >= levels().length - 1">
+    Next →
+  </button>
+</div>
+
+<div class="actions">
+  <button type="button" [color]="colors.secondary" (click)="undo()" [disabled]="!canUndo()">Undo</button>
+  <button type="button" [color]="colors.secondary" (click)="reset()">Restart</button>
+  <span class="moves">{{ moves() }} move{{ moves() === 1 ? '' : 's' }}</span>
+</div>
+
+<p class="keys">
+  Arrow keys walk, <kbd>↑</kbd> climbs and <kbd>↓</kbd> or <kbd>Space</kbd> picks up and puts down.
+  <kbd>Z</kbd> undoes, <kbd>R</kbd> restarts. Undo matters here: unlike most puzzles, a misplaced block can
+  make a level unsolvable with no way back.
+</p>

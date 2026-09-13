@@ -78,8 +78,8 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options, 
             else
             {
                 var initRng = new Xoshiro256StarStar(options.Seed ^ 0xDEADBEEF);
-                _net = options.Grow ? new RushHourPolicyNet(initRng, DqnGrowth.Start) : new RushHourPolicyNet(initRng);
-                Log(options.Grow ? $"initialized a fresh GROWING policy net (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                _net = new RushHourPolicyNet(initRng, RushHourGrowth.Ladder.TrunkFor(0));
+                Log(options.Grow ? $"initialized a fresh GROWING policy net (rung 0, trunk [{string.Join(",", RushHourGrowth.Ladder.TrunkFor(0))}])"
                          : "initialized a fresh policy net");
                 resumed = false;
             }
@@ -87,8 +87,29 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options, 
         // Restore Adam's moment estimates when continuing a campaign — without them, resumed
         // training spends its first minutes re-estimating gradient statistics from zero.
         _adam = AdamState.LoadOrInit(store, "rushhour", "policy-adam", _net.Parameters(), options.LearningRate, Log);
+
+        // Restore progress counters and the owner-thread RNG streams. Without this a restarted run replayed the
+        // same configs from the beginning AND reset PolicyGrowth's stage target (it keys off _totalSamples), so a
+        // repeatedly-interrupted run kept re-growing its trunk from the first stage. Absent sidecar = zeros,
+        // which is the pre-fix behaviour, so older stores still resume.
+        var progress = CampaignProgressState.TryLoad(store, "rushhour", ProgressId, ProgressKind, rngCount: 2, Log);
+        if (progress is not null)
+        {
+            _totalSamples = progress.Samples;
+            _totalConfigs = (int)progress.Units;
+            CampaignProgressState.RestoreInto(progress.Rngs[0], _rng);
+            CampaignProgressState.RestoreInto(progress.Rngs[1], _growRng);
+            Log($"resumed progress: {_totalSamples:N0} samples over {_totalConfigs:N0} configs");
+        }
+        else if (resumed)
+        {
+            Log("no progress sidecar found — the net resumed but counters restart at zero (pre-M58 checkpoint)");
+        }
         return resumed;
     }
+
+    private const string ProgressId = "policy-progress";
+    private const string ProgressKind = "rushhour-imitation-progress";
 
     public long TrainChunk()
     {
@@ -115,7 +136,7 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options, 
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
-        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, _growRng, Log) is var g && g.HasValue)
+        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, RushHourGrowth.Ladder, _growRng, Log) is var g && g.HasValue)
             (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }
@@ -169,6 +190,8 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options, 
     {
         store.Save("rushhour", "policy", s => _net.Save(s));
         AdamState.Save(store, "rushhour", "policy-adam", _adam);
+        CampaignProgressState.Save(store, "rushhour", ProgressId, ProgressKind,
+            _totalSamples, _totalConfigs, lastMetric: 0, _rng, _growRng);
     }
 
     public void Dispose() { }

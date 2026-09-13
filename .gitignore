@@ -50,3 +50,11 @@ cube-policy/
 # Polyglot-generated TypeScript twins — emitted by `dotnet build` (pgconfig.json include rules).
 # They must exist on disk for the Angular compile, but are build outputs, not source.
 src/RLDemo.Web/ClientApp/src/app/**/*_solver.ts
+
+# Level packs copied from the Environments project by the CopyLevelPacks build target. The canonical files live
+# in src/MintPlayer.AI.ReinforcementLearning.Environments/<Game>/levels/ and are embedded there for training;
+# these copies exist only so the browser fetches the identical bytes.
+src/RLDemo.Web/wwwroot/levels/
+
+# Python bytecode from the level-pack importer tools.
+__pycache__/

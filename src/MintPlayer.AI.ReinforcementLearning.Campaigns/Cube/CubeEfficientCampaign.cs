@@ -25,6 +25,11 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficien
     : ITrainingCampaign, INetworkTelemetrySource
 {
     private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
+
+    // Rooted at THIS run's configured width, so --grow starts where a plain run starts. It used to climb the
+    // shared DqnGrowth ladder, which tops out at [128,128,128] — below any --width worth training — so growth
+    // shrank the net it was meant to enlarge.
+    private GrowthLadder Ladder => GrowthLadder.FromTrunk([options.Width, options.Width], steps: 3);
     private const string PolicyId = "policy-efficient";
     private const string PolicyAdamId = "policy-efficient-adam";
     private const string PolicyProgressId = "policy-efficient-progress";
@@ -62,9 +67,9 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficien
             else
             {
                 var initRng = new Xoshiro256StarStar(options.Seed ^ 0xC0FFEE);
-                _net = options.Grow ? new CubePolicyNet(initRng, DqnGrowth.Start) : new CubePolicyNet(initRng, hidden: options.Width);
+                _net = new CubePolicyNet(initRng, Ladder.TrunkFor(0));
                 Log(options.Grow
-                    ? $"initialized a fresh GROWING EfficientCube net '{PolicyId}' (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                    ? $"initialized a fresh GROWING EfficientCube net '{PolicyId}' (rung 0, trunk [{string.Join(",", Ladder.TrunkFor(0))}])"
                     : $"initialized a fresh EfficientCube net '{PolicyId}' (trunk width {options.Width})");
                 resumed = false;
             }
@@ -113,7 +118,7 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficien
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
-        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, _growRng, Log) is var g && g.HasValue)
+        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, Ladder, _growRng, Log) is var g && g.HasValue)
             (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }

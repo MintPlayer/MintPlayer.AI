@@ -22,6 +22,25 @@ import { RouterLink } from '@angular/router';
         <span class="cta">Play →</span>
       </a>
 
+      <a class="card" routerLink="/blockdude">
+        <h2>Block Dude</h2>
+        <p>
+          Carry blocks to build your way up to the door. All eleven original levels, rules recovered from the
+          1990s calculator game — including the one that starts with blocks floating in mid-air.
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
+      <a class="card" routerLink="/lunarlockout">
+        <h2>Lunar Lockout</h2>
+        <p>
+          Rockets slide until they hit each other — the board edge will not stop them. Park the red one on
+          the centre. Every level's minimum is proven by an exact solver that also runs in your browser as
+          the hint button.
+        </p>
+        <span class="cta">Play →</span>
+      </a>
+
       <a class="card" routerLink="/2048">
         <h2>2048</h2>
         <p>
@@ -62,7 +81,8 @@ import { RouterLink } from '@angular/router';
         <h2>FruitCake</h2>
         <p>
           A Suika-style drop-and-merge physics game — aim, drop, and merge fruit from cherry to
-          watermelon. Runs entirely in your browser; no AI (yet). Play it fullscreen.
+          watermelon. Runs entirely in your browser, and so does its AI — watch it play a depth-3
+          search in a Web Worker. Play it fullscreen.
         </p>
         <span class="cta">Play →</span>
       </a>

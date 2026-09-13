@@ -42,6 +42,31 @@ export function canMove(vehicles: VehicleDto[], positions: number[], vehicle: nu
   return grid[row * SIZE + col] < 0;
 }
 
+/**
+ * The inclusive interval of positions a vehicle can reach along its own axis without passing through another
+ * vehicle or leaving the board — the multi-cell generalisation of {@link canMove}, and by construction it must
+ * agree with iterating that function one step at a time.
+ *
+ * Compute this ONCE when a drag begins: nothing else can move while one vehicle is being dragged, and
+ * {@link occupancy} rebuilds the whole 36-cell grid on every call, so recomputing per pointer event would be
+ * roughly a hundred grid rebuilds a second for a value that cannot change.
+ */
+export function clampRange(vehicles: VehicleDto[], positions: number[], vehicle: number): { lo: number; hi: number } {
+  const grid = occupancy(vehicles, positions);
+  const v = vehicles[vehicle];
+  const pos = positions[vehicle];
+  // The vehicle occupies [pos, pos + length - 1], so scanning outside that span never meets itself.
+  const cellAt = (k: number) => (v.horizontal ? v.row * SIZE + k : k * SIZE + v.col);
+
+  let lo = pos;
+  while (lo > 0 && grid[cellAt(lo - 1)] < 0) lo--;
+
+  let hi = pos;
+  while (hi + v.length <= SIZE - 1 && grid[cellAt(hi + v.length)] < 0) hi++;
+
+  return { lo, hi };
+}
+
 export function isSolved(vehicles: VehicleDto[], positions: number[]): boolean {
   return positions[0] + vehicles[0].length - 1 === SIZE - 1;
 }

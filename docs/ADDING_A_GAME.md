@@ -1,12 +1,51 @@
 # Adding a new game end-to-end
 
-The mechanical, file-by-file checklist for adding a game to the playground, reverse-engineered from
+> ## ⚠️ Read this first — the default is CLIENT-SIDE
+>
+> The six-layer checklist below describes the **server-authoritative** path (env → model service → controller →
+> `*-api.ts`). That was the original design and it is now the **exception**, kept for models that genuinely
+> cannot run in a browser — today only **Rush Hour, 2048 and Cube**.
+>
+> **Every game added since M32 is fully client-side**, and that is what you should reach for: Snake, MountainCar,
+> FruitCake, Crazy Fruits, Tetris, Chess, Draughts, Block Dude and Lunar Lockout. They have **no controller and
+> no model service at all**, and cost nothing per viewer.
+>
+> ### The client-side checklist
+> 1. **One `.pg` single source** — `src/…Environments/<Game>/polyglot/<game>_solver.pg`: rules,
+>    `buildObservation`, the net forward pass, and any scripted or search tiers. Use `constructor(...)`, never
+>    `init(...)`. The richest example is `Tetris/polyglot/tetris_solver.pg`.
+> 2. **Route the TS twin** — add an `include` entry to the repo-root `pgconfig.json` pointing at
+>    `src/RLDemo.Web/ClientApp/src/app/<game-dir>/<game>_solver`. `dotnet build` emits both C# and TS. The
+>    `*_solver.ts` twins are **gitignored build outputs — never edit them**.
+> 3. **C# facade + env** beside the `.pg` (`<Game>Board.cs`, `<Game>Env.cs`), delegating rules to the generated
+>    core. Observation built by a **static** method so training and serving are byte-identical.
+> 4. **Campaign** in `Campaigns/<Game>/`, registered in `CampaignServiceCollectionExtensions`, plus a Lab entry
+>    and a `--game <name>` line in `Lab/Program.cs`. Persist progress counters and RNG state — see
+>    `CampaignProgressState`, added in M58 after three campaigns were found to be silently replaying data on
+>    every restart.
+> 5. **Level content**, if any: one canonical JSON under `<Game>/levels/`, embedded for training and copied into
+>    `wwwroot/levels/` by the `CopyLevelPacks` target, so the browser reads the exact bytes the campaign trains
+>    against. Generate it with a committed script in `tools/`.
+> 6. **Ship the weights** to `src/RLDemo.Web/wwwroot/models/` (LFS), with a `<game>-net.ts` `.ckpt` parser and a
+>    **stale-checkpoint guard** — input width ≠ observation width must fall back to a scripted tier, never
+>    half-load. (`PolicyValueNet.Load` now throws on a shape mismatch; before M58 it silently left the tail of
+>    layer 0 at random init.)
+> 7. **Page**: component + renderer + `.scss`, a lazy route in `app.routes.ts`, a nav link in `app.html`, a home
+>    card in `home/home.ts`. Canvas loop outside Angular's zone, plain `fetch`, `touch-action: none` on any
+>    canvas you drag on.
+> 8. **Tests** in `tests/…Tests/`: engine rules, env contract, C#-vs-generated parity, and a `.ckpt` byte
+>    reference for the TS parser.
+
+The mechanical, file-by-file checklist for the **server-authoritative** path, reverse-engineered from
 **Rush Hour** / **2048** / **Cube** (investigated 2026-06-15). Cross-refs: `prd/PRD.md` §7 + §7.1 (interaction
 models), `prd/PLAN.md` M8–M10 (web slices) + M22 (MountainCar/Snake).
 
 For a new game `X` (lowercase env id `xgame`, PascalCase `XGame`), pick the **interaction principle** first
 (PRD §7.1): **A — compute-and-return** (HTTP, like Cube/2048/RushHour/Snake) or **B — live control stream**
 (WebSocket, like MountainCar). Then work the six layers.
+
+> **Note:** the live WebSocket stream (principle B) was **retired in M32/M33**. Every "watch AI" mode now runs
+> in the browser. Principle B is documented here for historical reading of the code, not as a choice to make.
 
 ## Load-bearing conventions
 - **Model-store filename:** `FileModelStore.PathOf` maps `(environmentId, algorithmId)` → `<root>/<envId>.<algoId>.ckpt`.

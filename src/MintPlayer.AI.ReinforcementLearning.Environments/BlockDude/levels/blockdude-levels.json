@@ -1,0 +1,291 @@
+{
+  "_generator": "tools/blockdude_levels.py — do not hand-edit; re-run the tool instead.",
+  "_source": "Levels 1-11: https://github.com/merthsoft/blockdudece (src/level.c, Unlicense) — TI-84+CE port by Shaun McFall of the original TI-83+ PuzzPack game and levels by Brandon Sterner (2001). Bonus 1-4: the BLOCKLV2 extra level set from the same author's TI-84+CSE release, decoded from the vendored appvar at tools/blockdude/BLOCKLV2.8xv.",
+  "_doors": "Most levels have exactly one door, but not all: bonus 2 seals its exit behind a row of seven door cells and bonus 4 offers two separate exits. Reaching ANY door wins.",
+  "_format": "Rows are TOP-first. W = wall (immovable, climbable, never carryable), B = carryable block, P = player start, D = door/exit, . = empty. No implicit floor or boundary — everything is explicit.",
+  "_notSettled": "These grids are deliberately NOT gravity-settled: level 11 ships 14 blocks floating in mid-air, which is authored content. The engine applies gravity only to the walking player or a dropped block, never as a global settle pass (PRD §4.2).",
+  "_noOptimalMoves": "Omitted on purpose: most of these boards are far beyond any exact solver (level 11 is 42 blocks on 551 cells). The oracle labels small GENERATED boards for training; these shipped levels are the human content and the search benchmark (PRD §4.4).",
+  "version": 1,
+  "levels": [
+    {
+      "name": "Level 1",
+      "grid": [
+        "WW....W............W",
+        "W.W...W............W",
+        "W..WWW.............W",
+        "W..................W",
+        "W...W.......W......W",
+        "WD..W...W.B.W.B.P..W",
+        "WWWWWWWWWWWWWWWWWWWW",
+        "...................."
+      ]
+    },
+    {
+      "name": "Level 2",
+      "grid": [
+        ".W....WW........WW....",
+        ".W................W...",
+        "WW.................W..",
+        "WD..................W.",
+        "WW...................W",
+        ".W...........W..B....W",
+        ".W...........WB.BBP..W",
+        ".WWWWW...WWWWWWWWWWWWW",
+        ".....W..BW............",
+        ".....WWWWW............"
+      ]
+    },
+    {
+      "name": "Level 3",
+      "grid": [
+        ".W.................",
+        ".W...WWWWWWWWWWWWW.",
+        "W.W.W.............W",
+        "W..W..............W",
+        "W................BW",
+        "W...............BBW",
+        "W.WWW....P...WB.WW.",
+        "W.W.W....W..WWWWW..",
+        "W.W.WBB.WW..W......",
+        "WDW.WWWWWW.WW......",
+        "WWW.WW...WWW......."
+      ]
+    },
+    {
+      "name": "Level 4",
+      "grid": [
+        "..................W.....",
+        ".................W.W....",
+        ".......W........W...W...",
+        "......W.W......W.....W..",
+        "...WWW...W....W.......W.",
+        "..W.......W..W.........W",
+        ".W.........WW..........W",
+        ".W....................BW",
+        ".W...................BBW",
+        ".W...............P...WWW",
+        "WW....W..........W...W..",
+        "WD....W.B........WWWWW..",
+        "WWWWW.W.B...B..WWW......",
+        "....W.W.B.W.WB.W........",
+        "....W.WWWWWWWWWW........",
+        "....WWW................."
+      ]
+    },
+    {
+      "name": "Level 5",
+      "grid": [
+        ".....WWW....WWWWWWWWW.",
+        ".WWWW...WWWW.........W",
+        "W....................W",
+        "W....................W",
+        "W....................W",
+        "W.....W..............W",
+        "W.....W..............W",
+        "W.....WBBBB..........W",
+        "WD...WWWWWWWP........W",
+        "WW.WWW.....WW.W.....BW",
+        ".W.W........W.WW...BBW",
+        ".W.W........W.WW..BBBW",
+        ".WWW........W.WWWWWWWW",
+        "............WWW......."
+      ]
+    },
+    {
+      "name": "Level 6",
+      "grid": [
+        ".WWW.............WWWW",
+        ".W..WWWWWWWWWWWWW...W",
+        "WW..................W",
+        "WD..................W",
+        "WW..................W",
+        ".W................BBW",
+        ".WBB........W..B..WWW",
+        ".WBBB.......WPBBB.W..",
+        ".WBBBB......WWWWW.W..",
+        ".WWWWW....WWW...WWW..",
+        ".....W...BW..........",
+        ".....WW.WWW..........",
+        "......WWW............"
+      ]
+    },
+    {
+      "name": "Level 7",
+      "grid": [
+        "..W...WWWWW...WW...WWW..",
+        ".W.W.W.....W.W..W.W...W.",
+        ".W..WW......WW...WW....W",
+        ".W...W.......W....W....W",
+        ".W....................BW",
+        ".W....................BW",
+        "WW...................BBW",
+        "WD...B...............WWW",
+        "WW...W.B.....W....WW.W..",
+        ".W...W.B....WW.B.PWWWW..",
+        ".WW..W.BBB..WW.BBBW.....",
+        "..W..WWWWWW.WWWWWWW.....",
+        "..WW.W....WWW...........",
+        "...WWW.................."
+      ]
+    },
+    {
+      "name": "Level 8",
+      "grid": [
+        ".WWW.......WWWW...WWWWWWW..",
+        "W...W.....W....W.W.......W.",
+        "W....W...W.....WW.........W",
+        "WB....WWW....W.W.....WWW..W",
+        "WBB.........WW......WW.W..W",
+        "WWWW.......WW..........WD.W",
+        "...WW............WW....WW.W",
+        "..W....B.W......W..W......W",
+        "..W....BW.W....W...W......W",
+        ".W...WWW...W....W..W.....BW",
+        ".W......W.W......WW.....BBW",
+        "W........W...........WWWWWW",
+        "W............B............W",
+        "W....B......WWW..........BW",
+        "W...WWW.................BBW",
+        "W........B.......B..P..BBBW",
+        "WWWWWWWWWWWWWWWWWWWWWWWWWWW"
+      ]
+    },
+    {
+      "name": "Level 9",
+      "grid": [
+        "........WWW.........",
+        ".......W...W........",
+        "......W.....W..WWWWW",
+        ".....W.......WW....W",
+        "....W.....B........W",
+        "...W......BB......BW",
+        "..W.......WWW....BBW",
+        ".W............P.WWWW",
+        "W.............B....W",
+        "WD...........WWW...W",
+        "WW....WW...W......BW",
+        ".W....WWB..WW...WWWW",
+        ".W....WWWWWWW..WW...",
+        ".WWW..W.....W.WW....",
+        "...W.WW.....WWW.....",
+        "...WWW.............."
+      ]
+    },
+    {
+      "name": "Level 10",
+      "grid": [
+        "...WWWWWWWWWWWWWWWWWWWWW...",
+        ".WW...........W.........W..",
+        "WWWWB.......BBWB...BBB.BWW.",
+        "W..WW..W...WWWWW..BWWW.WW.W",
+        "W...W..WW........WWW.WWW..W",
+        "W...WW..WWBBBB............W",
+        "WD.......WWWWWWW..........W",
+        "WW........W...WWW........WW",
+        ".W.....B...W.W..WW........W",
+        ".W.....W....W....WW.......W",
+        ".WWWW..WW.............WWWWW",
+        "...WWWWW......P...........W",
+        "...W..........W...........W",
+        "...W.........WW....WWWWWWWW",
+        "...W........WW...........W.",
+        "...W..........B.........BW.",
+        "...WB....WWWWWWWWWWW...BBW.",
+        "...WBB..WW.........WW.BBBW.",
+        "...WWWWWW...........WWWWWW."
+      ]
+    },
+    {
+      "name": "Level 11",
+      "grid": [
+        "WWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+        "W..W...W....................W",
+        "W.....BWBB............WWWWW.W",
+        "WB...WWW.BWW.....B..WW..D.W.W",
+        "WBB....WWW...P..B.......W.W.W",
+        "WWW..BBW.....W.B..........W.W",
+        "W...WWWW......W..WWW...WWW..W",
+        "WB............W.W......W..B.W",
+        "WBB.......WWW.W.WB....W..WWWW",
+        "WWWW.B...WWW..W.WWB..W.B.W..W",
+        "W...........B.WWW..BW...W...W",
+        "W...B.....BB.W...WWWW.......W",
+        "W....WWWWWWWWW........WWWWW.W",
+        "W..............B...BWW....W.W",
+        "WWWW...........B...W....BBW.W",
+        "WBWW...W....W..........WWWW.W",
+        "WWBWWW.W....W...BBB.B.......W",
+        "WBWBWBWW....W........BBB....W",
+        "WWWWWWWWWWWWWWWWWWWWWWWWWWWWW"
+      ]
+    },
+    {
+      "name": "Bonus 1",
+      "grid": [
+        "WWWWWWWWWWWWWWWWWWWW",
+        "W.......W.........PW",
+        "W.......W.........WW",
+        "W.......W..........W",
+        "W.......W..........W",
+        "WD......W..........W",
+        "WWWWWW...B.........W",
+        "WWWWWWW...W........W",
+        "WWWWWWWW..W.......BW",
+        "WWWWWWWWW.W......BBW",
+        "WWWWWWWWW.WWWWWWWWWW",
+        "WWWWWWWWWWWWWWWWWWWW"
+      ]
+    },
+    {
+      "name": "Bonus 2",
+      "grid": [
+        "W...................",
+        "W...................",
+        "W...................",
+        "W...................",
+        "W..B................",
+        "WPBB...............B",
+        "WWWW.W.............B",
+        "W...WW.....W.......W",
+        "WB.........W......BW",
+        "WBB........WWWWW.WWW",
+        "WBB........WDDDDDDDW",
+        "WWWWWWWWWWWWWWWWWWWW"
+      ]
+    },
+    {
+      "name": "Bonus 3",
+      "grid": [
+        ".............B......",
+        "W...........BBB.....",
+        "WP.........BBBBB....",
+        "WW..WWWWWWWWWWWWWWWW",
+        "WW..WWWWWWWWWWWWWWWW",
+        "WW..WWWWWWWWWWWWWW.W",
+        "W...WWWWWWWWWWWWW.DW",
+        "W...WW...W....W...WW",
+        "W...W......W.....WWW",
+        "W.....W....WW.B..W.W",
+        "WB....WBB.WWWWB.W..W",
+        "WWWWWWWWWWWWWWWWWWWW"
+      ]
+    },
+    {
+      "name": "Bonus 4",
+      "grid": [
+        "WWWWWWWW............",
+        "WW.W.WDW............",
+        "W.W.W.W..........WW.",
+        "WW.W.W...........W..",
+        "W.W.W...........WW..",
+        "WW.W...........W.W..",
+        "WWW...........W.WW..",
+        "W...P........W.W.W..",
+        "W...B.......W.W.WW..",
+        "W..BBB.....W.W.W.W..",
+        "W.BB.BB...W.W.W.WW.D",
+        "WWWWWWWWWW.W.W.W.W.W"
+      ]
+    }
+  ]
+}

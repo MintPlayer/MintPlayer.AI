@@ -20,6 +20,11 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger? logger = null) : ITrainingCampaign, INetworkTelemetrySource
 {
     private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
+
+    // Rooted at THIS run's configured width, so --grow starts where a plain run starts. It used to climb the
+    // shared DqnGrowth ladder, which tops out at [128,128,128] — below any --width worth training — so growth
+    // shrank the net it was meant to enlarge.
+    private GrowthLadder Ladder => GrowthLadder.FromTrunk([options.Width, options.Width], steps: 3);
     private const int BatchSize = 256;
     private const int SamplesPerRound = 4096;
     private static readonly int[] EvalDepths = [2, 4, 6, 8, 10, 12, 16, 20];
@@ -50,14 +55,33 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
             else
             {
                 var initRng = new Xoshiro256StarStar(options.Seed ^ 0xDEADBEEF);
-                _net = options.Grow ? new CubePolicyNet(initRng, DqnGrowth.Start) : new CubePolicyNet(initRng, hidden: options.Width);
+                _net = new CubePolicyNet(initRng, Ladder.TrunkFor(0));
                 Log(options.Grow
-                    ? $"initialized a fresh GROWING cube policy net '{_ids.Policy}' (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                    ? $"initialized a fresh GROWING cube policy net '{_ids.Policy}' (rung 0, trunk [{string.Join(",", Ladder.TrunkFor(0))}])"
                     : $"initialized a fresh cube policy net '{_ids.Policy}' (trunk width {options.Width})");
                 resumed = false;
             }
         }
         _adam = AdamState.LoadOrInit(store, CubeIds.Environment, _ids.PolicyAdam, _net.Parameters(), options.LearningRate, Log);
+
+        // Restore progress counters and the owner-thread RNG streams. Without this a restarted run replayed the
+        // same scrambles from round zero AND reset PolicyGrowth's stage target (it keys off _totalSamples).
+        // Absent sidecar = zeros, which is the pre-fix behaviour, so older stores still resume.
+        var progress = CampaignProgressState.TryLoad(store, CubeIds.Environment, ProgressId, ProgressKind, rngCount: 2, Log);
+        if (progress is not null)
+        {
+            _totalSamples = progress.Samples;
+            _round = progress.Units;
+            _totalSolves = (long)progress.LastMetric; // an exact counter below 2^53, carried in the metric slot
+            CampaignProgressState.RestoreInto(progress.Rngs[0], _rng);
+            CampaignProgressState.RestoreInto(progress.Rngs[1], _growRng);
+            Log($"resumed progress: {_totalSamples:N0} samples over {_round:N0} rounds");
+        }
+        else if (resumed)
+        {
+            Log("no progress sidecar found — the net resumed but counters restart at zero (pre-M58 checkpoint)");
+        }
+
         Log("warming the Kociemba tables…");
         CubeSolver.WarmUp();
         return resumed;
@@ -99,7 +123,7 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
-        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, _growRng, Log) is var g && g.HasValue)
+        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, Ladder, _growRng, Log) is var g && g.HasValue)
             (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }
@@ -134,7 +158,14 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
     {
         store.Save(CubeIds.Environment, _ids.Policy, s => _net.Save(s));
         AdamState.Save(store, CubeIds.Environment, _ids.PolicyAdam, _adam);
+        CampaignProgressState.Save(store, CubeIds.Environment, ProgressId, ProgressKind,
+            _totalSamples, _round, _totalSolves, _rng, _growRng);
     }
+
+    // Namespaced per width rung, exactly as the net and Adam ids are, so one rung's progress never overwrites
+    // another's (CubeIds.ForWidth).
+    private string ProgressId => $"{_ids.Policy}-progress";
+    private const string ProgressKind = "cube-imitation-progress";
 
     /// <summary>`--eval-only`: per-depth eval report + the pre-registered M16 gate. No training, no checkpoint.</summary>
     public bool TryRunStandaloneEval(IModelStore store)
