@@ -110,13 +110,51 @@ public static class BlockDudeSearch
     /// enough for the matrix multiply to amortise, small enough that the frontier stays close to best-first.</summary>
     public const int DefaultExpandBatch = 64;
 
+    /// <summary>
+    /// Searches for the door OR for a demonstrated position at most <paramref name="acceptRemaining"/> moves
+    /// from it, using both heads.
+    /// </summary>
+    /// <remarks>
+    /// <para>The failure mode this addresses: on a long level, asking A* for a 400-move suffix inside an 8-second
+    /// budget almost always fails, and a failed search produces no training data at all — so the levels with the
+    /// most left to learn produce the least signal. Aiming at the human's path as well as the door converts most
+    /// of those failures into real data, because reaching a state the demonstration also reached means a winning
+    /// continuation from there is already known.</para>
+    ///
+    /// <para>The door is itself a landmark with remaining 0, so a full solution is still found when one exists,
+    /// and the caller distinguishes the two outcomes by asking whether the final board is won. Only a genuine
+    /// win should move a level's frontier — otherwise the curriculum would advance on the strength of the
+    /// human's work rather than the net's.</para>
+    /// </remarks>
+    /// <param name="landmarks">State hash → moves remaining, from <c>BlockDudeDemonstrations.PathLandmarks</c>.</param>
+    /// <param name="acceptRemaining">How close to the door a landmark must be to count. Set well below the
+    /// start's own remaining distance, or the search stops at the first demonstrated state it stumbles onto and
+    /// learns nothing.</param>
+    public static Outcome SolveToLandmark(BlockDudePolicyNet net, BlockDudeBoard start,
+                                          IReadOnlyDictionary<int, int> landmarks, int acceptRemaining,
+                                          int maxExpansions = 200_000, float weight = 2f, float policyWeight = 1f,
+                                          TimeSpan? maxTime = null, int expandBatch = DefaultExpandBatch)
+    {
+        var model = new Model(landmarks, acceptRemaining);
+        var moves = PolicyValueSearch.Solve(
+            model,
+            boards => { var (priors, distances) = net.EvaluateBatch(boards); return new(priors, distances); },
+            start, maxExpansions, weight, policyWeight, expandBatch, maxTime);
+        return new(moves, maxExpansions);
+    }
+
     /// <summary>The forward model. Block Dude is already deterministic and goal-directed, so this is a pure
     /// adapter — no rules live here.</summary>
-    private sealed class Model : IDeterministicModel<BlockDudeBoard>
+    private sealed class Model(IReadOnlyDictionary<int, int>? landmarks = null, int acceptRemaining = -1)
+        : IDeterministicModel<BlockDudeBoard>
     {
         public int ActionCount => BlockDudeBoard.ActionCount;
 
-        public bool IsGoal(BlockDudeBoard state) => state.Won;
+        public bool IsGoal(BlockDudeBoard state)
+            => state.Won
+            || (landmarks is not null
+                && landmarks.TryGetValue(state.StateHash, out int remaining)
+                && remaining <= acceptRemaining);
 
         public BlockDudeBoard Apply(BlockDudeBoard state, int action) => state.Apply((BlockDudeAction)action);
 

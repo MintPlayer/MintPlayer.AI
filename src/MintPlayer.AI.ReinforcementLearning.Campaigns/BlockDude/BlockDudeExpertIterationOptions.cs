@@ -42,7 +42,10 @@ public sealed record BlockDudeExpertIterationOptions
     /// progress. Using the policy head here feeds the better-trained head back into producing its own next
     /// batch of training data.
     /// </remarks>
-    public float PolicyWeight { get; init; } = 1f;
+    /// <value>5, measured. Swept on a fixed checkpoint against the shipped levels: 0 (value only) and 0.5 and 2
+    /// all solve 7/15, 5 solves 8/15 (Level 6, which value-guided search never solved), 15 also 8/15. Five is
+    /// the smallest setting that buys the extra level, so the value head keeps as much say as it has earned.</value>
+    public float PolicyWeight { get; init; } = 5f;
 
     /// <summary>Where a level's frontier starts: moves from the door it must solve before moving outward.
     /// Defaults to the depth the current net was measured to manage unaided (PRD §6a).</summary>

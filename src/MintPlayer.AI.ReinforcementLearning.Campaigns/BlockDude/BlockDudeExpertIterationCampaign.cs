@@ -57,6 +57,10 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
     private double _liveLoss = double.NaN, _liveAcc = double.NaN;
     private int _windowSolved, _windowAttempts;
 
+    /// <summary>Searches that reached the demonstrated path rather than the door — attempts that would otherwise
+    /// have produced no training data at all. Reported so the harvest is visible rather than assumed.</summary>
+    private int _landmarkHits;
+
     /// <summary>Demonstration states, materialised once — they never change.</summary>
     private BlockDudeDemoState[] _demos = [];
 
@@ -130,16 +134,44 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
                 if (start is null) continue;
 
                 _windowAttempts++;
-                var found = _options.PolicyWeight > 0
-                    ? BlockDudeSearch.SolveWithPolicy(_net, start, _options.Expansions, _options.Weight,
-                                                      _options.PolicyWeight, TimeSpan.FromSeconds(_options.SearchSeconds))
-                    : BlockDudeSearch.Solve(_net, start, _options.Expansions, _options.Weight,
-                                            TimeSpan.FromSeconds(_options.SearchSeconds));
-                if (!found.Solved) continue;
 
-                solved++;
-                _windowSolved++;
-                Collect(start, found.Moves!, samples);
+                // First, the real task: reach the DOOR. This is the only outcome that may move the frontier —
+                // the curriculum has to advance on what the net can do.
+                var found = BlockDudeSearch.SolveWithPolicy(
+                    _net, start, _options.Expansions, _options.Weight, _options.PolicyWeight,
+                    TimeSpan.FromSeconds(_options.SearchSeconds));
+
+                if (found.Solved)
+                {
+                    solved++;
+                    _windowSolved++;
+                    Collect(start, found.Moves!, samples, tailRemaining: 0);
+                    continue;
+                }
+
+                // Failed — and a failed search teaches nothing, which is worst exactly where there is most left
+                // to learn. So retry aiming at the demonstrated path as well, on a smaller budget. Note this
+                // CANNOT be one combined search: the start is itself on the demonstrated path, so a landmark
+                // would be reached within a few moves and the search would stop there every time instead of
+                // pressing on to the door, quietly dismantling the frontier mechanism.
+                var salvaged = BlockDudeSearch.SolveToLandmark(
+                    _net, start, Landmarks(solution.Name), acceptRemaining: jittered / 2,
+                    _options.Expansions / 2, _options.Weight, _options.PolicyWeight,
+                    TimeSpan.FromSeconds(Math.Max(1, _options.SearchSeconds / 2)));
+                if (!salvaged.Solved) continue;
+
+                var reached = start;
+                foreach (int move in salvaged.Moves!) reached = reached.Apply((BlockDudeAction)move);
+
+                // The claim rests on a 32-bit hash, so confirm it by replaying the demonstrated remainder before
+                // training on it — a collision would otherwise assert a win that does not exist.
+                int remaining = reached.Won ? 0
+                    : Landmarks(solution.Name).TryGetValue(reached.StateHash, out int r) ? r : -1;
+                if (!reached.Won && BlockDudeDemonstrations.ContinuationFrom(reached, solution.Name, remaining) is null)
+                    continue;
+
+                _landmarkHits++;
+                Collect(start, salvaged.Moves!, samples, tailRemaining: remaining);
             }
 
             int cap = solution.Moves.Length;
@@ -197,14 +229,27 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
 
     /// <summary>Turns a found solution into one sample per state along it, labelled with the move taken and the
     /// moves remaining FROM THERE — the same two labels the demonstrations carry.</summary>
-    private void Collect(BlockDudeBoard start, IReadOnlyList<int> moves, List<Sample> into)
+    /// <param name="tailRemaining">Moves still needed after the last of <paramref name="moves"/>. Zero for a
+    /// search that reached the door; for one that reached a demonstrated landmark, the demonstrated remainder —
+    /// so every distance label counts all the way to the door rather than to the landmark.</param>
+    private void Collect(BlockDudeBoard start, IReadOnlyList<int> moves, List<Sample> into, int tailRemaining)
     {
         var board = start;
         for (int i = 0; i < moves.Count; i++)
         {
-            into.Add(Sample.From(board, (BlockDudeAction)moves[i], moves.Count - i));
+            into.Add(Sample.From(board, (BlockDudeAction)moves[i], moves.Count - i + tailRemaining));
             board = board.Apply((BlockDudeAction)moves[i]);
         }
+    }
+
+    /// <summary>Landmark tables are built once per level and reused — they are derived from the fixed
+    /// demonstrations, and rebuilding one per search attempt would replay whole solutions inside the hot loop.</summary>
+    private readonly Dictionary<string, IReadOnlyDictionary<int, int>> _landmarks = [];
+    private IReadOnlyDictionary<int, int> Landmarks(string level)
+    {
+        if (!_landmarks.TryGetValue(level, out var table))
+            _landmarks[level] = table = BlockDudeDemonstrations.PathLandmarks(level);
+        return table;
     }
 
     /// <summary>Mixes in human states so the far-distance labels never fade out as the frontier advances.</summary>
@@ -229,11 +274,13 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
         int maxFrontier = _frontier.Count > 0 ? _frontier.Values.Max() : 0;
         int whole = _frontier.Count(kv => kv.Value >= BlockDudeSolutions.For(kv.Key)!.Moves.Length);
 
-        _windowSolved = _windowAttempts = 0;
+        int landmarks = _landmarkHits;
+        _windowSolved = _windowAttempts = _landmarkHits = 0;
 
         var report = new StringBuilder()
             .Append($"round {_rounds} | {_totalSamples:N0} samples | loss {_liveLoss:F4} | acc {_liveAcc:P0} | ")
             .Append($"search {(double.IsNaN(rate) ? "-" : rate.ToString("P0"))} | ")
+            .Append($"landmarks {landmarks} | ")
             .Append($"frontier {minFrontier}–{maxFrontier} | {whole}/{_frontier.Count} levels whole");
 
         return new CampaignEval(
@@ -242,6 +289,7 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
             new("loss", _liveLoss, "F4"),
             new("acc", _liveAcc, "P0"),
             new("search_rate", rate, "P0"),
+            new("landmark_hits", landmarks, "N0"),
             new("frontier_min", minFrontier, "N0"),
             new("frontier_max", maxFrontier, "N0"),
             new("levels_whole", whole, "N0"),

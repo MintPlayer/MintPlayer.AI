@@ -56,7 +56,7 @@ internal static class BlockDudeLevelBench
         // --policy-search adds a third pass that uses the policy head as a prior as well as the value head as
         // cost-to-go. Reported next to the value-only number, because the comparison is the point.
         bool policySearch = a.Has("--policy-search");
-        float policyWeight = a.Flt("--policy-weight", 1f);
+        float policyWeight = a.Flt("--policy-weight", 5f);
 
         // --emit-solutions writes what the net actually played, in the SAME one-line-per-level format the web
         // game's own recorder produces ("Level 1 · 19 moves · 0303…"). That makes an AI solution paste-able

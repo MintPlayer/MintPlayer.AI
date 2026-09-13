@@ -94,6 +94,65 @@ public static class BlockDudeDemonstrations
         }
     }
 
+    /// <summary>
+    /// Every state on one level's demonstrated path, keyed by engine state hash, valued by the moves remaining
+    /// from it — the <b>landmarks</b> a search can aim at instead of the door.
+    /// </summary>
+    /// <remarks>
+    /// <para>A search that fails finds nothing and teaches nothing, and on the long levels that is most of them:
+    /// asking A* for a 400-move suffix inside an 8-second budget mostly fails, so the levels with the most left
+    /// to learn are the ones producing the least data.</para>
+    ///
+    /// <para>But the door is not the only place worth reaching. Any state on the human's path is a position from
+    /// which a winning continuation is already KNOWN, so a search that gets back onto that path further along
+    /// has found a genuine solution — its own prefix, then the demonstrated remainder. The part it found is new
+    /// data on states the net actually visits, which is precisely the distribution a demonstration alone cannot
+    /// supply.</para>
+    ///
+    /// <para><b>Hashes are 32-bit, so a hit is a candidate and not a proof.</b> Across a 200,000-node search a
+    /// collision is a few percent likely, and the cost of believing one is a training sample asserting a win
+    /// that does not exist. Callers must confirm a hit by replaying the remainder — see
+    /// <see cref="ContinuationFrom"/>.</para>
+    /// </remarks>
+    public static IReadOnlyDictionary<int, int> PathLandmarks(string levelName)
+    {
+        var landmarks = new Dictionary<int, int>();
+        var solution = BlockDudeSolutions.For(levelName);
+        var level = solution is null ? null : Array.Find(BlockDudeLevels.All, l => l.Name == levelName);
+        if (solution is null || level is null) return landmarks;
+
+        var board = BlockDudeBoard.FromGrid(level.Grid);
+        for (int i = 0; i < solution.Moves.Length; i++)
+        {
+            // A state visited twice on the path keeps its SMALLEST remaining: reaching it is worth the best
+            // continuation known from it, not the first one the human happened to take.
+            int remaining = solution.Moves.Length - i;
+            if (!landmarks.TryGetValue(board.StateHash, out int known) || remaining < known)
+                landmarks[board.StateHash] = remaining;
+            board = board.Apply(solution.Moves[i]);
+        }
+        landmarks[board.StateHash] = 0;   // the won state
+        return landmarks;
+    }
+
+    /// <summary>
+    /// The demonstrated moves that finish the level from <paramref name="board"/>, or null if it is not really on
+    /// the path — the confirmation step that makes a 32-bit landmark hit safe to train on.
+    /// </summary>
+    /// <param name="remaining">The remaining count the landmark table claimed, i.e. how far along to splice in.</param>
+    public static IReadOnlyList<BlockDudeAction>? ContinuationFrom(BlockDudeBoard board, string levelName, int remaining)
+    {
+        var solution = BlockDudeSolutions.For(levelName);
+        if (solution is null || remaining < 0 || remaining > solution.Moves.Length) return null;
+
+        var tail = solution.Moves[^remaining..];
+
+        // Replayed, not trusted. If the hash collided, this walks somewhere else and simply does not win.
+        var replayed = board;
+        foreach (var move in tail) replayed = replayed.Apply(move);
+        return replayed.Won ? tail : null;
+    }
+
     /// <summary>The human's move count per level — an upper bound to measure a policy against, and the only
     /// reference point that exists for boards no exact solver can reach.</summary>
     public static IReadOnlyDictionary<string, int> HumanMoveCounts()
