@@ -2765,12 +2765,103 @@ and applies to every canvas here: **a canvas sized from its element needs both a
 circular sizing. Verifying at 390px also showed the *page* scrolling sideways: thirteen non-wrapping nav links,
 two of them added by this milestone. Fixed.
 
+**Superseded in part by M59.** The Block Dude training thread continued past this milestone: the net that
+M58 built turned out to solve **0/15 shipped levels**, and finding out why produced four measurements, a
+search tier, 15 human solutions and a phase-2 pipeline. Read M59 before picking up any Block Dude AI work.
+
 **Still open (2026-09-13):** the two new pages have no tests; **no Block Dude net is committed** — the pipeline is
 verified end to end and an 11-hour run on the corrected engine with saturation growth is in flight (`data/bd4`),
 but its result is not in yet; phase-2 expert iteration is unbuilt; and `C:\Repos\WebGames` has not yet been
 deleted (its four untracked projects were committed and pushed first — M58.0). The **full test suite has not
 completed locally** — it repeatedly failed to finish on the dev machine — so **PR #50's CI is the check**,
 particularly for the Cube and Rush Hour growth-ladder changes. See the PRD's "Where to pick this up".
+
+
+---
+
+## M59 — Block Dude: why the net plateaued, and the pipeline that replaces the plan  *(2026-09-13; branch `m59-blockdude-plateau`; see `BLOCKDUDE_REBUILD_PRD.md` + `WEBGAMES_RETIREMENT_PRD.md` §8.4a)* 🟡
+
+M58 shipped a Block Dude pipeline that trained cleanly and could not play the game: **0/15 shipped levels
+greedy**, every one ending in a loop within 2–15 steps. This milestone is the investigation that found why, the
+instruments built to measure it, and the training pipeline that came out the other side. **Nothing is merged.**
+
+**Four measurements, each killing a candidate explanation.** Taken on one checkpoint (6.25M samples, stage 4):
+
+1. **Not capacity.** The saturation trigger climbed its whole ladder — `[512,512] → [1152,1152,1152]`, 869k →
+   4.0M parameters, in ~2 hours — and the gate did not move, while loss fell and training accuracy rose. The
+   growth feature worked and **disproved its own hypothesis**.
+2. **Not looping.** A no-revisit tie-break (best legal action to an unvisited state; no lookahead) converts
+   every `Loop` ending into `NoMove` and roughly triples survival — and solves **the same 1/15**.
+3. **The value head is compressed, not merely biased.** Predicted vs exact distance, banded by TRUE distance,
+   at stage 6: **+3.2** moves at 1–10, **−17.1** at 26–50, **−37.5** at 51+. It cannot separate a 60-move
+   position from a 20-move one. Since that value IS the A* heuristic, search degenerates toward uninformed
+   exactly where the shipped levels live.
+4. **The data cannot express the game.** `TryBuildLayout` puts the player on the LOW side of a rise and the
+   door on the HIGH side, so it emits only "stack up over a rise" — 70–80% door-above. The shipped levels are
+   **53% door at-or-below** (descend, bridge a pit), which is **unreachable by construction**: a low door is
+   walk-reachable and the candidate is rejected as `BlocksAreDecorative`. Training also tops out at ~25 optimal
+   moves and ~5 blocks against multi-hundred-move, 9–42-block levels. Straight P→D distance actually *matches*
+   (15.6 vs 15.7) — it is block budget and episode length that do not.
+
+**A hypothesis corrected.** The owner's reading was that the missing skill is walking AWAY from the door to
+fetch blocks. Measured: that pattern is in **37–43%** of generated boards versus **7%** of shipped levels —
+over-represented, not absent. The hypothesis was still the productive one: it motivated (3), which found the
+real defect.
+
+**Search, not training, is the near-term lever.** Greedy 0/15 → **5/15 with net-guided weighted A\***
+(`BlockDudeSearch`, reusing `Core.Planning`'s `ValueGuidedSearch`; the heuristic is free because the value head
+already regresses distance-to-goal). This restates M34 and M49 in Block Dude's terms — Snake plateaued
+reactively, Crazy Fruits was +6% greedy but +89% with expectimax-1. **The curriculum gate stays greedy**
+deliberately (§8.4); what changed is that the bench now reports both, because only reporting the first made a
+usable net look worthless.
+
+**The gate was measuring the wrong distribution.** Training discards boards whose oracle truncates;
+`GateBoardsFor` did not, so the hold-out was strictly wider than anything the net could be trained on, and the
+gap grew every rung (truncations 0 → 1 → 8 → 53 → 181 → 313, ~11% of boards in the final window). Fixed;
+**curriculum `Version` → 2**, so rates before and after are not comparable and an older checkpoint is refused.
+
+**15 human solutions — the only ground truth that exists.** The owner played every shipped level in the
+browser; the page records the whole action sequence (undo pops it, restart clears it, a refused keypress is
+never recorded — the engine's own `sameState` decides). **3,870 moves, longest 909** (Level 11, 42 blocks),
+committed as `blockdude-solutions.json` and **replayed move-by-move against the engine: all 15 legal
+throughout and reaching the door.** They are explicitly *human, not optimal* — nobody knows the minimum for
+these boards and proving it is off-scale. They are now also the strongest engine conformance test in the repo:
+a human solution threads gravity, the carried block, climbing and single occupancy simultaneously for hundreds
+of moves.
+
+**Those solutions became a training pipeline.** A suffix of a demonstrated path is a real position on real
+shipped terrain only N moves from the door, so one impossible board becomes a ladder of solvable ones.
+**Measured before building it:** every level solvable 20 moves out (bar Level 5), most at 40, and **Level 11 —
+untouchable from its opening — solved 35 moves from the end**. Search already beats the demonstrations locally
+(35 where the human took 40), which is the student-exceeding-the-teacher mechanism appearing before any
+training. `BlockDudeExpertIterationCampaign` (`--phase 2`) runs that loop: per-level frontiers, advance on a
+majority, a fixed share of human states in every batch so the far-distance labels never fade, single-action
+cross-entropy, distinct `policy-xit*` ids. First smoke test: frontier 20 → 100, 4/15 levels whole.
+
+**Irreversibility is a hole in the data, not just a property of the game (owner).** Rush Hour has no dead ends;
+Block Dude does. The oracle already labels them — forward BFS, then a BACKWARD BFS from the won states, so
+anything unreached keeps `dist = -1` — and `CollectSamples` discards exactly those. Measured: **41.5% of
+reachable states are unwinnable overall, 54.3% at stage 6**, and the net has been trained on **none** of them.
+That single fact explains all three of: a policy that walks confidently into unrecoverable positions, a value
+head that cannot represent "lost" and must invent a number for 41% of what it meets, and an A* that expands
+dead branches because the heuristic gives them plausible values. **This promotes the categorical value head to
+the next change**: buckets plus an explicit *unsolvable* class fix both natively, where a scalar head
+fundamentally cannot.
+
+**Also in this branch.** Saturation-driven growth generalised into `Core/Training` (`GrowthPlateau`,
+`GrowthLadder`, `SaturationGrowth`) after the owner asked whether the net auto-grows when saturated — it did
+not, it grew on a clock. Two defects surfaced: the shared `DqnGrowth` ladder **made nets smaller** (tops out at
+`[128,128,128]` against defaults of `[384,384]` and `[512,512]`), and the rung was *guessed* from the live
+trunk with a silent fall-back to rung 0. Both fixed; `DqnGrowth`'s tiny ladder is deliberate and documented as
+a viewer demo, not a capacity lever. Block Dude also joined the live network viewer — **twice**, because
+phase 2 shipped without the seam hours after phase 1 gained it; `CampaignTelemetryTests` now fails any campaign
+that cannot be watched, since `VizLauncher` skips silently by design.
+
+**Still open.** The generator rebuild (rebuild PRD §2) and the categorical value head (§4) are unbuilt; the
+phase-2 net has not been benched against the 0/15 greedy / 5/15 search baseline; and the full local test suite
+still does not complete on the dev machine, so CI remains the check.
+
+---
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:

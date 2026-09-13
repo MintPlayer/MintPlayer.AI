@@ -1,14 +1,25 @@
 # Block Dude — rebuilding the training pipeline (M60)
 
-**Status:** proposed, 2026-09-13. Nothing here is built.
+**Status, 2026-09-13 — partly BUILT, on branch `m59-blockdude-plateau` (M59).** The original plan had the
+generator rebuild (§2) as the prerequisite for everything. Measurement changed that order: the reverse
+curriculum (§6a) supplies in-distribution training data on the real levels *without* touching the generator, so
+it went first and is running.
+
+| § | What | Status |
+|---|---|---|
+| 2 | Generator — lift the topology restriction | **not built.** No longer blocking, still needed for volume and variety |
+| 3 | Labeller — search instead of BFS | **BUILT** — `BlockDudeSearch`, net-guided weighted A* over `Core.Planning` |
+| 4 | Value head — categorical, with an "unsolvable" bucket | **not built.** Promoted to the next change by §6b |
+| 5 | Owner's decomposition idea | evaluated, not built; sequenced after §4 |
+| 6 | Human solution recording | **BUILT** — all 15 levels recorded, validated and committed |
+| 6a | Reverse curriculum + expert iteration | **BUILT** — `BlockDudeDemonstrations`, `BlockDudeExpertIterationCampaign` (`--phase 2`) |
+| 6b | Dead ends the training data discards | **measured**, fix is §4 |
 
 **Goal (owner):** *"achieve a good net that's capable of solving these levels"* — the 15 shipped levels, not
-generated boards. The owner has stated they are willing to start over.
+generated boards. The owner stated they are willing to start over.
 
-**Where the evidence lives.** This PRD stands on measurements taken on branch **`m59-blockdude-plateau`** and
-recorded in `WEBGAMES_RETIREMENT_PRD.md` §8.4a. That branch also contains the tools this plan depends on —
-`BlockDudeSearch` (net-guided weighted A*), `--value-calibration`, the no-revisit greedy tier, and the gate's
-oracle filter. **It must land before this work starts**, because §3's labeller *is* `BlockDudeSearch`.
+**Where the evidence lives.** `WEBGAMES_RETIREMENT_PRD.md` §8.4a holds the measurements this plan stands on;
+PLAN.md M59 holds the milestone narrative. Everything is on `m59-blockdude-plateau`, unmerged as of writing.
 
 ---
 

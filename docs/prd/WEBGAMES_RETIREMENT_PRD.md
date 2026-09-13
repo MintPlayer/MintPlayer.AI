@@ -969,6 +969,14 @@ generator cannot express the shipped distribution, and the exact oracle cannot l
 could. Those two limits are the same limit, and §8.1b's phase 2 is the documented way through: search labels
 what BFS cannot reach.
 
+**7. Where this went next.** These measurements are the whole input to **M59** (`PLAN.md`) and
+`BLOCKDUDE_REBUILD_PRD.md`, on branch `m59-blockdude-plateau`. Built there, in the order the evidence forced
+rather than the order originally planned: net-guided A* (`BlockDudeSearch`), the human-solution recorder and
+the 15 committed solutions, the reverse curriculum and `BlockDudeExpertIterationCampaign` (`--phase 2`), and
+the dead-end measurement that promotes the categorical value head to the next change. The generator rebuild —
+originally the prerequisite for everything — turned out **not** to be blocking, because the reverse curriculum
+supplies in-distribution data on the real levels without it.
+
 **What this implies for the plan.** More samples alone is the weakest of the available levers: the net is not
 converged (loss and accuracy are both still moving), but solve rate at these horizons is brutally sensitive to
 per-step accuracy, which is improving roughly a point per million samples and decelerating. The levers that
