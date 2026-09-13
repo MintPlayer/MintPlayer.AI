@@ -25,6 +25,13 @@ internal static class BlockDudeLevelBench
         int budget = a.Int("--step-budget", 2000);
         bool useResumeNet = a.Has("--resume-net");
 
+        // --search adds a second, net-guided A* pass per level. Off by default so the headline number stays the
+        // policy-alone one the gate also reports.
+        bool search = a.Has("--search");
+        int expansions = a.Int("--expansions", 200_000);
+        float weight = a.Flt("--weight", 2f);
+        int seconds = a.Int("--search-seconds", 20);
+
         var ids = BlockDudeIds.ForPhase(phase);
         string netId = useResumeNet ? ids.Policy : ids.PolicyBest;
 
@@ -45,21 +52,40 @@ internal static class BlockDudeLevelBench
         Console.WriteLine();
 
         var levels = BlockDudeLevels.All;
-        int solved = 0;
+        int solved = 0, searchSolved = 0;
         for (int i = 0; i < levels.Length; i++)
         {
             var board = BlockDudeBoard.FromGrid(levels[i].Grid);
             var outcome = BlockDudeGreedy.Run(net, board, budget);
             if (outcome.Solved) solved++;
 
-            Console.WriteLine($"  {i + 1,2}. {levels[i].Name,-24} {board.Width,3}x{board.Height,-3} " +
-                              $"{(outcome.Solved ? "SOLVED" : "-     ")} " +
-                              $"{outcome.Ending,-8} after {outcome.Steps,5:N0} steps, " +
-                              $"{outcome.DistinctStates,5:N0} distinct states");
+            string line = $"  {i + 1,2}. {levels[i].Name,-24} {board.Width,3}x{board.Height,-3} " +
+                          $"{(outcome.Solved ? "SOLVED" : "-     ")} " +
+                          $"{outcome.Ending,-8} after {outcome.Steps,5:N0} steps, " +
+                          $"{outcome.DistinctStates,5:N0} distinct states";
+
+            if (search)
+            {
+                var found = BlockDudeSearch.Solve(net, board, expansions, weight, TimeSpan.FromSeconds(seconds));
+                if (found.Solved) searchSolved++;
+                line += found.Solved ? $"  | search SOLVED in {found.Length,4:N0} moves" : "  | search -";
+            }
+
+            Console.WriteLine(line);
         }
 
         Console.WriteLine();
         Console.WriteLine($"solved {solved}/{levels.Length} shipped levels " +
                           $"({solved / (double)levels.Length:P0}), greedy, no search");
+
+        if (search)
+        {
+            // Printed side by side on purpose. The two numbers answer different questions — "has the policy
+            // learned the game" and "what is this net worth with lookahead" — and reporting only the first is
+            // what let a net that loops on every shipped level look like a pure training failure.
+            Console.WriteLine($"solved {searchSolved}/{levels.Length} shipped levels " +
+                              $"({searchSolved / (double)levels.Length:P0}), net-guided A* " +
+                              $"(weight {weight}, ≤{expansions:N0} expansions, ≤{seconds}s per level)");
+        }
     }
 }

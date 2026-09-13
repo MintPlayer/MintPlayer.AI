@@ -874,6 +874,54 @@ green, and forcing it would mean either far more training or shipping occasional
 
 ---
 
+### 8.4a Measured 2026-09-13 — the plateau is not capacity, and greedy is not the net's ceiling
+
+Three measurements, taken against the run in `data/bd4` (6.25M samples, stage 4, trunk `[1152,1152,1152]`).
+
+**1. Capacity is not the binding constraint.** The saturation trigger (§7.1b) fired and climbed the ladder in
+full — `[512,512] → [768,768] → [768,768,768] → [1152,1152,1152]`, 869k → 4.0M parameters — in about two
+hours. **The gate did not improve.** Loss kept falling (0.252 → 0.216) and training accuracy kept rising
+(0.911 → 0.924) while the stage-4 gate sat at 0.55 → 0.41 → 0.39. Tripling capacity changed nothing that
+matters, which is strong evidence against the reading that the stage-3/4 stall was a capacity problem.
+
+**2. Greedy on the shipped levels is 0/15, and every level ends in a LOOP.**
+
+| | solved | note |
+|---|---|---|
+| greedy (the gate's own policy measure) | **0/15** | every level `Loop`, after 2–15 steps |
+| net-guided weighted A* (`BlockDudeSearch`, weight 2, ≤200k expansions, ≤20s) | **5/15 (33%)** | levels 1, 2, 3, Bonus 1, Bonus 3 |
+
+A deterministic argmax policy is *trapped by the first state it revisits* — that is a missing tie-break, not
+missing knowledge, and it is why the greedy number alone was misleading. The same net that solves nothing
+solves a third of the pack once it can back out of a dead end. This restates in Block Dude's terms what M34
+and M49 already found: **strength is search, not only training** (Snake plateaued reactively; Crazy Fruits was
++6% greedy but +89% with expectimax-1).
+
+The heuristic came free: the value head is already regressed onto distance-to-goal, which is exactly the
+cost-to-go `ValueGuidedSearch` wants (§8.6 — reuse, don't write another search). Nothing was trained for this.
+
+**The gate stays greedy, deliberately.** §8.4's stance is still right for deciding when a rung is passed. What
+changed is that the shipped-level bench now reports BOTH numbers (`--eval-levels --search`), because "has the
+policy learned the game" and "what is this net worth" are different questions and only reporting the first
+made a usable net look worthless.
+
+**3. The gate was scoring boards the net could never have been trained on.** Training discards any board whose
+oracle exceeds the rung's state cap; `GateBoardsFor` did not. So the hold-out was drawn from a strictly wider
+distribution, and the gap widened with every rung — truncations ran 0 → 1 → 8 → 53 → 181 → 313 across the run,
+about **11% of boards drawn in the final window**. The gate therefore measured the policy *and* the
+generator's reach at once, while promotion thresholds were read against it as if it measured only the first.
+Fixed: the hold-out now applies the same exact-oracle filter. **Curriculum `Version` → 2**, so gate rates
+before and after this date are not comparable and an older checkpoint is refused rather than resumed into the
+new metric.
+
+**What this implies for the plan.** More samples alone is the weakest of the available levers: the net is not
+converged (loss and accuracy are both still moving), but solve rate at these horizons is brutally sensitive to
+per-step accuracy, which is improving roughly a point per million samples and decelerating. The levers that
+the evidence actually supports are **search at inference** (measured above) and **phase-2 expert iteration**
+(§8.1b), which is the documented answer to the covariate-shift problem that a flat gate under falling loss
+points at: the net trains on oracle-optimal trajectories and has never seen how to recover from its own
+mistakes, in a game where §8.1a makes many mistakes unrecoverable.
+
 ### 8.5 Level 11 is a stretch benchmark, not an acceptance criterion
 
 Level 11 will be **implemented and playable** — it already is, floating blocks and all — but it will not be
