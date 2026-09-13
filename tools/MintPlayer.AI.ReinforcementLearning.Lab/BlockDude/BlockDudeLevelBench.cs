@@ -58,6 +58,12 @@ internal static class BlockDudeLevelBench
         bool policySearch = a.Has("--policy-search");
         float policyWeight = a.Flt("--policy-weight", 5f);
 
+        // --beam adds the long-level tier: policy beam search, which costs width × depth rather than holding an
+        // exponential frontier, so it is the only tier that can reach a multi-hundred-move solution at all.
+        bool beam = a.Has("--beam");
+        int beamWidth = a.Int("--beam-width", 256);
+        int beamDepth = a.Int("--beam-depth", 1_200);
+
         // --emit-solutions writes what the net actually played, in the SAME one-line-per-level format the web
         // game's own recorder produces ("Level 1 · 19 moves · 0303…"). That makes an AI solution paste-able
         // straight back into the game to be watched, and directly comparable with the human line for the same
@@ -85,7 +91,7 @@ internal static class BlockDudeLevelBench
         Console.WriteLine();
 
         var levels = BlockDudeLevels.All;
-        int solved = 0, noRevisitSolved = 0, searchSolved = 0, zeroSolved = 0, policySolved = 0;
+        int solved = 0, noRevisitSolved = 0, searchSolved = 0, zeroSolved = 0, policySolved = 0, beamSolved = 0;
         for (int i = 0; i < levels.Length; i++)
         {
             var board = BlockDudeBoard.FromGrid(levels[i].Grid);
@@ -115,6 +121,15 @@ internal static class BlockDudeLevelBench
                                                            TimeSpan.FromSeconds(seconds));
                 if (found.Solved) policySolved++;
                 line += found.Solved ? $"  | policy+value SOLVED in {found.Length,4:N0} moves" : "  | policy+value -";
+                if (found.Solved) Emit(emitted, levels[i].Name, found.Moves!);
+            }
+
+            if (beam)
+            {
+                var found = BlockDudeSearch.SolveByBeam(net, board, beamWidth, beamDepth,
+                                                        TimeSpan.FromSeconds(seconds));
+                if (found.Solved) beamSolved++;
+                line += found.Solved ? $"  | beam SOLVED in {found.Length,4:N0} moves" : "  | beam -";
                 if (found.Solved) Emit(emitted, levels[i].Name, found.Moves!);
             }
 
@@ -158,6 +173,14 @@ internal static class BlockDudeLevelBench
             Console.WriteLine($"solved {policySolved}/{levels.Length} shipped levels " +
                               $"({policySolved / (double)levels.Length:P0}), policy-prior + value A* " +
                               $"(weight {weight}, policy weight {policyWeight}, ≤{expansions:N0} expansions, ≤{seconds}s per level)");
+        }
+
+        if (beam)
+        {
+            Console.WriteLine($"solved {beamSolved}/{levels.Length} shipped levels " +
+                              $"({beamSolved / (double)levels.Length:P0}), policy beam search " +
+                              $"(width {beamWidth:N0}, ≤{beamDepth:N0} moves, ≤{seconds}s per level) — " +
+                              $"the tier that can reach the LONG levels at all");
         }
 
         if (zeroH)

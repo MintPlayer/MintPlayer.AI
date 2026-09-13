@@ -71,6 +71,23 @@ public sealed record BlockDudeExpertIterationOptions
     public double FrontierRetreat { get; init; } = 0.8;
 
     /// <summary>
+    /// Beam width for the fallback tier used when A* fails. 0 disables it.
+    /// </summary>
+    /// <remarks>
+    /// A* holds a frontier that grows with the space explored, so its reach is bounded by a node budget — and as
+    /// a level's frontier moves outward, the suffix it must solve eventually passes what any node budget can
+    /// reach, no matter how good the heuristic. Beam search costs width × depth, so depth is nearly free. On the
+    /// shipped levels it solves 10/15 against A*'s 8/15, including two levels no other tier solves at all.
+    /// <para>It is the FALLBACK rather than the first choice on purpose: beam solutions are the policy's own
+    /// widened rollout and tend to be longer (Level 4 in 281 moves), and a longer path means a looser distance
+    /// label. A* is asked first so the better labels are preferred where they exist.</para>
+    /// </remarks>
+    public int BeamWidth { get; init; } = 256;
+
+    /// <summary>Wall-clock ceiling for one beam attempt.</summary>
+    public int BeamSeconds { get; init; } = 8;
+
+    /// <summary>
     /// Share of each training batch drawn from the HUMAN demonstrations rather than searched solutions. Keeps a
     /// permanent anchor in true long-horizon data: searched solutions cluster near whatever the frontier
     /// currently is, so without this the far-distance labels would fade out of the mix as the frontier moves.

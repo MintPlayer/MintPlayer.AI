@@ -106,6 +106,31 @@ public static class BlockDudeSearch
         return new(moves, maxExpansions);
     }
 
+    /// <summary>
+    /// Policy beam search — the tier for the LONG levels, where a node budget is a wall rather than a dial.
+    /// </summary>
+    /// <remarks>
+    /// <para>Seven shipped levels are solved by nothing: not greedy, not uninformed search, not either head,
+    /// not both. They are the large ones — Level 11 is 29×19 and 909 human moves — and no heuristic quality
+    /// makes a 900-move solution reachable inside a 200,000-node A\* frontier. Beam search costs
+    /// <c>width × depth</c> instead, so depth is nearly free and these levels are at least *in range*.</para>
+    ///
+    /// <para>It is ranked by the policy head alone. That is not an oversight: every candidate in the beam is at
+    /// the same depth, so cumulative log-probabilities compare directly, whereas the long-horizon comparison is
+    /// exactly what the value head is measured to be bad at.</para>
+    ///
+    /// <para>It trades away completeness — a solution pruned from the beam is gone — so this complements the A\*
+    /// tiers rather than replacing them.</para>
+    /// </remarks>
+    public static Outcome SolveByBeam(BlockDudePolicyNet net, BlockDudeBoard start,
+                                      int beamWidth = 256, int maxDepth = 1_200, TimeSpan? maxTime = null)
+    {
+        var model = new Model();
+        var moves = PolicyBeamSearch.Solve(
+            model, boards => net.EvaluateBatch(boards).LogPriors, start, beamWidth, maxDepth, maxTime);
+        return new(moves, beamWidth);
+    }
+
     /// <summary>Open nodes expanded per round. 4 actions each, so the net sees up to 256 positions per forward —
     /// enough for the matrix multiply to amortise, small enough that the frontier stays close to best-first.</summary>
     public const int DefaultExpandBatch = 64;

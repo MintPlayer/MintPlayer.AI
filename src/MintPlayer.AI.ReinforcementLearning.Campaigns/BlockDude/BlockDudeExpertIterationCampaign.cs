@@ -61,6 +61,11 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
     /// have produced no training data at all. Reported so the harvest is visible rather than assumed.</summary>
     private int _landmarkHits;
 
+    /// <summary>Attempts A* failed but beam search solved — the long-suffix tier earning its keep. Worth its own
+    /// counter rather than folding into the solve rate: if this grows while A* shrinks, the frontier has moved
+    /// past what a node budget can reach, which is a fact about the curriculum's progress.</summary>
+    private int _beamHits;
+
     /// <summary>Demonstration states, materialised once — they never change.</summary>
     private BlockDudeDemoState[] _demos = [];
 
@@ -149,8 +154,28 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
                     continue;
                 }
 
-                // Failed — and a failed search teaches nothing, which is worst exactly where there is most left
-                // to learn. So retry aiming at the demonstrated path as well, on a smaller budget. Note this
+                // A* failed. As a frontier moves outward the suffix eventually passes what ANY node budget can
+                // reach, so falling back to beam search is not a consolation prize — past a few hundred moves it
+                // is the only tier that can reach the door at all. It reaches it genuinely, by the net's own
+                // policy, so these count as solves and may move the frontier.
+                if (_options.BeamWidth > 0)
+                {
+                    var viaBeam = BlockDudeSearch.SolveByBeam(
+                        _net, start, _options.BeamWidth, maxDepth: jittered * 3 + 50,
+                        TimeSpan.FromSeconds(_options.BeamSeconds));
+
+                    if (viaBeam.Solved)
+                    {
+                        solved++;
+                        _windowSolved++;
+                        _beamHits++;
+                        Collect(start, viaBeam.Moves!, samples, tailRemaining: 0);
+                        continue;
+                    }
+                }
+
+                // Both failed — and a failed search teaches nothing, which is worst exactly where there is most
+                // left to learn. So retry aiming at the demonstrated path as well, on a smaller budget. Note this
                 // CANNOT be one combined search: the start is itself on the demonstrated path, so a landmark
                 // would be reached within a few moves and the search would stop there every time instead of
                 // pressing on to the door, quietly dismantling the frontier mechanism.
@@ -275,12 +300,13 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
         int whole = _frontier.Count(kv => kv.Value >= BlockDudeSolutions.For(kv.Key)!.Moves.Length);
 
         int landmarks = _landmarkHits;
-        _windowSolved = _windowAttempts = _landmarkHits = 0;
+        int beams = _beamHits;
+        _windowSolved = _windowAttempts = _landmarkHits = _beamHits = 0;
 
         var report = new StringBuilder()
             .Append($"round {_rounds} | {_totalSamples:N0} samples | loss {_liveLoss:F4} | acc {_liveAcc:P0} | ")
             .Append($"search {(double.IsNaN(rate) ? "-" : rate.ToString("P0"))} | ")
-            .Append($"landmarks {landmarks} | ")
+            .Append($"beam {beams} | landmarks {landmarks} | ")
             .Append($"frontier {minFrontier}–{maxFrontier} | {whole}/{_frontier.Count} levels whole");
 
         return new CampaignEval(
@@ -289,6 +315,7 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
             new("loss", _liveLoss, "F4"),
             new("acc", _liveAcc, "P0"),
             new("search_rate", rate, "P0"),
+            new("beam_hits", beams, "N0"),
             new("landmark_hits", landmarks, "N0"),
             new("frontier_min", minFrontier, "N0"),
             new("frontier_max", maxFrontier, "N0"),
