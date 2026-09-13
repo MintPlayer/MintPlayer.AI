@@ -78,6 +78,34 @@ public sealed class BlockDudePolicyNet : IGrowableTrunkNet<BlockDudePolicyNet>
         }
     }
 
+    /// <summary>
+    /// Predicted distance-to-goal in MOVES for a whole batch of positions, in one forward pass.
+    /// </summary>
+    /// <remarks>
+    /// Search is the dominant consumer of this net and the net is the dominant cost of search, so the shape of
+    /// this call decides how deep a search can reach in a fixed budget. One forward over N·4 successors is far
+    /// cheaper than N·4 single-row forwards — the whole reason <c>SolveBatched</c> exists. Values are clamped at
+    /// 0 exactly as <see cref="Evaluate"/> clamps: a negative cost-to-go is meaningless and would let A* order a
+    /// node ahead of the goal.
+    /// </remarks>
+    public float[] Distances(IReadOnlyList<BlockDudeBoard> boards)
+    {
+        int n = boards.Count;
+        var result = new float[n];
+        if (n == 0) return result;
+
+        var obs = new float[n * BlockDudeBoard.ObservationSize];
+        for (int i = 0; i < n; i++)
+            boards[i].WriteObservation(obs.AsSpan(i * BlockDudeBoard.ObservationSize, BlockDudeBoard.ObservationSize));
+
+        using (GradMode.NoGrad())
+        {
+            var (_, value) = _core.Forward(new Tensor(obs, n, BlockDudeBoard.ObservationSize));
+            for (int i = 0; i < n; i++) result[i] = MathF.Max(0f, value.Data[i]) * DistanceScale;
+        }
+        return result;
+    }
+
     /// <summary>The highest-scoring legal action, or null when the position has none.</summary>
     public BlockDudeAction? Greedy(BlockDudeBoard board)
     {

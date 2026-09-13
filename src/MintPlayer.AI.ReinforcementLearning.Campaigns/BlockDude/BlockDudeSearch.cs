@@ -18,6 +18,13 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// moves (Huber, scaled by <see cref="BlockDudePolicyNet.DistanceScale"/>), which is exactly the cost-to-go
 /// <see cref="ValueGuidedSearch"/> wants. Nothing new is trained to enable this.</para>
 ///
+/// <para><b>Batched, not per-node.</b> The net forward is essentially the whole cost of this search, and a
+/// 1181-wide input through a 512×512 trunk is a matrix multiply that is wildly under-fed by a single row. So it
+/// runs <see cref="ValueGuidedSearch.SolveBatched"/>: expand a block of open nodes, then score ALL their
+/// successors in one pass. Same search, same ordering; the budget simply buys several times more of it, which
+/// matters twice over here — once at the bench and once inside expert iteration, where every training sample is
+/// produced by a search like this one.</para>
+///
 /// <para><b>A learned heuristic is not admissible</b>, so weight 1 buys optimality it cannot actually guarantee
 /// while expanding far more nodes. A weight above 1 is the practical setting — greedier, deeper, and the
 /// solutions it finds are not claimed to be optimal.</para>
@@ -40,14 +47,21 @@ public static class BlockDudeSearch
     /// <param name="maxExpansions">Node budget. Block Dude states are large, so this is the memory lever.</param>
     /// <param name="weight">f = g + weight·h. Above 1 trades optimality for depth.</param>
     /// <param name="maxTime">Wall-clock ceiling, so one hopeless level cannot stall a whole benchmark.</param>
+    /// <param name="expandBatch">How many open nodes to expand per round. Their successors are scored in ONE
+    /// forward pass, which is the entire point — see the remarks on batching above.</param>
     public static Outcome Solve(BlockDudePolicyNet net, BlockDudeBoard start,
-                                int maxExpansions = 200_000, float weight = 2f, TimeSpan? maxTime = null)
+                                int maxExpansions = 200_000, float weight = 2f, TimeSpan? maxTime = null,
+                                int expandBatch = DefaultExpandBatch)
     {
         var model = new Model();
-        var moves = ValueGuidedSearch.Solve(
-            model, board => net.Evaluate(board).Distance, start, maxExpansions, weight, maxTime);
+        var moves = ValueGuidedSearch.SolveBatched(
+            model, net.Distances, start, maxExpansions, weight, expandBatch, maxTime);
         return new(moves, maxExpansions);
     }
+
+    /// <summary>Open nodes expanded per round. 4 actions each, so the net sees up to 256 positions per forward —
+    /// enough for the matrix multiply to amortise, small enough that the frontier stays close to best-first.</summary>
+    public const int DefaultExpandBatch = 64;
 
     /// <summary>The forward model. Block Dude is already deterministic and goal-directed, so this is a pure
     /// adapter — no rules live here.</summary>
