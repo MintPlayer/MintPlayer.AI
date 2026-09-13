@@ -132,7 +132,7 @@ public class BlockDudeGeneratorTests
     [Fact]
     public void GeneratedBoardsNeverCollideWithAShippedLevel()
     {
-        // The 11 originals are the held-out gate set.
+        // The shipped pack — the 11 originals plus the 4 bonus levels — is the held-out gate set.
         var shipped = BlockDudeLevels.All.Select(l => string.Join("\n", l.Grid)).ToHashSet();
         foreach (var grid in Draw(new Xoshiro256StarStar(99), 10))
             Assert.DoesNotContain(grid, shipped);

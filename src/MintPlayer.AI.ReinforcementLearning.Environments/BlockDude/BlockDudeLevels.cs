@@ -18,6 +18,11 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.BlockDude;
 /// <para>Most of these boards are far beyond any exact solver — level 11 is 42 blocks on 551 cells — so they
 /// carry no optimal move count. The oracle labels small generated boards for training; these levels are the
 /// human content and the search-time benchmark.</para>
+///
+/// <para>The pack is <c>Level 1</c>-<c>Level 11</c>, the PuzzPack originals, followed by <c>Bonus 1</c>-
+/// <c>Bonus 4</c> from the TI-84+CSE release's optional extra level set. The bonus levels drop the originals'
+/// one-door-per-level habit: Bonus 2 seals its exit behind a row of seven door cells and Bonus 4 offers two
+/// separate exits. Reaching any door wins; only the observation's door bearing singles one out.</para>
 /// </remarks>
 public static class BlockDudeLevels
 {

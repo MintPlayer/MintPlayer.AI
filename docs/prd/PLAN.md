@@ -2670,7 +2670,10 @@ retiring the repo loses **no level content at all**:
   and a vertical red car can never exit. Level 1 alone has a vehicle off the board edge and two overlapping
   pairs. Harvest abandoned; the deck keeps its 79.
 - **Block Dude**: WebGames' levels are synthetic flat terrain. The **11 originals** were imported instead, from
-  the TI-84+CE port (Unlicense), whose `game.c` independently corroborated two recovered rules.
+  the TI-84+CE port (Unlicense), whose `game.c` independently corroborated two recovered rules. **4 bonus
+  levels** followed, decoded from the vendored `BLOCKLV2` appvar of the CSE release (PRD §4.4b) — the pack is
+  now 15. Importing them retired the one-door-per-level assumption: `FromGrid` requires at least one door, not
+  exactly one.
 
 **Measured, and it reshaped the AI plan:** only Block Dude levels **1–3 are exactly solvable**. Level 4 truncates
 even at a 3M-state cap costing 9 GB; the frontier is ≈6–7 blocks over ≈150 free cells, and cost is memory-bound
@@ -2705,6 +2708,19 @@ byte-identical checkpoints** to an uninterrupted one.
 **The generator needed four fixes, all found by measuring rather than reasoning** — accept rate went from 1–7%
 to 16–22%. The unit tests had hidden it by running at one small stage and asserting only that *some* board was
 accepted, so a 1% yield passed in a second and looked healthy.
+
+**Capacity now grows on saturation, not on a clock (2026-09-13, PRD §7.1b).** `--grow` used to step the
+architecture every `--grow-every` samples whether or not the net needed it; it now climbs one rung when the
+**gate** stops producing new highs (`GrowthPlateau`: running maximum + patience, `--grow-patience` 6,
+`--grow-min-improvement` 0.04). The gate, not the loss — falling loss with a flat gate *is* the saturation
+signature, and a loss-driven trigger reads that as healthy progress and never fires. A running maximum rather
+than consecutive values, because the gate swings ~10 points between evaluations; the window resets on stage
+promotion (a harder rung legitimately drops the rate) and after growing. **Two defects found en route:** the
+shared `DqnGrowth` ladder tops out at `[128,128,128]`, *below* Block Dude's default `[512,512]`, so `--grow`
+was a capacity **downgrade** for this game (it now has its own ladder, rung 0 = the default trunk); and the
+rung was recovered by matching the live trunk with a silent fall-back to rung 0, so resuming a non-growing net
+with `--grow` would have jumped it to the top of the ladder in one step (the rung is now persisted, sidecar
+v3, and a mismatch refuses to grow). Tests: `GrowthPlateauTests`, `BlockDudeGrowthTests`.
 
 **Two latent bugs fixed en route**, both pre-existing and unrelated to the new games:
 1. `PolicyValueNet.Load` **silently corrupted a stale checkpoint** — `inputSize` is not stored, and a shorter

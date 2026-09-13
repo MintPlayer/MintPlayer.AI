@@ -20,8 +20,11 @@ public sealed class BlockDudeTrainingState
 {
     public const string Kind = "blockdude-imitation-state";
     /// <summary>2 added the save-best cursor. A version-1 sidecar is refused, not upgraded — it carries no record
-    /// of which net was best, so continuing one would ship whichever net the next eval happened to land on.</summary>
-    private const int Version = 2;
+    /// of which net was best, so continuing one would ship whichever net the next eval happened to land on.
+    /// <para>3 added the growth rung and its plateau window. Earlier sidecars are refused for the same reason: a
+    /// v2 run records no rung, and growth that guesses the rung from the live trunk is exactly the failure this
+    /// version exists to remove.</para></summary>
+    private const int Version = 3;
 
     public int ObservationSize { get; set; }
     public int ActionCount { get; set; }
@@ -58,6 +61,22 @@ public sealed class BlockDudeTrainingState
     public long AcceptedBoards { get; set; }
     public long TruncatedBoards { get; set; }
     public long RejectedBoards { get; set; }
+
+    // ── capacity growth ───────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Which rung of <see cref="BlockDudeGrowth.Stages"/> the net is on. Recorded rather than recovered
+    /// from the live trunk, so a resume never has to guess (and never mistakes an off-ladder net for rung 0).</summary>
+    public int GrowthRung { get; set; }
+
+    /// <summary>Best gate seen since the plateau window was last reset; NaN before the first gate of the window.
+    /// Reset on a stage change and after growing — see <see cref="GrowthPlateau"/>.</summary>
+    public double PlateauBest { get; set; } = double.NaN;
+
+    /// <summary>Gate evaluations since <see cref="PlateauBest"/> was last beaten.</summary>
+    public int PlateauEvals { get; set; }
+
+    /// <summary>Total samples at the last growth, for the log and for post-hoc reading of the curve.</summary>
+    public long SamplesAtLastGrowth { get; set; }
 
     public Xoshiro256StarStar ShuffleRng { get; set; } = new(0);
     public Xoshiro256StarStar GrowRng { get; set; } = new(0);
@@ -101,6 +120,10 @@ public sealed class BlockDudeTrainingState
         writer.Write(AcceptedBoards);
         writer.Write(TruncatedBoards);
         writer.Write(RejectedBoards);
+        writer.Write(GrowthRung);
+        writer.Write(PlateauBest);
+        writer.Write(PlateauEvals);
+        writer.Write(SamplesAtLastGrowth);
         CheckpointFormat.WriteRngState(writer, ShuffleRng);
         CheckpointFormat.WriteRngState(writer, GrowRng);
     }
@@ -140,6 +163,10 @@ public sealed class BlockDudeTrainingState
             state.AcceptedBoards = reader.ReadInt64();
             state.TruncatedBoards = reader.ReadInt64();
             state.RejectedBoards = reader.ReadInt64();
+            state.GrowthRung = reader.ReadInt32();
+            state.PlateauBest = reader.ReadDouble();
+            state.PlateauEvals = reader.ReadInt32();
+            state.SamplesAtLastGrowth = reader.ReadInt64();
             state.ShuffleRng = CheckpointFormat.ReadRngState(reader);
             state.GrowRng = CheckpointFormat.ReadRngState(reader);
 

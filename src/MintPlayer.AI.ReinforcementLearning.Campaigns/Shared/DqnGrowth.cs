@@ -10,6 +10,16 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// function-preserving Net2WiderNet (wider) or Net2DeeperNet (one more layer) step — so capacity is added mid-run
 /// with no loss spike. Shared by every DQN game (Snake, FruitCake). The schedule starts tiny and alternates
 /// wider → deeper so a viewer literally watches the graph grow both ways.
+/// <para>
+/// <b>The tiny schedule is DELIBERATE here and must not be "fixed".</b> This is a demonstration of Net2Net —
+/// `FruitCakeLab` sets the starting width to <see cref="Start"/> on purpose so the growth is visible in the live
+/// network viewer — not a capacity lever. That distinction cost real work elsewhere: Rush Hour and the Cube
+/// campaigns borrowed this same schedule as if it WERE a capacity lever, and because it tops out at
+/// <c>[128,128,128]</c> while those nets default to <c>[384,384]</c>/<c>[512,512]</c>, enabling growth made their
+/// nets smaller. They now build their own ladders with <see cref="Core.Training.GrowthLadder.FromTrunk"/>. If you
+/// want capacity that responds to the net actually running out, use
+/// <see cref="Core.Training.SaturationGrowth"/> instead of either.
+/// </para>
 /// </summary>
 public static class DqnGrowth
 {

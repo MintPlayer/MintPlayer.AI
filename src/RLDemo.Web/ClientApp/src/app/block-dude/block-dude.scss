@@ -38,26 +38,38 @@
 
 // One compact row, 48px targets: over the 44px WCAG figure, and reachable with a thumb without covering the
 // board the way a floating d-pad would.
+// A D-pad, not a toolbar: the two walk keys are the ones held down, so they get the tall outer columns and the
+// thumb never has to hunt for them. Climb sits above put-down in the middle because that is the pair you
+// alternate while building a staircase.
+//
+//   +---+-------+---+
+//   |   |   ↑   |   |
+//   + ← +-------+ → +
+//   |   | drop  |   |
+//   +---+-------+---+
 .controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: 48px 104px 48px;
+  grid-template-rows: 48px 48px;
   justify-content: center;
   gap: 8px;
   margin: 0.75rem 0;
 
+  // DOM order stays ← ↑ drop → so tab order follows reading order; placement is explicit.
+  .left  { grid-column: 1; grid-row: 1 / span 2; }
+  .up    { grid-column: 2; grid-row: 1; }
+  .grab  { grid-column: 2; grid-row: 2; font-size: 0.95rem; }
+  .right { grid-column: 3; grid-row: 1 / span 2; }
+
   .ctl {
-    min-width: 48px;
-    height: 48px;
+    width: 100%;
+    height: 100%;
     font-size: 1.15rem;
     color: #aab2c5;
     background: #232938;
     border: 1px solid #3a4154;
     border-radius: 8px;
     -webkit-tap-highlight-color: transparent;
-
-    &.wide {
-      min-width: 104px;
-      font-size: 0.95rem;
-    }
 
     &.active {
       color: #14171f;

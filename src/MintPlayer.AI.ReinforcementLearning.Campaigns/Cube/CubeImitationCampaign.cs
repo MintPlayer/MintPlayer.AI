@@ -20,6 +20,11 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger? logger = null) : ITrainingCampaign, INetworkTelemetrySource
 {
     private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
+
+    // Rooted at THIS run's configured width, so --grow starts where a plain run starts. It used to climb the
+    // shared DqnGrowth ladder, which tops out at [128,128,128] — below any --width worth training — so growth
+    // shrank the net it was meant to enlarge.
+    private GrowthLadder Ladder => GrowthLadder.FromTrunk([options.Width, options.Width], steps: 3);
     private const int BatchSize = 256;
     private const int SamplesPerRound = 4096;
     private static readonly int[] EvalDepths = [2, 4, 6, 8, 10, 12, 16, 20];
@@ -50,9 +55,9 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
             else
             {
                 var initRng = new Xoshiro256StarStar(options.Seed ^ 0xDEADBEEF);
-                _net = options.Grow ? new CubePolicyNet(initRng, DqnGrowth.Start) : new CubePolicyNet(initRng, hidden: options.Width);
+                _net = new CubePolicyNet(initRng, Ladder.TrunkFor(0));
                 Log(options.Grow
-                    ? $"initialized a fresh GROWING cube policy net '{_ids.Policy}' (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                    ? $"initialized a fresh GROWING cube policy net '{_ids.Policy}' (rung 0, trunk [{string.Join(",", Ladder.TrunkFor(0))}])"
                     : $"initialized a fresh cube policy net '{_ids.Policy}' (trunk width {options.Width})");
                 resumed = false;
             }
@@ -118,7 +123,7 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
-        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, _growRng, Log) is var g && g.HasValue)
+        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, Ladder, _growRng, Log) is var g && g.HasValue)
             (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }

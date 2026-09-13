@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.BlockDude;
 using Tensor = MintPlayer.AI.ReinforcementLearning.Core.Numerics.Tensor;
@@ -27,7 +28,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// <para>Rejection reasons are counted, not just accepted boards. A quietly-falling accept rate biases the label
 /// set toward shallow puzzles, and at the top rungs the generator legitimately rejects most candidates.</para>
 /// </remarks>
-public sealed class BlockDudeImitationCampaign : ITrainingCampaign
+public sealed class BlockDudeImitationCampaign : ITrainingCampaign, INetworkTelemetrySource
 {
     private const int BatchSize = 256;
 
@@ -101,9 +102,13 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign
         if (!resumed)
         {
             var initRng = new Xoshiro256StarStar(_options.Seed ^ 0xDEADBEEF);
-            _net = _options.Grow ? new BlockDudePolicyNet(initRng, DqnGrowth.Start) : new BlockDudePolicyNet(initRng);
+            // Rung 0 of the Block Dude ladder IS the default trunk, so a growing run and a plain one start from
+            // the SAME architecture and diverge only when the gate saturates. (The shared DqnGrowth ladder starts
+            // at [16] and tops out below this game's default — growing on it would shrink the net.)
+            _net = new BlockDudePolicyNet(initRng, BlockDudeGrowth.Ladder.TrunkFor(0));
             Log(_options.Grow
-                ? $"initialized a fresh GROWING policy net (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                ? $"initialized a fresh GROWING policy net (rung 0, trunk [{string.Join(",", BlockDudeGrowth.Ladder.TrunkFor(0))}]) " +
+                  $"— grows one rung after {_options.GrowPatience} gates without a +{_options.GrowMinImprovement:P0} best"
                 : "initialized a fresh policy net");
         }
 
@@ -173,16 +178,7 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign
             _state.StageSamples += BatchSize;
         }
 
-        // Growth keys off the persisted sample counter. That is exactly the counter the other imitation
-        // campaigns failed to persist, which made a restarted run re-grow its trunk from the first stage.
-        var grown = PolicyGrowth.Maybe(
-            _net, _state.TotalSamples, _options.Grow, _options.GrowEvery, _options.LearningRate, _state.GrowRng, Log);
-        if (grown is not null)
-        {
-            _net = grown.Value.Net;
-            _adam = grown.Value.Adam;
-        }
-
+        // Growth is driven by the gate, inside MaybeGateAndAdvance — there is nothing to do on a sample cadence.
         MaybeGateAndAdvance();
         return _state.TotalSamples;
     }
@@ -274,6 +270,8 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign
             SaveBestNet();
         }
 
+        MaybeGrow(rate);
+
         int next = BlockDudeCurriculum.Advance(stage, _state.StageSamples, rate, out bool forced);
         next = Math.Min(next, _options.MaxStage);
         if (next == stage) return;
@@ -284,7 +282,53 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign
             : $"stage {stage} -> {next} (gate {rate:P0})");
         _state.Stage = next;
         _state.StageSamples = 0;
+
+        // A harder rung gates on harder boards, so the solve rate legitimately DROPS on promotion. To a detector
+        // watching for "no new highs" that is indistinguishable from saturation, and it would grow the net for the
+        // one reason that is not a capacity problem. The window starts again on the new rung's own scale.
+        ResetPlateau();
     }
+
+    /// <summary>
+    /// Adds one rung of capacity when the gate has stopped producing new highs — the net is fitting harder without
+    /// solving more, which is what saturation looks like from outside.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately driven by the GATE rather than the loss. Falling loss with a flat gate is the exact signature
+    /// this is for: the net is still learning to reproduce the oracle's chosen action and still failing to solve
+    /// boards, so more capacity is the plausible lever. A loss-driven trigger cannot see that difference — it would
+    /// read the falling loss as healthy progress and never fire.
+    /// </remarks>
+    private void MaybeGrow(double rate)
+    {
+        var result = SaturationGrowth.Observe(
+            _net, Progress, rate, _state.TotalSamples, BlockDudeGrowth.Ladder,
+            new GrowthSettings(_options.Grow, _options.GrowPatience, _options.GrowMinImprovement),
+            _state.GrowRng, Log);
+
+        Progress = result.Progress;
+        if (!result.Grew) return;
+
+        _net = result.Net;
+        _adam = new Adam(_net.Parameters(), _options.LearningRate);   // moments are keyed to the parameter set
+    }
+
+    /// <summary>The generic growth cursor, projected onto this campaign's own persisted state.</summary>
+    private GrowthProgress Progress
+    {
+        get => new(_state.GrowthRung, new GrowthPlateau.State(_state.PlateauBest, _state.PlateauEvals),
+                   _state.SamplesAtLastGrowth);
+        set
+        {
+            _state.GrowthRung = value.Rung;
+            _state.PlateauBest = value.Plateau.Best;
+            _state.PlateauEvals = value.Plateau.EvalsSinceBest;
+            _state.SamplesAtLastGrowth = value.LastGrowthAt;
+        }
+    }
+
+    /// <summary>Starts the saturation window again. Every caller documents its own reason.</summary>
+    private void ResetPlateau() => Progress = SaturationGrowth.ResetWindow(Progress);
 
     /// <summary>Greedy solve rate over the rung's fixed hold-out. Greedy, not search: it measures the policy
     /// itself, and the irreversibility of the game means a policy that needs search to avoid dead ends has not
@@ -415,6 +459,68 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign
     }
 
     private void Log(string message) => _logger?.LogInformation("[blockdude] {Message}", message);
+
+    // --- Live telemetry (INetworkTelemetrySource): read-only; a viewer samples the current net as it trains. ---
+    string INetworkTelemetrySource.NetKind => "blockdude-policy";
+
+    IReadOnlyList<Tensor>? INetworkTelemetrySource.SnapshotParameters()
+        => ReferenceEquals(_net, null) ? null : [.. _net.Parameters()];
+
+    /// <summary>
+    /// Eval is the CURRICULUM GATE — the solve rate over this rung's held-out boards — not the batch accuracy
+    /// beside it in the log. They diverge exactly where it matters: a net can predict the oracle's chosen action
+    /// nine times in ten and still solve barely half the boards, which is the shape of the stage-3 plateau. The
+    /// gate is the number that decides promotion, so it is the one worth watching evolve. NaN until the first
+    /// gate of the run fires, which the viewer renders as "—".
+    /// </summary>
+    NetworkMetrics INetworkTelemetrySource.Sample()
+    {
+        long step = ReferenceEquals(_state, null) ? 0 : _state.TotalSamples;
+        double gate = double.NaN;
+        if (!ReferenceEquals(_state, null) && _state.Stage >= 0 && _state.Stage < _state.GateRates.Length)
+            gate = _state.GateRates[_state.Stage];
+        return new(step, _options.TargetSamples, _liveLoss, gate, double.NaN);
+    }
+
+    IReadOnlyList<string>? INetworkTelemetrySource.OutputLabels => ["Left", "Right", "Climb", "Grab"];
+
+    // An imitation campaign has no running environment, so the viewer forwards ONE fixed position every frame —
+    // the start of shipped level 1 — and you watch this net's move preferences and hidden activations for that
+    // board evolve. Read-only forward on the CPU (imitation has no GPU path); it never touches training state.
+    private float[]? _probeObs;
+    private float[] ProbeObs()
+    {
+        if (_probeObs is null)
+        {
+            var obs = new float[BlockDudeBoard.ObservationSize];
+            BlockDudeLevels.Load(0).WriteObservation(obs);
+            _probeObs = obs;
+        }
+        return _probeObs;
+    }
+
+    (float[] Input, float[] Output)? INetworkTelemetrySource.SampleIo()
+    {
+        if (ReferenceEquals(_net, null)) return null;
+        try
+        {
+            var obs = ProbeObs();
+            var (logits, _) = _net.Forward(new Tensor((float[])obs.Clone(), 1, obs.Length));
+            return ((float[])obs.Clone(), [.. logits.Data]);
+        }
+        catch { return null; }
+    }
+
+    float[][]? INetworkTelemetrySource.SampleActivations()
+    {
+        if (ReferenceEquals(_net, null)) return null;
+        try
+        {
+            var obs = ProbeObs();
+            return _net.LayerActivations(new Tensor((float[])obs.Clone(), 1, obs.Length));
+        }
+        catch { return null; }
+    }
 
     private sealed record Sample(float[] Obs, float[] MaskOffsets, uint LabelMask, float Distance);
 }

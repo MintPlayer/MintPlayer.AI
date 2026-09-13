@@ -7,11 +7,20 @@ public sealed record BlockDudeImitationOptions
 
     public float LearningRate { get; init; } = 3e-4f;
 
-    /// <summary>Progressively grow the net wider and deeper mid-training (Net2Net).</summary>
+    /// <summary>Progressively grow the net wider and deeper mid-training (Net2Net), one rung of
+    /// <see cref="BlockDudeGrowth.Stages"/> at a time, when <see cref="GrowthPlateau"/> reports the gate has
+    /// saturated. Rung 0 IS the non-growing shape, so enabling this never starts a run smaller than the default.</summary>
     public bool Grow { get; init; }
 
-    /// <summary>Samples between growth steps (with <see cref="Grow"/>).</summary>
-    public int GrowEvery { get; init; } = 200_000;
+    /// <summary>Gate evaluations without a new best gate before the net is called saturated and grown. Counted in
+    /// GATES, not samples: the gate is the saturation signal, so patience is naturally measured in observations of
+    /// it.</summary>
+    public int GrowPatience { get; init; } = 6;
+
+    /// <summary>How much a gate must beat the window's best by to count as progress. Must sit ABOVE the gate's own
+    /// jitter — measured at ~10 points on the 64-board hold-out — or upward noise resets patience forever and the
+    /// net never grows. The default is deliberately a little under half that swing.</summary>
+    public double GrowMinImprovement { get; init; } = 0.04;
 
     /// <summary>Boards generated and labelled per <c>TrainChunk</c>.</summary>
     public int BoardsPerRound { get; init; } = 4;

@@ -54,7 +54,10 @@ MintPlayer.AI.ReinforcementLearning.sln
 ├── tests/…Tests/          xUnit: solve-threshold gates, determinism, web API contract tests.
 ├── tools/
 │   ├── …Lab/              Per-game CLI entry points for the campaigns + A/B & search-eval harnesses.
-│   └── …Bench/            Performance benchmarking harness.
+│   ├── …Bench/            Performance benchmarking harness.
+│   └── *_levels.py        Level-pack importers — they WRITE the embedded `levels/*.json`; never hand-edit
+│                          those. `blockdude_ti_levels.py` reads TI-83+/84+ `.8xv` packs (vendored under
+│                          `tools/blockdude/`) and is imported by `blockdude_levels.py`.
 ├── models/                Shipped checkpoints (Git LFS, *.ckpt) — seeds the web app & A/B baselines.
 └── docs/                  PRDs, PLAN, OPTIMIZATIONS, ADDING_A_GAME, and this guide.
 ```

@@ -10,7 +10,7 @@ landing everything worth keeping in this repo, so both source repos can be delet
 | M58.1 Lunar Lockout engine + oracle | ✅ 12-level ladder, BFS-verified |
 | M58.2 Lunar Lockout campaign | ⛔ dropped — the game is exhaustively solvable, so it ships the exact oracle rather than a trained net |
 | M58.3 Lunar Lockout page | ✅ |
-| M58.4 Block Dude engine + oracle | ✅ 11 original levels |
+| M58.4 Block Dude engine + oracle | ✅ 11 original levels + 4 CSE bonus levels (§4.4b) |
 | M58.5 Block Dude generator + campaign | ✅ trainable; no run completed yet |
 | M58.5a Block Dude expert iteration | ⬜ not started |
 | M58.6 Block Dude page | ✅ |
@@ -214,7 +214,7 @@ exists implicitly: no floor, no boundary walls unless placed.
 **Win.** Fired from exactly three places: walking left into a door, walking right into a door, and
 climbing onto a door. **No requirement to be empty-handed.** No move limit.
 
-### 4.3 The four defects (input to decision D1)
+### 4.3 The defects (four as input to decision D1; a fifth found later in our own port)
 
 1. **Right-wall off-by-one** (`SpeelVeld.cs:208`) — bound is `x+1 >= width`, so the rightmost reachable
    column is `width-1` while left reaches column 1. The last column is unreachable.
@@ -227,6 +227,35 @@ climbing onto a door. **No requirement to be empty-handed.** No move limit.
    has *more* lines than the requested index, so a multi-level file can never load.
 Under D1 = corrected, fix all four.
 
+**A fifth, found later — in OUR port, not the original (owner report, level 9).** The carried-block follow-up
+of §4.2 rule 6 is judged against the cell diagonally forward-and-up **from the old position**. The `.pg`
+judged it from the position *after* gravity instead. The two agree whenever the step is level, which is why it
+survived every test: it only diverges when the step ALSO drops the player. Walking left off a ledge at
+`(16,10)` on level 9 with wall at `(15,9)`, the block's own destination is solid rock — but the player falls
+to `(15,11)`, the check then looks at `(15,10)`, finds it empty, and the block arrives there **still in his
+hands, having passed diagonally through the wall.** Fixed: the follow-up is now decided from the old position
+before the step and before gravity, so the block is knocked out of his hands and falls in its own column,
+behind him. Pinned by `ACarriedBlockIsKnockedOutOfHisHands_WhenItsOwnWayForwardIsBlocked`.
+
+**And its mirror, which must NOT be "fixed" (owner ruling, same report).** A stone directly above the carried
+block does **not** knock it out on a climb: the climb moves the block diagonally up-and-forward, so the cell
+directly above it is never on its path — it is a low ceiling he slides out from under. The engine already
+behaved this way; it is now pinned by `ClimbingKeepsTheBlock_EvenWithAStoneDirectlyAboveIt` so the knock-out
+rule above cannot later be widened into "anything solid near the block".
+
+Both rules are pinned a third time on **real shipped content**, by
+`OnLevelTen_TheSameBlockSurvivesAClimbAndIsThenKnockedOffByAWalk`: on level 10, reachable in 14 moves (found
+by breadth-first search over the engine), the player holds a block under a ceiling at `(19,13)`, climbs
+up-left and **keeps** it — then walks back right and **loses** it to that very same wall. One block, two
+consecutive moves, opposite outcomes, because a climb carries it diagonally and a walk drags it sideways.
+That is the whole distinction in one test, on a board a player actually meets.
+
+**Still open — §4.2 rule 6 says the follow-up runs "even when the move was blocked", and the `.pg` does not.**
+Walking into a wall while carrying returns early, skipping the follow-up entirely. The TI-84+CE port takes a
+third position: `game.c` reverts the whole move when the carried block's destination is blocked, rather than
+dropping the block. Not changed, because it would alter every level where a carrier bumps a wall — possibly
+solvability — and no one has reported it. Needs an owner ruling against the real game.
+
 **Not a defect — a vacuous non-issue (recorded so it isn't "fixed" later).** Gravity is never applied after
 a climb, which *looks* like an omission next to the walk and drop paths. It has no observable effect. The
 climb requires `(x±d, y)` to be a Blok or Steen and lands the player at `(x±d, y+1)` — **directly on top of
@@ -235,7 +264,7 @@ pass there can never find anything to do. The carried block likewise lands on th
 by the player. Applying gravity after a climb would be behaviourally identical; leave the call out (it
 matches the original and costs nothing), but do not record it as preserved-bug-compatibility.
 
-### 4.4 Shipped level content — the 11 originals (BUILT)
+### 4.4 Shipped level content — the 11 originals, plus 4 bonus levels (BUILT)
 
 **All 11 original levels ship as-is** (Brandon Sterner, TI-83+ PuzzPack 2001), imported by
 `tools/blockdude_levels.py` from the TI-84+CE port at `github.com/merthsoft/blockdudece` (`src/level.c`,
@@ -258,6 +287,34 @@ explicitly — *"Ship them all, I understand that they won't be AI solvable, tha
 
 **Not gravity-settled on load.** Level 11 ships 14 blocks floating in mid-air, which is authored content; a
 global settle pass would silently rewrite the puzzle. Pinned by `BlockDudeEngineTests`.
+
+#### 4.4b Bonus 1–4 — the CSE extra level set (BUILT)
+
+Four further levels ship after the originals, named `Bonus 1`–`Bonus 4`. They come from `BLOCKLV2`, the
+optional extra level set of the same author's earlier **TI-84+CSE** release, which — unlike the CE port — was
+never published as source. The appvar is therefore **vendored** at `tools/blockdude/BLOCKLV2.8xv` and decoded
+by `tools/blockdude_ti_levels.py`, a reader for the TI level-pack format (one TI-BASIC line per level:
+`W`/`H` size, `I`/`J` player start, and a map string of two decimal digits per cell, row-major TOP-first,
+`00` empty / `01` wall / `02` block / `03` door). It reads both the `.8xv` appvar and its Token IDE `.txt`
+export; the two decode identically, which is the cross-check that the reader is right.
+
+All four are 20×12 — the CSE screen — with 4, 11, 14 and 8 blocks.
+
+The CSE release's **main** pack, `BLOCKLVL`, was examined and **deliberately not imported**: it holds the same
+11 originals, 7 byte-identical to what we already ship and 4 reframed for the narrower CSE screen (levels 4
+and 5 also move the player start). Each pack's first entry is the game's home screen — a title drawn in
+blocks, not a puzzle — and is skipped on import.
+
+**These levels broke the one-door assumption.** Bonus 2 seals its exit behind a row of **seven** door cells
+and Bonus 4 offers **two separate exits**, so `BlockDudeBoard.FromGrid` now requires *at least* one door
+rather than exactly one. No engine rule changed: the win check was already `tileAt(px, py) == door`, so any
+door cell wins. The only thing that needs a single cell is the observation's door bearing, which takes the
+last door in scan order. Pinned by `BlockDudeEngineTests.ALevelMayHoldSeveralDoors_AndAnyOfThemWins`.
+
+The renderer had the same latent assumption and it was a **visible** bug: `drawDoor` took
+`tiles.indexOf(2)` and drew exactly one aperture, so Bonus 2's other six door cells and — worse — one of
+Bonus 4's two exits rendered as plain floor, hiding a genuine way out. Now `drawDoors` loops over every door
+cell. Caught by playing the levels in the browser, not by any test; there is no renderer test.
 
 ### 4.4a Training-level generator — the heightmap design is DEAD
 
@@ -593,6 +650,78 @@ whole map, so padding shifts normalisation statistics between stages).
 `buildObservation` goes in the `.pg` so the browser computes byte-identical inputs and its stale-checkpoint
 guard is meaningful. Actions stay absolute — `Left`/`Right` are absolute in `BlockDudeAction`, and mirroring
 by facing would desynchronise action semantics from the observation.
+
+---
+
+### 7.1b Capacity growth on a SATURATION signal (BUILT 2026-09-13)
+
+**Owner Q, 2026-09-13: "will the net automatically grow when necessary?" — it does now.** The same question
+was asked and answered *no* on 2026-07-15 (`DRAUGHTS_SELFPLAY_PRD.md` §4.2: "it grows on a fixed sample
+cadence (`GrowEvery`, opt-in), **not on a saturation signal**"). The mechanism existed — function-preserving
+Net2Net `WidenTo`/`Deepen` — but the *policy* was a clock. `--grow` stepped the architecture every
+`--grow-every` samples regardless of whether the net needed capacity, which is close to the worst of both
+worlds: grow early and pay for capacity that cannot yet be used, grow late and waste samples on a saturated
+net.
+
+**Two defects found while building it, both of which invalidated the obvious experiment.**
+
+1. **The shared ladder made Block Dude's net SMALLER.** `DqnGrowth.Stages` is
+   `[16] → [32] → [32,32] → [64,64] → [64,64,64] → [128,128,128]`, sized for the Snake/FruitCake DQN nets.
+   Block Dude's default trunk is `[512,512]` against a 1181-wide observation, so the shared ladder's **top**
+   rung holds less capacity than the net this game already trains with. A `--grow` run would have started 32×
+   narrower and finished smaller than it started — and any conclusion drawn from it about the stage-3 plateau
+   would have been backwards. Block Dude now has its own ladder in `BlockDudeGrowth`, rung 0 of which **is**
+   the default trunk, so enabling growth never starts a run smaller than not enabling it.
+2. **The rung was guessed, not recorded.** `PolicyGrowth`/`DqnGrowth` recover the current rung by matching the
+   live trunk against the schedule and **fall back to rung 0** when nothing matches — which is exactly what a
+   net built outside the ladder (any non-growing run) looks like. Resuming such a net with growth enabled would
+   read it as rung 0 and, at a high sample count, jump it to the top of the ladder in a single step. The rung
+   is now persisted in `BlockDudeTrainingState` (sidecar **v3**; v2 refused, not upgraded), and
+   `BlockDudeGrowth.GrowOne` **refuses to grow** when the recorded rung disagrees with the live trunk rather
+   than guessing.
+
+**The trigger, and why it is shaped this way.** Growth fires when the **gate** — the held-out solve rate —
+stops producing new highs: `GrowthPlateau` keeps a running maximum plus a patience counter, exactly as early
+stopping does, and reports saturation after `--grow-patience` (default 6) gate evaluations without beating the
+window's best by `--grow-min-improvement` (default 0.04).
+
+- **Why the gate and not the loss.** Falling loss with a flat gate *is* the saturation signature: the net is
+  still learning to reproduce the oracle's chosen action and still failing to solve boards. A loss-driven
+  trigger cannot see that — it reads the falling loss as healthy progress and never fires. This is precisely
+  `bd2`'s stage-3 shape (accuracy 0.927, gate ~0.50–0.59).
+- **Why a running maximum and not a comparison of consecutive values.** The gate is noisy: measured swinging
+  **~10 points between consecutive evaluations** on the 64-board hold-out (61% → 50% → 52%) with the loss
+  falling throughout. A consecutive-value detector fires on that noise almost immediately. Against a running
+  maximum a downward swing can never trigger growth; upward noise can only *delay* it, which is the safe
+  direction to be wrong in — a late grow costs samples, an early grow costs samples **and** resets Adam on a
+  net that was still improving. `--grow-min-improvement` must stay above the jitter floor or upward noise
+  resets patience forever and the trigger silently never fires; the default sits a little under half the
+  measured swing.
+- **Why the window resets on promotion.** A harder rung gates on harder boards, so the solve rate legitimately
+  **drops**. To a detector watching for "no new highs" that is indistinguishable from saturation, and it would
+  grow the net for the one reason that is not a capacity problem. The window also resets after growing: the
+  grown net inherits the old one's function exactly, so it would otherwise inherit its best gate and have to
+  beat the plateau it was added to break — and one saturation event could cascade up the whole ladder.
+
+**Spikes that shaped it** (cheap, and each killed an option):
+
+| Spike | Question | Result |
+|---|---|---|
+| Replay the measured gate series `0.61, 0.50, 0.52, 0.66, 0.55, 0.58, 0.72` through the detector | does real noise on a rising trend trigger growth? | **No** — three apparent "declines", zero patience spent. A consecutive-value rule fires three times. Pinned by `TheMeasuredGateSwingDoesNotTriggerGrowth_ForANetThatIsStillImproving`. |
+| Feed a collapsing series `0.80, 0.10, 0.05, 0.02` | can a crash be mistaken for saturation? | **No** — patience advances at exactly the flat-metric rate, never faster. Pinned by `DownwardNoiseAloneCanNeverTriggerGrowth`. |
+| Feed a 1-point-per-eval creep against a 4-point threshold | does upward jitter starve the trigger? | It **saturates** as intended; with the threshold set below the step size the same series reads as progress. Pinned by `AnImprovementSmallerThanTheNoiseFloorDoesNotResetPatience`. |
+| Forward shipped level 1 through a net before and after one rung | is the grow really function-preserving? | Logits and value identical to 3 dp. Pinned by `GrowthIsFunctionPreserving_SoCapacityArrivesWithoutALossSpike`. |
+| Compare rung 0 against `DqnGrowth.Stages[^1]` | is the shared ladder usable here? | **No** — defect 1 above. Pinned by `RungZeroIsTheDefaultTrunk_SoGrowingNeverStartsSmallerThanNotGrowing`. |
+
+**Not generalised to the other campaigns.** `PolicyGrowth`/`DqnGrowth` keep their sample cadence, so Cube,
+Rush Hour and the DQN games are untouched and their trajectories stay comparable to their own history. The
+`GrowthPlateau` detector is game-agnostic and lives in `Campaigns/Shared`, so adopting it elsewhere is a
+ladder plus a call site — but each game needs its own ladder sized to its own net, which is the lesson of
+defect 1 and should not be skipped.
+
+**Still open.** The ladder tops out at `[1024,1024,1024]`; a run that saturates there has no capacity lever
+left and says so in the log rather than silently no-op'ing. Whether the stage-3 plateau is *actually* capacity
+is the hypothesis this feature exists to test, and it is untested until a run has been read.
 
 ---
 

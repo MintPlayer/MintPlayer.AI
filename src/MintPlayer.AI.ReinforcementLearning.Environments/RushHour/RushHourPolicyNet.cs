@@ -19,6 +19,10 @@ public sealed class RushHourPolicyNet : IGrowableTrunkNet<RushHourPolicyNet>
     private readonly PolicyValueNet _core;
 
     /// <summary>A fresh net with the classic two-layer trunk of the given width.</summary>
+    /// <summary>The trunk a plain run trains. Growth ladders root here, so enabling growth can never start a run
+    /// with less capacity than leaving it off.</summary>
+    public static int[] DefaultTrunk => [384, 384];
+
     public RushHourPolicyNet(Xoshiro256StarStar rng, int hidden = 384)
         : this(new PolicyValueNet(RushHourBoard.ObservationSize, [hidden, hidden], RushHourBoard.ActionCount, rng)) { }
 

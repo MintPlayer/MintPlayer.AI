@@ -61,7 +61,10 @@ public sealed class BlockDudeBoard
 
     /// <summary>Parses an ASCII grid, rows TOP-first: <c>W</c> wall, <c>B</c> block, <c>P</c> player start,
     /// <c>D</c> door, <c>.</c> empty.</summary>
-    /// <exception cref="ArgumentException">The grid is empty, ragged, or lacks exactly one player start and one door.</exception>
+    /// <remarks>A level may hold MORE than one door — the bonus pack has a level whose exit is a row of seven
+    /// door cells and another offering two separate exits — and reaching any of them wins. Only the observation's
+    /// door bearing needs a single cell to aim at, and that is the last door in scan order.</remarks>
+    /// <exception cref="ArgumentException">The grid is empty, ragged, lacks exactly one player start, or has no door.</exception>
     public static BlockDudeBoard FromGrid(string[] rows)
     {
         ArgumentNullException.ThrowIfNull(rows);
@@ -76,7 +79,7 @@ public sealed class BlockDudeBoard
         int starts = rows.Sum(r => r.Count(c => c == 'P'));
         if (starts != 1) throw new ArgumentException($"Expected exactly one 'P' player start, found {starts}.", nameof(rows));
         int doors = rows.Sum(r => r.Count(c => c == 'D'));
-        if (doors != 1) throw new ArgumentException($"Expected exactly one 'D' door, found {doors}.", nameof(rows));
+        if (doors < 1) throw new ArgumentException("Expected at least one 'D' door, found none.", nameof(rows));
 
         return new BlockDudeBoard(PgBlockDudeBoard.fromGrid(new List<string>(rows)));
     }

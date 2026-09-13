@@ -31,6 +31,10 @@ public sealed class BlockDudePolicyNet : IGrowableTrunkNet<BlockDudePolicyNet>
 
     private readonly PolicyValueNet _core;
 
+    /// <summary>The trunk a plain run trains. Growth ladders root here, so enabling growth can never start a run
+    /// with less capacity than leaving it off.</summary>
+    public static int[] DefaultTrunk => [512, 512];
+
     /// <summary>A fresh net with a two-layer trunk of the given width.</summary>
     public BlockDudePolicyNet(Xoshiro256StarStar rng, int hidden = 512)
         : this(new PolicyValueNet(BlockDudeBoard.ObservationSize, [hidden, hidden], BlockDudeBoard.ActionCount, rng)) { }

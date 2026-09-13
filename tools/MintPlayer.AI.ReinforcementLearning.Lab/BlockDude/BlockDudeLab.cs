@@ -12,6 +12,13 @@ using MintPlayer.AI.ReinforcementLearning.Campaigns;
 ///
 /// <para>Without <c>--fresh</c>, a progress sidecar whose fingerprint disagrees with the current settings (seed,
 /// learning rate, phase, curriculum version) is refused with a message rather than blended into this run.</para>
+///
+/// <para><c>--grow</c> adds capacity when the net SATURATES rather than on a clock: after
+/// <c>--grow-patience</c> gate evaluations (default 6) without beating the window's best gate by
+/// <c>--grow-min-improvement</c> (default 0.04), the net climbs one rung of
+/// <see cref="BlockDudeGrowth.Stages"/>. Rung 0 is the non-growing trunk, so the flag never starts a run
+/// smaller than the default — unlike the shared <c>DqnGrowth</c> ladder, whose top rung is narrower than this
+/// game's default net.</para>
 /// </remarks>
 internal static class BlockDudeLab
 {
@@ -28,7 +35,8 @@ internal static class BlockDudeLab
         float learningRate = a.Flt("--lr", 3e-4f);
         bool evalOnly = a.Has("--eval-only");
         bool grow = a.Has("--grow");
-        int growEvery = a.Int("--grow-every", 200_000);
+        int growPatience = a.Int("--grow-patience", 6);
+        double growMinImprovement = a.Dbl("--grow-min-improvement", 0.04);
         bool fresh = a.Has("--fresh");
         long targetSamples = a.Long("--target-samples", 0);
         int boardsPerRound = a.Int("--boards-per-round", 4);
@@ -47,7 +55,8 @@ internal static class BlockDudeLab
                 Seed = seed,
                 LearningRate = learningRate,
                 Grow = grow,
-                GrowEvery = growEvery,
+                GrowPatience = growPatience,
+                GrowMinImprovement = growMinImprovement,
                 Fresh = fresh,
                 TargetSamples = targetSamples,
                 BoardsPerRound = boardsPerRound,

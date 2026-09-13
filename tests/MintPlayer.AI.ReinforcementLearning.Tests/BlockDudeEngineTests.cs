@@ -11,15 +11,38 @@ public class BlockDudeEngineTests
     private static BlockDudeBoard Board(params string[] rows) => BlockDudeBoard.FromGrid(rows);
 
     [Fact]
-    public void TheShippedPack_HoldsTheElevenOriginalLevels()
+    public void TheShippedPack_HoldsTheElevenOriginalLevelsAndFourBonusLevels()
     {
-        Assert.Equal(11, BlockDudeLevels.All.Length);
+        Assert.Equal(15, BlockDudeLevels.All.Length);
+        Assert.Equal([.. Enumerable.Range(1, 11).Select(i => $"Level {i}")],
+                     BlockDudeLevels.All.Take(11).Select(l => l.Name));
+        Assert.Equal([.. Enumerable.Range(1, 4).Select(i => $"Bonus {i}")],
+                     BlockDudeLevels.All.Skip(11).Select(l => l.Name));
+
         foreach (var board in BlockDudeLevels.LoadAll())
         {
             Assert.False(board.Won);
             Assert.InRange(board.Width, 19, 29);
             Assert.InRange(board.Height, 8, 19);
         }
+    }
+
+    [Fact]
+    public void ALevelMayHoldSeveralDoors_AndAnyOfThemWins()
+    {
+        // The bonus pack breaks the one-door-per-level habit of the originals: Bonus 2 seals its exit behind a
+        // row of seven door cells, Bonus 4 offers two separate exits. FromGrid must accept both.
+        var bonusDoors = BlockDudeLevels.All.Skip(11)
+            .Select(l => l.Grid.Sum(r => r.Count(c => c == 'D')))
+            .ToArray();
+
+        Assert.Equal([1, 7, 1, 2], bonusDoors);
+
+        // Any door cell is a win cell, not just the one the observation aims at.
+        var twoDoors = Board(
+            "DP..D",
+            "WWWWW");
+        Assert.True(twoDoors.Apply(BlockDudeAction.Left).Won);
     }
 
     [Fact]
@@ -45,7 +68,7 @@ public class BlockDudeEngineTests
     public void AWallCanNeverBePickedUp_OnlyABlock()
     {
         // Facing a wall with empty headroom: Grab must be refused. The TI port pins this too (`== BLOCK`).
-        // The door in the top-right corner is inert here; FromGrid requires exactly one, as every real level has.
+        // The door in the top-right corner is inert here; FromGrid requires at least one.
         var board = Board(
             "...D",
             ".PW.",
@@ -91,6 +114,99 @@ public class BlockDudeEngineTests
         Assert.False(after.Won);
         Assert.Equal(2, after.PlayerY);
 
+    }
+
+    [Fact]
+    public void ACarriedBlockIsKnockedOutOfHisHands_WhenItsOwnWayForwardIsBlocked()
+    {
+        // The carried block travels sideways through the cell diagonally forward-and-up from where he STANDS,
+        // judged before the step and before gravity (PRD §4.2). Reported on level 9: walking left off a ledge
+        // with a wall diagonally ahead used to carry the block straight through that wall, because the check
+        // ran against the position he LANDED on — one row lower, and empty.
+        var board = Board(
+            ".......D",
+            "..W.....",
+            "....BP..",
+            "WW.WWWWW",
+            "WWWWWWWW");
+
+        // Pick the block up (he spawns facing left, so it is already the one he faces) and walk to the ledge.
+        var carried = board.Apply(BlockDudeAction.Grab);
+        Assert.True(carried.Carrying);
+
+        var atLedge = carried.Apply(BlockDudeAction.Left).Apply(BlockDudeAction.Left);
+        Assert.True(atLedge.Carrying);            // nothing blocked the block on the way
+        Assert.Equal(3, atLedge.PlayerX);
+        Assert.Equal(2, atLedge.PlayerY);
+
+        // Now step left: the block's own destination (2,1) is wall, so it is knocked out of his hands and falls
+        // in ITS OWN column, behind him, while he carries on into the hole.
+        var after = atLedge.Apply(BlockDudeAction.Left);
+
+        Assert.False(after.Carrying);
+        Assert.Equal(2, after.PlayerX);
+        Assert.Equal(3, after.PlayerY);           // he dropped into the hole
+        Assert.True(after.HasBlock(3, 2));        // same column he left it in, resting on the floor
+        Assert.False(after.HasBlock(2, 2));       // NOT dragged through the wall to above his landing cell
+    }
+
+    [Fact]
+    public void ClimbingKeepsTheBlock_EvenWithAStoneDirectlyAboveIt()
+    {
+        // The mirror of the knock-out rule, and the reason it must NOT be widened to "anything solid near the
+        // block": a climb moves the block diagonally up-and-forward, so the cell directly above it is never on
+        // its path. A stone there is simply a low ceiling he slides out from under — he keeps the block.
+        var board = Board(
+            ".....D",
+            ".W....",          // stone directly above the carried block
+            "......",
+            "BPW...",
+            "WWWWWW");
+
+        var carried = board.Apply(BlockDudeAction.Grab);
+        Assert.True(carried.Carrying);
+        Assert.Equal(1, carried.PlayerX);
+        Assert.Equal(3, carried.PlayerY);
+
+        var climbed = carried.Apply(BlockDudeAction.Right).Apply(BlockDudeAction.Climb);
+
+        Assert.True(climbed.Carrying, "the stone above the block is not on the block's diagonal path");
+        Assert.Equal(2, climbed.PlayerX);
+        Assert.Equal(2, climbed.PlayerY);
+    }
+
+    [Fact]
+    public void OnLevelTen_TheSameBlockSurvivesAClimbAndIsThenKnockedOffByAWalk()
+    {
+        // The two rules above meeting on REAL shipped content, one move apart, on the SAME block — which is what
+        // makes the distinction concrete: a climb carries the block DIAGONALLY, a walk drags it SIDEWAYS, so the
+        // very wall that a climb slips out from under is the wall that a walk knocks it against.
+        //
+        // The 14-move approach was found by breadth-first search over the shipped engine, so it is genuinely
+        // reachable from the level's start: 1=Right, 0=Left, 2=Climb, 3=Grab.
+        var board = BlockDudeLevels.Load(9);
+        foreach (char step in "10311321113022")
+            board = board.Apply((BlockDudeAction)(step - '0'));
+
+        Assert.True(board.Carrying);
+        Assert.Equal(19, board.PlayerX);
+        Assert.Equal(15, board.PlayerY);
+        Assert.Equal(BlockDudeTile.Wall, board.TileAt(19, 13));   // ceiling directly above the carried block
+
+        // Climb up-left: the block goes diagonally to (18,13), out from under that ceiling. Still in his hands.
+        var climbed = board.Apply(BlockDudeAction.Climb);
+        Assert.True(climbed.Carrying, "a ceiling above the block is never on the block's diagonal path");
+        Assert.Equal(18, climbed.PlayerX);
+        Assert.Equal(14, climbed.PlayerY);
+
+        // Now walk back right. The block's sideways path is that same wall at (19,13), so it is knocked out of
+        // his hands and falls in its own column while he steps on and drops.
+        var walked = climbed.Apply(BlockDudeAction.Right);
+        Assert.False(walked.Carrying, "a walk drags the block sideways, straight into the wall");
+        Assert.Equal(19, walked.PlayerX);
+        Assert.Equal(15, walked.PlayerY);
+        Assert.True(walked.HasBlock(18, 14));    // left in its own column, behind him
+        Assert.False(walked.HasBlock(19, 14));   // NOT dragged through the wall
     }
 
     [Fact]

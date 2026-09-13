@@ -14,12 +14,12 @@
 <p class="status" role="status">{{ status() }}</p>
 
 <div class="controls">
-  <button type="button" class="ctl" (click)="act(0)" aria-label="Walk left">←</button>
-  <button type="button" class="ctl" (click)="act(2)" aria-label="Climb">↑</button>
-  <button type="button" class="ctl wide" (click)="act(3)" [class.active]="carrying()">
+  <button type="button" class="ctl left" (click)="act(0)" aria-label="Walk left">←</button>
+  <button type="button" class="ctl up" (click)="act(2)" aria-label="Climb">↑</button>
+  <button type="button" class="ctl grab" (click)="act(3)" [class.active]="carrying()">
     {{ carrying() ? 'Put down' : 'Pick up' }}
   </button>
-  <button type="button" class="ctl" (click)="act(1)" aria-label="Walk right">→</button>
+  <button type="button" class="ctl right" (click)="act(1)" aria-label="Walk right">→</button>
 </div>
 
 <div class="actions">

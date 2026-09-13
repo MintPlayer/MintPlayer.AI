@@ -180,7 +180,7 @@ export class BlockDudeRenderer {
 
     this.drawLattice(snapshot, logicalW, logicalH);
     this.drawTerrain(snapshot);
-    this.drawDoor(snapshot);
+    this.drawDoors(snapshot);
 
     let busy = false;
 
@@ -278,12 +278,19 @@ export class BlockDudeRenderer {
     }
   }
 
+  /**
+   * Every door cell, because a level may hold more than one: Bonus 2 seals its exit behind a row of seven and
+   * Bonus 4 offers two separate exits. Drawing only the first left the rest looking like plain floor, which on
+   * Bonus 4 hid a genuine second way out.
+   */
+  private drawDoors(snapshot: BlockDudeSnapshot): void {
+    for (let index = 0; index < snapshot.tiles.length; index++)
+      if (snapshot.tiles[index] === 2)
+        this.drawDoor((index % snapshot.width) * CELL, Math.floor(index / snapshot.width) * CELL);
+  }
+
   /** A hollow aperture, open at the bottom: a doorway, not a box. Shape-coded, so it never relies on hue. */
-  private drawDoor(snapshot: BlockDudeSnapshot): void {
-    const index = snapshot.tiles.indexOf(2);
-    if (index < 0) return;
-    const x = (index % snapshot.width) * CELL;
-    const y = Math.floor(index / snapshot.width) * CELL;
+  private drawDoor(x: number, y: number): void {
     const { ctx } = this;
 
     ctx.strokeStyle = PALETTE.exit;

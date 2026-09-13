@@ -78,8 +78,8 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options, 
             else
             {
                 var initRng = new Xoshiro256StarStar(options.Seed ^ 0xDEADBEEF);
-                _net = options.Grow ? new RushHourPolicyNet(initRng, DqnGrowth.Start) : new RushHourPolicyNet(initRng);
-                Log(options.Grow ? $"initialized a fresh GROWING policy net (start trunk [{string.Join(",", DqnGrowth.Start)}])"
+                _net = new RushHourPolicyNet(initRng, RushHourGrowth.Ladder.TrunkFor(0));
+                Log(options.Grow ? $"initialized a fresh GROWING policy net (rung 0, trunk [{string.Join(",", RushHourGrowth.Ladder.TrunkFor(0))}])"
                          : "initialized a fresh policy net");
                 resumed = false;
             }
@@ -136,7 +136,7 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options, 
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
-        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, _growRng, Log) is var g && g.HasValue)
+        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, RushHourGrowth.Ladder, _growRng, Log) is var g && g.HasValue)
             (_net, _adam) = (g.Value.Net, g.Value.Adam);
         return _totalSamples;
     }

@@ -193,21 +193,29 @@ class PgBlockDudeBoard {
     if !this.inBounds(tx, this.py) { return turned }
     if this.blocksPlayer(tx, this.py) { return turned }
 
-    // The carried block rides above the player's head; it needs somewhere to be at the destination.
+    // The carried block rides above the player's head, so it travels SIDEWAYS through the cell diagonally
+    // forward-and-up from where he stands. Judge that cell from the OLD position, BEFORE the step and BEFORE
+    // gravity: if it is occupied the block cannot follow, and it is knocked out of his hands and falls from
+    // where it was — staying in its own column, behind him (PRD §4.2).
+    //
+    // Judging it from the position AFTER gravity instead — which this did until a level 9 report — silently
+    // teleports the block diagonally past a wall whenever the step also drops the player: he walks off a ledge,
+    // the block's own destination is solid rock, and it arrives below it anyway, still in his hands.
     let hadBlock = this.carrying
+    let ox = this.px
+    let oy = this.py
+    var knocked = false
+    if hadBlock {
+      if !this.inBounds(ox + dx, oy - 1) { knocked = true }
+      else if this.blocksPlayer(ox + dx, oy - 1) { knocked = true }
+    }
+
     this.px = tx
     this.dropPlayer()
 
-    if hadBlock {
-      let hy = this.py - 1
-      if !this.inBounds(this.px, hy) {
-        // Nowhere above the destination: the block is knocked out of his hands and falls where it stood.
-        this.carrying = false
-        this.dropBlock(this.px - dx, this.py - 1)
-      } else if this.blocksPlayer(this.px, hy) {
-        this.carrying = false
-        this.dropBlock(this.px - dx, this.py - 1)
-      }
+    if knocked {
+      this.carrying = false
+      this.dropBlock(ox, oy - 1)
     }
 
     this.checkWon()

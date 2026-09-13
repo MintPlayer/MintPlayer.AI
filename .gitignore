@@ -55,3 +55,6 @@ src/RLDemo.Web/ClientApp/src/app/**/*_solver.ts
 # in src/MintPlayer.AI.ReinforcementLearning.Environments/<Game>/levels/ and are embedded there for training;
 # these copies exist only so the browser fetches the identical bytes.
 src/RLDemo.Web/wwwroot/levels/
+
+# Python bytecode from the level-pack importer tools.
+__pycache__/
