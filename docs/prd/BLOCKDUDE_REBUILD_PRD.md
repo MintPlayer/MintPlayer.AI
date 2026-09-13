@@ -1,19 +1,26 @@
 # Block Dude — rebuilding the training pipeline (M60)
 
-**Status, 2026-09-13 — partly BUILT, on branch `m59-blockdude-plateau` (M59).** The original plan had the
+**Status, 2026-09-14 — partly BUILT, on branch `m59-blockdude-plateau` (M59).** The original plan had the
 generator rebuild (§2) as the prerequisite for everything. Measurement changed that order: the reverse
 curriculum (§6a) supplies in-distribution training data on the real levels *without* touching the generator, so
 it went first and is running.
+
+Measurement has now reordered the plan twice, in the same direction both times. §6a demoted the generator
+rebuild; §6d demoted the categorical value head, after three changes to the *search* — none of them a training
+change — took a frozen checkpoint from 6/15 to 8/15 shipped levels. The recurring lesson is that the cheap
+measurement was worth more than the expensive rebuild it was meant to justify, so take the next item in this
+plan as a hypothesis to test rather than work to schedule.
 
 | § | What | Status |
 |---|---|---|
 | 2 | Generator — lift the topology restriction | **not built.** No longer blocking, still needed for volume and variety |
 | 3 | Labeller — search instead of BFS | **BUILT** — `BlockDudeSearch`, net-guided weighted A* over `Core.Planning` |
-| 4 | Value head — categorical, with an "unsolvable" bucket | **not built.** Promoted to the next change by §6b |
+| 4 | Value head — categorical, with an "unsolvable" bucket | **not built, and demoted** by §6d — using the policy head in search recovered the cost of a weak value head at zero training cost |
 | 5 | Owner's decomposition idea | evaluated, not built; sequenced after §4 |
 | 6 | Human solution recording | **BUILT** — all 15 levels recorded, validated and committed |
 | 6a | Reverse curriculum + expert iteration | **BUILT** — `BlockDudeDemonstrations`, `BlockDudeExpertIterationCampaign` (`--phase 2`) |
-| 6b | Dead ends the training data discards | **measured**, fix is §4 |
+| 6b | Dead ends the training data discards | **measured**, fix is §4 (still unbuilt — see §6d) |
+| 6d | Search: batched calls, policy-as-prior, frontier retreat, landmark salvage | **BUILT** — 6/15 → 8/15 on frozen weights, `Core.Planning.PolicyValueSearch` |
 
 **Goal (owner):** *"achieve a good net that's capable of solving these levels"* — the 15 shipped levels, not
 generated boards. The owner stated they are willing to start over.
@@ -185,6 +192,100 @@ produces a net that plays measurably better on the real levels, from a standing 
 establish the ceiling: the run used the scalar value head, which §6b shows is both compressed at long horizons
 and blind to the 41.5% of states that are unwinnable. So this is a **lower bound** on the approach, and any
 stall observed with this head is evidence about the heuristic rather than about the curriculum.
+
+## 6d. The search was the bottleneck, not the value head (2026-09-14, overnight)
+
+§6c ended by naming the scalar value head as the thing holding phase 2 back, and §4 (a categorical head with an
+unsolvable bucket) as the fix. Measuring before building changed that order, exactly as §6a changed the order of
+the generator rebuild. **Three changes to the search, none of them a training change, took the same frozen
+checkpoint from 6/15 to 8/15** — and one of them was free.
+
+All three numbers below are the *same weights*, benched with `--eval-levels --phase 2 --resume-net`,
+weight 2, ≤200,000 expansions, ≤20s per level.
+
+| change | shipped levels solved | what it cost |
+|---|---|---|
+| baseline (§6c) | 6/15 | — |
+| batched net calls in search | **7/15** (+ Bonus 2) | nothing — a different call shape |
+| policy head used as a search prior | **8/15** (+ Level 6) | nothing — a head that was already trained |
+
+### The net was being called one row at a time
+
+`BlockDudeSearch` used `ValueGuidedSearch.Solve`, which evaluates one successor per call: a 1181-wide input
+through a 1152×1152×1152 trunk, as a single row. That is the entire cost of the search, and a one-row matrix
+multiply wastes nearly all of it. Core already had `SolveBatched` — written for the cube, scoring a whole round
+of successors in one pass — and Block Dude simply was not on it. Switching cost one new method on the net.
+
+This matters twice, because expert iteration **generates every training sample with this same search**. In the
+run, search success went 43% → 58% and levels-whole 5/15 → 7/15 within three rounds of the change landing.
+
+### A\* weight was already saturated — which is what made the next step clear
+
+| A\* weight | 1.0 | 1.5 | 2.0 | 3.0 | 5.0 |
+|---|---|---|---|---|---|
+| solved | 5/15 | 7/15 | 7/15 | 7/15 | 7/15 |
+
+Everything from 1.5 up gives the same answer. There was no better setting of this knob to find, so the next
+lever had to be a **different signal** rather than more of this one.
+
+### The better-trained head was not being used at all
+
+The search ordered its frontier by `f = g + weight·h` — the value head alone, the head §8.4a measures as
+compressed at long horizons (−37.5 moves at true distance 51+). Meanwhile the policy head agrees with
+demonstrated moves ~94% of the time and solves three shipped levels outright with no lookahead whatsoever. It
+was discarded at search time.
+
+`Core/Planning/PolicyValueSearch` adds it as an accumulated **surprise** term:
+
+```
+f = g + weight·h + policyWeight·Σ −log π(a)
+```
+
+A line the policy would have played costs nothing extra; one it considers absurd pays per step. The accurate
+head answers the local question it is good at, and the inaccurate one is left only the coarse question.
+
+| policy weight | 0 (value only) | 0.5 | 2 | 5 | 15 |
+|---|---|---|---|---|---|
+| solved | 7/15 | 7/15 | 7/15 | **8/15** | 8/15 |
+
+5 is the default: the smallest setting that buys Level 6, a level value-guided search never solved at any A\*
+weight. Paths shorten too — Level 5 went 207 → 172 → 161 moves across the three tiers.
+
+**The prior biases order; it never prunes.** Surprise is finite and accumulated, so a disliked node is
+deprioritised, not removed, and the search still reaches anything uninformed search would given budget. A hard
+policy mask can make a solvable problem unsolvable, which in an irreversible game where the winning line is
+often the policy's second choice would be a serious defect rather than an optimisation.
+
+### What this does to §4
+
+It does not refute §4 — the value head really is compressed, and §6b's 41.5% unwinnable states really are
+absent from the data. It **demotes** it. The measured cost of a weak value head turned out to be recoverable by
+leaning on the head that is already strong, at zero training cost, and a categorical head still requires a
+fresh run because it changes the output shape. So §4 stays the plan for the next deliberate rebuild, and is no
+longer the thing standing between the current net and the shipped levels.
+
+### Two flaws found in the curriculum while doing this
+
+**A frontier could only ever move outward.** Advancing multiplies it by 1.5, so a level can be thrown past what
+the net can solve — and a level that solves nothing produces no samples, so it can never recover. The
+curriculum would park it there for the rest of the run, silently, while the other levels kept the reported loss
+and accuracy looking healthy. A round that solves none of its attempts now retreats (×0.8, deliberately gentler
+than growth, so a level settles at the edge of its ability instead of oscillating).
+
+**A failed search taught nothing, and 42% of them failed.** Worst on the long levels — asking A\* for a 400-move
+suffix in eight seconds nearly always fails — which are precisely the levels with the most left to learn. A
+failed attempt is now retried on half the budget aiming at the *human's path* as well as the door: reaching a
+state the demonstration also reached is a real solution, because a winning continuation from there is known,
+and the prefix the search found is new data on states the net actually visits.
+
+Two things had to be right, and the first was wrong in the first version. It must be a **fallback, not a
+combined goal**: the start state is itself on the demonstrated path, so a single search aiming at both stops at
+a landmark within a few moves every time instead of pressing on to the door — dismantling the frontier
+mechanism while still looking like a healthy run. And a hit is a **candidate, not a proof**: the key is a 32-bit
+state hash, a collision across a 200k-node search is a few percent likely, and believing one would manufacture a
+training sample asserting a win that does not exist. Every hit is confirmed by replaying the demonstrated
+remainder through the engine. Only genuine door-reaching solutions move a frontier; landmark hits are reported
+separately in the eval line so the two can never be read as one number.
 
 ## 6b. Irreversibility — the net has never been shown a lost position (owner, 2026-09-13)
 

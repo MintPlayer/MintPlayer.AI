@@ -2862,6 +2862,44 @@ that cannot be watched, since `VizLauncher` skips silently by design.
 Level 1 in 19 steps, matching the human optimum. A lower bound, not a ceiling: the run used the scalar value
 head that §6b shows is compressed AND blind to the 41.5% of states that are unwinnable.
 
+**Then the search turned out to be the bottleneck, not the value head** (rebuild PRD §6d, overnight
+2026-09-14). §6c had named the scalar value head as what was holding phase 2 back and §4 as the fix. Measuring
+first changed that, the same way §6a had changed the plan's order once already: **three changes to the search,
+none of them a training change, took the SAME frozen checkpoint from 6/15 to 8/15 shipped levels.**
+
+- **The net was being called one row at a time.** `BlockDudeSearch` used the per-node `ValueGuidedSearch.Solve`;
+  Core's `SolveBatched` — which scores a whole round of successors in one forward, written for the cube — was
+  right there unused. 6/15 → **7/15** for a different call shape. It compounds, because expert iteration
+  *generates every training sample with this same search*: solve rate 43% → 58% and levels-whole 5/15 → 7/15
+  within three rounds.
+- **A\* weight was already saturated** — 1.5, 2, 3 and 5 all give 7/15, only 1.0 is worse. There was no better
+  setting of that knob to find, which is what made it clear the next lever had to be a different *signal*.
+- **The better-trained head was not used at all.** Ordering was `g + weight·h`, the value head alone — the head
+  §8.4a measures as compressed at long horizons — while the policy head agrees with demonstrated moves ~94% of
+  the time and solves three levels outright with no lookahead. New generic `Core/Planning/PolicyValueSearch`
+  adds accumulated policy *surprise* to the frontier cost: 7/15 → **8/15**, adding Level 6, which value-guided
+  search never solved at any weight. The prior biases order and never prunes — a hard mask can make a solvable
+  problem unsolvable, which in an irreversible game is a defect and not an optimisation.
+
+**This demotes the categorical value head rather than refuting it.** The head really is compressed and really is
+blind to the 41.5%; the measured cost of that turned out to be recoverable by leaning on the head that is
+already strong, at zero training cost. §4 stays the plan for the next deliberate rebuild — it changes the output
+shape, so it forces a fresh run — and is no longer what stands between the current net and the shipped levels.
+Two measurements have now each demoted an expensive rebuild; treat the next item in that PRD as a hypothesis to
+test, not work to schedule.
+
+**Two silent curriculum flaws, found while doing the above.** A frontier could only ever move *outward*, and
+advancing multiplies it by 1.5 — so a level could be thrown past what the net can solve, and a level that solves
+nothing produces no samples and can never recover. The run keeps reporting healthy loss and accuracy from the
+other levels throughout. A round that solves nothing now retreats, gently (×0.8), so a level settles at the edge
+of its ability instead of oscillating. And **a failed search taught nothing while 42% of them failed** — worst
+on the long levels, which have the most left to learn. A failure is now retried on half the budget aiming at the
+*human's demonstrated path* as well as the door, since reaching a state the demonstration reached means a
+winning continuation is already known. It must be a fallback and not a combined goal (the start is itself on the
+path, so one search aiming at both stops a few moves in, every time, quietly dismantling the frontier), and a
+hit is a candidate rather than a proof (a 32-bit state hash, a few percent collision chance over 200k nodes), so
+every hit is confirmed by replaying the remainder through the engine.
+
 **Still open.** The generator rebuild (rebuild PRD §2) and the categorical value head (§4) are unbuilt; and the
 full local test suite still does not complete on the dev machine, so CI remains the check.
 
