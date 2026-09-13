@@ -7,14 +7,15 @@ it went first and is running.
 
 Measurement has now reordered the plan twice, in the same direction both times. §6a demoted the generator
 rebuild; §6d demoted the categorical value head, after three changes to the *search* — none of them a training
-change — took a frozen checkpoint from 6/15 to 8/15 shipped levels. The recurring lesson is that the cheap
+change — took a frozen checkpoint from 6/15 to 10/15 shipped levels. The recurring lesson is that the cheap
 measurement was worth more than the expensive rebuild it was meant to justify, so take the next item in this
 plan as a hypothesis to test rather than work to schedule.
 
-**Read §6d's control before quoting any number in this document.** Uninformed breadth-first search solves 6/15
-shipped levels by itself. Every "solves N/15" here is therefore a claim about the *search budget* first and the
-net second, and the trained net's own contribution with lookahead is **+2 levels**. That control did not exist
-until 2026-09-14, so earlier sections overstate what they attribute to the net.
+**Read §6d's controls before quoting any number in this document.** Uninformed search solves **6/15** shipped
+levels by itself — 6/15 as best-first with `h = 0`, and 6/15 again as a uniform-prior beam. Every "solves N/15"
+here is therefore a claim about the search first and the net second. Against that baseline the trained net is
+worth **+2 levels in A\*** and **+4 in beam search**. Those controls did not exist until 2026-09-14, so earlier
+sections overstate what they attribute to the net.
 
 | § | What | Status |
 |---|---|---|
@@ -25,7 +26,7 @@ until 2026-09-14, so earlier sections overstate what they attribute to the net.
 | 6 | Human solution recording | **BUILT** — all 15 levels recorded, validated and committed |
 | 6a | Reverse curriculum + expert iteration | **BUILT** — `BlockDudeDemonstrations`, `BlockDudeExpertIterationCampaign` (`--phase 2`) |
 | 6b | Dead ends the training data discards | **measured**, fix is §4 (still unbuilt — see §6d) |
-| 6d | Search: batched calls, policy-as-prior, frontier retreat, landmark salvage | **BUILT** — 6/15 → 8/15 on frozen weights, `Core.Planning.PolicyValueSearch` |
+| 6d | Search: batched calls, policy-as-prior, **beam search**, frontier retreat, landmark salvage | **BUILT** — 6/15 → **10/15** on frozen weights; `Core.Planning.PolicyValueSearch` + `PolicyBeamSearch` |
 
 **Goal (owner):** *"achieve a good net that's capable of solving these levels"* — the 15 shipped levels, not
 generated boards. The owner stated they are willing to start over.
@@ -213,6 +214,7 @@ weight 2, ≤200,000 expansions, ≤20s per level.
 | baseline (§6c) | 6/15 | — |
 | batched net calls in search | **7/15** (+ Bonus 2) | nothing — a different call shape |
 | policy head used as a search prior | **8/15** (+ Level 6) | nothing — a head that was already trained |
+| policy **beam** search instead of A\* | **10/15** (+ Level 4, Bonus 4) | nothing — a different search shape |
 
 …but read the control below before crediting those levels to the net: uninformed search alone solves
 6/15, so the trained net with lookahead is worth **+2 levels over knowing nothing**, and Level 6 is a
@@ -259,6 +261,78 @@ by *nothing*: not greedy, not blind search, not either head, not both. They are 
 is 29×19 and 909 human moves). No amount of heuristic tuning reaches them inside a 200k-node budget, because
 the budget is the wall. That is what the reverse curriculum exists to climb, and it is why the run's frontier
 number, not the bench, is the thing to watch overnight.
+
+### Beam search — the tier the long levels actually needed
+
+The control's last line said seven levels are solved by nothing, and that the node budget is the wall. That is
+a statement about the *shape* of the search, not about the heuristic, and it has a standard answer.
+
+A\* holds an open frontier that grows with the space explored, so its reach is bounded by a node budget — and a
+node budget is a wall, not a dial. Level 11 needs about 900 moves; no heuristic quality makes 900 moves
+reachable inside 200,000 nodes, because the frontier alone would dwarf that. **Beam search costs
+`width × depth`**, so depth is nearly free, and the long levels stop being out of range.
+
+On the same frozen checkpoint, width 256, ≤30s per level:
+
+| tier | solved | levels it adds |
+|---|---|---|
+| policy + value A\* | 8/15 | — |
+| **policy beam search** | **10/15** | **Level 4 (281 moves), Bonus 4 (118)** — neither solved by any other tier at any setting |
+
+It also finds **shorter** paths everywhere the tiers overlap: Level 5 in 129 moves against 207 / 172 / 161;
+Level 2 in 73 against 87 / 82; Bonus 2 in 88 against 97 / 94.
+
+**Its own control, because the shape changed.** `--zero-h` cannot attribute a beam result: beam and A\* are
+different search shapes, so comparing beam-with-a-policy against best-first-without-a-heuristic would credit the
+policy for the change of shape. So the beam tier gets a matching control — the same beam with a **uniform
+prior**, where every candidate at a depth scores identically and the beam keeps whatever it enumerates first.
+
+| | uninformed | with the net | the net is worth |
+|---|---|---|---|
+| best-first (A\*) | 6/15 | 8/15 | +2 |
+| **beam** | **6/15** | **10/15** | **+4** |
+
+The two uninformed baselines agree at 6/15, which is reassuring — it says the shapes are comparable and that the
+6 easy levels are simply searchable. What differs is how much the net adds: **the policy head is worth twice as
+much in the beam as in the A\***. The A\* tiers were understating the net, not measuring it.
+
+That also reframes the greedy number. The policy alone solves 3/15; a *uniform* beam of 256 solves 6/15; the
+policy driving that same beam solves 10/15. So the policy is far better than its greedy score suggests — what
+greedy lacks is not knowledge but any capacity to survive its own single mistake, which in an irreversible game
+is fatal by construction.
+
+**Ranked by the policy head alone**, deliberately. Every candidate in a beam sits at the same depth, so
+cumulative log-probabilities are directly comparable with no length normalisation — whereas comparing states at
+*different* depths is precisely what a regression-trained value head is measured to be bad at. This tier
+therefore sidesteps §8.4a's compression rather than working around it.
+
+**What it gives up is completeness.** A solution pruned out of the beam is gone for good, so unlike the A\*
+tiers this can fail on a problem it has ample budget for. The tiers are complements: best-first for short
+awkward problems, beam for long ones. A test requires a narrow beam to *fail* on a solvable problem, so that
+nobody reading "search" assumes the siblings' guarantees.
+
+**It is in the training loop too**, as a fallback after A\*, for the same reason it exists: as a level's frontier
+moves outward the suffix eventually passes what a node budget can reach. A\* is still asked first, because beam
+solutions are the policy's own widened rollout and tend to be longer, and a longer path is a looser distance
+label — so the better labels are preferred wherever they exist. Beam solves count as genuine solves and may
+move a frontier, since they reach the door by the net's own policy. They carry their own counter in the eval
+line: **if beam hits grow while A\* hits shrink, the curriculum has moved past what a node budget can reach**,
+which is a fact about the run's progress worth seeing rather than averaging into one solve rate.
+
+### Where the tiers stand
+
+| tier | solved | what it is for |
+|---|---|---|
+| greedy (policy alone) | 3/15 | diagnostic: has the policy learned the game |
+| uninformed best-first, `h = 0` | 6/15 | the control for the A\* tiers |
+| uniform-prior beam | 6/15 | the control for the beam tier |
+| value head as heuristic | 7/15 | — |
+| policy prior + value head | 8/15 | short, awkward levels |
+| **policy beam search** | **10/15** | **the long levels; the shipped tier** |
+
+Five levels remain unsolved by everything: 7, 8, 9, 10 and 11 — the largest boards, up to 29×19 and 909 human
+moves. Those are the curriculum's job, and the number to watch for them is the run's frontier rather than this
+bench.
 
 ### The net was being called one row at a time
 

@@ -79,6 +79,29 @@ public static class BlockDudeSearch
     public static float[] ZeroHeuristic(IReadOnlyList<BlockDudeBoard> boards) => new float[boards.Count];
 
     /// <summary>
+    /// A flat prior over all actions — the control for <see cref="SolveByBeam"/>, as <see cref="ZeroHeuristic"/>
+    /// is for the A* tiers.
+    /// </summary>
+    /// <remarks>
+    /// Needed because beam search and A* are different search SHAPES, so the h = 0 control cannot be used to
+    /// attribute a beam result: comparing beam-with-a-policy against best-first-without-a-heuristic would credit
+    /// the policy for the change of shape. With uniform priors every candidate at a depth scores identically, so
+    /// the beam keeps whichever states it happens to enumerate first — an uninformed width-limited sweep, which
+    /// is exactly the "what does the net add" baseline.
+    /// </remarks>
+    public static float[] UniformPriors(IReadOnlyList<BlockDudeBoard> boards)
+    {
+        var priors = new float[boards.Count * BlockDudeBoard.ActionCount];
+        Array.Fill(priors, -MathF.Log(BlockDudeBoard.ActionCount));
+        return priors;
+    }
+
+    /// <summary>Beam search against an arbitrary batched prior — the seam <see cref="UniformPriors"/> needs.</summary>
+    public static Outcome SolveByBeam(Func<IReadOnlyList<BlockDudeBoard>, float[]> logPriors, BlockDudeBoard start,
+                                      int beamWidth = 256, int maxDepth = 1_200, TimeSpan? maxTime = null)
+        => new(PolicyBeamSearch.Solve(new Model(), logPriors, start, beamWidth, maxDepth, maxTime), beamWidth);
+
+    /// <summary>
     /// Search using BOTH heads — the value head as cost-to-go and the policy head as a prior over moves.
     /// </summary>
     /// <remarks>

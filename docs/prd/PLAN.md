@@ -2881,10 +2881,29 @@ none of them a training change, took the SAME frozen checkpoint from 6/15 to 8/1
   search never solved at any weight. The prior biases order and never prunes — a hard mask can make a solvable
   problem unsolvable, which in an irreversible game is a defect and not an optimisation.
 
-**And then the control put all of it in proportion.** `--zero-h` runs the identical search with `h = 0`, i.e.
-uninformed breadth-first, and it solves **6/15 on its own**. So six of the eight are not evidence about the net
-at all, and the honest claim for the trained net with lookahead is **+2 levels over knowing nothing**. Two
-things only that control could show: the value head **actively misleads** the search on Level 6 — blind search
+**Then beam search, which is what the long levels actually needed.** The control's closing observation — that
+seven levels are solved by *nothing* and the node budget is the wall — is a statement about the search's shape,
+not its heuristic. A\* holds a frontier that grows with the space explored, so no heuristic quality makes a
+900-move solution reachable inside 200k nodes. Beam search costs `width × depth`, so depth is nearly free. New
+generic `Core/Planning/PolicyBeamSearch` (the cube had an EfficientCube-style one buried in its own files; this
+is the reusable one): **8/15 → 10/15**, adding Level 4 (281 moves) and Bonus 4, neither solved by any other tier
+at any setting — and shorter paths everywhere the tiers overlap (Level 5 in 129 against 207/172/161). It is
+ranked by the policy head *alone*, which is valid precisely because every candidate in a beam sits at the same
+depth, so cumulative log-π compares directly; it therefore sidesteps the value head's long-horizon compression
+instead of working around it. What it gives up is completeness — a pruned solution is gone — so a test *requires*
+a narrow beam to fail on a solvable problem, since anyone reading "search" would otherwise assume the A\* tiers'
+guarantees. It is in the training loop too, as a fallback after A\*, with its own counter: if beam hits grow
+while A\* hits shrink, the curriculum has moved past what a node budget can reach.
+
+**And then the controls put all of it in proportion.** `--zero-h` runs the identical search with `h = 0`, i.e.
+uninformed breadth-first, and it solves **6/15 on its own**; a uniform-prior beam — the beam tier's own control,
+needed because beam and A\* are different *shapes* and the h = 0 number would otherwise credit the policy for
+the change of shape — also solves **6/15**. So the easy six are not evidence about the net at all, and against
+that baseline the net is worth **+2 levels in A\*** and **+4 in beam**. The policy head is worth twice as much in
+the right search shape; the A\* tiers were understating it. That also reframes the greedy score: policy alone
+3/15, uniform beam 6/15, policy-driven beam 10/15 — so what greedy lacks is not knowledge but any capacity to
+survive its own single mistake, which in an irreversible game is fatal by construction. Two more things only
+the control could show: the value head **actively misleads** the search on Level 6 — blind search
 solves it in 107 moves, value-guided solves it at no A\* weight tested, which is §8.4a's compression appearing
 as a lost level rather than an error bar — and the two heads are **complementary rather than redundant**, each
 worth exactly +1 over the control and not the same +1 (value brings Level 5, the prior brings back Level 6).

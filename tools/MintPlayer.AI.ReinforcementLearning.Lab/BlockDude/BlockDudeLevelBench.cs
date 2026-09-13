@@ -91,7 +91,7 @@ internal static class BlockDudeLevelBench
         Console.WriteLine();
 
         var levels = BlockDudeLevels.All;
-        int solved = 0, noRevisitSolved = 0, searchSolved = 0, zeroSolved = 0, policySolved = 0, beamSolved = 0;
+        int solved = 0, noRevisitSolved = 0, searchSolved = 0, zeroSolved = 0, policySolved = 0, beamSolved = 0, zeroBeamSolved = 0;
         for (int i = 0; i < levels.Length; i++)
         {
             var board = BlockDudeBoard.FromGrid(levels[i].Grid);
@@ -139,6 +139,16 @@ internal static class BlockDudeLevelBench
                                                   TimeSpan.FromSeconds(seconds));
                 if (blind.Solved) zeroSolved++;
                 line += blind.Solved ? $"  | blind SOLVED in {blind.Length,4:N0} moves" : "  | blind -";
+
+                // Beam and A* are different search SHAPES, so the h = 0 number cannot attribute a beam result —
+                // it would credit the policy for the change of shape. The beam tier needs its own control.
+                if (beam)
+                {
+                    var blindBeam = BlockDudeSearch.SolveByBeam(BlockDudeSearch.UniformPriors, board, beamWidth,
+                                                                beamDepth, TimeSpan.FromSeconds(seconds));
+                    if (blindBeam.Solved) zeroBeamSolved++;
+                    line += blindBeam.Solved ? $"  | blind-beam SOLVED in {blindBeam.Length,4:N0}" : "  | blind-beam -";
+                }
             }
 
             Console.WriteLine(line);
@@ -190,6 +200,12 @@ internal static class BlockDudeLevelBench
             Console.WriteLine($"solved {zeroSolved}/{levels.Length} shipped levels " +
                               $"({zeroSolved / (double)levels.Length:P0}), SAME search with h = 0 " +
                               $"(uninformed breadth-first — the control for what the value head is worth)");
+
+            if (beam)
+                Console.WriteLine($"solved {zeroBeamSolved}/{levels.Length} shipped levels " +
+                                  $"({zeroBeamSolved / (double)levels.Length:P0}), SAME beam with a UNIFORM prior " +
+                                  $"(the control for what the policy head is worth — beam and A* are different " +
+                                  $"search shapes, so the h = 0 line above cannot attribute the beam result)");
         }
     }
 }
