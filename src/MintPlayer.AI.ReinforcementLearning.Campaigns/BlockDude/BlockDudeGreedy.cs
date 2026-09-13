@@ -36,6 +36,51 @@ public static class BlockDudeGreedy
         public bool Solved => Ending == Ending.Won;
     }
 
+    /// <summary>
+    /// Plays greedily but never re-enters a state it has already been in: among the legal actions, takes the
+    /// highest-scoring one whose successor is unvisited. NOT search — no lookahead, no backtracking, one forward
+    /// pass per step exactly as <see cref="Run"/> — just a tie-break that a deterministic argmax lacks.
+    /// </summary>
+    /// <remarks>
+    /// Separates two failure modes the plain greedy number conflates. A deterministic policy is trapped by the
+    /// FIRST state it revisits, so "loops after 4 steps" can mean either "has learned nothing" or "knows where to
+    /// go but has no way to break a tie". Measuring both says which. Deliberately NOT what the curriculum gate
+    /// uses — the gate's stance (§8.4) is that the policy should stand on its own.
+    /// </remarks>
+    public static Outcome RunAvoidingRevisits(BlockDudePolicyNet net, BlockDudeBoard start, int stepBudget)
+    {
+        var current = start;
+        var seen = new HashSet<int> { start.StateHash };
+
+        for (int step = 0; step < stepBudget; step++)
+        {
+            if (current.Won) return new(Ending.Won, step, seen.Count);
+
+            var (logits, _) = net.Evaluate(current);
+
+            // Best-scoring legal action whose successor is somewhere new.
+            var best = (Action: (BlockDudeAction?)null, Score: float.NegativeInfinity, Next: current);
+            for (int a = 0; a < BlockDudeBoard.ActionCount; a++)
+            {
+                var action = (BlockDudeAction)a;
+                if (!current.IsLegal(action)) continue;
+                if (logits[a] <= best.Score) continue;
+
+                var next = current.Apply(action);
+                if (next.SameStateAs(current) || seen.Contains(next.StateHash)) continue;
+
+                best = (action, logits[a], next);
+            }
+
+            if (best.Action is null) return new(Ending.NoMove, step, seen.Count);
+
+            seen.Add(best.Next.StateHash);
+            current = best.Next;
+        }
+
+        return current.Won ? new(Ending.Won, stepBudget, seen.Count) : new(Ending.Budget, stepBudget, seen.Count);
+    }
+
     /// <summary>Plays <paramref name="start"/> greedily under <paramref name="net"/> until it ends.</summary>
     /// <param name="stepBudget">Hard cap on moves. The training gate derives this from the rung's optimal length;
     /// the shipped levels carry no optimal count, so their benchmark passes an explicit ceiling.</param>

@@ -914,6 +914,31 @@ Fixed: the hold-out now applies the same exact-oracle filter. **Curriculum `Vers
 before and after this date are not comparable and an older checkpoint is refused rather than resumed into the
 new metric.
 
+**4. The value head loses its discrimination exactly where the detour lives — owner hypothesis, confirmed.**
+The owner's reading (2026-09-13): *"the player first needs to go to the opposite end of the field vs the door,
+to retrieve blocks… so distance to the door isn't necessarily a health-indication."* Measured with
+`--value-calibration` (predicted distance-to-goal vs the exact oracle, in MOVES, over labelled hold-out states):
+
+| stage | states | MAE | bias | 1–10 | 11–25 | 26–50 | 51+ |
+|---|---|---|---|---|---|---|---|
+| 0–3 | 0.3–4.0k | 6–10 | **+6 to +10** | +5 to +11 | +8 to +11 | – | – |
+| 4 | 82.5k | 8.7 | +8.4 | +8.0 | +9.1 | −3.3 | – |
+| 5 | 19.1k | 6.2 | +6.1 | +6.1 | +6.1 | −2.6 | – |
+| 6 | 82.8k | 12.8 | **−10.8** | +3.2 | +0.3 | **−17.1** | **−37.5** |
+
+Near states are **over**-estimated and far states are massively **under**-estimated: at the top rung a state
+genuinely 51+ moves from the door is scored ~37 moves closer than it is. The estimate is not merely biased, it
+is **compressed** — the head cannot separate a 60-move position from a 20-move one. That is precisely the
+geometry failure the owner predicted, and it has a direct consequence: this value IS the heuristic
+`BlockDudeSearch` steers by, so A* degenerates toward uninformed search in exactly the regime the shipped
+levels occupy, which is why search solves the small levels and none of the large ones.
+
+**5. Looping is not the whole story.** A no-revisit tie-break (`RunAvoidingRevisits` — best legal action whose
+successor is unvisited; no lookahead) converts every `Loop` ending into `NoMove` and roughly triples survival
+(Bonus 4: 28 → 165 steps) but solves **the same 1/15**. So the policy is not a good policy lacking a tie-break;
+it walks into genuinely unrecoverable positions. Recorded because it cheaply rules out the most attractive
+easy explanation.
+
 **What this implies for the plan.** More samples alone is the weakest of the available levers: the net is not
 converged (loss and accuracy are both still moving), but solve rate at these horizons is brutally sensitive to
 per-step accuracy, which is improving roughly a point per million samples and decelerating. The levers that

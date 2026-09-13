@@ -52,17 +52,21 @@ internal static class BlockDudeLevelBench
         Console.WriteLine();
 
         var levels = BlockDudeLevels.All;
-        int solved = 0, searchSolved = 0;
+        int solved = 0, noRevisitSolved = 0, searchSolved = 0;
         for (int i = 0; i < levels.Length; i++)
         {
             var board = BlockDudeBoard.FromGrid(levels[i].Grid);
             var outcome = BlockDudeGreedy.Run(net, board, budget);
             if (outcome.Solved) solved++;
 
+            var noRevisit = BlockDudeGreedy.RunAvoidingRevisits(net, board, budget);
+            if (noRevisit.Solved) noRevisitSolved++;
+
             string line = $"  {i + 1,2}. {levels[i].Name,-24} {board.Width,3}x{board.Height,-3} " +
                           $"{(outcome.Solved ? "SOLVED" : "-     ")} " +
-                          $"{outcome.Ending,-8} after {outcome.Steps,5:N0} steps, " +
-                          $"{outcome.DistinctStates,5:N0} distinct states";
+                          $"{outcome.Ending,-8} after {outcome.Steps,5:N0} steps  | no-revisit " +
+                          $"{(noRevisit.Solved ? "SOLVED" : "-     ")} {noRevisit.Ending,-7} " +
+                          $"{noRevisit.Steps,5:N0} steps";
 
             if (search)
             {
@@ -77,6 +81,9 @@ internal static class BlockDudeLevelBench
         Console.WriteLine();
         Console.WriteLine($"solved {solved}/{levels.Length} shipped levels " +
                           $"({solved / (double)levels.Length:P0}), greedy, no search");
+        Console.WriteLine($"solved {noRevisitSolved}/{levels.Length} shipped levels " +
+                          $"({noRevisitSolved / (double)levels.Length:P0}), greedy + never re-enter a visited state " +
+                          $"(a tie-break, still no lookahead)");
 
         if (search)
         {

@@ -29,6 +29,9 @@ internal static class BlockDudeLab
         // Read-only benchmark against the shipped levels; no training, no checkpoint writes.
         if (a.Has("--eval-levels")) { BlockDudeLevelBench.Run(args); return; }
 
+        // Read-only diagnostic: predicted distance-to-goal vs the oracle's exact optimal move count.
+        if (a.Has("--value-calibration")) { BlockDudeValueCalibration.Run(args); return; }
+
         double hours = a.Dbl("--hours", 9);
         string dataDir = a.Str("--data", "data");
         ulong seed = a.ULong("--seed", 1);
