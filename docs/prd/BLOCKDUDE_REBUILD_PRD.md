@@ -156,6 +156,50 @@ remaining along that path — the second landing in the 1-to-909 range where the
 under-estimating by ~37 moves with no training data at all (§8.4a). No search or oracle is needed to extract
 either.
 
+## 6b. Irreversibility — the net has never been shown a lost position (owner, 2026-09-13)
+
+> *"in Rush Hour, a lousy move doesn't kill the entire game, whereas in Block Dude each move has to be perfect
+> or the game is in a dead end"*
+
+§8.1a of the M58 PRD records the difference. Following it into the training data finds something that section
+did not: **the consequence is a hole in the data, not just a property of the game.**
+
+The oracle already knows which states are lost. It enumerates forward from the start, then runs a **backward**
+BFS from the won states, so anything the backward pass never reaches keeps `dist = -1` — reachable, but with
+no path to the door. `CollectSamples` then filters `distance > 0 && mask != 0`, which discards exactly those.
+
+**Measured** (`BlockDudeDeadEndTests`, over hold-out boards per rung):
+
+| stage | winnable | dead | dead share |
+|---|---|---|---|
+| 0 | 334 | 143 | 30.0% |
+| 3 | 4,121 | 1,016 | 19.8% |
+| 4 | 84,717 | 31,575 | 27.2% |
+| **6** | 83,366 | **99,120** | **54.3%** |
+| **total** | 195,110 | 138,506 | **41.5%** |
+
+**On the hardest rung the majority of reachable states are unwinnable, and the net has been trained on none of
+them.** Every position it has ever seen was still winnable. This is free data being thrown away — the oracle
+computes it and the filter drops it.
+
+Three measured behaviours become one explanation:
+
+- **The policy walks confidently into unrecoverable positions** (no-revisit greedy ends in `NoMove`, §8.4a
+  finding 5) because it has never been shown that such positions exist.
+- **The value head is compressed** (§8.4a finding 3) partly because it *cannot represent* "lost". A scalar
+  regression must emit some finite number for a dead state, and at inference 41% of what it meets is dead.
+- **A\* wastes its budget.** The heuristic hands dead branches a plausible finite value, so search expands
+  them. At stage 6 more than half the reachable space contains no goal at all.
+
+**This makes the categorical value head (§4) the clear next change rather than one option among several.** A
+distribution over distance buckets **plus an explicit "unsolvable" bucket** fixes both defects at once and does
+so natively: it represents "lost" as a class rather than as a number it has to invent, and it gives search a
+pruning rule instead of a misleading estimate. A scalar head fundamentally cannot express this — which is why
+patching it (say, labelling dead states with a large distance) would trade one distortion for another.
+
+Note this is the axis on which Rush Hour and Block Dude genuinely differ, and why the Rush Hour campaign needs
+none of it: with no dead ends, every state has a finite distance and the scalar regression is well-posed.
+
 ## 7. Risks
 
 - **§2 is the big unknown.** "Generate a solvable multi-barrier puzzle" is materially harder than the current
