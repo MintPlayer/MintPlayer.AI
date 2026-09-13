@@ -49,6 +49,19 @@ export class BlockDude {
   });
 
   private readonly history = signal<PgBlockDudeBoard[]>([]);
+
+  /**
+   * Actions taken since the level was (re)started — undo pops it, so it always mirrors what actually happened.
+   * On a win the whole trajectory is saved to localStorage under SOLUTIONS_KEY.
+   *
+   * A human solution to a shipped level is training data this project cannot get any other way: the exact BFS
+   * oracle cannot label boards this size (that is why the curriculum stops short of them), so these are the only
+   * ground-truth solutions to the real content that exist. The ACTION SEQUENCE is kept, not just the final
+   * board, because the sequence is strictly more: it yields a per-state action label, the final block
+   * configuration, AND a true remaining-distance label for every state along the way — in the 1-to-several-hundred
+   * range where the value head was measured to be badly compressed and has no training data at all.
+   */
+  private played: number[] = [];
   private renderer: BlockDudeRenderer | null = null;
   private board: PgBlockDudeBoard | null = null;
 
@@ -79,6 +92,7 @@ export class BlockDude {
     if (!level) return;
     this.board = PgBlockDudeBoard.fromGrid(level.grid);
     this.history.set([]);
+    this.played = [];
     this.moves.set(0);
     this.won.set(false);
     this.carrying.set(false);
@@ -93,11 +107,38 @@ export class BlockDude {
     this.reset();
   }
 
+  /** Where recorded human solutions accumulate. Read them with `localStorage.getItem(...)`. */
+  private static readonly SOLUTIONS_KEY = 'blockdude.solutions.v1';
+
+  /**
+   * Appends the finished trajectory. Keyed by level NAME rather than index so a future change to the pack's
+   * order cannot silently re-label old recordings, and the shortest solution per level wins — replaying a level
+   * better should improve the record, not append a worse duplicate.
+   */
+  private recordSolution(): void {
+    const level = this.level();
+    if (!level) return;
+
+    try {
+      const raw = localStorage.getItem(BlockDude.SOLUTIONS_KEY);
+      const all = raw ? JSON.parse(raw) as Record<string, { grid: string[]; moves: number[] }> : {};
+
+      const existing = all[level.name];
+      if (!existing || this.played.length < existing.moves.length)
+        all[level.name] = { grid: level.grid, moves: [...this.played] };
+
+      localStorage.setItem(BlockDude.SOLUTIONS_KEY, JSON.stringify(all));
+    } catch {
+      // A full or blocked localStorage must never break the game — the recording is a side benefit, not the point.
+    }
+  }
+
   protected undo(): void {
     const stack = this.history();
     if (stack.length === 0) return;
     this.board = stack[stack.length - 1];
     this.history.set(stack.slice(0, -1));
+    this.played.pop();   // keep the recording honest: an undone move was never played
     this.moves.update(n => Math.max(0, n - 1));
     this.won.set(false);
     this.carrying.set(this.board.carrying);
@@ -186,9 +227,12 @@ export class BlockDude {
       moved ? { fromX: before.px, fromY: before.py, climb: climbed } : undefined,
       fall);
 
+    this.played.push(action);
+
     if (next.won) {
       this.won.set(true);
-      this.status.set(`Level complete in ${this.moves()} move${this.moves() === 1 ? '' : 's'}.`);
+      this.recordSolution();
+      this.status.set(`Level complete in ${this.moves()} move${this.moves() === 1 ? '' : 's'} — solution recorded.`);
     } else if (next.carrying !== before.carrying) {
       this.status.set(next.carrying ? 'Carrying a block.' : 'Block placed.');
     } else {
