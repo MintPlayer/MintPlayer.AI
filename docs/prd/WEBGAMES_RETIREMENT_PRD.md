@@ -190,9 +190,11 @@ exists implicitly: no floor, no boundary walls unless placed.
 3. Target cell empty → move, then apply gravity.
 4. Target cell holds a Deur → move there, apply gravity, **fire level-complete**.
 5. Otherwise (Steen / Blok / Petie) → no move.
-6. Carried-block follow-up, which runs **even when the move was blocked**: if the cell diagonally
-   forward-and-up from the *old* position is occupied, the carried block falls from where it is and is
-   **knocked out of your hands**; otherwise it is placed directly above the player's new position.
+6. Carried-block follow-up, **only when the step actually happened** (a blocked move keeps the block — owner
+   ruling 2026-09-13, §4.3; the original wording said "even when the move was blocked" and was wrong): if the
+   cell diagonally forward-and-up from the *old* position — judged BEFORE the step and BEFORE gravity — is
+   occupied, the carried block falls from where it is and is **knocked out of your hands**; otherwise it is
+   placed directly above the player's new position.
 
 *Up = climb:* with `d = -1` for Links, `+1` for Rechts —
 1. `(x+d, y)` must be occupied (something to climb).
@@ -250,11 +252,16 @@ up-left and **keeps** it — then walks back right and **loses** it to that very
 consecutive moves, opposite outcomes, because a climb carries it diagonally and a walk drags it sideways.
 That is the whole distinction in one test, on a board a player actually meets.
 
-**Still open — §4.2 rule 6 says the follow-up runs "even when the move was blocked", and the `.pg` does not.**
-Walking into a wall while carrying returns early, skipping the follow-up entirely. The TI-84+CE port takes a
-third position: `game.c` reverts the whole move when the carried block's destination is blocked, rather than
-dropping the block. Not changed, because it would alter every level where a carrier bumps a wall — possibly
-solvability — and no one has reported it. Needs an owner ruling against the real game.
+**RESOLVED (owner ruling 2026-09-13): a blocked move does NOT knock the block out of your hands.** §4.2 rule
+6 as first written said the follow-up runs "even when the move was blocked"; the `.pg` returns early instead,
+skipping it, and **that is the intended behaviour** — the rule text was wrong, not the code. Walking into a
+wall while carrying now provably keeps the block, and rule 6 above has been corrected to match.
+
+Recorded because all three sources disagreed and the disagreement is the interesting part: the recovered rule
+text said "drop it", this port says "keep it", and the TI-84+CE port takes a third position again —
+`game.c` reverts the whole move when the carried block's destination is blocked. Nothing here is changing, so
+the only cost of the ambiguity was the investigation; pinned by
+`WalkingIntoAWallWhileCarrying_KeepsTheBlock` so a future reading of the old rule text cannot reintroduce it.
 
 **Not a defect — a vacuous non-issue (recorded so it isn't "fixed" later).** Gravity is never applied after
 a climb, which *looks* like an omission next to the walk and drop paths. It has no observable effect. The

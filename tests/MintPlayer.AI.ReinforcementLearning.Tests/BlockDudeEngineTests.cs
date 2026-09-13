@@ -151,6 +151,38 @@ public class BlockDudeEngineTests
     }
 
     [Fact]
+    public void WalkingIntoAWallWhileCarrying_KeepsTheBlock()
+    {
+        // Owner ruling 2026-09-13 (PRD §4.3). The carried-block follow-up runs only when the step ACTUALLY
+        // happened: bumping a wall costs the move but never the block. Worth pinning because all three sources
+        // disagreed — the recovered rule text said the follow-up runs "even when the move was blocked", and the
+        // TI-84+CE port reverts the whole move instead. This is the behaviour that is intended.
+        // The wall is TWO high on purpose. The rejected reading knocks the block out when the cell diagonally
+        // forward-and-up from the old position is occupied — which (4,0) is — so this board separates the two
+        // rules instead of merely agreeing with both.
+        var board = Board(
+            "....W.",
+            ".PB.WD",
+            "WWWWWW");
+
+        var carried = board.Apply(BlockDudeAction.Right).Apply(BlockDudeAction.Grab);
+        Assert.True(carried.Carrying);
+
+        // Walk up to the wall: he ends at (3,1) holding the block at (3,0), facing a 2-high wall.
+        var atWall = carried.Apply(BlockDudeAction.Right).Apply(BlockDudeAction.Right);
+        Assert.True(atWall.Carrying);
+        Assert.Equal(3, atWall.PlayerX);
+        Assert.Equal(1, atWall.PlayerY);
+        Assert.Equal(BlockDudeTile.Wall, atWall.TileAt(4, 0));   // the cell that would knock it out
+
+        var bumped = atWall.Apply(BlockDudeAction.Right);
+
+        Assert.True(bumped.Carrying, "bumping a wall must never knock the block out of his hands");
+        Assert.Equal(3, bumped.PlayerX);
+        Assert.Equal(1, bumped.PlayerY);
+    }
+
+    [Fact]
     public void ClimbingKeepsTheBlock_EvenWithAStoneDirectlyAboveIt()
     {
         // The mirror of the knock-out rule, and the reason it must NOT be widened to "anything solid near the

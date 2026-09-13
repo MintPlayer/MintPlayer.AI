@@ -2694,6 +2694,15 @@ stand in the door cell, which is how a level is won (owner ruling). Four genuine
 the cell whose solidity it just required, so a gravity pass there could never do anything. Gravity is never
 settled on load, which is what lets level 11 ship with **14 blocks floating in mid-air**.
 
+**The carried block: one real defect, two rules confirmed (2026-09-13, owner reports, PRD §4.3).** The
+follow-up must be judged from the cell diagonally forward-and-up from the OLD position, before the step and
+before gravity; the `.pg` judged it AFTER gravity, so walking off a ledge carried the block diagonally
+**through a wall**. Fixed. Two adjacent behaviours were then confirmed as correct rather than changed: a climb
+carries the block diagonally, so a ceiling directly above it is never on its path and carrying survives; and a
+**blocked** move keeps the block — the recovered rule text's "even when the move was blocked" was wrong, and
+the TI-84+CE port disagrees with both. All three are pinned by tests, one of them on real shipped content
+(level 10: the same block survives a climb under a wall and is knocked off by that wall one move later).
+
 **Training (M58.5, D2/D9).** Two-phase by design: imitation from the exact oracle, then expert iteration on
 boards the oracle cannot label. The owner's objection — *"the net will never be stronger than the teacher"* —
 is right in general but vacuous for phase 1, because BFS is *optimal* where Kociemba (the cube's teacher) was
@@ -2756,10 +2765,12 @@ and applies to every canvas here: **a canvas sized from its element needs both a
 circular sizing. Verifying at 390px also showed the *page* scrolling sideways: thirteen non-wrapping nav links,
 two of them added by this milestone. Fixed.
 
-**Still open:** the full test suite has not run since the campaign work, the two new pages have no tests, no Block
-Dude net has been trained to a gate (the pipeline is verified end to end but no checkpoint is committed), phase-2
-expert iteration is unbuilt, and `C:\Repos\WebGames` has not yet been deleted (its four untracked projects were
-committed and pushed first — M58.0). See the PRD's "Where to pick this up".
+**Still open (2026-09-13):** the two new pages have no tests; **no Block Dude net is committed** — the pipeline is
+verified end to end and an 11-hour run on the corrected engine with saturation growth is in flight (`data/bd4`),
+but its result is not in yet; phase-2 expert iteration is unbuilt; and `C:\Repos\WebGames` has not yet been
+deleted (its four untracked projects were committed and pushed first — M58.0). The **full test suite has not
+completed locally** — it repeatedly failed to finish on the dev machine — so **PR #50's CI is the check**,
+particularly for the Cube and Rush Hour growth-ladder changes. See the PRD's "Where to pick this up".
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
