@@ -167,6 +167,25 @@ remaining along that path — the second landing in the 1-to-909 range where the
 under-estimating by ~37 moves with no training data at all (§8.4a). No search or oracle is needed to extract
 either.
 
+## 6c. Phase 2, first real result — the mechanism works (2026-09-13, 26 minutes of training)
+
+Benched with `--eval-levels --search --phase 2 --resume-net` against the phase-1 baseline taken the same day:
+
+| tier | phase 1 | phase 2, after 26 min | levels newly solved |
+|---|---|---|---|
+| greedy (policy alone) | **0/15** | **3/15** | Level 1, Bonus 1, Bonus 3 |
+| greedy + no-revisit | 1/15 | 3/15 | — |
+| net-guided A* | 5/15 | **6/15** | + Level 5 (207 moves) |
+
+**The policy now solves levels unaided, which it had never done** — and Level 1 in 19 steps, matching the
+human's 19. The curriculum reached 5/15 levels whole, frontier 19→100, in six rounds.
+
+Worth stating plainly what this does and does not establish. It establishes that the reverse curriculum
+produces a net that plays measurably better on the real levels, from a standing start of zero. It does **not**
+establish the ceiling: the run used the scalar value head, which §6b shows is both compressed at long horizons
+and blind to the 41.5% of states that are unwinnable. So this is a **lower bound** on the approach, and any
+stall observed with this head is evidence about the heuristic rather than about the curriculum.
+
 ## 6b. Irreversibility — the net has never been shown a lost position (owner, 2026-09-13)
 
 > *"in Rush Hour, a lousy move doesn't kill the entire game, whereas in Block Dude each move has to be perfect

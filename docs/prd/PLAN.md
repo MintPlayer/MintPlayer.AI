@@ -2857,9 +2857,13 @@ a viewer demo, not a capacity lever. Block Dude also joined the live network vie
 phase 2 shipped without the seam hours after phase 1 gained it; `CampaignTelemetryTests` now fails any campaign
 that cannot be watched, since `VizLauncher` skips silently by design.
 
-**Still open.** The generator rebuild (rebuild PRD §2) and the categorical value head (§4) are unbuilt; the
-phase-2 net has not been benched against the 0/15 greedy / 5/15 search baseline; and the full local test suite
-still does not complete on the dev machine, so CI remains the check.
+**Phase 2's first result, after 26 minutes of training** (rebuild PRD §6c): greedy **0/15 → 3/15**, A\*
+**5/15 → 6/15**. The policy solves Level 1, Bonus 1 and Bonus 3 unaided — something it had never done — and
+Level 1 in 19 steps, matching the human optimum. A lower bound, not a ceiling: the run used the scalar value
+head that §6b shows is compressed AND blind to the 41.5% of states that are unwinnable.
+
+**Still open.** The generator rebuild (rebuild PRD §2) and the categorical value head (§4) are unbuilt; and the
+full local test suite still does not complete on the dev machine, so CI remains the check.
 
 ---
 
