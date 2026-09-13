@@ -939,6 +939,36 @@ successor is unvisited; no lookahead) converts every `Loop` ending into `NoMove`
 it walks into genuinely unrecoverable positions. Recorded because it cheaply rules out the most attractive
 easy explanation.
 
+**6. The training and shipped distributions differ — but NOT in the way expected.** The owner's reading implied
+the missing skill was the away-from-the-door detour. Measured over 30 generated boards per stage against the 15
+shipped levels (walk-only BFS for fetchable blocks; optimal-path rollout for how far the dude walks opposite
+the door):
+
+| population | W×H | free | blocks | optimal moves | door above player | must fetch AWAY from door |
+|---|---|---|---|---|---|---|
+| stage 0 | 10×8 | 27 | 1.4 | 6.6 | 77% | 37% |
+| stage 4 | 18×10 | 78 | 4.1 | 21.2 | 70% | 43% |
+| stage 6 | 24×13 | 141 | 4.8 | 24.9 | 80% | 40% |
+| **shipped (15)** | 22×14 | **220** | **12.7** | far beyond the oracle | 47% | **7%** |
+
+**The detour is over-represented in training, not absent** (37–43% vs 7% shipped) — so the data does not need
+redesigning for it. Two other gaps are real and large:
+
+- **Scale.** Stage 6 tops out at ~25 optimal moves with ~5 blocks; the shipped levels need multi-hundred-move
+  solutions with 9–42 blocks and repeated staircases. Training never exceeds roughly one barrier and a
+  one-to-two-block bridge. Straight P→D distance actually *matches* (15.6 shipped vs 15.7 at stage 6) — it is
+  the block budget and episode length that do not.
+- **Topology.** `BlockDudeGenerator.TryBuildLayout` places the player on the LOW side of a rise and the door on
+  the HIGH side, with blocks only on the player's side. It can therefore emit only "stack up over a rise"
+  puzzles — 70–80% door-above. The shipped levels are **53% door at-or-below the player**: descend, bridge a
+  pit, drop blocks in. That shape is not merely rare in training, it is **unreachable by construction** (a
+  low door would be walk-reachable and the candidate rejected as `BlocksAreDecorative`).
+
+This reframes the ceiling. It is not that the net is under-trained on the right distribution; it is that the
+generator cannot express the shipped distribution, and the exact oracle cannot label at that length even if it
+could. Those two limits are the same limit, and §8.1b's phase 2 is the documented way through: search labels
+what BFS cannot reach.
+
 **What this implies for the plan.** More samples alone is the weakest of the available levers: the net is not
 converged (loss and accuracy are both still moving), but solve rate at these horizons is brutally sensitive to
 per-step accuracy, which is improving roughly a point per million samples and decelerating. The levers that
