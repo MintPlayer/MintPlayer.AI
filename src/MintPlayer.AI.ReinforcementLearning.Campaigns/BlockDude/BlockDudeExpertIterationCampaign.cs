@@ -130,8 +130,11 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
                 if (start is null) continue;
 
                 _windowAttempts++;
-                var found = BlockDudeSearch.Solve(_net, start, _options.Expansions, _options.Weight,
-                                                 TimeSpan.FromSeconds(_options.SearchSeconds));
+                var found = _options.PolicyWeight > 0
+                    ? BlockDudeSearch.SolveWithPolicy(_net, start, _options.Expansions, _options.Weight,
+                                                      _options.PolicyWeight, TimeSpan.FromSeconds(_options.SearchSeconds))
+                    : BlockDudeSearch.Solve(_net, start, _options.Expansions, _options.Weight,
+                                            TimeSpan.FromSeconds(_options.SearchSeconds));
                 if (!found.Solved) continue;
 
                 solved++;

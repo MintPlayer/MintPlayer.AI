@@ -32,6 +32,15 @@ internal static class BlockDudeLevelBench
         float weight = a.Flt("--weight", 2f);
         int seconds = a.Int("--search-seconds", 20);
 
+        // --zero-h runs the SAME search with h = 0, i.e. uninformed breadth-first, as a control. Without it
+        // "search solves N/15" cannot be attributed: part of that N is the search and part is the net.
+        bool zeroH = a.Has("--zero-h");
+
+        // --policy-search adds a third pass that uses the policy head as a prior as well as the value head as
+        // cost-to-go. Reported next to the value-only number, because the comparison is the point.
+        bool policySearch = a.Has("--policy-search");
+        float policyWeight = a.Flt("--policy-weight", 1f);
+
         var ids = BlockDudeIds.ForPhase(phase);
         string netId = useResumeNet ? ids.Policy : ids.PolicyBest;
 
@@ -52,7 +61,7 @@ internal static class BlockDudeLevelBench
         Console.WriteLine();
 
         var levels = BlockDudeLevels.All;
-        int solved = 0, noRevisitSolved = 0, searchSolved = 0;
+        int solved = 0, noRevisitSolved = 0, searchSolved = 0, zeroSolved = 0, policySolved = 0;
         for (int i = 0; i < levels.Length; i++)
         {
             var board = BlockDudeBoard.FromGrid(levels[i].Grid);
@@ -75,6 +84,22 @@ internal static class BlockDudeLevelBench
                 line += found.Solved ? $"  | search SOLVED in {found.Length,4:N0} moves" : "  | search -";
             }
 
+            if (policySearch)
+            {
+                var found = BlockDudeSearch.SolveWithPolicy(net, board, expansions, weight, policyWeight,
+                                                           TimeSpan.FromSeconds(seconds));
+                if (found.Solved) policySolved++;
+                line += found.Solved ? $"  | policy+value SOLVED in {found.Length,4:N0} moves" : "  | policy+value -";
+            }
+
+            if (zeroH)
+            {
+                var blind = BlockDudeSearch.Solve(BlockDudeSearch.ZeroHeuristic, board, expansions, weight,
+                                                  TimeSpan.FromSeconds(seconds));
+                if (blind.Solved) zeroSolved++;
+                line += blind.Solved ? $"  | blind SOLVED in {blind.Length,4:N0} moves" : "  | blind -";
+            }
+
             Console.WriteLine(line);
         }
 
@@ -93,6 +118,22 @@ internal static class BlockDudeLevelBench
             Console.WriteLine($"solved {searchSolved}/{levels.Length} shipped levels " +
                               $"({searchSolved / (double)levels.Length:P0}), net-guided A* " +
                               $"(weight {weight}, ≤{expansions:N0} expansions, ≤{seconds}s per level)");
+        }
+
+        if (policySearch)
+        {
+            Console.WriteLine($"solved {policySolved}/{levels.Length} shipped levels " +
+                              $"({policySolved / (double)levels.Length:P0}), policy-prior + value A* " +
+                              $"(weight {weight}, policy weight {policyWeight}, ≤{expansions:N0} expansions, ≤{seconds}s per level)");
+        }
+
+        if (zeroH)
+        {
+            // The control. Whatever the net-guided number is, the honest claim about the heuristic is the
+            // DIFFERENCE between the two lines — not the net-guided line on its own.
+            Console.WriteLine($"solved {zeroSolved}/{levels.Length} shipped levels " +
+                              $"({zeroSolved / (double)levels.Length:P0}), SAME search with h = 0 " +
+                              $"(uninformed breadth-first — the control for what the value head is worth)");
         }
     }
 }

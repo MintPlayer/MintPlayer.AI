@@ -52,10 +52,57 @@ public static class BlockDudeSearch
     public static Outcome Solve(BlockDudePolicyNet net, BlockDudeBoard start,
                                 int maxExpansions = 200_000, float weight = 2f, TimeSpan? maxTime = null,
                                 int expandBatch = DefaultExpandBatch)
+        => Solve(net.Distances, start, maxExpansions, weight, maxTime, expandBatch);
+
+    /// <summary>
+    /// The same search against an arbitrary batched cost-to-go — the seam that lets a bench substitute a
+    /// different heuristic for the net's.
+    /// </summary>
+    /// <remarks>
+    /// Its reason for existing is <see cref="ZeroHeuristic"/>. "The net solves 7/15 with search" is not
+    /// interpretable on its own: uninformed breadth-first search solves some of these levels too, and without
+    /// that control number there is no way to tell whether the value head is guiding the search or merely
+    /// riding along. Comparing the two is what says whether effort belongs in the heuristic or elsewhere.
+    /// </remarks>
+    public static Outcome Solve(Func<IReadOnlyList<BlockDudeBoard>, float[]> costToGo, BlockDudeBoard start,
+                                int maxExpansions = 200_000, float weight = 2f, TimeSpan? maxTime = null,
+                                int expandBatch = DefaultExpandBatch)
     {
         var model = new Model();
         var moves = ValueGuidedSearch.SolveBatched(
-            model, net.Distances, start, maxExpansions, weight, expandBatch, maxTime);
+            model, costToGo, start, maxExpansions, weight, expandBatch, maxTime);
+        return new(moves, maxExpansions);
+    }
+
+    /// <summary>h = 0 everywhere: weighted A* degenerates to uniform-cost (breadth-first) search. The control
+    /// for "is the learned heuristic worth anything".</summary>
+    public static float[] ZeroHeuristic(IReadOnlyList<BlockDudeBoard> boards) => new float[boards.Count];
+
+    /// <summary>
+    /// Search using BOTH heads — the value head as cost-to-go and the policy head as a prior over moves.
+    /// </summary>
+    /// <remarks>
+    /// <para>The value-only <see cref="Solve(BlockDudePolicyNet, BlockDudeBoard, int, float, TimeSpan?, int)"/>
+    /// discards the better-trained half of the net. The policy reaches ~89% agreement with demonstrated moves
+    /// and solves shipped levels outright with no lookahead at all; the value head is measured compressed at
+    /// long horizons (PRD §8.4a). Asking the accurate head "which move" and the inaccurate one only "roughly how
+    /// far" plays to what each actually knows.</para>
+    ///
+    /// <para>The policy is a preference, never a filter: deviating from it costs, so the search still reaches
+    /// anything an uninformed search would, given budget. That matters in a game where the winning line is
+    /// frequently the move the policy ranks second.</para>
+    /// </remarks>
+    /// <param name="policyWeight">How many moves' worth of cost one nat of policy surprise is worth. 0 reduces
+    /// this exactly to the value-only search.</param>
+    public static Outcome SolveWithPolicy(BlockDudePolicyNet net, BlockDudeBoard start,
+                                          int maxExpansions = 200_000, float weight = 2f, float policyWeight = 1f,
+                                          TimeSpan? maxTime = null, int expandBatch = DefaultExpandBatch)
+    {
+        var model = new Model();
+        var moves = PolicyValueSearch.Solve(
+            model,
+            boards => { var (priors, distances) = net.EvaluateBatch(boards); return new(priors, distances); },
+            start, maxExpansions, weight, policyWeight, expandBatch, maxTime);
         return new(moves, maxExpansions);
     }
 

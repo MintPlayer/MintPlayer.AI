@@ -32,6 +32,18 @@ public sealed record BlockDudeExpertIterationOptions
     /// <summary>f = g + weight·h. A learned heuristic is not admissible, so above 1 is the practical setting.</summary>
     public float Weight { get; init; } = 2f;
 
+    /// <summary>
+    /// How much the policy head's prior steers the search that generates training data — one nat of surprise
+    /// costs this many moves. 0 falls back to value-only search.
+    /// </summary>
+    /// <remarks>
+    /// This is a self-improvement loop, so the search is not only the measuring instrument but the data source:
+    /// a search that reaches further solves longer suffixes, which moves the frontier, which is the run's actual
+    /// progress. Using the policy head here feeds the better-trained head back into producing its own next
+    /// batch of training data.
+    /// </remarks>
+    public float PolicyWeight { get; init; } = 1f;
+
     /// <summary>Where a level's frontier starts: moves from the door it must solve before moving outward.
     /// Defaults to the depth the current net was measured to manage unaided (PRD §6a).</summary>
     public int InitialFrontier { get; init; } = 20;

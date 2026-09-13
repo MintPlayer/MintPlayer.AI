@@ -72,6 +72,7 @@ internal static class BlockDudeLab
                     Expansions = a.Int("--expansions", 40_000),
                     SearchSeconds = a.Int("--search-seconds", 6),
                     Weight = a.Flt("--weight", 2f),
+                    PolicyWeight = a.Flt("--policy-weight", 1f),
                     InitialFrontier = a.Int("--frontier", 20),
                     FrontierGrowth = a.Dbl("--frontier-growth", 1.5),
                     AdvanceRate = a.Dbl("--advance-rate", 0.75),

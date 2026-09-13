@@ -106,6 +106,70 @@ public sealed class BlockDudePolicyNet : IGrowableTrunkNet<BlockDudePolicyNet>
         return result;
     }
 
+    /// <summary>
+    /// Both heads for a whole batch, in one forward pass: per-action log-probabilities (illegal moves heavily
+    /// penalised but FINITE) and distance-to-goal in moves.
+    /// </summary>
+    /// <param name="illegalLogProb">What an illegal move scores. Deliberately not −∞: a policy-guided search
+    /// accumulates these along a path, and −∞ would turn the whole path's cost into NaN, which sorts
+    /// unpredictably and silently corrupts the frontier. A large negative number expresses the same preference
+    /// and stays arithmetic.</param>
+    /// <remarks>
+    /// Log-probabilities rather than logits, because a search that accumulates them along a path needs them
+    /// comparable ACROSS states — two nodes at different depths are ordered against each other, and unnormalised
+    /// logits would let one state's arbitrary offset outweigh a real preference in another.
+    /// </remarks>
+    public (float[] LogPriors, float[] Distances) EvaluateBatch(IReadOnlyList<BlockDudeBoard> boards,
+                                                               float illegalLogProb = -20f)
+    {
+        int n = boards.Count;
+        const int actions = BlockDudeBoard.ActionCount;
+        var priors = new float[n * actions];
+        var distances = new float[n];
+        if (n == 0) return (priors, distances);
+
+        var obs = new float[n * BlockDudeBoard.ObservationSize];
+        for (int i = 0; i < n; i++)
+            boards[i].WriteObservation(obs.AsSpan(i * BlockDudeBoard.ObservationSize, BlockDudeBoard.ObservationSize));
+
+        using (GradMode.NoGrad())
+        {
+            var (logits, value) = _core.Forward(new Tensor(obs, n, BlockDudeBoard.ObservationSize));
+
+            for (int i = 0; i < n; i++)
+            {
+                distances[i] = MathF.Max(0f, value.Data[i]) * DistanceScale;
+
+                // Log-softmax over the legal moves only, computed in the numerically stable form. Masking before
+                // normalising matters: probability spent on moves the engine will refuse is probability stolen
+                // from the ones the search can actually take.
+                int row = i * actions;
+                float max = float.NegativeInfinity;
+                for (int a = 0; a < actions; a++)
+                    if (boards[i].IsLegal((BlockDudeAction)a) && logits.Data[row + a] > max) max = logits.Data[row + a];
+
+                if (float.IsNegativeInfinity(max))
+                {
+                    // No legal move at all (a dead position). Uniform is the honest prior: there is nothing to
+                    // prefer, and the search will discover the successors go nowhere.
+                    for (int a = 0; a < actions; a++) priors[row + a] = -MathF.Log(actions);
+                    continue;
+                }
+
+                float sum = 0f;
+                for (int a = 0; a < actions; a++)
+                    if (boards[i].IsLegal((BlockDudeAction)a)) sum += MathF.Exp(logits.Data[row + a] - max);
+
+                float logSum = max + MathF.Log(sum);
+                for (int a = 0; a < actions; a++)
+                    priors[row + a] = boards[i].IsLegal((BlockDudeAction)a)
+                        ? logits.Data[row + a] - logSum
+                        : illegalLogProb;
+            }
+        }
+        return (priors, distances);
+    }
+
     /// <summary>The highest-scoring legal action, or null when the position has none.</summary>
     public BlockDudeAction? Greedy(BlockDudeBoard board)
     {
