@@ -142,16 +142,13 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
                 Collect(start, found.Moves!, samples);
             }
 
-            // Advance only on a clear majority: a frontier pushed outward on one lucky search produces tasks the
-            // net cannot do, which yields no data at all and stalls the level.
-            if (solved >= _options.AdvanceRate * _options.AttemptsPerLevel)
+            int cap = solution.Moves.Length;
+            int moved = NextFrontier(depth, solved, _options.AttemptsPerLevel, cap, _options);
+            if (moved != depth)
             {
-                int next = Math.Max(depth + 1, (int)(depth * _options.FrontierGrowth));
-                int cap = solution.Moves.Length;
-                _frontier[solution.Name] = Math.Min(next, cap);
-                if (_frontier[solution.Name] != depth)
-                    Log($"{solution.Name}: frontier {depth} → {_frontier[solution.Name]}" +
-                        (_frontier[solution.Name] == cap ? " (the whole level)" : ""));
+                _frontier[solution.Name] = moved;
+                Log($"{solution.Name}: frontier {depth} → {moved}" +
+                    (moved == cap ? " (the whole level)" : moved < depth ? $" (retreat — solved none of {_options.AttemptsPerLevel})" : ""));
             }
         }
 
@@ -168,6 +165,34 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
         }
 
         return _totalSamples;
+    }
+
+    /// <summary>
+    /// Where a level's frontier goes after a round that solved <paramref name="solved"/> of
+    /// <paramref name="attempts"/> attempts. Pure, so the curriculum's one piece of real judgement is testable
+    /// without running a campaign.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Outward</b> only on a clear majority: a frontier pushed out on one lucky search sets tasks the
+    /// net cannot do, which yields no data and stalls the level.</para>
+    ///
+    /// <para><b>Inward</b> when a round solves nothing — the part that was missing, and the reason it matters is
+    /// that the two directions are not symmetric. Growth is a 1.5× jump, so a level can be moved somewhere the
+    /// net cannot reach at all; a level solving nothing produces no samples; a level producing no samples never
+    /// improves. Without a retreat the curriculum strands it there for the rest of the run. Retreat is gentler
+    /// than growth on purpose, so a frontier settles at the edge of the net's ability instead of oscillating
+    /// across it.</para>
+    /// </remarks>
+    internal static int NextFrontier(int depth, int solved, int attempts, int cap,
+                                     BlockDudeExpertIterationOptions options)
+    {
+        if (solved >= options.AdvanceRate * attempts)
+            return Math.Min(Math.Max(depth + 1, (int)(depth * options.FrontierGrowth)), cap);
+
+        if (solved == 0 && depth > 1)
+            return Math.Max(1, Math.Min(depth - 1, (int)(depth * options.FrontierRetreat)));
+
+        return depth;
     }
 
     /// <summary>Turns a found solution into one sample per state along it, labelled with the move taken and the

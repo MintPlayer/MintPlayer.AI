@@ -56,6 +56,18 @@ public sealed record BlockDudeExpertIterationOptions
     public double AdvanceRate { get; init; } = 0.75;
 
     /// <summary>
+    /// Multiplier applied to a level's frontier after a round in which it solved NOTHING.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to <see cref="FrontierGrowth"/>, and the thing that makes overshooting recoverable.
+    /// Growth is a 1.5× jump, so a level can be moved somewhere the net cannot solve at all — and a level
+    /// solving nothing produces no training samples, so on its own it would never improve and the curriculum
+    /// would strand it there permanently. Retreating is gentler than growth on purpose: the frontier should
+    /// settle at the edge of the net's ability rather than oscillate across it.
+    /// </remarks>
+    public double FrontierRetreat { get; init; } = 0.8;
+
+    /// <summary>
     /// Share of each training batch drawn from the HUMAN demonstrations rather than searched solutions. Keeps a
     /// permanent anchor in true long-horizon data: searched solutions cluster near whatever the frontier
     /// currently is, so without this the far-distance labels would fade out of the mix as the frontier moves.
