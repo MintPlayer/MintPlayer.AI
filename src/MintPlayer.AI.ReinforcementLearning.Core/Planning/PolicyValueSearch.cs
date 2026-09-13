@@ -35,6 +35,10 @@ namespace MintPlayer.AI.ReinforcementLearning.Core.Planning;
 /// </remarks>
 public static class PolicyValueSearch
 {
+    /// <summary>How much cheaper a new path must be before a state is re-opened. Guards against re-expanding a
+    /// state for float improvements too small to change any decision — see the note at the dedup check.</summary>
+    private const float ReopenEpsilon = 1e-3f;
+
     /// <summary>
     /// One batched evaluation of the net over a list of states.
     /// </summary>
@@ -114,7 +118,13 @@ public static class PolicyValueSearch
                     // depth alone: two paths to one state can differ in how plausible they are, and keeping the
                     // shallower-but-implausible one would discard exactly the information the policy adds.
                     float cost = node.Cost + 1f + policyWeight * -nodePriors[action];
-                    if (bestCost.TryGetValue(key, out float known) && known <= cost) continue;
+
+                    // The epsilon is not cosmetic. The value-only search dedups on integer depth, so a state can
+                    // only ever be re-opened a bounded number of times; cost here is a float, so two paths of the
+                    // same length that differ only in how plausible they are produce different costs, and without
+                    // a threshold a state can be re-opened for improvements far too small to change any decision.
+                    // That is a node-count explosion, in the one place where nodes are the whole budget.
+                    if (bestCost.TryGetValue(key, out float known) && known <= cost + ReopenEpsilon) continue;
 
                     bestCost[key] = cost;
                     pending.Add(new(next, index, action, node.Depth + 1, cost, key));

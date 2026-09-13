@@ -17,6 +17,23 @@ using MintPlayer.AI.ReinforcementLearning.Environments.BlockDude;
 /// </remarks>
 internal static class BlockDudeLevelBench
 {
+    /// <summary>Records one solved level in the web recorder's line format, keeping the SHORTEST line per level
+    /// when several tiers solve it — the tiers differ, and reporting the worse one would understate the net.</summary>
+    private static void Emit(List<string> lines, string levelName, IReadOnlyList<int> moves)
+    {
+        string line = $"{levelName} · {moves.Count} moves · {string.Concat(moves)}";
+
+        int existing = lines.FindIndex(l => l.StartsWith($"{levelName} · ", StringComparison.Ordinal));
+        if (existing < 0) lines.Add(line);
+        else if (moves.Count < ExistingLength(lines[existing])) lines[existing] = line;
+    }
+
+    private static int ExistingLength(string line)
+    {
+        var parts = line.Split(" · ");
+        return parts.Length >= 2 && int.TryParse(parts[1].AsSpan(0, parts[1].IndexOf(' ')), out int n) ? n : int.MaxValue;
+    }
+
     public static void Run(string[] args)
     {
         var a = new CliArgs(args);
@@ -40,6 +57,13 @@ internal static class BlockDudeLevelBench
         // cost-to-go. Reported next to the value-only number, because the comparison is the point.
         bool policySearch = a.Has("--policy-search");
         float policyWeight = a.Flt("--policy-weight", 1f);
+
+        // --emit-solutions writes what the net actually played, in the SAME one-line-per-level format the web
+        // game's own recorder produces ("Level 1 · 19 moves · 0303…"). That makes an AI solution paste-able
+        // straight back into the game to be watched, and directly comparable with the human line for the same
+        // level — which is the only honest way to read "solved it in 172 moves".
+        string? emitPath = a.Str("--emit-solutions", "") is { Length: > 0 } p ? p : null;
+        var emitted = new List<string>();
 
         var ids = BlockDudeIds.ForPhase(phase);
         string netId = useResumeNet ? ids.Policy : ids.PolicyBest;
@@ -82,6 +106,7 @@ internal static class BlockDudeLevelBench
                 var found = BlockDudeSearch.Solve(net, board, expansions, weight, TimeSpan.FromSeconds(seconds));
                 if (found.Solved) searchSolved++;
                 line += found.Solved ? $"  | search SOLVED in {found.Length,4:N0} moves" : "  | search -";
+                if (found.Solved) Emit(emitted, levels[i].Name, found.Moves!);
             }
 
             if (policySearch)
@@ -90,6 +115,7 @@ internal static class BlockDudeLevelBench
                                                            TimeSpan.FromSeconds(seconds));
                 if (found.Solved) policySolved++;
                 line += found.Solved ? $"  | policy+value SOLVED in {found.Length,4:N0} moves" : "  | policy+value -";
+                if (found.Solved) Emit(emitted, levels[i].Name, found.Moves!);
             }
 
             if (zeroH)
@@ -118,6 +144,13 @@ internal static class BlockDudeLevelBench
             Console.WriteLine($"solved {searchSolved}/{levels.Length} shipped levels " +
                               $"({searchSolved / (double)levels.Length:P0}), net-guided A* " +
                               $"(weight {weight}, ≤{expansions:N0} expansions, ≤{seconds}s per level)");
+        }
+
+        if (emitPath is not null && emitted.Count > 0)
+        {
+            File.WriteAllLines(emitPath, emitted);
+            Console.WriteLine();
+            Console.WriteLine($"wrote {emitted.Count} solution line(s) to {emitPath} — paste them into the game to watch them.");
         }
 
         if (policySearch)
