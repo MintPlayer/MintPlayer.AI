@@ -38,6 +38,64 @@
 
 // One compact row, 48px targets: over the 44px WCAG figure, and reachable with a thumb without covering the
 // board the way a floating d-pad would.
+// The move list. Deliberately a readonly textarea rather than a <pre>: it is selectable on every browser and
+// on touch, so copying never depends on the clipboard permission the button needs.
+.solution {
+  max-width: 44rem;
+  margin: 0.75rem auto 0;
+  text-align: left;
+
+  .solution-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 0.35rem;
+    color: #aab2c5;
+    font-size: 0.9rem;
+  }
+
+  .copy {
+    flex: none;
+    color: #aab2c5;
+    background: #232938;
+    border: 1px solid #3a4154;
+    border-radius: 6px;
+    padding: 2px 10px;
+    font-size: 0.85rem;
+
+    &:hover { color: #e6e8ee; }
+  }
+
+  .solution-text {
+    display: block;
+    width: 100%;
+    resize: vertical;
+    color: #e6e8ee;
+    background: #14171f;
+    border: 1px solid #3a4154;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    word-break: break-all;   // a 200-move digit string must wrap, not scroll sideways
+  }
+
+  .solution-legend {
+    margin: 0.35rem 0 0;
+    color: #7c869c;
+    font-size: 0.8rem;
+
+    code {
+      color: #aab2c5;
+      background: #232938;
+      border-radius: 4px;
+      padding: 0 4px;
+    }
+  }
+}
+
 // A D-pad, not a toolbar: the two walk keys are the ones held down, so they get the tall outer columns and the
 // thumb never has to hunt for them. Climb sits above put-down in the middle because that is the pair you
 // alternate while building a staircase.

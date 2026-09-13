@@ -39,6 +39,22 @@
   <span class="moves">{{ moves() }} move{{ moves() === 1 ? '' : 's' }}</span>
 </div>
 
+@if (solution() ?? attempt(); as text) {
+  <div class="solution">
+    <p class="solution-head">
+      {{ solution() ? 'Solution recorded — copy this and paste it back.' : 'Moves so far' }}
+      <button type="button" class="copy" (click)="copySolution(text)">{{ copyLabel() }}</button>
+    </p>
+    <textarea class="solution-text" readonly rows="3"
+              (focus)="$any($event.target).select()">{{ text }}</textarea>
+    <p class="solution-legend">
+      <code>0</code> ← walk left · <code>1</code> → walk right · <code>2</code> ↑ climb ·
+      <code>3</code> ↓ pick up / put down. Undo drops the last move from this list; Restart clears it.
+      Finishing a level keeps it — shortest attempt wins — and the list then shows every level you have solved.
+    </p>
+  </div>
+}
+
 <p class="keys">
   Arrow keys walk, <kbd>↑</kbd> climbs and <kbd>↓</kbd> or <kbd>Space</kbd> picks up and puts down.
   <kbd>Z</kbd> undoes, <kbd>R</kbd> restarts. Undo matters here: unlike most puzzles, a misplaced block can

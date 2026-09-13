@@ -41,6 +41,26 @@ export class BlockDude {
   protected readonly status = signal('Loading levels…');
   protected readonly carrying = signal(false);
 
+  /**
+   * Every solution recorded so far, rendered as pasteable lines. Set on a win so the player can hand the whole
+   * set over in one copy, rather than anyone having to dig it out of localStorage.
+   */
+  protected readonly solution = signal<string | null>(null);
+  protected readonly copyLabel = signal('Copy');
+
+  /**
+   * The move list for the CURRENT attempt, live. Derived from <see cref="played"/> rather than accumulated
+   * separately so it cannot drift from what actually happened: undo drops the last move from the list because
+   * it drops it from the recording, and restart empties both. One source of truth, not two kept in step.
+   */
+  protected readonly attempt = computed(() => {
+    const moves = this.played();
+    const level = this.level();
+    return moves.length === 0 || !level
+      ? null
+      : `${level.name} · ${moves.length} move${moves.length === 1 ? '' : 's'} · ${moves.join('')}`;
+  });
+
   protected readonly level = computed(() => this.levels()[this.levelIndex()]);
   protected readonly canUndo = computed(() => this.history().length > 0);
   protected readonly aspect = computed(() => {
@@ -61,7 +81,7 @@ export class BlockDude {
    * configuration, AND a true remaining-distance label for every state along the way — in the 1-to-several-hundred
    * range where the value head was measured to be badly compressed and has no training data at all.
    */
-  private played: number[] = [];
+  protected readonly played = signal<number[]>([]);
   private renderer: BlockDudeRenderer | null = null;
   private board: PgBlockDudeBoard | null = null;
 
@@ -92,7 +112,8 @@ export class BlockDude {
     if (!level) return;
     this.board = PgBlockDudeBoard.fromGrid(level.grid);
     this.history.set([]);
-    this.played = [];
+    this.played.set([]);
+    this.solution.set(null);   // restart clears the list; the saved recording in localStorage is untouched
     this.moves.set(0);
     this.won.set(false);
     this.carrying.set(false);
@@ -124,13 +145,39 @@ export class BlockDude {
       const all = raw ? JSON.parse(raw) as Record<string, { grid: string[]; moves: number[] }> : {};
 
       const existing = all[level.name];
-      if (!existing || this.played.length < existing.moves.length)
-        all[level.name] = { grid: level.grid, moves: [...this.played] };
+      if (!existing || this.played().length < existing.moves.length)
+        all[level.name] = { grid: level.grid, moves: [...this.played()] };
 
       localStorage.setItem(BlockDude.SOLUTIONS_KEY, JSON.stringify(all));
+      this.solution.set(BlockDude.render(all));
     } catch {
-      // A full or blocked localStorage must never break the game — the recording is a side benefit, not the point.
+      // A full or blocked localStorage must never break the game — the recording is a side benefit, not the
+      // point. Still show THIS solution, which is the one the player just earned and would be annoyed to lose.
+      const level = this.level();
+      if (level) this.solution.set(BlockDude.render({ [level.name]: { grid: level.grid, moves: this.played() } }));
     }
+  }
+
+  /**
+   * One line per level: name, move count, then the actions as digits — the same 0..3 encoding the engine and
+   * the Lab's tests already use, so a pasted line needs no translation to be replayed.
+   */
+  private static render(all: Record<string, { grid: string[]; moves: number[] }>): string {
+    return Object.entries(all)
+      .map(([name, s]) => `${name} · ${s.moves.length} moves · ${s.moves.join('')}`)
+      .join('\n');
+  }
+
+  protected async copySolution(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+      this.copyLabel.set('Copied');
+    } catch {
+      // Clipboard access is permission-gated and fails outright over plain http on some browsers. The text is
+      // in a focusable, select-on-focus textarea precisely so this is a convenience, never the only way out.
+      this.copyLabel.set('Select it and copy');
+    }
+    setTimeout(() => this.copyLabel.set('Copy'), 2500);
   }
 
   protected undo(): void {
@@ -138,7 +185,7 @@ export class BlockDude {
     if (stack.length === 0) return;
     this.board = stack[stack.length - 1];
     this.history.set(stack.slice(0, -1));
-    this.played.pop();   // keep the recording honest: an undone move was never played
+    this.played.update(p => p.slice(0, -1));   // keep the recording honest: an undone move was never played
     this.moves.update(n => Math.max(0, n - 1));
     this.won.set(false);
     this.carrying.set(this.board.carrying);
@@ -227,7 +274,7 @@ export class BlockDude {
       moved ? { fromX: before.px, fromY: before.py, climb: climbed } : undefined,
       fall);
 
-    this.played.push(action);
+    this.played.update(p => [...p, action]);
 
     if (next.won) {
       this.won.set(true);
