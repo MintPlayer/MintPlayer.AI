@@ -240,10 +240,19 @@ export class BlockDude {
 
     const before = board;
     const next = board.applyAction(action);
-    if (next.px === before.px && next.py === before.py
-      && next.facingRight === before.facingRight && next.carrying === before.carrying
-      && next.blocks.length === before.blocks.length) {
-      // Nothing changed: an illegal move. Say why rather than failing silently.
+
+    // Nothing changed: an illegal move. Say why rather than failing silently, and do NOT record it — a refused
+    // keypress is not a move, so it stays out of the move count, the undo history and the recorded solution.
+    //
+    // Asking the ENGINE rather than comparing fields here. The previous hand-rolled test compared block COUNT
+    // rather than block positions, which is only safe as long as nothing can relocate a block without also
+    // changing `carrying`. That happens to hold today, but it is the engine's rule to know, not this page's —
+    // and `sameState` is the same predicate the training harness uses to detect a refused move, so the recording
+    // now agrees with the trainer by construction.
+    //
+    // Note a turn IS a change: facing right when you were facing left counts as a move even if the way ahead is
+    // blocked, faithful to the original. Pressing into a wall you already face does not.
+    if (next.sameState(before)) {
       this.status.set(this.refusal(action));
       return;
     }
