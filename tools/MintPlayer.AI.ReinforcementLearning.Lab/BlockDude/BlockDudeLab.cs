@@ -32,6 +32,9 @@ internal static class BlockDudeLab
         // Read-only diagnostic: predicted distance-to-goal vs the oracle's exact optimal move count.
         if (a.Has("--value-calibration")) { BlockDudeValueCalibration.Run(args); return; }
 
+        // Read-only: how far back along the human demonstrations can net + A* still finish?
+        if (a.Has("--demo-probe")) { BlockDudeDemoProbe.Run(args); return; }
+
         double hours = a.Dbl("--hours", 9);
         string dataDir = a.Str("--data", "data");
         ulong seed = a.ULong("--seed", 1);

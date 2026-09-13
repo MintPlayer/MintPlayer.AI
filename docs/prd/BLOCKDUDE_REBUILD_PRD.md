@@ -119,6 +119,43 @@ the levels A* cannot solve is more ground truth than this project currently has,
 
 ---
 
+## 6a. Reverse curriculum from the demonstrations — MEASURED, and it works
+
+The 15 human solutions (§6) are only 3,870 states, which sounds negligible against millions of training
+samples. Volume is the wrong axis: they are the **only** data that exists in the distribution the net is graded
+on, because §2 and §3 make every other source out-of-distribution by construction.
+
+**The mechanism.** A suffix of a demonstrated path is a legitimate position on real shipped terrain that is only
+N moves from the door. So one impossible board becomes a ladder of solvable ones, and fifteen trajectories
+become thousands of distinct training tasks — on exactly the topologies and horizons the generator cannot
+produce. `BlockDudeDemonstrations.ReverseCurriculumStarts(movesFromEnd)` yields them.
+
+**Measured with `--demo-probe`** (current net, A* weight 2, ≤40k expansions, ≤6s per attempt). Numbers are the
+solution length found; `-` is a miss:
+
+| level | human | 5 | 10 | 20 | 40 | 80 |
+|---|---|---|---|---|---|---|
+| Level 3 | 98 | 5 | 10 | 20 | 39 | **76** |
+| Level 7 | 782 | 5 | 10 | 20 | **41** | − |
+| Level 8 | 494 | 5 | 10 | 20 | **40** | − |
+| Level 10 | 386 | 5 | 10 | 18 | − | − |
+| **Level 11** | **909** | 5 | 10 | 18 | **35** | − |
+| Bonus 2 | 110 | 6 | 11 | **15** | 33 | − |
+
+Every level is solvable 20 moves out (bar Level 5), most at 40, and **Level 11 — which A\* cannot touch from
+the opening — is solved 35 moves from the end**. The frontier is therefore ~20–40 moves, which is where a
+reverse curriculum starts and what training pushes outward.
+
+**Search already beats the demonstrations locally**: Level 11 found 35 where the human took 40, Bonus 2 found
+15 where the human took 20, Level 10 found 18 where the human took 20. That is the mechanism by which the
+student exceeds the teacher (§8.1b of the M58 PRD) showing up before any training has happened — and it is why
+`Remaining` is documented as an upper bound, never an optimum.
+
+**Two labels, both free.** Each demonstrated state carries the action the human played AND the true moves
+remaining along that path — the second landing in the 1-to-909 range where the value head was measured
+under-estimating by ~37 moves with no training data at all (§8.4a). No search or oracle is needed to extract
+either.
+
 ## 7. Risks
 
 - **§2 is the big unknown.** "Generate a solvable multi-barrier puzzle" is materially harder than the current
