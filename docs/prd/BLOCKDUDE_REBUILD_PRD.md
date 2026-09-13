@@ -11,11 +11,16 @@ change — took a frozen checkpoint from 6/15 to 8/15 shipped levels. The recurr
 measurement was worth more than the expensive rebuild it was meant to justify, so take the next item in this
 plan as a hypothesis to test rather than work to schedule.
 
+**Read §6d's control before quoting any number in this document.** Uninformed breadth-first search solves 6/15
+shipped levels by itself. Every "solves N/15" here is therefore a claim about the *search budget* first and the
+net second, and the trained net's own contribution with lookahead is **+2 levels**. That control did not exist
+until 2026-09-14, so earlier sections overstate what they attribute to the net.
+
 | § | What | Status |
 |---|---|---|
 | 2 | Generator — lift the topology restriction | **not built.** No longer blocking, still needed for volume and variety |
 | 3 | Labeller — search instead of BFS | **BUILT** — `BlockDudeSearch`, net-guided weighted A* over `Core.Planning` |
-| 4 | Value head — categorical, with an "unsolvable" bucket | **not built, and demoted** by §6d — using the policy head in search recovered the cost of a weak value head at zero training cost |
+| 4 | Value head — categorical, with an "unsolvable" bucket | **not built. Lower priority, stronger evidence** (§6d): the scalar head was caught *losing* Level 6 that uninformed search solves — but pairing it with the policy prior recovers that at zero training cost, while §4 forces a fresh run |
 | 5 | Owner's decomposition idea | evaluated, not built; sequenced after §4 |
 | 6 | Human solution recording | **BUILT** — all 15 levels recorded, validated and committed |
 | 6a | Reverse curriculum + expert iteration | **BUILT** — `BlockDudeDemonstrations`, `BlockDudeExpertIterationCampaign` (`--phase 2`) |
@@ -208,6 +213,52 @@ weight 2, ≤200,000 expansions, ≤20s per level.
 | baseline (§6c) | 6/15 | — |
 | batched net calls in search | **7/15** (+ Bonus 2) | nothing — a different call shape |
 | policy head used as a search prior | **8/15** (+ Level 6) | nothing — a head that was already trained |
+
+…but read the control below before crediting those levels to the net: uninformed search alone solves
+6/15, so the trained net with lookahead is worth **+2 levels over knowing nothing**, and Level 6 is a
+level the value head was *losing* rather than one the policy prior won.
+
+### What the net is actually worth: the h = 0 control
+
+The table above says the search improved. It does **not** say the net caused it, and that question needed its
+own measurement — so `--zero-h` runs the identical search with `h = 0`, which is uninformed breadth-first. The
+result is chastening and worth stating first:
+
+| tier | solved | levels |
+|---|---|---|
+| greedy — the policy alone, no search | 3/15 | 1, Bonus 1, Bonus 3 |
+| **uninformed search, `h = 0` — the control** | **6/15** | + 2, 3, **6** |
+| value head as heuristic (weight 2) | 7/15 | + 5, Bonus 2 — and **loses 6** |
+| policy prior alone (weight 0, policy weight 5) | 7/15 | + Bonus 2 |
+| policy prior + value head | **8/15** | + 5, 6, Bonus 2 |
+
+**Uninformed search already solves 6 of the 15 shipped levels.** Six of the eight the best tier solves are
+therefore not evidence about the net at all — they are evidence that those levels are small enough to search.
+The honest claim for the trained net, with both heads and lookahead, is **+2 levels over knowing nothing**.
+
+Two things follow, and neither was visible before the control existed.
+
+**The value head actively misleads the search on Level 6.** Uninformed search solves it in 107 moves; the
+value-guided search does not solve it at all, at any A\* weight in the sweep. That is §8.4a's compression
+showing up as a concrete lost level rather than as an error bar — a heuristic that is merely uninformative
+costs nothing, but one that is confidently wrong steers the frontier away from the solution. It is the
+strongest argument in this document for §4, and it also means **the value head should never be used as the sole
+guide**: paired with the policy prior, Level 6 comes back.
+
+**The two heads are complementary, not redundant.** Each alone is worth exactly +1 level over the control, and
+they are not the same level — the value head brings Level 5, the policy prior brings back Level 6, and using
+both gets both. That is the case for `PolicyValueSearch` over picking a winner between them.
+
+**A caveat on precision.** These are wall-clock-budgeted searches measured with a training run competing for the
+same eight cores, so a single level is within noise. The differences worth believing are the ones with a
+mechanism attached: the 6/15 control, and Level 6 flipping with the heuristic, both reproduce the pattern rather
+than resting on one number.
+
+**What this says about where the remaining work is.** Seven levels — 4, 7, 8, 9, 10, 11 and Bonus 4 — are solved
+by *nothing*: not greedy, not blind search, not either head, not both. They are the large, long ones (Level 11
+is 29×19 and 909 human moves). No amount of heuristic tuning reaches them inside a 200k-node budget, because
+the budget is the wall. That is what the reverse curriculum exists to climb, and it is why the run's frontier
+number, not the bench, is the thing to watch overnight.
 
 ### The net was being called one row at a time
 

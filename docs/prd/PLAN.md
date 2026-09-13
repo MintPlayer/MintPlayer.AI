@@ -2881,10 +2881,23 @@ none of them a training change, took the SAME frozen checkpoint from 6/15 to 8/1
   search never solved at any weight. The prior biases order and never prunes — a hard mask can make a solvable
   problem unsolvable, which in an irreversible game is a defect and not an optimisation.
 
-**This demotes the categorical value head rather than refuting it.** The head really is compressed and really is
-blind to the 41.5%; the measured cost of that turned out to be recoverable by leaning on the head that is
-already strong, at zero training cost. §4 stays the plan for the next deliberate rebuild — it changes the output
-shape, so it forces a fresh run — and is no longer what stands between the current net and the shipped levels.
+**And then the control put all of it in proportion.** `--zero-h` runs the identical search with `h = 0`, i.e.
+uninformed breadth-first, and it solves **6/15 on its own**. So six of the eight are not evidence about the net
+at all, and the honest claim for the trained net with lookahead is **+2 levels over knowing nothing**. Two
+things only that control could show: the value head **actively misleads** the search on Level 6 — blind search
+solves it in 107 moves, value-guided solves it at no A\* weight tested, which is §8.4a's compression appearing
+as a lost level rather than an error bar — and the two heads are **complementary rather than redundant**, each
+worth exactly +1 over the control and not the same +1 (value brings Level 5, the prior brings back Level 6).
+Seven levels (4, 7, 8, 9, 10, 11, Bonus 4) are solved by *nothing*, at any tier; those are the long ones, the
+budget is the wall, and the frontier is the number to watch rather than the bench.
+
+**This lowers the categorical value head's PRIORITY while strengthening the evidence for it** — the two move in
+opposite directions and it is worth being exact about which. The evidence got stronger: Level 6 is a
+scalar-value-head defect caught doing real damage, not an error bar. The priority dropped anyway, because the
+damage turned out to be recoverable at **zero training cost** by pairing the head with the policy prior, while
+§4 changes the output shape and therefore forces a fresh run. So §4 stays the plan for the next deliberate
+rebuild, with a better argument behind it than it had, and is no longer what stands between the current net and
+the shipped levels.
 Two measurements have now each demoted an expensive rebuild; treat the next item in that PRD as a hypothesis to
 test, not work to schedule.
 
