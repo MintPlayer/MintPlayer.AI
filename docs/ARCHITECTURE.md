@@ -488,13 +488,19 @@ the reasons are measured rather than guessed (`WEBGAMES_RETIREMENT_PRD.md` §8.4
 | [`levels/blockdude-solutions.json`](../src/MintPlayer.AI.ReinforcementLearning.Environments/BlockDude/levels/blockdude-solutions.json) + [`BlockDudeSolutions.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/BlockDude/BlockDudeSolutions.cs) | **Human** solutions to all 15 levels, 3,870 moves. Ground truth for boards no exact solver reaches — and the repo's strongest engine regression suite. Human, never optimal. |
 | [`src/…Campaigns/BlockDude/BlockDudeImitationCampaign.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/BlockDude/BlockDudeImitationCampaign.cs) | **Phase 1**: size curriculum over generated boards, labelled exactly by the oracle. `--phase 1`. |
 | [`BlockDudeExpertIterationCampaign.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/BlockDude/BlockDudeExpertIterationCampaign.cs) + [`BlockDudeDemonstrations.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/BlockDude/BlockDudeDemonstrations.cs) | **Phase 2**: expert iteration on the SHIPPED levels via a reverse curriculum over the human solutions. `--phase 2`, ids `policy-xit*`. |
-| [`BlockDudeSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/BlockDude/BlockDudeSearch.cs) | Net-guided A\* over `Core.Planning`, batched. `Solve` = value head as the heuristic; `SolveWithPolicy` = value head **plus** the policy head as a prior (`PolicyValueSearch`); `ZeroHeuristic` = the h = 0 control, without which "search solves N/15" cannot be attributed to the net at all. |
-| [`BlockDudeGreedy.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/BlockDude/BlockDudeGreedy.cs) | Policy-alone rollout (what the gate measures) + a no-revisit tie-break tier for diagnosis. |
+| [`BlockDudeSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/BlockDude/BlockDudeSearch.cs) | Net-guided search over `Core.Planning`, batched. `Solve` = value head as the heuristic; `SolveWithPolicy` = value head **plus** the policy head as a prior; `SolveByBeam` = the long-level tier; `ZeroHeuristic` / `UniformPriors` = the controls, without which "solves N/15" cannot be attributed to the net at all. **In Environments, not Campaigns** — inference lives next to the net (as for Cube and Rush Hour) so the load-only web app can use it without referencing the training assembly. |
+| [`BlockDudeGreedy.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/BlockDude/BlockDudeGreedy.cs) | Policy-alone rollout — **the shipped tier**: the net solves all 15 levels this way, one forward pass per move. `recordMoves` returns the line played (off by default; the gate runs thousands of rollouts and needs only the verdict). |
+| [`RLDemo.Web/Services/BlockDudeModelService.cs`](../src/RLDemo.Web/Services/BlockDudeModelService.cs) + [`Controllers/BlockDudeController.cs`](../src/RLDemo.Web/Controllers/BlockDudeController.cs) | `POST /api/blockdude/solve` — the game page's "Watch AI". Greedy first, beam only as a fallback. Server-side (unlike FruitCake's in-browser net) because the checkpoint is 16 MB. Takes a GRID, not a level name, so a new level needs no server change. |
 | `tools/…Lab/BlockDude/` `LevelBench` · `ValueCalibration` · `DemoProbe` | `--eval-levels [--search]`, `--value-calibration` (predicted vs exact distance, banded), `--demo-probe` (how far back search can still finish). |
 
 *Change it:* obs in the `.pg` `buildObservation` (both twins regenerate); curriculum + gate in
 `BlockDudeCurriculum` — **bump its `Version` if the gate metric changes**, it is mixed into the run fingerprint;
 growth ladder in `BlockDudeGrowth`; phase-2 frontier behaviour in `BlockDudeExpertIterationOptions`.
+
+*Watch-AI caveat:* the page's autoplay deliberately does **not** write to `played` or the `blockdude.solutions.v1`
+localStorage archive. Those are the HUMAN recordings — the ground truth the net was trained on — and letting an
+autoplay overwrite a hand-played line with the net's own would corrupt the data the game exists to collect.
+Keep that guard if you touch `act()`.
 
 ### 2048 — n-tuple afterstate TD + expectimax
 
