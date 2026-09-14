@@ -2934,14 +2934,21 @@ every hit is confirmed by replaying the remainder through the engine.
 
 **Result: 15/15, and shorter than the teacher on 12 of them.** Once the beam budget stopped capping the
 curriculum, the frontier went 494 → 735 → **909** in two rounds and every level reached whole. Benched at 368k
-samples (beam width 256, ≤45s): **greedy 10/15, no-revisit 12/15, policy beam search 15/15** — including Level 7
-in 768 moves, Level 8 in 463 and Level 11 in 840. Against the human demonstrations it trained on: **3,614 moves
-against 3,870, shorter on 12 levels, equal on 3, longer on none** (Level 11 −69, Level 10 −38, Level 5 −36,
-Bonus 2 −25). That margin matters more than the 15/15, because a net that had merely memorised the
-demonstrations would *match* them — beating them across twelve levels means it learned the terrain rather than
-the keystrokes. Caveats stated where they belong: the human lines are recorded as non-optimal, so this is
-"better than the teacher", not "optimal"; and 15/15 is the beam tier, with the policy alone at 10/15, so the
-shipped artefact is net + search exactly as §8.1a argued it would have to be in an irreversible game.
+samples (beam width 256, ≤45s): greedy 10/15, no-revisit 12/15, policy beam search 15/15. **An hour later the
+search was unnecessary: greedy alone reached 15/15** — pure argmax, one forward pass per move, no lookahead, no
+backtracking — including Level 7 in 768 moves, Level 8 in 462 and Level 11 in 843. That overturns §8.1a of the
+M58 PRD, which argued irreversibility *forces* net + search as the shipped artefact: true of the net it was
+written for, and no longer true of this one, because a policy that does not make the wrong move has nothing to
+recover from. It also makes the artefact far cheaper to ship — a bare forward pass ports to the browser twin
+with no search to reimplement. Against the human demonstrations it trained on, playing greedily: **3,644 moves
+against 3,870, shorter on 11 levels, equal on 4, longer on none** (Level 11 −66, Level 5 −35, Level 8 −32,
+Level 10 −30, Bonus 2 −23). That margin matters more than the 15/15, because a net that had merely memorised the
+demonstrations would *match* them — beating them across eleven levels means it learned the terrain rather than
+the keystrokes, and it is the sharpest evidence that "overfitting to these levels" is not the same as
+"replaying these recordings". The caveat belongs next to it: the human lines are recorded as non-optimal, so
+this is "better than the teacher", not "optimal", and no optimal reference exists for boards this size — which
+is why the demonstrations were recorded in the first place. All fifteen lines are in
+`docs/blockdude-ai-solutions.txt`, in the game recorder's own format, so they can be pasted back in and watched.
 
 **The net learned these fifteen levels, not the game — and that is the design, but it must be labelled.** Phase
 2 trains on the shipped levels, so they are the curriculum and the benchmark at once and every "solves N/15" is

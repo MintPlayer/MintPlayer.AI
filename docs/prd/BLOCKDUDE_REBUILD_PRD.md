@@ -32,7 +32,7 @@ sections overstate what they attribute to the net.
 | 6a | Reverse curriculum + expert iteration | **BUILT** — `BlockDudeDemonstrations`, `BlockDudeExpertIterationCampaign` (`--phase 2`) |
 | 6b | Dead ends the training data discards | **measured**, fix is §4 (still unbuilt — see §6d) |
 | 6d | Search: batched calls, policy-as-prior, **beam search**, frontier retreat, landmark salvage | **BUILT** — 6/15 → **10/15** on frozen weights; `Core.Planning.PolicyValueSearch` + `PolicyBeamSearch` |
-| 6e | Result after the overnight run | **15/15 shipped levels**, and shorter than the human demonstrations on 12 of 15 (3,614 moves vs 3,870) |
+| 6e | Result after the overnight run | **15/15 shipped levels with NO SEARCH** — greedy, one forward pass per move — and shorter than the human demonstrations on 11 of 15 (3,644 moves vs 3,870) |
 
 **Goal (owner):** *"achieve a good net that's capable of solving these levels"* — the 15 shipped levels, not
 generated boards. The owner stated they are willing to start over.
@@ -468,13 +468,23 @@ separately in the eval line so the two can never be read as one number.
 Once the beam budget stopped capping the curriculum (§6d), the frontier went 494 → 735 → **909** in two rounds
 and every level reached whole. Benched on the checkpoint at 368k samples, beam width 256, ≤45s per level:
 
-| tier | solved |
-|---|---|
-| greedy — policy alone, no search | 10/15 |
-| greedy + no-revisit tie-break | 12/15 |
-| **policy beam search** | **15/15** |
+| tier | at 368k samples | at 604k samples (one hour later) |
+|---|---|---|
+| **greedy — policy alone, no search** | 10/15 | **15/15** |
+| greedy + no-revisit tie-break | 12/15 | 15/15 — the tie-break is now redundant |
+| policy beam search | **15/15** | 15/15 |
 
-Every shipped level, including Level 7 (768 moves), Level 8 (463) and Level 11 (840).
+Every shipped level, including Level 7 (768 moves), Level 8 (462) and Level 11 (843).
+
+**The search became unnecessary.** An hour of training on full-length solutions for every level — the regime
+that only became possible once the curriculum reached 15/15 whole — moved the policy from needing a 256-wide
+beam to needing nothing at all. Pure argmax, one forward pass per move, no lookahead and no backtracking.
+
+That overturns a standing conclusion. §8.1a of the M58 PRD argued that irreversibility *forces* net + search as
+the shipped artefact, because a single wrong move is unrecoverable and a deterministic policy is trapped by the
+first state it revisits. That was correct about the net it was written for and is simply no longer true of this
+one: a policy that does not make the wrong move does not need to recover from it. It also makes the artefact far
+cheaper to ship — a bare forward pass per move ports to the browser twin with no search to reimplement.
 
 ### Against the human demonstrations it was trained on
 
@@ -500,10 +510,18 @@ It also refines §6d's held-out finding rather than contradicting it. Both are t
 these fifteen boards (6% on unseen ones), *and* on those boards it is genuinely playing rather than reciting.
 Overfitting to terrain is not the same as overfitting to a path.
 
+Greedy play beats the human on 11 levels and ties the other 4 — **3,644 moves against 3,870** — so the table
+above (measured on the beam tier at 368k) understates where the net ended up. The two are close because both are
+now the same underlying policy, with and without a beam in front of it.
+
 **What this is not.** The human solutions are recorded as non-optimal, so "shorter than the human" is not
 "optimal" — no optimal reference exists for boards this size, which is why the demonstrations were recorded in
-the first place. And the 15/15 is the *beam* tier: the policy alone still solves 10/15, so the shipped artefact
-is net + search, as §8.1a of the M58 PRD argued it would have to be in an irreversible game.
+the first place. Nor is it a claim about Block Dude in general: see the held-out measurement above, where the
+same policy scores 6%. This net plays *these fifteen levels*, and plays them better than the person who
+recorded them.
+
+All fifteen greedy lines are in [`docs/blockdude-ai-solutions.txt`](../blockdude-ai-solutions.txt), in the
+game recorder's own format, so they can be pasted back into the page and watched.
 
 ## 6b. Irreversibility — the net has never been shown a lost position (owner, 2026-09-13)
 
