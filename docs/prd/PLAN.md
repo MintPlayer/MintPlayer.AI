@@ -2932,6 +2932,17 @@ path, so one search aiming at both stops a few moves in, every time, quietly dis
 hit is a candidate rather than a proof (a 32-bit state hash, a few percent collision chance over 200k nodes), so
 every hit is confirmed by replaying the remainder through the engine.
 
+**Result: 15/15, and shorter than the teacher on 12 of them.** Once the beam budget stopped capping the
+curriculum, the frontier went 494 → 735 → **909** in two rounds and every level reached whole. Benched at 368k
+samples (beam width 256, ≤45s): **greedy 10/15, no-revisit 12/15, policy beam search 15/15** — including Level 7
+in 768 moves, Level 8 in 463 and Level 11 in 840. Against the human demonstrations it trained on: **3,614 moves
+against 3,870, shorter on 12 levels, equal on 3, longer on none** (Level 11 −69, Level 10 −38, Level 5 −36,
+Bonus 2 −25). That margin matters more than the 15/15, because a net that had merely memorised the
+demonstrations would *match* them — beating them across twelve levels means it learned the terrain rather than
+the keystrokes. Caveats stated where they belong: the human lines are recorded as non-optimal, so this is
+"better than the teacher", not "optimal"; and 15/15 is the beam tier, with the policy alone at 10/15, so the
+shipped artefact is net + search exactly as §8.1a argued it would have to be in an irreversible game.
+
 **The net learned these fifteen levels, not the game — and that is the design, but it must be labelled.** Phase
 2 trains on the shipped levels, so they are the curriculum and the benchmark at once and every "solves N/15" is
 a *training-set* score. New `--held-out` scores the same net on generated gate boards, the only positions it has

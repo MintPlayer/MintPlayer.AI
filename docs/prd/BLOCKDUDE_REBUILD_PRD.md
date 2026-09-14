@@ -32,6 +32,7 @@ sections overstate what they attribute to the net.
 | 6a | Reverse curriculum + expert iteration | **BUILT** — `BlockDudeDemonstrations`, `BlockDudeExpertIterationCampaign` (`--phase 2`) |
 | 6b | Dead ends the training data discards | **measured**, fix is §4 (still unbuilt — see §6d) |
 | 6d | Search: batched calls, policy-as-prior, **beam search**, frontier retreat, landmark salvage | **BUILT** — 6/15 → **10/15** on frozen weights; `Core.Planning.PolicyValueSearch` + `PolicyBeamSearch` |
+| 6e | Result after the overnight run | **15/15 shipped levels**, and shorter than the human demonstrations on 12 of 15 (3,614 moves vs 3,870) |
 
 **Goal (owner):** *"achieve a good net that's capable of solving these levels"* — the 15 shipped levels, not
 generated boards. The owner stated they are willing to start over.
@@ -461,6 +462,48 @@ state hash, a collision across a 200k-node search is a few percent likely, and b
 training sample asserting a win that does not exist. Every hit is confirmed by replaying the demonstrated
 remainder through the engine. Only genuine door-reaching solutions move a frontier; landmark hits are reported
 separately in the eval line so the two can never be read as one number.
+
+## 6e. Result — 15/15, and shorter than the teacher on 12 of them (2026-09-14, 03:35)
+
+Once the beam budget stopped capping the curriculum (§6d), the frontier went 494 → 735 → **909** in two rounds
+and every level reached whole. Benched on the checkpoint at 368k samples, beam width 256, ≤45s per level:
+
+| tier | solved |
+|---|---|
+| greedy — policy alone, no search | 10/15 |
+| greedy + no-revisit tie-break | 12/15 |
+| **policy beam search** | **15/15** |
+
+Every shipped level, including Level 7 (768 moves), Level 8 (463) and Level 11 (840).
+
+### Against the human demonstrations it was trained on
+
+| level | human | net | | level | human | net | |
+|---|---|---|---|---|---|---|---|
+| Level 1 | 19 | 19 | = | Level 8 | 494 | **463** | −31 |
+| Level 2 | 74 | **73** | −1 | Level 9 | 227 | **214** | −13 |
+| Level 3 | 98 | **94** | −4 | Level 10 | 386 | **348** | −38 |
+| Level 4 | 281 | 281 | = | Level 11 | 909 | **840** | −69 |
+| Level 5 | 164 | **128** | −36 | Bonus 1 | 42 | **41** | −1 |
+| Level 6 | 113 | **107** | −6 | Bonus 2 | 110 | **85** | −25 |
+| Level 7 | 782 | **768** | −14 | Bonus 3 | 39 | 39 | = |
+| | | | | Bonus 4 | 132 | **114** | −18 |
+
+**Total 3,614 moves against the human's 3,870 — shorter on 12 levels, equal on 3, longer on none.**
+
+**Why that number matters more than the 15/15.** A net that had memorised the demonstrations would *match*
+them. Beating them on twelve levels means it is not replaying recorded keystrokes — it learned the terrain well
+enough to find better lines through it. That is the student-exceeds-teacher effect §6a predicted from local
+search, now visible across whole levels.
+
+It also refines §6d's held-out finding rather than contradicting it. Both are true: the net is specialised to
+these fifteen boards (6% on unseen ones), *and* on those boards it is genuinely playing rather than reciting.
+Overfitting to terrain is not the same as overfitting to a path.
+
+**What this is not.** The human solutions are recorded as non-optimal, so "shorter than the human" is not
+"optimal" — no optimal reference exists for boards this size, which is why the demonstrations were recorded in
+the first place. And the 15/15 is the *beam* tier: the policy alone still solves 10/15, so the shipped artefact
+is net + search, as §8.1a of the M58 PRD argued it would have to be in an irreversible game.
 
 ## 6b. Irreversibility — the net has never been shown a lost position (owner, 2026-09-13)
 
