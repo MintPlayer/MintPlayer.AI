@@ -30,9 +30,13 @@ public sealed record BlockDudeStage(
 /// </remarks>
 public static class BlockDudeCurriculum
 {
-    /// <summary>Bumped whenever the stage table or the advance rule changes. Part of the run fingerprint, so a
-    /// checkpoint from an older curriculum is refused rather than silently resumed into a different schedule.</summary>
-    public const int Version = 1;
+    /// <summary>Bumped whenever the stage table, the advance rule, or WHAT THE GATE MEASURES changes. Part of the
+    /// run fingerprint, so a checkpoint from an older curriculum is refused rather than silently resumed into a
+    /// different schedule.
+    /// <para>2 (2026-09-13): <see cref="GateBoardsFor"/> now applies the training set's exact-oracle filter, so
+    /// the gate scores the distribution the net is actually trained on. A rate under 2 is not comparable with a
+    /// rate under 1, and promotion thresholds are read against it — hence the bump.</para></summary>
+    public const int Version = 2;
 
     /// <summary>Fixed hold-out size per rung — big enough for a stable rate, small enough to evaluate often.</summary>
     public const int GateBoards = 64;
@@ -95,15 +99,46 @@ public static class BlockDudeCurriculum
     public static Xoshiro256StarStar GateRng(int stage) => new(4242UL + (ulong)stage);
 
     /// <summary>Generates a rung's fixed hold-out boards. Pure in the stage index.</summary>
+    /// <summary>
+    /// The rung's fixed hold-out. Boards are drawn from the same generator AND filtered by the same exact-oracle
+    /// condition the training set uses — a board the oracle truncates on is skipped here exactly as
+    /// <c>CollectSamples</c> skips it.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Why the filter, added 2026-09-13.</b> Training discards any board whose oracle exceeds
+    /// <c>OracleMaxStates</c>, so the net is only ever shown boards BFS could fully label. The gate did not
+    /// filter, so it scored the net on a strictly wider distribution — including a class of board the net was
+    /// never trained on, by construction. The gap was invisible at the easy rungs and grew with stage: measured
+    /// on the 2026-09-13 run, truncations went 0 → 1 → 8 → 53 → 181 → 313 as the curriculum advanced, around
+    /// 11% of boards drawn in the last window.</para>
+    ///
+    /// <para>That made the gate measure two things at once — how well the policy plays, and how often the
+    /// generator produced something unlabelable — and only the first is what promotion should depend on. A
+    /// curriculum rung is a claim about the data the rung actually trains on.</para>
+    ///
+    /// <para>This CHANGES the gate metric, so gate numbers from before this date are not comparable with those
+    /// after it.</para>
+    /// </remarks>
     public static List<BlockDudeBoard> GateBoardsFor(int stage, int count = GateBoards)
     {
-        var rng = GateRng(stage);
-        var spec = Stages[Math.Clamp(stage, 0, LastStage)].Spec;
+        int clamped = Math.Clamp(stage, 0, LastStage);
+        var rng = GateRng(clamped);
+        var spec = Stages[clamped].Spec;
         var boards = new List<BlockDudeBoard>(count);
         for (int attempt = 0; attempt < count * 40 && boards.Count < count; attempt++)
         {
             var board = BlockDudeGenerator.TryGenerate(rng, spec, out var outcome);
-            if (outcome == BlockDudeGenerationOutcome.Accepted) boards.Add(board!);
+            if (outcome != BlockDudeGenerationOutcome.Accepted) continue;
+
+            // Same admission test as the training set. This is NOT cheap — solving a candidate to the rung's
+            // state cap dominates the cost of drawing it, measured at a few seconds per board at the upper rungs
+            // — but it is paid once per stage per run: the campaign caches the hold-out and rebuilds it only on a
+            // stage change, never per eval. A gate that is wrong every ten minutes costs more than a stage
+            // transition that takes a few minutes.
+            var oracle = new BlockDudeOracle(board!, spec.OracleMaxStates);
+            if (oracle.Truncated) continue;
+
+            boards.Add(board!);
         }
         return boards;
     }

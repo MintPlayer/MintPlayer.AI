@@ -33,6 +33,9 @@
        `python tools/blockdude_levels.py` / `python tools/lunarlockout_levels.py` — never hand-edit. -->
   <ItemGroup>
     <EmbeddedResource Include="BlockDude\levels\blockdude-levels.json" />
+    <!-- Human solutions, hand-played rather than generated: the only ground truth for boards the exact oracle
+         cannot label. Not copied into wwwroot — the browser has no use for them. -->
+    <EmbeddedResource Include="BlockDude\levels\blockdude-solutions.json" />
     <EmbeddedResource Include="LunarLockout\levels\lunarlockout-levels.json" />
   </ItemGroup>
 

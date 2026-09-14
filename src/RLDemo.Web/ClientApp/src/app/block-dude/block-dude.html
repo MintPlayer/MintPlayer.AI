@@ -36,11 +36,44 @@
 <div class="actions">
   <button type="button" [color]="colors.secondary" (click)="undo()" [disabled]="!canUndo()">Undo</button>
   <button type="button" [color]="colors.secondary" (click)="reset()">Restart</button>
+  <button type="button" [color]="colors.primary" (click)="watchAi()" [disabled]="aiThinking()">
+    {{ aiPlaying() ? 'Stop' : aiThinking() ? 'Asking…' : 'Watch AI' }}
+  </button>
+  @if (aiPlaying()) {
+    <button type="button" [color]="colors.secondary" (click)="cycleAiSpeed()"
+            aria-label="Playback speed">{{ aiSpeed() }}&times;</button>
+  }
   <span class="moves">{{ moves() }} move{{ moves() === 1 ? '' : 's' }}</span>
 </div>
+
+@if (solution() ?? attempt(); as text) {
+  <div class="solution">
+    <p class="solution-head">
+      {{ solution() ? 'Solution recorded — copy this and paste it back.' : 'Moves so far' }}
+      <button type="button" class="copy" (click)="copySolution(text)">{{ copyLabel() }}</button>
+    </p>
+    <textarea class="solution-text" readonly rows="3"
+              (focus)="$any($event.target).select()">{{ text }}</textarea>
+    <p class="solution-legend">
+      <code>0</code> ← walk left · <code>1</code> → walk right · <code>2</code> ↑ climb ·
+      <code>3</code> ↓ pick up / put down. Undo drops the last move from this list; Restart clears it.
+      Finishing a level keeps it — shortest attempt wins — and the list then shows every level you have solved.
+    </p>
+  </div>
+}
 
 <p class="keys">
   Arrow keys walk, <kbd>↑</kbd> climbs and <kbd>↓</kbd> or <kbd>Space</kbd> picks up and puts down.
   <kbd>Z</kbd> undoes, <kbd>R</kbd> restarts. Undo matters here: unlike most puzzles, a misplaced block can
   make a level unsolvable with no way back.
+</p>
+
+<p class="keys ai-note">
+  <strong>Watch AI</strong> replays a neural network playing the level — no search and no lookahead, just one
+  look at the board per move. It finishes all fifteen levels, and on eleven of them in fewer moves than the
+  recorded human solutions it learned from (3,598 against 3,870; Level 11 in 826 moves against 909).
+  <br>
+  It was trained on these fifteen levels specifically, so that is all it knows: on levels it has never seen it
+  solves about one in ten. Add a sixteenth and it will most likely fail — it has learned this terrain, not the
+  game. Your own recordings are never touched by it.
 </p>

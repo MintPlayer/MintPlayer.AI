@@ -1,0 +1,116 @@
+namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+
+/// <summary>Tunables for <see cref="BlockDudeExpertIterationCampaign"/>.</summary>
+public sealed record BlockDudeExpertIterationOptions
+{
+    public ulong Seed { get; init; } = 1;
+
+    public float LearningRate { get; init; } = 3e-4f;
+
+    /// <summary>Start from a blank slate rather than resuming this phase's net and frontier.</summary>
+    public bool Fresh { get; init; }
+
+    /// <summary>
+    /// Warm-start from the phase-1 imitation net instead of random weights. On by default: phase 1 already
+    /// learned the local mechanics (climb, carry, place) on small boards, and re-learning them from scratch on
+    /// expensive searched data would waste the only signal that is cheap to produce.
+    /// </summary>
+    public bool WarmStart { get; init; } = true;
+
+    /// <summary>Stop after this many training samples (0 = run to the runner's deadline).</summary>
+    public long TargetSamples { get; init; }
+
+    /// <summary>Search attempts per level per round.</summary>
+    public int AttemptsPerLevel { get; init; } = 4;
+
+    /// <summary>Node budget for one search. The memory lever — Block Dude states are large.</summary>
+    public int Expansions { get; init; } = 40_000;
+
+    /// <summary>Wall-clock ceiling per search, so one hopeless level cannot stall a round.</summary>
+    public int SearchSeconds { get; init; } = 6;
+
+    /// <summary>f = g + weight·h. A learned heuristic is not admissible, so above 1 is the practical setting.</summary>
+    public float Weight { get; init; } = 2f;
+
+    /// <summary>
+    /// How much the policy head's prior steers the search that generates training data — one nat of surprise
+    /// costs this many moves. 0 falls back to value-only search.
+    /// </summary>
+    /// <remarks>
+    /// This is a self-improvement loop, so the search is not only the measuring instrument but the data source:
+    /// a search that reaches further solves longer suffixes, which moves the frontier, which is the run's actual
+    /// progress. Using the policy head here feeds the better-trained head back into producing its own next
+    /// batch of training data.
+    /// </remarks>
+    /// <value>5, measured. Swept on a fixed checkpoint against the shipped levels: 0 (value only) and 0.5 and 2
+    /// all solve 7/15, 5 solves 8/15 (Level 6, which value-guided search never solved), 15 also 8/15. Five is
+    /// the smallest setting that buys the extra level, so the value head keeps as much say as it has earned.</value>
+    public float PolicyWeight { get; init; } = 5f;
+
+    /// <summary>Where a level's frontier starts: moves from the door it must solve before moving outward.
+    /// Defaults to the depth the current net was measured to manage unaided (PRD §6a).</summary>
+    public int InitialFrontier { get; init; } = 20;
+
+    /// <summary>Multiplier applied to a level's frontier when it clears <see cref="AdvanceRate"/>. A ratio rather
+    /// than a step: the far end of a 909-move level is not reached by adding 10 at a time.</summary>
+    public double FrontierGrowth { get; init; } = 1.5;
+
+    /// <summary>Fraction of a round's attempts a level must solve before its frontier moves outward.</summary>
+    public double AdvanceRate { get; init; } = 0.75;
+
+    /// <summary>
+    /// Multiplier applied to a level's frontier after a round in which it solved NOTHING.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to <see cref="FrontierGrowth"/>, and the thing that makes overshooting recoverable.
+    /// Growth is a 1.5× jump, so a level can be moved somewhere the net cannot solve at all — and a level
+    /// solving nothing produces no training samples, so on its own it would never improve and the curriculum
+    /// would strand it there permanently. Retreating is gentler than growth on purpose: the frontier should
+    /// settle at the edge of the net's ability rather than oscillate across it.
+    /// </remarks>
+    public double FrontierRetreat { get; init; } = 0.8;
+
+    /// <summary>
+    /// Beam width for the fallback tier used when A* fails. 0 disables it.
+    /// </summary>
+    /// <remarks>
+    /// A* holds a frontier that grows with the space explored, so its reach is bounded by a node budget — and as
+    /// a level's frontier moves outward, the suffix it must solve eventually passes what any node budget can
+    /// reach, no matter how good the heuristic. Beam search costs width × depth, so depth is nearly free. On the
+    /// shipped levels it solves 10/15 against A*'s 8/15, including two levels no other tier solves at all.
+    /// <para>It is the FALLBACK rather than the first choice on purpose: beam solutions are the policy's own
+    /// widened rollout and tend to be longer (Level 4 in 281 moves), and a longer path means a looser distance
+    /// label. A* is asked first so the better labels are preferred where they exist.</para>
+    /// </remarks>
+    public int BeamWidth { get; init; } = 256;
+
+    /// <summary>Wall-clock floor for one beam attempt, used at shallow frontiers.</summary>
+    public int BeamSeconds { get; init; } = 8;
+
+    /// <summary>
+    /// Ceiling for one beam attempt at deep frontiers. The budget is scaled by how long a suffix is being asked
+    /// for, between <see cref="BeamSeconds"/> and this.
+    /// </summary>
+    /// <remarks>
+    /// A flat budget silently caps the curriculum. Beam search advances one depth step per forward pass, so the
+    /// moves it can reach are roughly proportional to the time it gets: measured, width 256 needs about 25s to
+    /// reach 358 moves, so an 8-second budget stops around 110. A level whose frontier passes that point fails
+    /// every attempt no matter how good the net is — and the run shows exactly that, with the frontier settling
+    /// at ~494 and holding there while loss and accuracy stay pinned at their floors. That is a budget wall
+    /// being mistaken for the net's limit.
+    /// <para>Scaling by depth rather than raising the flat budget matters because most levels are shallow: only
+    /// the few deep ones pay the larger cost, so a round does not get 5× slower to help two levels.</para>
+    /// </remarks>
+    public int BeamSecondsMax { get; init; } = 45;
+
+    /// <summary>Moves of suffix per second of beam budget — the constant behind the scaling, measured rather
+    /// than guessed (width 256 reached 358 moves in ~25s, so ~14; 12 leaves headroom).</summary>
+    public int BeamMovesPerSecond { get; init; } = 12;
+
+    /// <summary>
+    /// Share of each training batch drawn from the HUMAN demonstrations rather than searched solutions. Keeps a
+    /// permanent anchor in true long-horizon data: searched solutions cluster near whatever the frontier
+    /// currently is, so without this the far-distance labels would fade out of the mix as the frontier moves.
+    /// </summary>
+    public double DemoShare { get; init; } = 0.25;
+}

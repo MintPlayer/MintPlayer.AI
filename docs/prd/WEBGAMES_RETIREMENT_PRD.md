@@ -874,6 +874,117 @@ green, and forcing it would mean either far more training or shipping occasional
 
 ---
 
+### 8.4a Measured 2026-09-13 — the plateau is not capacity, and greedy is not the net's ceiling
+
+Three measurements, taken against the run in `data/bd4` (6.25M samples, stage 4, trunk `[1152,1152,1152]`).
+
+**1. Capacity is not the binding constraint.** The saturation trigger (§7.1b) fired and climbed the ladder in
+full — `[512,512] → [768,768] → [768,768,768] → [1152,1152,1152]`, 869k → 4.0M parameters — in about two
+hours. **The gate did not improve.** Loss kept falling (0.252 → 0.216) and training accuracy kept rising
+(0.911 → 0.924) while the stage-4 gate sat at 0.55 → 0.41 → 0.39. Tripling capacity changed nothing that
+matters, which is strong evidence against the reading that the stage-3/4 stall was a capacity problem.
+
+**2. Greedy on the shipped levels is 0/15, and every level ends in a LOOP.**
+
+| | solved | note |
+|---|---|---|
+| greedy (the gate's own policy measure) | **0/15** | every level `Loop`, after 2–15 steps |
+| net-guided weighted A* (`BlockDudeSearch`, weight 2, ≤200k expansions, ≤20s) | **5/15 (33%)** | levels 1, 2, 3, Bonus 1, Bonus 3 |
+
+A deterministic argmax policy is *trapped by the first state it revisits* — that is a missing tie-break, not
+missing knowledge, and it is why the greedy number alone was misleading. The same net that solves nothing
+solves a third of the pack once it can back out of a dead end. This restates in Block Dude's terms what M34
+and M49 already found: **strength is search, not only training** (Snake plateaued reactively; Crazy Fruits was
++6% greedy but +89% with expectimax-1).
+
+The heuristic came free: the value head is already regressed onto distance-to-goal, which is exactly the
+cost-to-go `ValueGuidedSearch` wants (§8.6 — reuse, don't write another search). Nothing was trained for this.
+
+**The gate stays greedy, deliberately.** §8.4's stance is still right for deciding when a rung is passed. What
+changed is that the shipped-level bench now reports BOTH numbers (`--eval-levels --search`), because "has the
+policy learned the game" and "what is this net worth" are different questions and only reporting the first
+made a usable net look worthless.
+
+**3. The gate was scoring boards the net could never have been trained on.** Training discards any board whose
+oracle exceeds the rung's state cap; `GateBoardsFor` did not. So the hold-out was drawn from a strictly wider
+distribution, and the gap widened with every rung — truncations ran 0 → 1 → 8 → 53 → 181 → 313 across the run,
+about **11% of boards drawn in the final window**. The gate therefore measured the policy *and* the
+generator's reach at once, while promotion thresholds were read against it as if it measured only the first.
+Fixed: the hold-out now applies the same exact-oracle filter. **Curriculum `Version` → 2**, so gate rates
+before and after this date are not comparable and an older checkpoint is refused rather than resumed into the
+new metric.
+
+**4. The value head loses its discrimination exactly where the detour lives — owner hypothesis, confirmed.**
+The owner's reading (2026-09-13): *"the player first needs to go to the opposite end of the field vs the door,
+to retrieve blocks… so distance to the door isn't necessarily a health-indication."* Measured with
+`--value-calibration` (predicted distance-to-goal vs the exact oracle, in MOVES, over labelled hold-out states):
+
+| stage | states | MAE | bias | 1–10 | 11–25 | 26–50 | 51+ |
+|---|---|---|---|---|---|---|---|
+| 0–3 | 0.3–4.0k | 6–10 | **+6 to +10** | +5 to +11 | +8 to +11 | – | – |
+| 4 | 82.5k | 8.7 | +8.4 | +8.0 | +9.1 | −3.3 | – |
+| 5 | 19.1k | 6.2 | +6.1 | +6.1 | +6.1 | −2.6 | – |
+| 6 | 82.8k | 12.8 | **−10.8** | +3.2 | +0.3 | **−17.1** | **−37.5** |
+
+Near states are **over**-estimated and far states are massively **under**-estimated: at the top rung a state
+genuinely 51+ moves from the door is scored ~37 moves closer than it is. The estimate is not merely biased, it
+is **compressed** — the head cannot separate a 60-move position from a 20-move one. That is precisely the
+geometry failure the owner predicted, and it has a direct consequence: this value IS the heuristic
+`BlockDudeSearch` steers by, so A* degenerates toward uninformed search in exactly the regime the shipped
+levels occupy, which is why search solves the small levels and none of the large ones.
+
+**5. Looping is not the whole story.** A no-revisit tie-break (`RunAvoidingRevisits` — best legal action whose
+successor is unvisited; no lookahead) converts every `Loop` ending into `NoMove` and roughly triples survival
+(Bonus 4: 28 → 165 steps) but solves **the same 1/15**. So the policy is not a good policy lacking a tie-break;
+it walks into genuinely unrecoverable positions. Recorded because it cheaply rules out the most attractive
+easy explanation.
+
+**6. The training and shipped distributions differ — but NOT in the way expected.** The owner's reading implied
+the missing skill was the away-from-the-door detour. Measured over 30 generated boards per stage against the 15
+shipped levels (walk-only BFS for fetchable blocks; optimal-path rollout for how far the dude walks opposite
+the door):
+
+| population | W×H | free | blocks | optimal moves | door above player | must fetch AWAY from door |
+|---|---|---|---|---|---|---|
+| stage 0 | 10×8 | 27 | 1.4 | 6.6 | 77% | 37% |
+| stage 4 | 18×10 | 78 | 4.1 | 21.2 | 70% | 43% |
+| stage 6 | 24×13 | 141 | 4.8 | 24.9 | 80% | 40% |
+| **shipped (15)** | 22×14 | **220** | **12.7** | far beyond the oracle | 47% | **7%** |
+
+**The detour is over-represented in training, not absent** (37–43% vs 7% shipped) — so the data does not need
+redesigning for it. Two other gaps are real and large:
+
+- **Scale.** Stage 6 tops out at ~25 optimal moves with ~5 blocks; the shipped levels need multi-hundred-move
+  solutions with 9–42 blocks and repeated staircases. Training never exceeds roughly one barrier and a
+  one-to-two-block bridge. Straight P→D distance actually *matches* (15.6 shipped vs 15.7 at stage 6) — it is
+  the block budget and episode length that do not.
+- **Topology.** `BlockDudeGenerator.TryBuildLayout` places the player on the LOW side of a rise and the door on
+  the HIGH side, with blocks only on the player's side. It can therefore emit only "stack up over a rise"
+  puzzles — 70–80% door-above. The shipped levels are **53% door at-or-below the player**: descend, bridge a
+  pit, drop blocks in. That shape is not merely rare in training, it is **unreachable by construction** (a
+  low door would be walk-reachable and the candidate rejected as `BlocksAreDecorative`).
+
+This reframes the ceiling. It is not that the net is under-trained on the right distribution; it is that the
+generator cannot express the shipped distribution, and the exact oracle cannot label at that length even if it
+could. Those two limits are the same limit, and §8.1b's phase 2 is the documented way through: search labels
+what BFS cannot reach.
+
+**7. Where this went next.** These measurements are the whole input to **M59** (`PLAN.md`) and
+`BLOCKDUDE_REBUILD_PRD.md`, on branch `m59-blockdude-plateau`. Built there, in the order the evidence forced
+rather than the order originally planned: net-guided A* (`BlockDudeSearch`), the human-solution recorder and
+the 15 committed solutions, the reverse curriculum and `BlockDudeExpertIterationCampaign` (`--phase 2`), and
+the dead-end measurement that promotes the categorical value head to the next change. The generator rebuild —
+originally the prerequisite for everything — turned out **not** to be blocking, because the reverse curriculum
+supplies in-distribution data on the real levels without it.
+
+**What this implies for the plan.** More samples alone is the weakest of the available levers: the net is not
+converged (loss and accuracy are both still moving), but solve rate at these horizons is brutally sensitive to
+per-step accuracy, which is improving roughly a point per million samples and decelerating. The levers that
+the evidence actually supports are **search at inference** (measured above) and **phase-2 expert iteration**
+(§8.1b), which is the documented answer to the covariate-shift problem that a flat gate under falling loss
+points at: the net trains on oracle-optimal trajectories and has never seen how to recover from its own
+mistakes, in a game where §8.1a makes many mistakes unrecoverable.
+
 ### 8.5 Level 11 is a stretch benchmark, not an acceptance criterion
 
 Level 11 will be **implemented and playable** — it already is, floating blocks and all — but it will not be

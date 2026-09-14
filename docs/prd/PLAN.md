@@ -2765,12 +2765,220 @@ and applies to every canvas here: **a canvas sized from its element needs both a
 circular sizing. Verifying at 390px also showed the *page* scrolling sideways: thirteen non-wrapping nav links,
 two of them added by this milestone. Fixed.
 
+**Superseded in part by M59.** The Block Dude training thread continued past this milestone: the net that
+M58 built turned out to solve **0/15 shipped levels**, and finding out why produced four measurements, a
+search tier, 15 human solutions and a phase-2 pipeline. Read M59 before picking up any Block Dude AI work.
+
 **Still open (2026-09-13):** the two new pages have no tests; **no Block Dude net is committed** — the pipeline is
 verified end to end and an 11-hour run on the corrected engine with saturation growth is in flight (`data/bd4`),
 but its result is not in yet; phase-2 expert iteration is unbuilt; and `C:\Repos\WebGames` has not yet been
 deleted (its four untracked projects were committed and pushed first — M58.0). The **full test suite has not
 completed locally** — it repeatedly failed to finish on the dev machine — so **PR #50's CI is the check**,
 particularly for the Cube and Rush Hour growth-ladder changes. See the PRD's "Where to pick this up".
+
+
+---
+
+## M59 — Block Dude: why the net plateaued, and the pipeline that replaces the plan  *(2026-09-13; branch `m59-blockdude-plateau`; see `BLOCKDUDE_REBUILD_PRD.md` + `WEBGAMES_RETIREMENT_PRD.md` §8.4a)* 🟡
+
+M58 shipped a Block Dude pipeline that trained cleanly and could not play the game: **0/15 shipped levels
+greedy**, every one ending in a loop within 2–15 steps. This milestone is the investigation that found why, the
+instruments built to measure it, and the training pipeline that came out the other side. **Nothing is merged.**
+
+**Four measurements, each killing a candidate explanation.** Taken on one checkpoint (6.25M samples, stage 4):
+
+1. **Not capacity.** The saturation trigger climbed its whole ladder — `[512,512] → [1152,1152,1152]`, 869k →
+   4.0M parameters, in ~2 hours — and the gate did not move, while loss fell and training accuracy rose. The
+   growth feature worked and **disproved its own hypothesis**.
+2. **Not looping.** A no-revisit tie-break (best legal action to an unvisited state; no lookahead) converts
+   every `Loop` ending into `NoMove` and roughly triples survival — and solves **the same 1/15**.
+3. **The value head is compressed, not merely biased.** Predicted vs exact distance, banded by TRUE distance,
+   at stage 6: **+3.2** moves at 1–10, **−17.1** at 26–50, **−37.5** at 51+. It cannot separate a 60-move
+   position from a 20-move one. Since that value IS the A* heuristic, search degenerates toward uninformed
+   exactly where the shipped levels live.
+4. **The data cannot express the game.** `TryBuildLayout` puts the player on the LOW side of a rise and the
+   door on the HIGH side, so it emits only "stack up over a rise" — 70–80% door-above. The shipped levels are
+   **53% door at-or-below** (descend, bridge a pit), which is **unreachable by construction**: a low door is
+   walk-reachable and the candidate is rejected as `BlocksAreDecorative`. Training also tops out at ~25 optimal
+   moves and ~5 blocks against multi-hundred-move, 9–42-block levels. Straight P→D distance actually *matches*
+   (15.6 vs 15.7) — it is block budget and episode length that do not.
+
+**A hypothesis corrected.** The owner's reading was that the missing skill is walking AWAY from the door to
+fetch blocks. Measured: that pattern is in **37–43%** of generated boards versus **7%** of shipped levels —
+over-represented, not absent. The hypothesis was still the productive one: it motivated (3), which found the
+real defect.
+
+**Search, not training, is the near-term lever.** Greedy 0/15 → **5/15 with net-guided weighted A\***
+(`BlockDudeSearch`, reusing `Core.Planning`'s `ValueGuidedSearch`; the heuristic is free because the value head
+already regresses distance-to-goal). This restates M34 and M49 in Block Dude's terms — Snake plateaued
+reactively, Crazy Fruits was +6% greedy but +89% with expectimax-1. **The curriculum gate stays greedy**
+deliberately (§8.4); what changed is that the bench now reports both, because only reporting the first made a
+usable net look worthless.
+
+**The gate was measuring the wrong distribution.** Training discards boards whose oracle truncates;
+`GateBoardsFor` did not, so the hold-out was strictly wider than anything the net could be trained on, and the
+gap grew every rung (truncations 0 → 1 → 8 → 53 → 181 → 313, ~11% of boards in the final window). Fixed;
+**curriculum `Version` → 2**, so rates before and after are not comparable and an older checkpoint is refused.
+
+**15 human solutions — the only ground truth that exists.** The owner played every shipped level in the
+browser; the page records the whole action sequence (undo pops it, restart clears it, a refused keypress is
+never recorded — the engine's own `sameState` decides). **3,870 moves, longest 909** (Level 11, 42 blocks),
+committed as `blockdude-solutions.json` and **replayed move-by-move against the engine: all 15 legal
+throughout and reaching the door.** They are explicitly *human, not optimal* — nobody knows the minimum for
+these boards and proving it is off-scale. They are now also the strongest engine conformance test in the repo:
+a human solution threads gravity, the carried block, climbing and single occupancy simultaneously for hundreds
+of moves.
+
+**Those solutions became a training pipeline.** A suffix of a demonstrated path is a real position on real
+shipped terrain only N moves from the door, so one impossible board becomes a ladder of solvable ones.
+**Measured before building it:** every level solvable 20 moves out (bar Level 5), most at 40, and **Level 11 —
+untouchable from its opening — solved 35 moves from the end**. Search already beats the demonstrations locally
+(35 where the human took 40), which is the student-exceeding-the-teacher mechanism appearing before any
+training. `BlockDudeExpertIterationCampaign` (`--phase 2`) runs that loop: per-level frontiers, advance on a
+majority, a fixed share of human states in every batch so the far-distance labels never fade, single-action
+cross-entropy, distinct `policy-xit*` ids. First smoke test: frontier 20 → 100, 4/15 levels whole.
+
+**Irreversibility is a hole in the data, not just a property of the game (owner).** Rush Hour has no dead ends;
+Block Dude does. The oracle already labels them — forward BFS, then a BACKWARD BFS from the won states, so
+anything unreached keeps `dist = -1` — and `CollectSamples` discards exactly those. Measured: **41.5% of
+reachable states are unwinnable overall, 54.3% at stage 6**, and the net has been trained on **none** of them.
+That single fact explains all three of: a policy that walks confidently into unrecoverable positions, a value
+head that cannot represent "lost" and must invent a number for 41% of what it meets, and an A* that expands
+dead branches because the heuristic gives them plausible values. **This promotes the categorical value head to
+the next change**: buckets plus an explicit *unsolvable* class fix both natively, where a scalar head
+fundamentally cannot.
+
+**Also in this branch.** Saturation-driven growth generalised into `Core/Training` (`GrowthPlateau`,
+`GrowthLadder`, `SaturationGrowth`) after the owner asked whether the net auto-grows when saturated — it did
+not, it grew on a clock. Two defects surfaced: the shared `DqnGrowth` ladder **made nets smaller** (tops out at
+`[128,128,128]` against defaults of `[384,384]` and `[512,512]`), and the rung was *guessed* from the live
+trunk with a silent fall-back to rung 0. Both fixed; `DqnGrowth`'s tiny ladder is deliberate and documented as
+a viewer demo, not a capacity lever. Block Dude also joined the live network viewer — **twice**, because
+phase 2 shipped without the seam hours after phase 1 gained it; `CampaignTelemetryTests` now fails any campaign
+that cannot be watched, since `VizLauncher` skips silently by design.
+
+**Phase 2's first result, after 26 minutes of training** (rebuild PRD §6c): greedy **0/15 → 3/15**, A\*
+**5/15 → 6/15**. The policy solves Level 1, Bonus 1 and Bonus 3 unaided — something it had never done — and
+Level 1 in 19 steps, matching the human optimum. A lower bound, not a ceiling: the run used the scalar value
+head that §6b shows is compressed AND blind to the 41.5% of states that are unwinnable.
+
+**Then the search turned out to be the bottleneck, not the value head** (rebuild PRD §6d, overnight
+2026-09-14). §6c had named the scalar value head as what was holding phase 2 back and §4 as the fix. Measuring
+first changed that, the same way §6a had changed the plan's order once already: **three changes to the search,
+none of them a training change, took the SAME frozen checkpoint from 6/15 to 8/15 shipped levels.**
+
+- **The net was being called one row at a time.** `BlockDudeSearch` used the per-node `ValueGuidedSearch.Solve`;
+  Core's `SolveBatched` — which scores a whole round of successors in one forward, written for the cube — was
+  right there unused. 6/15 → **7/15** for a different call shape. It compounds, because expert iteration
+  *generates every training sample with this same search*: solve rate 43% → 58% and levels-whole 5/15 → 7/15
+  within three rounds.
+- **A\* weight was already saturated** — 1.5, 2, 3 and 5 all give 7/15, only 1.0 is worse. There was no better
+  setting of that knob to find, which is what made it clear the next lever had to be a different *signal*.
+- **The better-trained head was not used at all.** Ordering was `g + weight·h`, the value head alone — the head
+  §8.4a measures as compressed at long horizons — while the policy head agrees with demonstrated moves ~94% of
+  the time and solves three levels outright with no lookahead. New generic `Core/Planning/PolicyValueSearch`
+  adds accumulated policy *surprise* to the frontier cost: 7/15 → **8/15**, adding Level 6, which value-guided
+  search never solved at any weight. The prior biases order and never prunes — a hard mask can make a solvable
+  problem unsolvable, which in an irreversible game is a defect and not an optimisation.
+
+**Then beam search, which is what the long levels actually needed.** The control's closing observation — that
+seven levels are solved by *nothing* and the node budget is the wall — is a statement about the search's shape,
+not its heuristic. A\* holds a frontier that grows with the space explored, so no heuristic quality makes a
+900-move solution reachable inside 200k nodes. Beam search costs `width × depth`, so depth is nearly free. New
+generic `Core/Planning/PolicyBeamSearch` (the cube had an EfficientCube-style one buried in its own files; this
+is the reusable one): **8/15 → 10/15**, adding Level 4 (281 moves) and Bonus 4, neither solved by any other tier
+at any setting — and shorter paths everywhere the tiers overlap (Level 5 in 129 against 207/172/161). It is
+ranked by the policy head *alone*, which is valid precisely because every candidate in a beam sits at the same
+depth, so cumulative log-π compares directly; it therefore sidesteps the value head's long-horizon compression
+instead of working around it. What it gives up is completeness — a pruned solution is gone — so a test *requires*
+a narrow beam to fail on a solvable problem, since anyone reading "search" would otherwise assume the A\* tiers'
+guarantees. It is in the training loop too, as a fallback after A\*, with its own counter: if beam hits grow
+while A\* hits shrink, the curriculum has moved past what a node budget can reach.
+
+**And then the controls put all of it in proportion.** `--zero-h` runs the identical search with `h = 0`, i.e.
+uninformed breadth-first, and it solves **6/15 on its own**; a uniform-prior beam — the beam tier's own control,
+needed because beam and A\* are different *shapes* and the h = 0 number would otherwise credit the policy for
+the change of shape — also solves **6/15**. So the easy six are not evidence about the net at all, and against
+that baseline the net is worth **+2 levels in A\*** and **+4 in beam**. The policy head is worth twice as much in
+the right search shape; the A\* tiers were understating it. That also reframes the greedy score: policy alone
+3/15, uniform beam 6/15, policy-driven beam 10/15 — so what greedy lacks is not knowledge but any capacity to
+survive its own single mistake, which in an irreversible game is fatal by construction. Two more things only
+the control could show: the value head **actively misleads** the search on Level 6 — blind search
+solves it in 107 moves, value-guided solves it at no A\* weight tested, which is §8.4a's compression appearing
+as a lost level rather than an error bar — and the two heads are **complementary rather than redundant**, each
+worth exactly +1 over the control and not the same +1 (value brings Level 5, the prior brings back Level 6).
+Seven levels (4, 7, 8, 9, 10, 11, Bonus 4) are solved by *nothing*, at any tier; those are the long ones, the
+budget is the wall, and the frontier is the number to watch rather than the bench.
+
+**This lowers the categorical value head's PRIORITY while strengthening the evidence for it** — the two move in
+opposite directions and it is worth being exact about which. The evidence got stronger: Level 6 is a
+scalar-value-head defect caught doing real damage, not an error bar. The priority dropped anyway, because the
+damage turned out to be recoverable at **zero training cost** by pairing the head with the policy prior, while
+§4 changes the output shape and therefore forces a fresh run. So §4 stays the plan for the next deliberate
+rebuild, with a better argument behind it than it had, and is no longer what stands between the current net and
+the shipped levels.
+Two measurements have now each demoted an expensive rebuild; treat the next item in that PRD as a hypothesis to
+test, not work to schedule.
+
+**Two silent curriculum flaws, found while doing the above.** A frontier could only ever move *outward*, and
+advancing multiplies it by 1.5 — so a level could be thrown past what the net can solve, and a level that solves
+nothing produces no samples and can never recover. The run keeps reporting healthy loss and accuracy from the
+other levels throughout. A round that solves nothing now retreats, gently (×0.8), so a level settles at the edge
+of its ability instead of oscillating. And **a failed search taught nothing while 42% of them failed** — worst
+on the long levels, which have the most left to learn. A failure is now retried on half the budget aiming at the
+*human's demonstrated path* as well as the door, since reaching a state the demonstration reached means a
+winning continuation is already known. It must be a fallback and not a combined goal (the start is itself on the
+path, so one search aiming at both stops a few moves in, every time, quietly dismantling the frontier), and a
+hit is a candidate rather than a proof (a 32-bit state hash, a few percent collision chance over 200k nodes), so
+every hit is confirmed by replaying the remainder through the engine.
+
+**Result: 15/15, and shorter than the teacher on 12 of them.** Once the beam budget stopped capping the
+curriculum, the frontier went 494 → 735 → **909** in two rounds and every level reached whole. Benched at 368k
+samples (beam width 256, ≤45s): greedy 10/15, no-revisit 12/15, policy beam search 15/15. **An hour later the
+search was unnecessary: greedy alone reached 15/15** — pure argmax, one forward pass per move, no lookahead, no
+backtracking — including Level 7 in 768 moves, Level 8 in 453 and Level 11 in 826. That overturns §8.1a of the
+M58 PRD, which argued irreversibility *forces* net + search as the shipped artefact: true of the net it was
+written for, and no longer true of this one, because a policy that does not make the wrong move has nothing to
+recover from. It also makes the artefact far cheaper to ship — a bare forward pass ports to the browser twin
+with no search to reimplement. Against the human demonstrations it trained on, playing greedily: **3,598 moves
+against 3,870, shorter on 11 levels, equal on 4, longer on none** (Level 11 −83, Level 8 −41, Level 10 −37,
+Level 5 −36, Bonus 2 −21). The final net was chosen by *measurement* rather than by being last: phase 2
+checkpoints the latest net, not the best, and with accuracy pinned at 100% a later round can drift as easily as
+improve — so an earlier 15/15 checkpoint was preserved and the two benched against each other (3,598 vs 3,644). That margin matters more than the 15/15, because a net that had merely memorised the
+demonstrations would *match* them — beating them across eleven levels means it learned the terrain rather than
+the keystrokes, and it is the sharpest evidence that "overfitting to these levels" is not the same as
+"replaying these recordings". The caveat belongs next to it: the human lines are recorded as non-optimal, so
+this is "better than the teacher", not "optimal", and no optimal reference exists for boards this size — which
+is why the demonstrations were recorded in the first place. All fifteen lines are in
+`docs/blockdude-ai-solutions.txt`, in the game recorder's own format, so they can be pasted back in and watched.
+
+**The net learned these fifteen levels, not the game — and that is the design, but it must be labelled.** Phase
+2 trains on the shipped levels, so they are the curriculum and the benchmark at once and every "solves N/15" is
+a *training-set* score. New `--held-out` scores the same net on generated gate boards, the only positions it has
+On the final net: greedy **100% on the trained levels, 9% on held-out**. The beam tier reads 98% on held-out
+with every solution optimal — but the uniform-prior control reads **the same 98%, equally optimal**, because
+those boards are small enough for a 256-wide beam to be near-exhaustive. So on held-out data **the net
+contributes nothing measurable**, and without the control this would have been written up as "generalises to
+98% of unseen boards". Third time in one night that a control overturned the conclusion it was checking.
+
+This is the reverse curriculum working exactly as intended — overfitting to the target is its *mechanism*, and
+it meets the owner's stated goal. What it does not support is a claim that the net plays Block Dude. It also
+gives §2 a sharper purpose: the generator rebuild stops being "volume and variety" and becomes the specific
+prerequisite for a net that transfers. A cheaper partial fix, if transfer matters sooner, is to mix
+oracle-labelled generated boards back into phase-2 batches the way `DemoShare` anchors long-horizon data —
+phase 2 currently trains on shipped levels and demonstrations only, so phase 1's skills are simply forgotten.
+
+**SDK 0.6.0 → 0.7.0.** Two of the five packable libraries changed, so the lockstep version is bumped in the
+same PR that changes them: **Core** gains `Planning/PolicyValueSearch` and `Planning/PolicyBeamSearch`, and
+**Environments** gains batched `Distances`/`EvaluateBatch` on `BlockDudePolicyNet` plus `BlockDudeGreedy` and
+`BlockDudeSearch`, moved in from Campaigns so inference sits next to the net (as it already does for Cube and
+Rush Hour) and the load-only web app never references the training assembly. That move is not a breaking change
+for consumers: Campaigns is `IsPackable=false` and has never shipped.
+
+**Still open.** The generator rebuild (rebuild PRD §2) and the categorical value head (§4) are unbuilt; and the
+full local test suite still does not complete on the dev machine, so CI remains the check.
+
+---
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
