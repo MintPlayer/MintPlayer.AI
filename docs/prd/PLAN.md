@@ -2978,6 +2978,81 @@ for consumers: Campaigns is `IsPackable=false` and has never shipped.
 **Still open.** The generator rebuild (rebuild PRD §2) and the categorical value head (§4) are unbuilt; and the
 full local test suite still does not complete on the dev machine, so CI remains the check.
 
+## M60 — Snake: render the planned Hamiltonian cycle  *(2026-09-14; branch `m60-snake-cycle-overlay`; see `SNAKE_CYCLE_OVERLAY_PRD.md`)* 🔜
+
+**Why:** M48's "Watch AI (Hamiltonian cycle)" is the repo's only provably-never-dying agent, and on screen it
+looks like an ordinary snake that gets lucky. The rail it can never leave — a cycle through *every* cell,
+redrawn as it plays — is invisible. `SNAKE_HAMILTONIAN_PRD.md` §4.5 named the overlay as a stretch and M48.3
+shipped without it. Also folded in (owner's one-PR rule, bug found along the way): **Snake is the only game page
+whose board doesn't shrink on a phone** — `snake.scss:20` is a hard `width: 480px`, while `crazy-fruits.scss:42`
+and `tetris.scss:34` both use `min(Npx, 100%)`.
+
+**Pure view-layer for the overlay itself.** `PgSnakeEnv.cycle` / `.cycleIndex` are already public on the
+generated TS twin (`snake_solver.ts:106–107`), the cycle is always full-board, and `tryRebuildCycle` assigns a
+**new array reference** (`:864`) — a free change-detector. **No `.pg` edit, no transpile, no C#, no checkpoint,
+no npm dep.**
+
+**Decisions (owner, design interview 2026-09-14) — five, each with the rejected branch:**
+
+1. **The bright arc is a CORRIDOR, not a route.** `chooseActionCycle` scores `d*1000 + Q*50`
+   (`snake-director.ts:33–34`), so while `freeCount() > 72` the policy takes the **largest legal forward jump**
+   every tick and the net only breaks ties — the snake cuts *across* the arc, it does not follow it. What saves
+   the arc is that `d > dFood` is rejected: head and food are both on it and the snake provably stays inside.
+   Copy must say *corridor it's allowed to move inside*. **Accepted:** right after `initCycle` the arc can be
+   ~97% of the loop. *(Rejected: capping it to a ~24-cell lookahead — stable at every moment, but discards the
+   guaranteed-enclosure property and the cap length is an arbitrary number picked without seeing a board.)*
+2. **Rebuild: geometry snaps, the arc flashes once** (full brightness → resting alpha over ~300 ms, a bounded
+   self-terminating rAF keepalive). Honest framing: the flash means *the plan changed*, **not** *it ate* — a
+   failed rebuild retries every tick, so late game it decouples from eating entirely. *(Rejected: cross-fade —
+   same unpredictable timing, needs the old cycle retained; sidebar text — nobody watching a canvas reads it.)*
+3. **Two flat strokes, both 5 CSS px**, distinguished only by colour: arc-to-food `rgba(255,212,121,0.45)`
+   (`#ffd479`, already in `snake.scss`), rest-of-loop `#3a4154` (the `hair` token from
+   `lunar-lockout-render.ts:65`). **No gradient/dash/glow** — `lunar-lockout-render.ts:4` states the house rule
+   and `snake-renderer.ts` has no gradient either. The draft's head→food gradient was justified as "direction
+   without animation"; that dies on contact, because the arc's endpoints are already marked (eyed head, red
+   food dot). The 0.45 pre-empts a board-spanning gold ribbon out-shouting a 29 px green tube — **the one
+   number here chosen without seeing it rendered.**
+4. **Fix the responsive board** (`min(480px, 100%)` + `aspect-ratio: 1`) **and keep the stroke at exactly 5 CSS
+   px** — owner overruled "over-engineering".
+5. **Backing-store resize (D2)**, per `tetris.ts:147–154` / `crazy-fruits.ts:106–113`: drawing units become CSS
+   px, so `lineWidth = 5` is literally 5 px with no compensation term. *(Provisionally chose, then reversed on
+   evidence: a frozen 480-unit board with `5 * (480/cssWidth)` compensation — it keeps the other two modes'
+   output pixel-identical at every size, but **every** responsive canvas in this repo resizes its backing store,
+   so it would be the only one of its kind, and it retains the term most likely to be subtly wrong.)*
+
+**Not asked, derived — draw order under the tube is load-bearing, not just cheap:** by the cycle invariant the
+body is a contiguous run *behind* the head, so the head→food arc **always lies on non-body cells and is never
+occluded**; the remaining arc contains the body and is progressively swallowed by the tube — which is exactly
+right, it's the part already covered.
+
+- **M60.1 — Director seam** 🔜 (`SnakeAiFrame` gains `cycle: number[] | null` + `cycleEpoch`; epoch bumps on
+  reference **and length** change — `initCycle` mutates in place so the first build keeps the old ref, and
+  `reset()` empties the same array; frame holds a `slice()` copy, because handing out the engine array lets a
+  rebuild tear a frame mid-rAF). **Gate:** cycle mode plays identically; search-mode frames carry `cycle: null`.
+- **M60.2 — Responsive board + backing-store resize** 🔜 (`snake.scss` → `min(480px,100%)` + `aspect-ratio: 1`;
+  `cell`/`boardPx` stop being `readonly`; `syncSize()` from a guarded `ResizeObserver` + defensively in
+  `draw()`; **`setTransform(dpr,0,0,dpr,0,0)` after reassigning `canvas.width`**, which resets context state and
+  would otherwise silently drop the constructor's `ctx.scale`). No overlay yet. **Gate:** all three modes
+  undistorted at 1280×800 and 390×844, no page-level horizontal scroll on phone width.
+- **M60.3 — Overlay rendering + rebuild flash** 🔜 (drawn between `clear()` and the food. Full loop at
+  rest-colour as a `Path2D` cached on **`(cycleEpoch, cell)`** — keyed on `cell` too, or a viewport change
+  leaves stale geometry at the wrong scale — closed **including the implicit wrap `cycle[n-1]→cycle[0]`**,
+  corners via the existing `tubePath` at `cell*0.22`; then the head→food arc overdrawn, rebuilt per tick,
+  wrapping. rAF park condition becomes `p < 1 || flashing`.) **Gate:** both strokes correct; the loop visibly
+  redraws on rebuild; search + human still run the unchanged tube/food/grid paths; rAF parks within ~300 ms of
+  the last rebuild.
+- **M60.4 — Control + live verification** 🔜 (checkbox under `@if (mode() === 'watch-cycle')`, native `<input>`
+  + signal setter per `rush-hour.html:109`, on by default, no cross-session persistence; setter re-pushes the
+  last snapshot so it repaints immediately instead of waiting 120 ms; intro copy uses the *corridor* wording).
+  **Gate:** `playwright_node` MCP against the user's already-running host at 1280×800 and 390×844 — overlay
+  on/off screenshots, ≥30 s watching at 60 fps with no long tasks; `ARCHITECTURE.md` Snake section updated.
+
+**Hard gates:** zero AI change (`git diff master` empty under
+`src/MintPlayer.AI.ReinforcementLearning.Environments/`; same seed ⇒ same trajectory) and the other two modes
+keep **identical drawing logic** — narrowed from the draft's "pixel-identical", which M60.2 deliberately makes
+false on narrow screens. Perf gate likewise restated: **no permanent animation loop**; bounded self-terminating
+keepalives are allowed, 60 fps with no long tasks over ≥30 s is the real check.
+
 ---
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
