@@ -158,8 +158,11 @@ internal static class BlockDudeLevelBench
         for (int i = 0; i < levels.Length; i++)
         {
             var board = BlockDudeBoard.FromGrid(levels[i].Grid);
-            var outcome = BlockDudeGreedy.Run(net, board, budget);
+            var outcome = BlockDudeGreedy.Run(net, board, budget, recordMoves: emitPath is not null);
             if (outcome.Solved) solved++;
+            // Emitted FIRST, so the greedy line wins ties against the search tiers: same length, but it is the
+            // one the net plays on its own, and that is the line worth watching.
+            if (outcome.Solved && outcome.Moves is not null) Emit(emitted, levels[i].Name, outcome.Moves);
 
             var noRevisit = BlockDudeGreedy.RunAvoidingRevisits(net, board, budget);
             if (noRevisit.Solved) noRevisitSolved++;

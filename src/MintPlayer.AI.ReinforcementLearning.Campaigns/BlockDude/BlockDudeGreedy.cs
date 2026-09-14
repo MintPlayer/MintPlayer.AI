@@ -31,7 +31,11 @@ public static class BlockDudeGreedy
     /// <param name="DistinctStates">How many distinct board states the rollout touched. Read it against
     /// <paramref name="Steps"/>: far fewer distinct states than steps means the policy is cycling, which a
     /// <see cref="Ending.Budget"/> ending alone does not tell you.</param>
-    public readonly record struct Outcome(Ending Ending, int Steps, int DistinctStates)
+    /// <param name="Moves">The actions actually played, when the caller asked for them. Optional because the
+    /// training gate runs thousands of rollouts and only needs the verdict, while a benchmark wants the line
+    /// itself — to replay it, to compare its length with the human's, or to watch it in the game.</param>
+    public readonly record struct Outcome(Ending Ending, int Steps, int DistinctStates,
+                                          IReadOnlyList<int>? Moves = null)
     {
         public bool Solved => Ending == Ending.Won;
     }
@@ -84,20 +88,24 @@ public static class BlockDudeGreedy
     /// <summary>Plays <paramref name="start"/> greedily under <paramref name="net"/> until it ends.</summary>
     /// <param name="stepBudget">Hard cap on moves. The training gate derives this from the rung's optimal length;
     /// the shipped levels carry no optimal count, so their benchmark passes an explicit ceiling.</param>
-    public static Outcome Run(BlockDudePolicyNet net, BlockDudeBoard start, int stepBudget)
+    /// <param name="recordMoves">Also return the line played. Off by default — the gate runs thousands of these
+    /// and only needs the verdict.</param>
+    public static Outcome Run(BlockDudePolicyNet net, BlockDudeBoard start, int stepBudget, bool recordMoves = false)
     {
         var current = start;
         var seen = new HashSet<int>();
+        var moves = recordMoves ? new List<int>() : null;
 
         for (int step = 0; step < stepBudget; step++)
         {
-            if (current.Won) return new(Ending.Won, step, seen.Count);
+            if (current.Won) return new(Ending.Won, step, seen.Count, moves);
 
             var action = net.Greedy(current);
-            if (action is null) return new(Ending.NoMove, step, seen.Count);
+            if (action is null) return new(Ending.NoMove, step, seen.Count, moves);
 
             var next = current.Apply(action.Value);
-            if (next.SameStateAs(current)) return new(Ending.Refused, step, seen.Count);
+            if (next.SameStateAs(current)) return new(Ending.Refused, step, seen.Count, moves);
+            moves?.Add((int)action.Value);
 
             // Exit on the FIRST revisit. The original guard also required `seen.Count > stepBudget`, which can
             // never hold when at most `stepBudget` states are ever added — so it was inert and a cycling policy
@@ -108,12 +116,12 @@ public static class BlockDudeGreedy
             // `StateHash` is a 32-bit hash, so a collision could in principle end a live rollout early. At these
             // trajectory lengths that is well under a tenth of a percent, and the affected rollout was already
             // being counted as unsolved.
-            if (!seen.Add(next.StateHash)) return new(Ending.Loop, step, seen.Count);
+            if (!seen.Add(next.StateHash)) return new(Ending.Loop, step, seen.Count, moves);
             current = next;
         }
 
         return current.Won
-            ? new(Ending.Won, stepBudget, seen.Count)
-            : new(Ending.Budget, stepBudget, seen.Count);
+            ? new(Ending.Won, stepBudget, seen.Count, moves)
+            : new(Ending.Budget, stepBudget, seen.Count, moves);
     }
 }
