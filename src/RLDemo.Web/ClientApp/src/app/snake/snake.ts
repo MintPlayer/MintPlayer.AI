@@ -1,6 +1,6 @@
 import { Component, DestroyRef, ElementRef, afterNextRender, inject, signal, viewChild } from '@angular/core';
 import { Dir, SIZE, SnakeGame } from './snake-logic';
-import { SnakeDirector } from './snake-director';
+import { SnakeAiFrame, SnakeDirector } from './snake-director';
 import { SnakeTubeRenderer } from './snake-renderer';
 import { ScreenWakeLock } from '../screen-wake-lock';
 import { Color } from '@mintplayer/ng-bootstrap';
@@ -30,6 +30,8 @@ export class Snake {
   protected readonly mode = signal<'idle' | 'watch' | 'watch-cycle' | 'human'>('idle');
   protected readonly foodEaten = signal(0);
   protected readonly status = signal('Watch the self-taught AI play, or play it yourself.');
+  /** M60: the cycle overlay is the explanation of the Hamiltonian mode, so it starts visible. Not persisted. */
+  protected readonly showRoute = signal(true);
 
   private readonly boardRef = viewChild.required<ElementRef<HTMLCanvasElement>>('board');
   private renderer: SnakeTubeRenderer | null = null;
@@ -37,12 +39,13 @@ export class Snake {
   private timer: ReturnType<typeof setInterval> | null = null;
   private game: SnakeGame | null = null;
   private director: SnakeDirector | null = null;
+  private lastFrame: SnakeAiFrame | null = null;
 
   constructor() {
     afterNextRender(() => {
       this.renderer = new SnakeTubeRenderer(this.boardRef().nativeElement, SIZE, BOARD_PX);
     });
-    inject(DestroyRef).onDestroy(() => this.stop());
+    inject(DestroyRef).onDestroy(() => { this.stop(); this.renderer?.destroy(); });
   }
 
   // --- Watch AI: the whole AI (physics + net + search/cycle policy) runs in the browser (M33/M34/M48) ---
@@ -64,7 +67,8 @@ export class Snake {
     this.timer = setInterval(() => {
       const f = this.director?.step();
       if (!f) return; // checkpoint still loading
-      this.render(f.body, f.food, f.foodEaten);
+      this.lastFrame = f;
+      this.render(f.body, f.food, f.foodEaten, f.cycle, f.cycleEpoch);
       if (f.done) {
         this.status.set(f.length === SIZE * SIZE
           ? `AI filled the whole board — a perfect game (${f.foodEaten} food). Restarting…`
@@ -109,13 +113,22 @@ export class Snake {
     this.renderer?.stop();
     this.game = null;
     this.director = null;
+    this.lastFrame = null;
     void this.wakeLock.release();
     if (this.mode() !== 'idle') this.mode.set('idle');
   }
 
-  private render(body: number[], food: number, eaten: number): void {
+  /** Toggle the cycle overlay and repaint at once, rather than waiting up to a full tick for the next frame. */
+  protected toggleRoute(on: boolean): void {
+    this.showRoute.set(on);
+    const f = this.lastFrame;
+    if (f) this.render(f.body, f.food, f.foodEaten, f.cycle, f.cycleEpoch);
+  }
+
+  private render(body: number[], food: number, eaten: number, cycle: number[] | null = null, epoch = 0): void {
     this.foodEaten.set(eaten);
-    this.renderer?.push(body, food, eaten);
+    // Hiding is a data decision, so the renderer stays a pure function of the snapshot it is handed.
+    this.renderer?.push(body, food, eaten, this.showRoute() ? cycle : null, epoch);
   }
 
   private clearTimer(): void {

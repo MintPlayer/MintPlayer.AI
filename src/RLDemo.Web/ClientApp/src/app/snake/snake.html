@@ -20,6 +20,18 @@
       <button [color]="colors.secondary" (click)="stop()" [disabled]="mode() === 'idle'">Stop</button>
     </div>
     <p class="status">{{ status() }}</p>
+    @if (mode() === 'watch-cycle') {
+      <label class="toggle">
+        <input type="checkbox" [checked]="showRoute()"
+               (change)="toggleRoute($any($event.target).checked)" />
+        Show planned route
+      </label>
+      <p class="hint">
+        The thin line is the cycle it holds — a loop through every cell. The gold stretch is the corridor it's
+        allowed to move inside on the way to the food: it takes shortcuts forward along the loop, but never past
+        the food, so it can't box itself in. The whole loop redraws whenever the plan changes.
+      </p>
+    }
     @if (mode() === 'human') {
       <p class="hint">Arrow keys or WASD to steer. You can't reverse straight back into your neck.</p>
     }

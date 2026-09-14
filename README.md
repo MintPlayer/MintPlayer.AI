@@ -25,7 +25,7 @@ See also:
 | `src/MintPlayer.AI.ReinforcementLearning.Core` | Environment API (Gymnasium-faithful), spaces, seeded RNG, agents, trainers, solvers, checkpoints + model store |
 | `src/MintPlayer.AI.ReinforcementLearning.Environments` | GridWorld, FrozenLake, CartPole, 2048, Rush Hour (incl. BFS solver + puzzle generator), Rubik's Cube (incl. a C# port of Kociemba's two-phase solver) |
 | `src/RLDemo.Console` | Console demo — watch agents learn and play (`--save`/`--load` persist trained models) |
-| `src/RLDemo.Web` | **MintPlayer.AI.ReinforcementLearning Playground** — ASP.NET Core + Angular web app: three games (Rush Hour, classic-feel 2048, a 3D Rubik's Cube), each playable yourself and solvable by the trained AI with step-through playback, plus a public gallery of every submitted board |
+| `src/RLDemo.Web` | **MintPlayer.AI.ReinforcementLearning Playground** — ASP.NET Core + Angular web app: Rush Hour, 2048, Rubik's Cube, Snake, Mountain Car, FruitCake, Crazy Fruits, Tetris, Chess, Draughts, Block Dude and Lunar Lockout — each playable yourself and watchable as the trained AI plays (most of them running **entirely in the browser**, no server), plus a public gallery of every submitted board |
 | `tests/MintPlayer.AI.ReinforcementLearning.Tests` | xUnit suite incl. solved-threshold gates, determinism tests and web API integration tests |
 | `tools/MintPlayer.AI.ReinforcementLearning.Lab` | Long-running training campaigns (Rush Hour, Rubik's Cube, Snake, FruitCake) — resumable, checkpointing into the model store. Add `--viz` for a live in-browser **network visualizer** (see below) |
 

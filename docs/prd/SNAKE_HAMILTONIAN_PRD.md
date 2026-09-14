@@ -131,6 +131,7 @@ All simulation stays RNG-free (M34 rule: RNG lives with the caller), so C#/TS re
 - `snake_solver.ts` regenerated from the `.pg` (never hand-edited). Renderer untouched (mode-agnostic).
 - A full-board win at `WATCH_TICK_MS=120` takes ~10–20 min — consider a faster tick for this mode (owner call).
 - *(Stretch, optional)* faint overlay drawing the current cycle — great for demoing *why* it never dies.
+  **Not built in M48.3; promoted to its own milestone — M60, `SNAKE_CYCLE_OVERLAY_PRD.md` (2026-09-14).**
 
 ## 5. Results (measured — C#, shipped 177-dim net, 12×12, 50 eps, seed 1)
 
