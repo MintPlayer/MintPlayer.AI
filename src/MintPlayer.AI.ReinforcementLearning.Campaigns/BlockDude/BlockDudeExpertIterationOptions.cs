@@ -84,8 +84,28 @@ public sealed record BlockDudeExpertIterationOptions
     /// </remarks>
     public int BeamWidth { get; init; } = 256;
 
-    /// <summary>Wall-clock ceiling for one beam attempt.</summary>
+    /// <summary>Wall-clock floor for one beam attempt, used at shallow frontiers.</summary>
     public int BeamSeconds { get; init; } = 8;
+
+    /// <summary>
+    /// Ceiling for one beam attempt at deep frontiers. The budget is scaled by how long a suffix is being asked
+    /// for, between <see cref="BeamSeconds"/> and this.
+    /// </summary>
+    /// <remarks>
+    /// A flat budget silently caps the curriculum. Beam search advances one depth step per forward pass, so the
+    /// moves it can reach are roughly proportional to the time it gets: measured, width 256 needs about 25s to
+    /// reach 358 moves, so an 8-second budget stops around 110. A level whose frontier passes that point fails
+    /// every attempt no matter how good the net is — and the run shows exactly that, with the frontier settling
+    /// at ~494 and holding there while loss and accuracy stay pinned at their floors. That is a budget wall
+    /// being mistaken for the net's limit.
+    /// <para>Scaling by depth rather than raising the flat budget matters because most levels are shallow: only
+    /// the few deep ones pay the larger cost, so a round does not get 5× slower to help two levels.</para>
+    /// </remarks>
+    public int BeamSecondsMax { get; init; } = 45;
+
+    /// <summary>Moves of suffix per second of beam budget — the constant behind the scaling, measured rather
+    /// than guessed (width 256 reached 358 moves in ~25s, so ~14; 12 leaves headroom).</summary>
+    public int BeamMovesPerSecond { get; init; } = 12;
 
     /// <summary>
     /// Share of each training batch drawn from the HUMAN demonstrations rather than searched solutions. Keeps a

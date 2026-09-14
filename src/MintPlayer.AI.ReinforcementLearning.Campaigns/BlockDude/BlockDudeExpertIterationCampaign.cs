@@ -160,9 +160,14 @@ public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetwo
                 // policy, so these count as solves and may move the frontier.
                 if (_options.BeamWidth > 0)
                 {
+                    // Budget scaled to the suffix being asked for: beam advances one depth step per forward, so
+                    // reachable moves scale with the time it gets. A flat budget caps the CURRICULUM rather than
+                    // the search — a level past the reach of that budget fails every attempt however good the
+                    // net is, which is indistinguishable in the logs from the net having hit its limit.
                     var viaBeam = BlockDudeSearch.SolveByBeam(
                         _net, start, _options.BeamWidth, maxDepth: jittered * 3 + 50,
-                        TimeSpan.FromSeconds(_options.BeamSeconds));
+                        TimeSpan.FromSeconds(Math.Clamp(jittered / (double)_options.BeamMovesPerSecond,
+                                                        _options.BeamSeconds, _options.BeamSecondsMax)));
 
                     if (viaBeam.Solved)
                     {

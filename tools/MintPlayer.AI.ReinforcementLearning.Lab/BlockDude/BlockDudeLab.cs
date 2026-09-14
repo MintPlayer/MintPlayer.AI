@@ -75,6 +75,8 @@ internal static class BlockDudeLab
                     PolicyWeight = a.Flt("--policy-weight", 5f),
                     BeamWidth = a.Int("--beam-width", 256),
                     BeamSeconds = a.Int("--beam-seconds", 8),
+                    BeamSecondsMax = a.Int("--beam-seconds-max", 45),
+                    BeamMovesPerSecond = a.Int("--beam-moves-per-second", 12),
                     InitialFrontier = a.Int("--frontier", 20),
                     FrontierGrowth = a.Dbl("--frontier-growth", 1.5),
                     AdvanceRate = a.Dbl("--advance-rate", 0.75),
