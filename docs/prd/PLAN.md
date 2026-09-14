@@ -2978,7 +2978,7 @@ for consumers: Campaigns is `IsPackable=false` and has never shipped.
 **Still open.** The generator rebuild (rebuild PRD §2) and the categorical value head (§4) are unbuilt; and the
 full local test suite still does not complete on the dev machine, so CI remains the check.
 
-## M60 — Snake: render the planned Hamiltonian cycle  *(2026-09-14; branch `m60-snake-cycle-overlay`; see `SNAKE_CYCLE_OVERLAY_PRD.md`)* 🔜
+## M60 — Snake: render the planned Hamiltonian cycle  *(2026-09-14; branch `m60-snake-cycle-overlay`; see `SNAKE_CYCLE_OVERLAY_PRD.md`)* ✅
 
 **Why:** M48's "Watch AI (Hamiltonian cycle)" is the repo's only provably-never-dying agent, and on screen it
 looks like an ordinary snake that gets lucky. The rail it can never leave — a cycle through *every* cell,
@@ -3025,27 +3025,55 @@ body is a contiguous run *behind* the head, so the head→food arc **always lies
 occluded**; the remaining arc contains the body and is progressively swallowed by the tube — which is exactly
 right, it's the part already covered.
 
-- **M60.1 — Director seam** 🔜 (`SnakeAiFrame` gains `cycle: number[] | null` + `cycleEpoch`; epoch bumps on
+- **M60.1 — Director seam** ✅ (`SnakeAiFrame` gains `cycle: number[] | null` + `cycleEpoch`; epoch bumps on
   reference **and length** change — `initCycle` mutates in place so the first build keeps the old ref, and
   `reset()` empties the same array; frame holds a `slice()` copy, because handing out the engine array lets a
   rebuild tear a frame mid-rAF). **Gate:** cycle mode plays identically; search-mode frames carry `cycle: null`.
-- **M60.2 — Responsive board + backing-store resize** 🔜 (`snake.scss` → `min(480px,100%)` + `aspect-ratio: 1`;
+- **M60.2 — Responsive board + backing-store resize** ✅ (`snake.scss` → `min(480px,100%)` + `aspect-ratio: 1`;
   `cell`/`boardPx` stop being `readonly`; `syncSize()` from a guarded `ResizeObserver` + defensively in
   `draw()`; **`setTransform(dpr,0,0,dpr,0,0)` after reassigning `canvas.width`**, which resets context state and
   would otherwise silently drop the constructor's `ctx.scale`). No overlay yet. **Gate:** all three modes
   undistorted at 1280×800 and 390×844, no page-level horizontal scroll on phone width.
-- **M60.3 — Overlay rendering + rebuild flash** 🔜 (drawn between `clear()` and the food. Full loop at
+- **M60.3 — Overlay rendering + rebuild flash** ✅ (drawn between `clear()` and the food. Full loop at
   rest-colour as a `Path2D` cached on **`(cycleEpoch, cell)`** — keyed on `cell` too, or a viewport change
   leaves stale geometry at the wrong scale — closed **including the implicit wrap `cycle[n-1]→cycle[0]`**,
   corners via the existing `tubePath` at `cell*0.22`; then the head→food arc overdrawn, rebuilt per tick,
   wrapping. rAF park condition becomes `p < 1 || flashing`.) **Gate:** both strokes correct; the loop visibly
   redraws on rebuild; search + human still run the unchanged tube/food/grid paths; rAF parks within ~300 ms of
   the last rebuild.
-- **M60.4 — Control + live verification** 🔜 (checkbox under `@if (mode() === 'watch-cycle')`, native `<input>`
+- **M60.4 — Control + live verification** ✅ (checkbox under `@if (mode() === 'watch-cycle')`, native `<input>`
   + signal setter per `rush-hour.html:109`, on by default, no cross-session persistence; setter re-pushes the
   last snapshot so it repaints immediately instead of waiting 120 ms; intro copy uses the *corridor* wording).
   **Gate:** `playwright_node` MCP against the user's already-running host at 1280×800 and 390×844 — overlay
   on/off screenshots, ≥30 s watching at 60 fps with no long tasks; `ARCHITECTURE.md` Snake section updated.
+
+**Results (measured live against the running host via `playwright_node`, 2026-09-14) — all gates green:**
+
+| gate | result |
+|---|---|
+| zero AI change | `git diff master -- src/MintPlayer.AI.ReinforcementLearning.Environments/` **empty** |
+| overlay renders (cycle mode) | loop + corridor drawn; checkbox toggles it off (0 gold, 0 loop px) and back on |
+| other modes untouched | search **and** human: 0 loop pixels, 0 gold, no checkbox; tube/food/grid paths unchanged |
+| no phone overflow (390×844) | board 327×327 CSS with a matching backing store; `scrollWidth == clientWidth == 375` |
+| frame rate (≥30 s watching) | **59.9 fps over 43.4 s, 0 long tasks**, rAF gap p50 16.7 / p95 17.2 / p99 18.0 / max 30.0 ms |
+| no permanent animation loop | **0 rAF requests over 3 s while stopped** (737 over 3 s while playing) |
+| typecheck | `tsc --noEmit -p tsconfig.app.json` clean |
+
+**Found and fixed during implementation — a self-inflicted layout regression.** The side panel wrapped below
+the board. The first diagnosis blamed the new `.board` width and was **wrong**; measuring gave `side w=1052px`
+and the real cause: `.side` is a flex item with `flex-basis: auto`, so it sizes to max-content, and M60.4's
+multi-sentence route hint demanded the whole row. Fixed with `max-width: 360px` on `.side`. (Also settled:
+`width: min(480px, 100%)` — crazy-fruits' formulation — is for a block with `margin: auto`; as a flex child a
+percentage resolves against the flex container, so `.board` uses `width` + `max-width`.)
+
+**Measurement note worth keeping:** two pixel-probe false readings preceded the green results above — an
+`r > 150` gold threshold missed the composited stroke entirely (gold at α 0.45 over `#1c2230` is ≈ rgb(130,132,88)),
+and a looser threshold then counted the `#ff6b6b` food dot as gold. Distinguish them on `|r − g|`: the overlay
+gold has r ≈ g, the food has r − g ≈ 148.
+
+**Also fixed (docs):** `ARCHITECTURE.md`'s client-side table had **no Snake row at all** while every other game
+had one — added, covering both planners, the M35 tube and the M60 overlay. `README.md`'s repo table still
+described the playground as "three games (Rush Hour, 2048, Rubik's Cube)"; it now lists all twelve.
 
 **Hard gates:** zero AI change (`git diff master` empty under
 `src/MintPlayer.AI.ReinforcementLearning.Environments/`; same seed ⇒ same trajectory) and the other two modes

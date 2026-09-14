@@ -1,6 +1,6 @@
 # Snake — render the planned Hamiltonian cycle on the board — PRD
 
-**Status:** planned · 2026-09-14 · branch `m60-snake-cycle-overlay` (off `master`)
+**Status:** SHIPPED (M60.1–M60.4) · 2026-09-14 · branch `m60-snake-cycle-overlay` (off `master`)
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M60 · **Depends on:** M48 (`SNAKE_HAMILTONIAN_PRD.md`), M35 (renderer, `SNAKE_RENDER_PRD.md`)
 
@@ -104,7 +104,9 @@ without seeing it rendered.**
 
 ### 3.4 Fix the responsive board, and keep the stroke at exactly 5 CSS px
 
-The board gets `width: min(480px, 100%)` + `aspect-ratio: 1`, matching the two phone-verified pages. The
+The board gets `width: 480px` + `max-width: 100%` + `aspect-ratio: 1`. *(Specced as crazy-fruits'
+`width: min(480px, 100%)`; corrected during M60.2 — see §6b.1. That form is for a block with `margin: auto`;
+`.board` is a flex child, where a percentage resolves against the flex container.)* The
 renderer then **resizes its backing store to the real CSS width** (`tetris.ts:147–154` / `crazy-fruits.ts:106–113`
 pattern), so drawing units are CSS pixels again and `lineWidth = 5` is literally 5 px with no compensation term.
 
@@ -177,7 +179,9 @@ In `'search'` mode `cycle` is `null` and `cycleEpoch` stays `0`; the `chooseActi
 
 ### 5.2 Responsive board + backing-store resize — `snake.scss`, `snake-renderer.ts`
 
-- `snake.scss:20` → `width: min(480px, 100%); height: auto; aspect-ratio: 1;`
+- `snake.scss:20` → `width: 480px; max-width: 100%; height: auto; aspect-ratio: 1;` (see §6b.1)
+- `.side` gains `max-width: 360px` — it is a flex item with `flex-basis: auto`, so §5.4's route hint would
+  otherwise size it to max-content and wrap the panel below the board
 - `cell` and `boardPx` stop being `readonly`. A `syncSize()` reads `canvas.clientWidth`, and when
   `round(cssW * dpr)` differs from `canvas.width` it reassigns `canvas.width`/`height`, re-applies the transform
   with `setTransform(dpr, 0, 0, dpr, 0, 0)` (assigning `canvas.width` resets context state — the current
@@ -233,7 +237,7 @@ written against final coordinates.
 
 - **M60.1 — Director seam.** `SnakeAiFrame.cycle` / `.cycleEpoch`, epoch detection (ref **and** length),
   defensive `slice()`. *Gate:* cycle mode plays identically; search-mode frames carry `cycle: null`.
-- **M60.2 — Responsive board + backing-store resize.** `snake.scss` `min(480px, 100%)` + `aspect-ratio`;
+- **M60.2 — Responsive board + backing-store resize.** `snake.scss` `width` + `max-width` + `aspect-ratio`;
   mutable `cell`/`boardPx`, `syncSize()`, `setTransform`, guarded `ResizeObserver`. No overlay yet.
   *Gate:* all three modes render correctly and undistorted at 1280×800 and 390×844; no page-level horizontal
   scroll on the phone width; drawing logic untouched.
@@ -244,6 +248,49 @@ written against final coordinates.
 - **M60.4 — Control + live verification.** Checkbox, immediate repaint, intro copy. *Gate:* `playwright_node`
   MCP against the user's already-running host at 1280×800 and 390×844 — overlay on/off screenshots, ≥30 s
   watching at 60 fps with no long tasks; `docs/ARCHITECTURE.md` Snake section updated.
+
+## 6b. Results (measured 2026-09-14, live against the running host via `playwright_node`)
+
+All four milestones shipped in one pass. Every gate in §2 green:
+
+| gate | result |
+|---|---|
+| zero AI change | `git diff master -- src/MintPlayer.AI.ReinforcementLearning.Environments/` **empty** |
+| overlay renders (cycle mode) | loop + corridor drawn; the checkbox removes it (0 gold, 0 loop px) and restores it |
+| other modes keep identical drawing logic | search **and** human: 0 loop pixels, 0 gold, no checkbox |
+| no phone overflow (390×844) | board 327×327 CSS with a matching backing store; `scrollWidth == clientWidth == 375` |
+| no permanent animation loop | **0 rAF requests over 3 s while stopped**; 737 over 3 s while playing |
+| 60 fps, no long tasks, ≥30 s | **59.9 fps over 43.4 s, 0 long tasks**; rAF gap p50 16.7 / p95 17.2 / p99 18.0 / max 30.0 ms |
+| typecheck | `tsc --noEmit -p tsconfig.app.json` clean |
+
+### 6b.1 The one regression, and the wrong first diagnosis
+
+M60.4's route hint wrapped the side panel below the board. The first diagnosis blamed M60.2's `.board` width
+change and was **wrong** — a code comment asserting that cause was written and then had to be corrected.
+Measuring gave `side w=1052px`: `.side` is a flex item with `flex-basis: auto`, so it sizes to max-content, and
+a three-sentence hint demands the whole row. Fixed with `max-width: 360px` on `.side`.
+
+The `.board` question settled independently: `width: min(480px, 100%)` — crazy-fruits' formulation — is for
+`.cf-stage`, a block with `margin: auto`. As a flex child a percentage resolves against the flex container, so
+`.board` uses `width: 480px` + `max-width: 100%`, which keeps the basis at 480 and still shrinks.
+
+### 6b.2 Measurement note — two false pixel readings
+
+Both green results above were preceded by a probe that lied, so record the calibration:
+
+- `r > 150` finds **no** overlay gold. The stroke is composited: `#ffd479` at α 0.45 over `#1c2230` is
+  ≈ `rgb(130, 132, 88)`.
+- Loosening to `r > 100 && g > 95 && b < 115` then counts the **food dot** (`#ff6b6b`) as gold.
+- Separate them on `|r − g|`: the overlay gold has r ≈ g (Δ ≈ 2); the food has r − g ≈ 148.
+
+The robust check for "is the overlay on" is the rest-of-loop colour instead — `#3a4154` is opaque and unique on
+the board, and the loop is drawn whenever `cycle` is non-null.
+
+### 6b.3 Still a live-tuning call
+
+`rgba(255, 212, 121, 0.45)` remains the one value chosen without seeing it rendered (§3.3). Desktop reads well.
+On the 390px phone the constant 5 px stroke sits against a tube that shrank to ~23 px, so the corridor carries
+proportionally more weight there — exactly the trade §3.4 accepted. Unchanged pending the owner's eye.
 
 ## 7. Non-goals
 
