@@ -2968,6 +2968,13 @@ prerequisite for a net that transfers. A cheaper partial fix, if transfer matter
 oracle-labelled generated boards back into phase-2 batches the way `DemoShare` anchors long-horizon data —
 phase 2 currently trains on shipped levels and demonstrations only, so phase 1's skills are simply forgotten.
 
+**SDK 0.6.0 → 0.7.0.** Two of the five packable libraries changed, so the lockstep version is bumped in the
+same PR that changes them: **Core** gains `Planning/PolicyValueSearch` and `Planning/PolicyBeamSearch`, and
+**Environments** gains batched `Distances`/`EvaluateBatch` on `BlockDudePolicyNet` plus `BlockDudeGreedy` and
+`BlockDudeSearch`, moved in from Campaigns so inference sits next to the net (as it already does for Cube and
+Rush Hour) and the load-only web app never references the training assembly. That move is not a breaking change
+for consumers: Campaigns is `IsPackable=false` and has never shipped.
+
 **Still open.** The generator rebuild (rebuild PRD §2) and the categorical value head (§4) are unbuilt; and the
 full local test suite still does not complete on the dev machine, so CI remains the check.
 
