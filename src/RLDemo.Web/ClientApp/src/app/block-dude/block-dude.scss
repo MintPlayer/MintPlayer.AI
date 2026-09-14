@@ -160,3 +160,13 @@
   color: #8b93a7;
   font-size: 0.9rem;
 }
+
+// Set apart from the keyboard help rather than merged into it: this is a claim about what the AI can and
+// cannot do, and it should read as a note rather than as more instructions.
+.ai-note {
+  margin-top: 0.75rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid #3a4257;
+
+  strong { color: #b9c1d4; }
+}

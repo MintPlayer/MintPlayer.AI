@@ -67,3 +67,13 @@
   <kbd>Z</kbd> undoes, <kbd>R</kbd> restarts. Undo matters here: unlike most puzzles, a misplaced block can
   make a level unsolvable with no way back.
 </p>
+
+<p class="keys ai-note">
+  <strong>Watch AI</strong> replays a neural network playing the level — no search and no lookahead, just one
+  look at the board per move. It finishes all fifteen levels, and on eleven of them in fewer moves than the
+  recorded human solutions it learned from (3,598 against 3,870; Level 11 in 826 moves against 909).
+  <br>
+  It was trained on these fifteen levels specifically, so that is all it knows: on levels it has never seen it
+  solves about one in ten. Add a sixteenth and it will most likely fail — it has learned this terrain, not the
+  game. Your own recordings are never touched by it.
+</p>
