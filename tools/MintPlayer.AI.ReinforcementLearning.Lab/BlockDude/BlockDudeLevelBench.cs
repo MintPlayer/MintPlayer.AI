@@ -34,6 +34,59 @@ internal static class BlockDudeLevelBench
         return parts.Length >= 2 && int.TryParse(parts[1].AsSpan(0, parts[1].IndexOf(' ')), out int n) ? n : int.MaxValue;
     }
 
+    /// <summary>
+    /// Scores the net on generated gate boards — positions it was never trained on.
+    /// </summary>
+    /// <remarks>
+    /// <para>Read the result with the generator's known bias in mind: it cannot express 53% of shipped
+    /// topologies and tops out around 25 optimal moves (§2 of the rebuild PRD), so this is a *different*
+    /// distribution rather than a harder sample of the same one. A low score here does not straightforwardly
+    /// mean "did not generalise" — but a high one is real evidence that the mechanics were learned, because
+    /// nothing in phase 2's training data is anywhere near these boards.</para>
+    ///
+    /// <para>The oracle also gives the exact optimal length for each, so unlike the shipped levels this reports
+    /// how far from optimal the net's solutions actually are.</para>
+    /// </remarks>
+    private static void HeldOut(BlockDudePolicyNet net, int stage, int count, int budget, int beamWidth, int seconds)
+    {
+        var boards = BlockDudeCurriculum.GateBoardsFor(stage, count);
+        Console.WriteLine($"held-out: {boards.Count} generated gate boards at stage {stage} — positions phase 2 " +
+                          $"never trained on (the 15 shipped levels are its training set)");
+        Console.WriteLine();
+
+        int greedy = 0, beam = 0, optimal = 0, excess = 0, scored = 0, blindBeam = 0;
+        foreach (var board in boards)
+        {
+            if (BlockDudeGreedy.Run(net, board, budget).Solved) greedy++;
+
+            // The control, for the same reason it exists on the shipped levels — and it matters MORE here.
+            // These boards are small (roughly 25 optimal moves), so a 256-wide beam may be close to exhaustive,
+            // and "98% optimal" would then be a fact about the search rather than about the net.
+            if (BlockDudeSearch.SolveByBeam(BlockDudeSearch.UniformPriors, board, beamWidth, 400,
+                                            TimeSpan.FromSeconds(seconds)).Solved) blindBeam++;
+
+            var found = BlockDudeSearch.SolveByBeam(net, board, beamWidth, 400, TimeSpan.FromSeconds(seconds));
+            if (!found.Solved) continue;
+            beam++;
+
+            var oracle = new BlockDudeOracle(board);
+            int exact = oracle.OptimalFromStart;
+            if (oracle.Truncated || exact <= 0) continue;   // unlabelable board: no honest comparison exists
+            scored++;
+            excess += found.Length - exact;
+            if (found.Length == exact) optimal++;
+        }
+
+        Console.WriteLine($"greedy (policy alone)   {greedy,3}/{boards.Count} ({greedy / (double)boards.Count:P0})");
+        Console.WriteLine($"policy beam search      {beam,3}/{boards.Count} ({beam / (double)boards.Count:P0})");
+        Console.WriteLine($"  same beam, UNIFORM prior (control)  {blindBeam,3}/{boards.Count} " +
+                          $"({blindBeam / (double)boards.Count:P0}) — these boards are small, so the beam may be " +
+                          $"close to exhaustive on its own");
+        if (scored > 0)
+            Console.WriteLine($"of the beam solutions the oracle could score: {optimal}/{scored} were OPTIMAL, " +
+                              $"average {excess / (double)scored:F1} moves over optimal");
+    }
+
     public static void Run(string[] args)
     {
         var a = new CliArgs(args);
@@ -89,6 +142,16 @@ internal static class BlockDudeLevelBench
         Console.WriteLine($"net: {dataDir}/{BlockDudeIds.Environment}.{netId}.ckpt  " +
                           $"(trunk [{string.Join(",", net.Trunk)}], step budget {budget:N0})");
         Console.WriteLine();
+
+        // --held-out answers a question the shipped-level bench structurally CANNOT. Phase 2 trains on the 15
+        // shipped levels, so those levels are the curriculum and the benchmark at once and every "solves N/15"
+        // is a training-set score. Generated gate boards are the only Block Dude positions this net has not been
+        // trained on, so they are the only evidence about whether it learned the game or memorised 15 paths.
+        if (a.Has("--held-out"))
+        {
+            HeldOut(net, a.Int("--held-out-stage", 4), a.Int("--held-out-boards", 64), budget, beamWidth, seconds);
+            return;
+        }
 
         var levels = BlockDudeLevels.All;
         int solved = 0, noRevisitSolved = 0, searchSolved = 0, zeroSolved = 0, policySolved = 0, beamSolved = 0, zeroBeamSolved = 0;

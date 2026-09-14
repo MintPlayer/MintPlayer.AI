@@ -2932,6 +2932,22 @@ path, so one search aiming at both stops a few moves in, every time, quietly dis
 hit is a candidate rather than a proof (a 32-bit state hash, a few percent collision chance over 200k nodes), so
 every hit is confirmed by replaying the remainder through the engine.
 
+**The net learned these fifteen levels, not the game — and that is the design, but it must be labelled.** Phase
+2 trains on the shipped levels, so they are the curriculum and the benchmark at once and every "solves N/15" is
+a *training-set* score. New `--held-out` scores the same net on generated gate boards, the only positions it has
+never seen. Mid-run: greedy **67% on the trained levels, 6% on held-out**. The beam tier reads 98% on held-out
+with every solution optimal — but the uniform-prior control reads **the same 98%, equally optimal**, because
+those boards are small enough for a 256-wide beam to be near-exhaustive. So on held-out data **the net
+contributes nothing measurable**, and without the control this would have been written up as "generalises to
+98% of unseen boards". Third time in one night that a control overturned the conclusion it was checking.
+
+This is the reverse curriculum working exactly as intended — overfitting to the target is its *mechanism*, and
+it meets the owner's stated goal. What it does not support is a claim that the net plays Block Dude. It also
+gives §2 a sharper purpose: the generator rebuild stops being "volume and variety" and becomes the specific
+prerequisite for a net that transfers. A cheaper partial fix, if transfer matters sooner, is to mix
+oracle-labelled generated boards back into phase-2 batches the way `DemoShare` anchors long-horizon data —
+phase 2 currently trains on shipped levels and demonstrations only, so phase 1's skills are simply forgotten.
+
 **Still open.** The generator rebuild (rebuild PRD §2) and the categorical value head (§4) are unbuilt; and the
 full local test suite still does not complete on the dev machine, so CI remains the check.
 

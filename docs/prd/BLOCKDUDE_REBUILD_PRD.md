@@ -11,6 +11,11 @@ change — took a frozen checkpoint from 6/15 to 10/15 shipped levels. The recur
 measurement was worth more than the expensive rebuild it was meant to justify, so take the next item in this
 plan as a hypothesis to test rather than work to schedule.
 
+**Every "solves N/15" in this document is a TRAINING-SET score.** Phase 2 trains on the 15 shipped
+levels, so they are the curriculum and the benchmark at once. Measured on held-out boards the policy
+drops from 67% to 6% (§6d): this net plays *these fifteen levels*, not Block Dude. That is the reverse
+curriculum working as designed and it meets the stated goal — but it is not a generalisation claim.
+
 **Read §6d's controls before quoting any number in this document.** Uninformed search solves **6/15** shipped
 levels by itself — 6/15 as best-first with `h = 0`, and 6/15 again as a uniform-prior beam. Every "solves N/15"
 here is therefore a claim about the search first and the net second. Against that baseline the trained net is
@@ -19,7 +24,7 @@ sections overstate what they attribute to the net.
 
 | § | What | Status |
 |---|---|---|
-| 2 | Generator — lift the topology restriction | **not built.** No longer blocking, still needed for volume and variety |
+| 2 | Generator — lift the topology restriction | **not built.** No longer blocking — but §6d's held-out measurement makes it the specific prerequisite for a net that TRANSFERS, rather than a vague want of "volume and variety" |
 | 3 | Labeller — search instead of BFS | **BUILT** — `BlockDudeSearch`, net-guided weighted A* over `Core.Planning` |
 | 4 | Value head — categorical, with an "unsolvable" bucket | **not built. Lower priority, stronger evidence** (§6d): the scalar head was caught *losing* Level 6 that uninformed search solves — but pairing it with the policy prior recovers that at zero training cost, while §4 forces a fresh run |
 | 5 | Owner's decomposition idea | evaluated, not built; sequenced after §4 |
@@ -318,6 +323,51 @@ label — so the better labels are preferred wherever they exist. Beam solves co
 move a frontier, since they reach the door by the net's own policy. They carry their own counter in the eval
 line: **if beam hits grow while A\* hits shrink, the curriculum has moved past what a node budget can reach**,
 which is a fact about the run's progress worth seeing rather than averaging into one solve rate.
+
+### Held-out: the net learned these fifteen levels, not the game
+
+Phase 2 trains on the 15 shipped levels, so those levels are the curriculum and the benchmark **at once**.
+Every "solves N/15" in this document is therefore a *training-set* score. That is legitimate — the stated goal
+is these levels — but it cannot support a claim that the net learned Block Dude, and the difference is not
+rhetorical. `--held-out` scores the same net on generated gate boards, the only Block Dude positions phase 2
+has never seen.
+
+Measured mid-run (172k samples, stage-4 gate boards, 64 of them, beam width 256):
+
+| | on the 15 trained levels | on 64 held-out boards |
+|---|---|---|
+| greedy (policy alone) | 10/15 (67%) | **4/64 (6%)** |
+| policy beam search | 12/15 (80%) | 63/64 (98%) |
+| *uniform-prior beam (control)* | *6/15 (40%)* | ***63/64 (98%)*** |
+
+**The control is the whole finding.** A uniform prior scores exactly the same 63/64 on the held-out boards, and
+the net's solutions being 63/63 optimal is likewise a fact about the beam rather than about the net: these
+boards are small (~25 optimal moves), so a 256-wide beam is close to exhaustive and would find the optimum with
+no guidance at all. On the held-out set **the net contributes nothing measurable**. Without the control this
+would have been written up as "98% of unseen boards, all optimal — it generalises", which is the opposite of
+what happened.
+
+The greedy row is the uncontaminated one, since no search can flatter it: **67% on the levels it was trained on,
+6% on anything else.** The policy has fitted fifteen trajectories.
+
+**This is the reverse curriculum working as designed, not a defect.** It is *built* to train on the shipped
+levels — that is how §6a escaped the generator's distribution problem in the first place. Overfitting to the
+target is the mechanism, and against the owner's goal (*"a good net that's capable of solving these levels"*)
+it is a success. It just has to be labelled correctly:
+
+- **Supported:** this net plays the 15 shipped levels well.
+- **Not supported:** this net plays Block Dude. On a new level it would be roughly as good as an untrained one.
+
+**And it is direct evidence for §2.** The generator rebuild was demoted as non-blocking, which was right — but
+this is the measurement that says what it is *for*. A net that generalises needs in-distribution training data
+on varied terrain, and the generator is the only thing that can produce that at volume. §2 stops being "volume
+and variety" and becomes the specific prerequisite for a net that transfers.
+
+**A cheaper partial fix, if transfer matters before §2 lands:** mix a share of oracle-labelled generated boards
+back into phase-2 batches, exactly as `DemoShare` keeps an anchor in long-horizon data. Phase 2 currently trains
+on shipped levels and demonstrations only, so the phase-1 skills are simply being forgotten. That is a few lines
+and does not need a new generator — though it trades some of the shipped-level score for generality, which is
+the owner's call rather than a default.
 
 ### Where the tiers stand
 
