@@ -46,6 +46,33 @@
     margin: 0.5rem 0;
   }
 
+  // M61 board-size / AI-speed pickers.
+  .settings {
+    margin: 0.75rem 0;
+
+    label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #cdd5e0;
+      font-size: 0.9em;
+      margin-bottom: 6px;
+
+      > span:first-child { flex: 0 0 5.5rem; }
+
+      input {
+        width: 5rem;
+        padding: 0.25rem 0.4rem;
+        background: #1c2230;
+        color: #e6ebf2;
+        border: 1px solid #3a4154;
+        border-radius: 4px;
+      }
+
+      .unit { color: #8b95a5; }
+    }
+  }
+
   .status { color: #cdd5e0; min-height: 1.4em; }
   .hint { color: #8b95a5; font-size: 0.9em; }
 

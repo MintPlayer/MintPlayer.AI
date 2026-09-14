@@ -67,7 +67,7 @@ export class SnakeTubeRenderer {
   private loopKey = '';
   private flashT0 = 0;
 
-  constructor(canvas: HTMLCanvasElement, private readonly size: number, fallbackPx: number) {
+  constructor(canvas: HTMLCanvasElement, private size: number, fallbackPx: number) {
     this.canvas = canvas;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2D canvas context unavailable');
@@ -102,12 +102,32 @@ export class SnakeTubeRenderer {
     return true;
   }
 
+  /**
+   * Re-grid the board (M61: the visitor picks the field size). Cell indices are size-relative, so any cached
+   * geometry — the loop path, and the snapshot it was built against — is meaningless at the new size and is
+   * dropped rather than rescaled. The caller starts a fresh game right after.
+   */
+  setSize(size: number): void {
+    if (size === this.size) return;
+    this.size = size;
+    this.cell = this.boardPx / size;
+    this.loopPath = null;
+    this.loopKey = '';
+    this.snap = null;
+    this.clear();
+  }
+
   /** Start a fresh game's animation. `tickMs` is the game's tick period (so glide fills exactly one tick). */
   begin(tickMs: number): void {
     this.tickMs = tickMs;
     this.snap = null;
     this.running = true;
     this.clear();
+  }
+
+  /** Re-time the glide mid-game (the speed picker), without disturbing the game in flight. */
+  setTickMs(tickMs: number): void {
+    this.tickMs = tickMs;
   }
 
   /** Feed one tick's state. Snaps (no glide) across a discontinuity — a new game teleports the body. */

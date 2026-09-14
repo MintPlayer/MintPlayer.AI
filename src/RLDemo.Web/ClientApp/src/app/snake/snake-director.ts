@@ -12,7 +12,10 @@ import { loadSnakeNet } from './snake-net';
 // provably cannot die on, rebuilds it per food to route straight at the food, and the net ranks the safe
 // shortcuts — games end board-full (a perfect game), never in a death.
 
-const SIZE = 12;                 // the shipped net was trained on a 12×12 board
+// The board edge is a visitor setting (M61). The shipped net was trained on 12×12, but its 177-dim observation
+// is size-independent — a 9×9 local obstacle patch plus scalars normalised by the board edge — so the same
+// checkpoint drives any size. Only the Hamiltonian mode constrains it: a square grid graph has a Hamiltonian
+// cycle only when an edge is EVEN (odd×odd is bipartite with unequal colour classes), so the picker steps by 2.
 const SAFE_MASK = false;         // the planner's survival scoring supersedes the reactive 1-ply shield (it plans deeper)
 const STEP_PENALTY = -0.01;      // training-only; irrelevant to greedy/search inference
 
@@ -21,6 +24,9 @@ const STEP_PENALTY = -0.01;      // training-only; irrelevant to greedy/search i
 // scored WORSE (beam pruning misranks deep lines, per PR #11's sweep) and slower. Mirrors SnakeSearchConfig in C#.
 const SEARCH_DEPTH = 12;
 const SEARCH_BEAM = 16;
+const SEARCH_TUNED_CELLS = 12 * 12;   // the board those two numbers were tuned on
+const MIN_SEARCH_DEPTH = 4;
+const MIN_SEARCH_BEAM = 2;
 const W_FOOD = 10_000;
 const W_TRAP = 50_000;
 const W_NET = 50;   // small: the net only breaks ties between equally-safe root moves (a big weight slightly hurts — measured)
@@ -32,7 +38,6 @@ const W_RATIO = 100_000;   // anti-fragmentation: fraction of free cells still r
 const W_CYCLE_NET = 50;          // net Q nudge between equally-safe shortcut options
 const W_CYCLE_PROGRESS = 1_000;  // pull per cycle position a shortcut skips
 const CYCLE_MARGIN = 4;          // positions a shortcut must leave before the tail (growth slack)
-const CYCLE_MIN_FREE = SIZE * SIZE / 2; // shortcuts allowed while more than this many cells are free
 const DEAD_HOLD_TICKS = 8;       // show the finished board briefly before auto-restarting
 
 export interface SnakeAiFrame {
@@ -48,7 +53,11 @@ export interface SnakeAiFrame {
 }
 
 export class SnakeDirector {
-  private readonly core = new PgSnakeEnv(SIZE, STEP_PENALTY, SAFE_MASK);
+  private readonly core: PgSnakeEnv;
+  /** Shortcuts are allowed while more than half the board is still free — a fraction, so it scales with size. */
+  private readonly cycleMinFree: number;
+  private readonly depth: number;
+  private readonly beam: number;
   private net: PgSnakeNet | null = null;
   private ready = false;
   private deadHold = 0;
@@ -62,7 +71,19 @@ export class SnakeDirector {
   private cycleEpoch = 0;
   private cycleCopy: number[] | null = null;
 
-  constructor(private readonly strategy: 'search' | 'cycle' = 'search') {
+  constructor(private readonly strategy: 'search' | 'cycle' = 'search', size = 12) {
+    this.core = new PgSnakeEnv(size, STEP_PENALTY, SAFE_MASK);
+    this.cycleMinFree = size * size / 2;
+    // Search budget, scaled to the board (M61). Every node of the look-ahead flood-fills the whole grid, so the
+    // cost of the tuned depth-12 / beam-16 search grows super-linearly in cells: MEASURED in-browser at speed 30,
+    // a step costs <50 ms at 12×12 but ~233 ms at 24×24, ~1.1 s at 40×40 and ~2.2 s at 50×50 — the main thread
+    // is pegged and the board crawls. Shrinking the beam (∝ cells) and the depth (∝ √cells) holds a step at
+    // roughly its 12×12 cost at every size. At and below 12×12 this is exactly the tuned pair, unchanged; the
+    // floors keep a shallow but real search on the biggest boards, where the anti-fragmentation ratio term —
+    // the measured big lever (M34) — is doing most of the work anyway.
+    const scale = SEARCH_TUNED_CELLS / (size * size);
+    this.depth = Math.max(MIN_SEARCH_DEPTH, Math.min(SEARCH_DEPTH, Math.round(SEARCH_DEPTH * Math.sqrt(scale))));
+    this.beam = Math.max(MIN_SEARCH_BEAM, Math.min(SEARCH_BEAM, Math.round(SEARCH_BEAM * scale)));
     void loadSnakeNet().then(n => {
       this.net = n; // null (missing checkpoint) → the board just sits; the checkpoint is shipped, so this is a safety net
       this.newGame();
@@ -91,8 +112,8 @@ export class SnakeDirector {
     if (this.net === null) return this.frame();
 
     const action = this.strategy === 'cycle'
-      ? this.core.chooseActionCycle(this.net, W_CYCLE_NET, W_CYCLE_PROGRESS, CYCLE_MARGIN, true, CYCLE_MIN_FREE)
-      : this.core.chooseActionSearch(this.net, SEARCH_DEPTH, SEARCH_BEAM, W_FOOD, W_TRAP, W_NET, W_SPACE, W_DIST, W_RATIO);
+      ? this.core.chooseActionCycle(this.net, W_CYCLE_NET, W_CYCLE_PROGRESS, CYCLE_MARGIN, true, this.cycleMinFree)
+      : this.core.chooseActionSearch(this.net, this.depth, this.beam, W_FOOD, W_TRAP, W_NET, W_SPACE, W_DIST, W_RATIO);
     if (action < 0) { this.deadHold = DEAD_HOLD_TICKS; return this.frame(); } // no legal move (shouldn't happen)
     this.core.step(action);
     if (this.core.needsFood) this.core.spawnFood(this.randFree());

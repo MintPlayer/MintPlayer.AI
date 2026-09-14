@@ -2,8 +2,8 @@
 // timer — no backend in the loop). Mirrors SnakeEnv's rules (grid, reversal guard, eat/grow, collision)
 // so the human and the AI obey the same game.
 
+/** Shipped default board edge. The board size is a visitor setting (see snake.ts) — pass it to the ctor. */
 export const SIZE = 12;
-export const CELLS = SIZE * SIZE;
 
 export type Dir = 0 | 1 | 2 | 3; // Up, Down, Left, Right — same indexing as SnakeEnv
 const DELTAS: ReadonlyArray<readonly [number, number]> = [[-1, 0], [1, 0], [0, -1], [0, 1]];
@@ -16,16 +16,20 @@ export class SnakeGame {
   foodEaten = 0;
   dead = false;
   private heading: Dir = 3; // facing Right at start
+  private readonly cells: number;
 
-  constructor() { this.reset(); }
+  constructor(private readonly size: number = SIZE) {
+    this.cells = size * size;
+    this.reset();
+  }
 
   reset(): void {
     this.body = [];
     this.occupied.clear();
-    const row = Math.floor(SIZE / 2);
-    const headCol = Math.floor(SIZE / 2);
+    const row = Math.floor(this.size / 2);
+    const headCol = Math.floor(this.size / 2);
     for (let c = headCol; c >= headCol - 2; c--) {
-      const cell = row * SIZE + c;
+      const cell = row * this.size + c;
       this.body.push(cell);
       this.occupied.add(cell);
     }
@@ -40,9 +44,9 @@ export class SnakeGame {
     if (this.body.length >= 2) {
       const head = this.body[0];
       const [dr, dc] = DELTAS[dir];
-      const r = Math.floor(head / SIZE) + dr;
-      const c = (head % SIZE) + dc;
-      if (r * SIZE + c === this.body[1]) return; // reversal — ignored
+      const r = Math.floor(head / this.size) + dr;
+      const c = (head % this.size) + dc;
+      if (r * this.size + c === this.body[1]) return; // reversal — ignored
     }
     this.heading = dir;
   }
@@ -52,11 +56,11 @@ export class SnakeGame {
     if (this.dead) return;
     const head = this.body[0];
     const [dr, dc] = DELTAS[this.heading];
-    const r = Math.floor(head / SIZE) + dr;
-    const c = (head % SIZE) + dc;
-    if (r < 0 || r >= SIZE || c < 0 || c >= SIZE) { this.dead = true; return; }
+    const r = Math.floor(head / this.size) + dr;
+    const c = (head % this.size) + dc;
+    if (r < 0 || r >= this.size || c < 0 || c >= this.size) { this.dead = true; return; }
 
-    const newHead = r * SIZE + c;
+    const newHead = r * this.size + c;
     const eating = newHead === this.food;
     const tail = this.body[this.body.length - 1];
     if (this.occupied.has(newHead) && !(newHead === tail && !eating)) { this.dead = true; return; }
@@ -65,7 +69,7 @@ export class SnakeGame {
     if (eating) {
       this.occupied.add(newHead);
       this.foodEaten++;
-      if (this.occupied.size < CELLS) this.spawnFood();
+      if (this.occupied.size < this.cells) this.spawnFood();
     } else {
       // Remove the vacating tail BEFORE marking the new head occupied — on a tail-follow move (newHead === tail)
       // adding first is a no-op and the removal would then drop the head's own cell, untracking it. Mirrors
@@ -78,7 +82,7 @@ export class SnakeGame {
 
   private spawnFood(): void {
     const free: number[] = [];
-    for (let i = 0; i < CELLS; i++) if (!this.occupied.has(i)) free.push(i);
+    for (let i = 0; i < this.cells; i++) if (!this.occupied.has(i)) free.push(i);
     this.food = free[Math.floor(Math.random() * free.length)];
   }
 }

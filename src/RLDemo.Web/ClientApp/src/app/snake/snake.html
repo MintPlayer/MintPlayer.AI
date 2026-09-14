@@ -19,6 +19,27 @@
       <button [color]="colors.primary" (click)="playHuman()">Play yourself</button>
       <button [color]="colors.secondary" (click)="stop()" [disabled]="mode() === 'idle'">Stop</button>
     </div>
+    <div class="settings">
+      <label>
+        <span>Board size</span>
+        <input type="number" [value]="boardSize()" [min]="minSize" [max]="maxSize" [step]="sizeStep"
+               (change)="setBoardSize($any($event.target).value)" />
+        <span class="unit">× {{ boardSize() }}</span>
+      </label>
+      <label>
+        <span>AI speed</span>
+        <input type="number" [value]="aiSpeed()" [min]="minSpeed" [max]="maxSpeed" step="1"
+               (change)="setSpeed($any($event.target).value)" />
+        <span class="unit">moves/sec</span>
+      </label>
+      <p class="hint">
+        Even sizes only — the Hamiltonian cycle exists only on a board with an even edge. Changing the size
+        restarts the current game; changing the speed does not. On a big board the look-ahead search runs
+        shallower to keep the tick fast, so “Watch AI” plays a little looser and tops out near 8 moves/sec at
+        50×50 however high you set the speed. The Hamiltonian mode is unaffected — it stays fast at every size
+        and still fills the whole board.
+      </p>
+    </div>
     <p class="status">{{ status() }}</p>
     @if (mode() === 'watch-cycle') {
       <label class="toggle">
