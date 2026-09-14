@@ -149,13 +149,28 @@ export class BlockDudeRenderer {
   }
 
   private kick(): void {
+    // A request that arrives while a frame is already in flight must not be DROPPED, only coalesced into it.
+    // The old guard returned outright, which loses a redraw whenever the element's size changes between the
+    // scheduling of a frame and its execution — and losing that particular redraw is fatal rather than cosmetic,
+    // because `draw` reacts to a size change by reassigning `canvas.width`, and that CLEARS the canvas. Miss the
+    // follow-up and the board is wiped with nothing painted back. It is invisible in every obvious way: no
+    // exception, correct buffer dimensions, and a blank canvas that looks exactly like the stage behind it,
+    // because the stage's background is deliberately the same colour as the renderer's void.
+    this.pending = true;
     if (this.frame) return;
+
     const step = () => {
       this.frame = 0;
-      if (this.draw()) this.frame = requestAnimationFrame(step);
+      this.pending = false;
+      const busy = this.draw();
+      // Re-arm for animation OR for a request that came in while this frame was pending.
+      if (busy || this.pending) this.frame = requestAnimationFrame(step);
     };
     this.frame = requestAnimationFrame(step);
   }
+
+  /** A redraw asked for while a frame was already scheduled — see `kick`. */
+  private pending = false;
 
   dispose(): void {
     if (this.frame) cancelAnimationFrame(this.frame);
