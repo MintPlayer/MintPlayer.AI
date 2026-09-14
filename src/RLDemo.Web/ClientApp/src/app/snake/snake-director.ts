@@ -41,6 +41,10 @@ export interface SnakeAiFrame {
   foodEaten: number;
   done: boolean;
   length: number;
+  /** The safety cycle in travel order (M60), or null in 'search' mode — there is no cycle there. */
+  cycle: number[] | null;
+  /** Bumped whenever the cycle changes; the view keys its cached path and its rebuild flash off this. */
+  cycleEpoch: number;
 }
 
 export class SnakeDirector {
@@ -48,6 +52,15 @@ export class SnakeDirector {
   private net: PgSnakeNet | null = null;
   private ready = false;
   private deadHold = 0;
+
+  // Cycle change-detection (M60). Reference identity alone is not enough in EITHER direction: initCycle()
+  // mutates the array in place (`length = 0` + push), so the very first build keeps the old reference, and
+  // reset() empties that same array on a new game. tryRebuildCycle() does assign a fresh array, which the
+  // reference check catches — including on a non-food tick, since a failed rebuild is retried every tick.
+  private lastCycleRef: number[] | null = null;
+  private lastCycleLen = -1;
+  private cycleEpoch = 0;
+  private cycleCopy: number[] | null = null;
 
   constructor(private readonly strategy: 'search' | 'cycle' = 'search') {
     void loadSnakeNet().then(n => {
@@ -91,6 +104,26 @@ export class SnakeDirector {
     const n = this.core.body.length;
     const body = new Array<number>(n);
     for (let k = 0; k < n; k++) body[k] = this.core.body[n - 1 - k]; // core stores head-at-end → head first
-    return { body, food: this.core.food, foodEaten: this.core.foodEaten, done: this.core.done, length: n };
+    return {
+      body, food: this.core.food, foodEaten: this.core.foodEaten, done: this.core.done, length: n,
+      cycle: this.syncCycle(), cycleEpoch: this.cycleEpoch,
+    };
+  }
+
+  /**
+   * Hand the view a SNAPSHOT of the cycle, never the engine's live array — `core.cycle` is engine-owned and
+   * mutated in place, so a live reference would let a rebuild tear a frame the rAF loop is mid-draw on. The
+   * copy is taken once per epoch (≈ once per food), not once per tick.
+   */
+  private syncCycle(): number[] | null {
+    if (this.strategy !== 'cycle') return null;
+    const live = this.core.cycle;
+    if (live !== this.lastCycleRef || live.length !== this.lastCycleLen) {
+      this.lastCycleRef = live;
+      this.lastCycleLen = live.length;
+      this.cycleEpoch++;
+      this.cycleCopy = live.length > 0 ? live.slice() : null;
+    }
+    return this.cycleCopy;
   }
 }
