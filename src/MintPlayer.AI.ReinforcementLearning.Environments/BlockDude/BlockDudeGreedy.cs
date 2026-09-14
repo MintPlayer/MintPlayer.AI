@@ -1,6 +1,5 @@
-using MintPlayer.AI.ReinforcementLearning.Environments.BlockDude;
 
-namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+namespace MintPlayer.AI.ReinforcementLearning.Environments.BlockDude;
 
 /// <summary>
 /// Runs a Block Dude policy greedily to a terminal state.

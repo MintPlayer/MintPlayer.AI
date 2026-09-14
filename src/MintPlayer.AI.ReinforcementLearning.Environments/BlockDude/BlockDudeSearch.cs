@@ -1,7 +1,6 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
-using MintPlayer.AI.ReinforcementLearning.Environments.BlockDude;
 
-namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
+namespace MintPlayer.AI.ReinforcementLearning.Environments.BlockDude;
 
 /// <summary>
 /// Net-guided weighted A* over Block Dude, for measuring what a trained policy is worth WITH lookahead in front

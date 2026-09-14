@@ -36,6 +36,13 @@
 <div class="actions">
   <button type="button" [color]="colors.secondary" (click)="undo()" [disabled]="!canUndo()">Undo</button>
   <button type="button" [color]="colors.secondary" (click)="reset()">Restart</button>
+  <button type="button" [color]="colors.primary" (click)="watchAi()" [disabled]="aiThinking()">
+    {{ aiPlaying() ? 'Stop' : aiThinking() ? 'Asking…' : 'Watch AI' }}
+  </button>
+  @if (aiPlaying()) {
+    <button type="button" [color]="colors.secondary" (click)="cycleAiSpeed()"
+            aria-label="Playback speed">{{ aiSpeed() }}&times;</button>
+  }
   <span class="moves">{{ moves() }} move{{ moves() === 1 ? '' : 's' }}</span>
 </div>
 
