@@ -136,6 +136,15 @@ export class BlockDudeRenderer {
     this.moveMs = 0;
     this.falling = null;
     this.wonAt = 0;
+
+    // Painted SYNCHRONOUSLY, not merely scheduled. A reset is a static frame by definition, so making it wait
+    // for an animation frame buys nothing and costs the one guarantee that matters here: that the board is
+    // visible. This is the FIRST paint of the page — the level arrives from an async fetch — and if that single
+    // rAF is ever deferred or dropped (a backgrounded tab, a frame lost to a slow first layout) the canvas just
+    // stays dark, which is indistinguishable from the stage's own background.
+    this.draw();
+
+    // Still kick, for anything the static frame leaves running (the victory veil after a restart-into-won).
     this.kick();
   }
 
