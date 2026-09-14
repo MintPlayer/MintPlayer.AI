@@ -2955,7 +2955,7 @@ is why the demonstrations were recorded in the first place. All fifteen lines ar
 **The net learned these fifteen levels, not the game — and that is the design, but it must be labelled.** Phase
 2 trains on the shipped levels, so they are the curriculum and the benchmark at once and every "solves N/15" is
 a *training-set* score. New `--held-out` scores the same net on generated gate boards, the only positions it has
-never seen. Mid-run: greedy **67% on the trained levels, 6% on held-out**. The beam tier reads 98% on held-out
+On the final net: greedy **100% on the trained levels, 9% on held-out**. The beam tier reads 98% on held-out
 with every solution optimal — but the uniform-prior control reads **the same 98%, equally optimal**, because
 those boards are small enough for a 256-wide beam to be near-exhaustive. So on held-out data **the net
 contributes nothing measurable**, and without the control this would have been written up as "generalises to

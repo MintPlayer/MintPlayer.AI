@@ -13,7 +13,7 @@ plan as a hypothesis to test rather than work to schedule.
 
 **Every "solves N/15" in this document is a TRAINING-SET score.** Phase 2 trains on the 15 shipped
 levels, so they are the curriculum and the benchmark at once. Measured on held-out boards the policy
-drops from 67% to 6% (§6d): this net plays *these fifteen levels*, not Block Dude. That is the reverse
+drops from 100% to 9% (§6d): this net plays *these fifteen levels*, not Block Dude. That is the reverse
 curriculum working as designed and it meets the stated goal — but it is not a generalisation claim.
 
 **Read §6d's controls before quoting any number in this document.** Uninformed search solves **6/15** shipped
@@ -335,11 +335,17 @@ has never seen.
 
 Measured mid-run (172k samples, stage-4 gate boards, 64 of them, beam width 256):
 
+Re-measured on the FINAL net (889k samples), alongside the mid-run figures it replaces:
+
 | | on the 15 trained levels | on 64 held-out boards |
 |---|---|---|
-| greedy (policy alone) | 10/15 (67%) | **4/64 (6%)** |
-| policy beam search | 12/15 (80%) | 63/64 (98%) |
+| greedy (policy alone) | 10/15 → **15/15 (100%)** | 4/64 → **6/64 (9%)** |
+| policy beam search | 12/15 → 15/15 | 63/64 → 64/64 |
 | *uniform-prior beam (control)* | *6/15 (40%)* | ***63/64 (98%)*** |
+
+The gap widened as training continued, which is the point: the policy went from 67% to **100%** on the levels it
+trains on and from 6% to **9%** on everything else. Beam still matches its uniform-prior control to within one
+board, so the net remains worth nothing measurable on unseen terrain.
 
 **The control is the whole finding.** A uniform prior scores exactly the same 63/64 on the held-out boards, and
 the net's solutions being 63/63 optimal is likewise a fact about the beam rather than about the net: these
@@ -348,8 +354,8 @@ no guidance at all. On the held-out set **the net contributes nothing measurable
 would have been written up as "98% of unseen boards, all optimal — it generalises", which is the opposite of
 what happened.
 
-The greedy row is the uncontaminated one, since no search can flatter it: **67% on the levels it was trained on,
-6% on anything else.** The policy has fitted fifteen trajectories.
+The greedy row is the uncontaminated one, since no search can flatter it: on the final net, **100% on the levels
+it was trained on and 9% on anything else.** The policy has fitted fifteen boards.
 
 **This is the reverse curriculum working as designed, not a defect.** It is *built* to train on the shipped
 levels — that is how §6a escaped the generator's distribution problem in the first place. Overfitting to the
@@ -528,7 +534,7 @@ now the same underlying policy, with and without a beam in front of it.
 **What this is not.** The human solutions are recorded as non-optimal, so "shorter than the human" is not
 "optimal" — no optimal reference exists for boards this size, which is why the demonstrations were recorded in
 the first place. Nor is it a claim about Block Dude in general: see the held-out measurement above, where the
-same policy scores 6%. This net plays *these fifteen levels*, and plays them better than the person who
+same policy scores 9%. This net plays *these fifteen levels*, and plays them better than the person who
 recorded them.
 
 All fifteen greedy lines are in [`docs/blockdude-ai-solutions.txt`](../blockdude-ai-solutions.txt), in the
