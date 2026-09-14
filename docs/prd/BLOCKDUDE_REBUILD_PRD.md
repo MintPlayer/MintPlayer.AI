@@ -32,7 +32,7 @@ sections overstate what they attribute to the net.
 | 6a | Reverse curriculum + expert iteration | **BUILT** — `BlockDudeDemonstrations`, `BlockDudeExpertIterationCampaign` (`--phase 2`) |
 | 6b | Dead ends the training data discards | **measured**, fix is §4 (still unbuilt — see §6d) |
 | 6d | Search: batched calls, policy-as-prior, **beam search**, frontier retreat, landmark salvage | **BUILT** — 6/15 → **10/15** on frozen weights; `Core.Planning.PolicyValueSearch` + `PolicyBeamSearch` |
-| 6e | Result after the overnight run | **15/15 shipped levels with NO SEARCH** — greedy, one forward pass per move — and shorter than the human demonstrations on 11 of 15 (3,644 moves vs 3,870) |
+| 6e | Result after the overnight run | **15/15 shipped levels with NO SEARCH** — greedy, one forward pass per move — and shorter than the human demonstrations on 11 of 15 (3,598 moves vs 3,870) |
 
 **Goal (owner):** *"achieve a good net that's capable of solving these levels"* — the 15 shipped levels, not
 generated boards. The owner stated they are willing to start over.
@@ -468,13 +468,18 @@ separately in the eval line so the two can never be read as one number.
 Once the beam budget stopped capping the curriculum (§6d), the frontier went 494 → 735 → **909** in two rounds
 and every level reached whole. Benched on the checkpoint at 368k samples, beam width 256, ≤45s per level:
 
-| tier | at 368k samples | at 604k samples (one hour later) |
-|---|---|---|
-| **greedy — policy alone, no search** | 10/15 | **15/15** |
-| greedy + no-revisit tie-break | 12/15 | 15/15 — the tie-break is now redundant |
-| policy beam search | **15/15** | 15/15 |
+| tier | 368k samples | 604k samples | **889k — final** |
+|---|---|---|---|
+| **greedy — policy alone, no search** | 10/15 | 15/15 | **15/15** |
+| greedy + no-revisit tie-break | 12/15 | 15/15 | 15/15 — the tie-break is redundant |
+| policy beam search | **15/15** | 15/15 | 15/15 |
 
-Every shipped level, including Level 7 (768 moves), Level 8 (462) and Level 11 (843).
+Every shipped level, including Level 7 (768 moves), Level 8 (453) and Level 11 (826).
+
+**The final net was chosen by measurement, not by being last.** Phase 2 checkpoints the latest net rather than
+the best, and with accuracy pinned at 100% a later round can drift as easily as improve — so the 604k checkpoint
+was preserved and the two were benched against each other. The final one wins: 3,598 total moves against 3,644,
+shorter on 6 levels and longer on 2, both at 15/15. Had it lost, the earlier one was the one to ship.
 
 **The search became unnecessary.** An hour of training on full-length solutions for every level — the regime
 that only became possible once the curriculum reached 15/15 whole — moved the policy from needing a 256-wide
@@ -488,29 +493,35 @@ cheaper to ship — a bare forward pass per move ports to the browser twin with 
 
 ### Against the human demonstrations it was trained on
 
+The final net, playing **greedily** — no search in front of it:
+
 | level | human | net | | level | human | net | |
 |---|---|---|---|---|---|---|---|
-| Level 1 | 19 | 19 | = | Level 8 | 494 | **463** | −31 |
-| Level 2 | 74 | **73** | −1 | Level 9 | 227 | **214** | −13 |
-| Level 3 | 98 | **94** | −4 | Level 10 | 386 | **348** | −38 |
-| Level 4 | 281 | 281 | = | Level 11 | 909 | **840** | −69 |
-| Level 5 | 164 | **128** | −36 | Bonus 1 | 42 | **41** | −1 |
-| Level 6 | 113 | **107** | −6 | Bonus 2 | 110 | **85** | −25 |
+| Level 1 | 19 | 19 | = | Level 8 | 494 | **453** | −41 |
+| Level 2 | 74 | **73** | −1 | Level 9 | 227 | **216** | −11 |
+| Level 3 | 98 | **94** | −4 | Level 10 | 386 | **349** | −37 |
+| Level 4 | 281 | 281 | = | Level 11 | 909 | **826** | −83 |
+| Level 5 | 164 | **128** | −36 | Bonus 1 | 42 | 42 | = |
+| Level 6 | 113 | **107** | −6 | Bonus 2 | 110 | **89** | −21 |
 | Level 7 | 782 | **768** | −14 | Bonus 3 | 39 | 39 | = |
 | | | | | Bonus 4 | 132 | **114** | −18 |
 
-**Total 3,614 moves against the human's 3,870 — shorter on 12 levels, equal on 3, longer on none.**
+**Total 3,598 moves against the human's 3,870 — shorter on 11 levels, equal on 4, longer on none.**
 
 **Why that number matters more than the 15/15.** A net that had memorised the demonstrations would *match*
-them. Beating them on twelve levels means it is not replaying recorded keystrokes — it learned the terrain well
-enough to find better lines through it. That is the student-exceeds-teacher effect §6a predicted from local
-search, now visible across whole levels.
+them. Beating them on eleven levels — by 83 moves on Level 11 alone — means it is not replaying recorded
+keystrokes; it learned the terrain well enough to find better lines through it. That is the
+student-exceeds-teacher effect §6a predicted from local search, now visible across whole levels.
+
+It is also the sharpest evidence that the held-out result above is about *generality*, not about memorisation.
+Both are true at once: the net is specialised to these fifteen boards, and on those boards it is genuinely
+playing rather than reciting. Overfitting to terrain is not the same as overfitting to a path.
 
 It also refines §6d's held-out finding rather than contradicting it. Both are true: the net is specialised to
 these fifteen boards (6% on unseen ones), *and* on those boards it is genuinely playing rather than reciting.
 Overfitting to terrain is not the same as overfitting to a path.
 
-Greedy play beats the human on 11 levels and ties the other 4 — **3,644 moves against 3,870** — so the table
+Greedy play beats the human on 11 levels and ties the other 4 — **3,598 moves against 3,870** — so the table
 above (measured on the beam tier at 368k) understates where the net ended up. The two are close because both are
 now the same underlying policy, with and without a beam in front of it.
 

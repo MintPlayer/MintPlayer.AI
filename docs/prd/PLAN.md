@@ -2936,13 +2936,15 @@ every hit is confirmed by replaying the remainder through the engine.
 curriculum, the frontier went 494 → 735 → **909** in two rounds and every level reached whole. Benched at 368k
 samples (beam width 256, ≤45s): greedy 10/15, no-revisit 12/15, policy beam search 15/15. **An hour later the
 search was unnecessary: greedy alone reached 15/15** — pure argmax, one forward pass per move, no lookahead, no
-backtracking — including Level 7 in 768 moves, Level 8 in 462 and Level 11 in 843. That overturns §8.1a of the
+backtracking — including Level 7 in 768 moves, Level 8 in 453 and Level 11 in 826. That overturns §8.1a of the
 M58 PRD, which argued irreversibility *forces* net + search as the shipped artefact: true of the net it was
 written for, and no longer true of this one, because a policy that does not make the wrong move has nothing to
 recover from. It also makes the artefact far cheaper to ship — a bare forward pass ports to the browser twin
-with no search to reimplement. Against the human demonstrations it trained on, playing greedily: **3,644 moves
-against 3,870, shorter on 11 levels, equal on 4, longer on none** (Level 11 −66, Level 5 −35, Level 8 −32,
-Level 10 −30, Bonus 2 −23). That margin matters more than the 15/15, because a net that had merely memorised the
+with no search to reimplement. Against the human demonstrations it trained on, playing greedily: **3,598 moves
+against 3,870, shorter on 11 levels, equal on 4, longer on none** (Level 11 −83, Level 8 −41, Level 10 −37,
+Level 5 −36, Bonus 2 −21). The final net was chosen by *measurement* rather than by being last: phase 2
+checkpoints the latest net, not the best, and with accuracy pinned at 100% a later round can drift as easily as
+improve — so an earlier 15/15 checkpoint was preserved and the two benched against each other (3,598 vs 3,644). That margin matters more than the 15/15, because a net that had merely memorised the
 demonstrations would *match* them — beating them across eleven levels means it learned the terrain rather than
 the keystrokes, and it is the sharpest evidence that "overfitting to these levels" is not the same as
 "replaying these recordings". The caveat belongs next to it: the human lines are recorded as non-optimal, so
