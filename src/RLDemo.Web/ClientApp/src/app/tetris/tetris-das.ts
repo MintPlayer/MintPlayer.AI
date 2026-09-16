@@ -49,6 +49,10 @@ export const TECHNIQUE_FRAMES: Readonly<Record<Technique, number>> = {
   roll: 3,
 };
 
+/** Frames the SECOND shift costs under DAS — the ROM's auto-shift charge, and the whole reason DAS
+ *  cannot feed a well at kill-screen gravity. Tap techniques pay their ordinary rate instead. */
+export const DAS_CHARGE_FRAMES = DAS_FULL;
+
 /** Human-facing rate, for the status line and the hint text. */
 export function techniqueHz(t: Technique): number {
   return Math.round((1000 / NES_FRAME_MS / TECHNIQUE_FRAMES[t]) * 10) / 10;

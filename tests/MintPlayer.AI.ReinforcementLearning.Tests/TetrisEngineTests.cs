@@ -334,6 +334,144 @@ public class TetrisEngineTests
     }
 
     [Fact]
+    public void Reachability_OffByDefault_IsExactlyPlacementLegal()
+    {
+        // M62.3b D7: enforcement is opt-in precisely so the default path — and therefore every shipped
+        // checkpoint and the parity checksum — is untouched. If this ever fails, the opt-in leaked.
+        var t = new TetrisBoard();
+        t.Reset(11);
+        for (int a = 0; a < TetrisBoard.ActionCount; a++)
+            Assert.Equal(t.IsLegal(a), t.PlacementReachable(a));
+    }
+
+    [Fact]
+    public void Reachability_AtLevelZero_EverythingLegalIsAlsoReachable()
+    {
+        // 48 frames per row is so slow that even DAS crosses the whole board with frames to spare. This is
+        // why an A/B at the default start level shows nothing — the dial cannot bite until gravity is fast.
+        var t = new TetrisBoard();
+        t.Reset(11);
+        t.SetReachEnforced(true);
+        t.SetTapModel(6, 16); // DAS, the most restrictive
+        for (int a = 0; a < TetrisBoard.ActionCount; a++)
+            Assert.Equal(t.IsLegal(a), t.PlacementReachable(a));
+    }
+
+    [Theory]
+    [InlineData(19)]
+    [InlineData(29)]
+    public void Reachability_RollingReachesASupersetOfDas(int startLevel)
+    {
+        // The core ordering property: faster hands never reach LESS. Checked across pieces and seeds so a
+        // sign error or an off-by-one in the shift schedule cannot hide in one lucky board.
+        for (ulong seed = 1; seed <= 12; seed++)
+        {
+            var das = new TetrisBoard();
+            das.Reset(seed);
+            das.SetStartLevel(startLevel);
+            das.SetReachEnforced(true);
+            das.SetTapModel(6, 16);
+
+            var roll = new TetrisBoard();
+            roll.Reset(seed);
+            roll.SetStartLevel(startLevel);
+            roll.SetReachEnforced(true);
+            roll.SetTapModel(3, 3);
+
+            for (int a = 0; a < TetrisBoard.ActionCount; a++)
+                if (das.PlacementReachable(a))
+                    Assert.True(roll.PlacementReachable(a),
+                        $"seed {seed}, action {a}: DAS reached it but rolling did not");
+        }
+    }
+
+    [Fact]
+    public void Reachability_AtTheKillScreen_DasLosesPlacementsThatRollingKeeps()
+    {
+        // The measurable claim behind the whole technique dial. At 1 frame per row DAS pays a 16-frame
+        // charge before its second shift, which is 16 rows of fall — so the far columns go out of reach.
+        var das = new TetrisBoard();
+        das.Reset(5);
+        das.SetStartLevel(29);
+        das.SetReachEnforced(true);
+        das.SetTapModel(6, 16);
+
+        var roll = new TetrisBoard();
+        roll.Reset(5);
+        roll.SetStartLevel(29);
+        roll.SetReachEnforced(true);
+        roll.SetTapModel(3, 3);
+
+        int dasCount = 0, rollCount = 0;
+        for (int a = 0; a < TetrisBoard.ActionCount; a++)
+        {
+            if (das.PlacementReachable(a)) dasCount++;
+            if (roll.PlacementReachable(a)) rollCount++;
+        }
+
+        Assert.True(dasCount > 0, "DAS must always keep the placements near spawn — an empty mask is a top-out");
+        Assert.True(rollCount > dasCount, $"rolling {rollCount} should beat DAS {dasCount} at the kill screen");
+    }
+
+    [Fact]
+    public void ReachTimeline_ReplaysToExactlyTheChosenPlacement()
+    {
+        // D9's guarantee, asserted rather than assumed: replaying the emitted inputs through the MICRO api,
+        // against the same gravity clock, must land the piece on the same board the MACRO placement gives.
+        // This is what makes "the AI chose it" and "the player saw it" the same statement.
+        var t = new TetrisBoard();
+        t.Reset(5);
+        t.SetStartLevel(19);
+        t.SetReachEnforced(true);
+        t.SetTapModel(3, 3);
+
+        int checkedCount = 0;
+        for (int a = 0; a < TetrisBoard.ActionCount && checkedCount < 6; a++)
+        {
+            if (!t.PlacementReachable(a)) continue;
+            var timeline = t.ReachTimelineFor(a);
+
+            var macro = new TetrisBoard();
+            macro.Reset(5);
+            macro.SetStartLevel(19);
+            Assert.Equal(0, macro.ApplyPlacement(a));
+
+            var micro = new TetrisBoard();
+            micro.Reset(5);
+            micro.SetStartLevel(19);
+            Assert.True(micro.MicroSpawn());
+
+            int g = micro.GravityFramesAt(19);
+            int rows = micro.GravityRowsPerStep();
+            int targetRot = a / 10, targetX = a % 10;
+            for (int frame = 0, ev = 0; frame < 1200; frame++)
+            {
+                while (ev + 1 < timeline.Count && timeline[ev] == frame)
+                {
+                    switch (timeline[ev + 1])
+                    {
+                        case 1: micro.MicroShift(-1); break;
+                        case 2: micro.MicroShift(1); break;
+                        case 3: micro.MicroRotate(); break;
+                        case 4: micro.MicroRotateCcw(); break;
+                    }
+                    ev += 2;
+                }
+                if (micro.ActiveRot == targetRot && micro.ActiveX == targetX) break;
+                if ((frame + 1) % g == 0)
+                    for (int r = 0; r < rows; r++) micro.MicroDropStep();
+            }
+
+            Assert.Equal(targetRot, micro.ActiveRot);
+            Assert.Equal(targetX, micro.ActiveX);
+            micro.MicroHardDrop();
+            for (int y = 0; y < 20; y++) Assert.Equal(macro.Row(y), micro.Row(y));
+            checkedCount++;
+        }
+        Assert.True(checkedCount > 0, "no reachable placement was exercised");
+    }
+
+    [Fact]
     public void Features_PinnedOnAHandDrawnBoard()
     {
         // Single filled cell at (x=0, y=19): rowT = 19 empty rows × 2 + 2 = 40; colT = 1 (col 0) + 9

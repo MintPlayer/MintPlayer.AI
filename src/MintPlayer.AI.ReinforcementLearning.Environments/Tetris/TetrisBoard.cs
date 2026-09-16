@@ -76,6 +76,16 @@ public sealed class TetrisBoard
     }
 
     public bool IsLegal(int action) => _core.placementLegal(action);
+
+    /// <summary>Legality AND reachability per action — the mask a net-based policy must use once
+    /// enforcement is on, or it silently plays a different game than the scripted tiers.</summary>
+    public bool[] ReachableMask()
+    {
+        var core = _core.reachableMask();
+        var mask = new bool[ActionCount];
+        for (int i = 0; i < ActionCount; i++) mask[i] = core[i];
+        return mask;
+    }
     public bool HasLegalPlacement() => _core.hasLegalPlacement();
 
     /// <summary>Apply a placement end-to-end (lock, clear, score, garbage clock, draw). Returns the
@@ -123,7 +133,6 @@ public sealed class TetrisBoard
         return _core.randomAction(rng);
     }
 
-    /// <summary>The Dellacherie tier: argmax placement by the canonical hand-tuned evaluator.</summary>
     /// <summary>NES start level (gate G7). Call AFTER <see cref="Reset"/> — reset clears it to 0.
     /// Tap speed constrains nothing at level 0 (48 frames/row) and is decisive from 19 upward, so a
     /// level-0 protocol cannot see the regime this milestone is about.</summary>
@@ -147,6 +156,22 @@ public sealed class TetrisBoard
 
     /// <summary>Tap budget in frames per shift: 6 = DAS 10Hz, 5 = hypertapping 12Hz, 3 = rolling 20Hz.</summary>
     public void SetTapRate(int framesPerShift) => _core.setTapRate(framesPerShift);
+
+    /// <summary>M62.3b: the full input model. <paramref name="chargeFrames"/> is what the SECOND shift
+    /// costs — 16 under DAS, equal to <paramref name="framesPerShift"/> for hypertapping/rolling.</summary>
+    public void SetTapModel(int framesPerShift, int chargeFrames) => _core.setTapModel(framesPerShift, chargeFrames);
+
+    /// <summary>Opt-in reachability enforcement. Off by default, which keeps the default path and the M54
+    /// parity checksum bit-identical — see <c>tetris_solver.pg</c> D7.</summary>
+    public void SetReachEnforced(bool on) => _core.setReachEnforced(on);
+
+    /// <summary>Legal AND physically reachable with the current hands. Equals <see cref="IsLegal"/>
+    /// when enforcement is off.</summary>
+    public bool PlacementReachable(int action) => _core.placementReachable(action);
+
+    /// <summary>The input sequence for a placement as flat (frame, code) pairs; empty when unreachable.
+    /// Codes: 1 = left, 2 = right, 3 = rotate CW, 4 = rotate CCW.</summary>
+    public IReadOnlyList<int> ReachTimelineFor(int action) => _core.reachTimelineFor(action);
 
     public int DellacherieAction() => _core.dellacherieAction();
 
