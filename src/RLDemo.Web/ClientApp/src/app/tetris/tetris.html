@@ -108,6 +108,14 @@
     benchmark — it separates the players fast.
   </p>
   <p class="hint">
+    <strong>Dellacherie plays by default, not the trained net</strong> — because on the one skill that
+    matters most it is simply better. Around <strong>18%</strong> of the lines it clears come from
+    tetrises, against roughly <strong>3%</strong> for the net, which clears plenty of lines but burns them
+    one at a time. The net learns to copy the same evaluator, and copying it imperfectly is enough to lose
+    the tetrises: keeping a well open needs about ten correct decisions in a row, and one wrong one fills
+    it in. Pick <strong>Trained net</strong> above to watch the difference.
+  </p>
+  <p class="hint">
     <strong>Input technique</strong> limits how fast the AI can move a piece sideways, the same way it
     limits a human. <em>DAS</em> holds the d-pad and waits 16 frames for the ROM to start auto-shifting,
     then gets one shift every 6 (10 Hz). <em>Hypertapping</em> taps by hand — no waiting, about 12 Hz.

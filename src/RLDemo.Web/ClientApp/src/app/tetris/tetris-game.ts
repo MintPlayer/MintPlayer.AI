@@ -58,7 +58,7 @@ export class TetrisGame {
    * disagree — a real bug. Logged rather than absorbed, which is precisely what the old `stuck >= 2`
    * hard-drop fallback never did.
    */
-  reportDivergence = false;
+  reportDivergence = true;
 
   private readonly dasHost = {
     shift: (dir: -1 | 1) => this.board.microShift(dir),
@@ -97,6 +97,11 @@ export class TetrisGame {
     this.board.reset(seed, this.sevenBag, this.garbageEvery);
     // Order matters: reset() zeroes startLevel and level, so both settings are reapplied afterwards.
     this.board.setKillscreenMode(this.killscreenMode);
+    // M62.4a: reachability is enforced in the browser, so the technique dial constrains what the AI can
+    // actually DO rather than only how fast it looks. Safe for human play: enforcement is consulted by
+    // placementReachable/hasLegalPlacement, which are reached only from the MACRO path (applyPlacement)
+    // that the AI uses — a human plays through the micro API and is untouched.
+    this.board.setReachEnforced(true);
     this.applyTechnique();
     if (this.startLevel > 0) this.board.setStartLevel(this.startLevel);
     this.board.microSpawn();

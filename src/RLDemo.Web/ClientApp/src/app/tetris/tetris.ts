@@ -39,7 +39,11 @@ export class Tetris implements AfterViewInit {
 
   /** 'human' = play locally; 'watch' = a selectable tier plays — everything runs in the browser. */
   protected readonly mode = signal<'human' | 'watch'>('human');
-  protected readonly tier = signal<Tier>('net');
+  // M62.4a (owner decision, supersedes D12's della-search): the hand-tuned Dellacherie evaluator is the
+  // default player. It builds tetrises — the trained net measurably does not (18.1% vs 2.7% of lines
+  // cleared as tetrises) — and it decides in ~0.06 ms, so the board never stalls. Every tier stays one
+  // click away.
+  protected readonly tier = signal<Tier>('dellacherie');
   /** Rising-garbage mode: a full bottom row with one random gap every 10 placements. */
   protected readonly garbage = signal(false);
 
@@ -53,7 +57,9 @@ export class Tetris implements AfterViewInit {
 
   // M62.3 — the input technique dial (owner ask 4). Governs the AI's tap budget, which the engine's
   // evaluator already consults, so this is a strength control and not just an animation speed.
-  protected readonly technique = signal<Technique>('das');
+  // M62.4a: rolling by default — the modern technique, and the one that keeps the AI able to feed a well
+  // once gravity gets fast. Switch to DAS at a high start level to watch it stop being able to.
+  protected readonly technique = signal<Technique>('roll');
   protected readonly techniqueHz = techniqueHz;
   /** Esc pause: freezes the game AND hides the field (the render covers the canvas). */
   protected readonly paused = signal(false);
