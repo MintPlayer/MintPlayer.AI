@@ -3184,8 +3184,7 @@ evaluator, so neither reachability nor the payback change needed a re-pin) · �
 `ActionCount` 40 and `ObservationSize` 854 unchanged (C2 would break the latter deliberately, at M62.4c) ·
 ✅ rolling CI-above DAS at L19 · ✅ pilot divergence structurally impossible (D9) rather than merely bounded,
 0 console errors over ~130 placements live · ✅ `della-search` inside the 50 ms budget · ✅ 63/63 tests,
-clean build and `tsc --noEmit` · ⬜ Block Dude row stability and the L/J preview verified by eye (code +
-typecheck only — five sampled previews never drew either affected piece).
+clean build and `tsc --noEmit` · ✅ **Block Dude row stability, the L/J preview orientation and CCW-on-Shift all verified in the browser** — the picker sits at a single vertical position (198px) across all 15 levels while the stage height swings 384→768px, and the owner confirmed the preview and rotation by eye.
 
 **G3 settled by D3** — gate the tier, not the number: search tier ≥ 40% TRT (measured **51.4%**, PASS), plain
 net ≥ 20% + ≥ 4 tetrises/ep (measured 2.7%, FAIL, and the target of the blocked M62.4c).

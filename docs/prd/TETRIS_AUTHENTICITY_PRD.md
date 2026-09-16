@@ -1,9 +1,15 @@
 # Tetris NES authenticity + the tetris rate, and a Block Dude layout fix
 
-**Status:** 🔵 PLANNED — not started. Written 2026-09-16 from a 4-agent investigation (gravity/rotation,
-tetris-rate, technique research, Block Dude layout). Findings in §2; **three of the five asks are already
-designed in [TETRIS_TECHNIQUES_PRD.md](TETRIS_TECHNIQUES_PRD.md) §4–§5 and were never built** (M57.2, M57.3,
-M57.4, M57.6). This PRD supersedes those milestones with a re-scoped, re-measured plan.
+**Status:** 🟡 **SHIPPED except the net retrain** — PR #53. Asks 1, 3, 4 and 5 are done and owner-verified in
+the browser; ask 2 is fixed **for the scripted tiers** (`tetrisPayback`: +45% score, +25% tetrises, top-outs
+10/16 → 3/16, owner-confirmed) and **still open for the trained net**, whose retrain is blocked — §6.F/§6.G.
+Written 2026-09-16 from a 4-agent investigation; **three of the five asks were already designed in
+[TETRIS_TECHNIQUES_PRD.md](TETRIS_TECHNIQUES_PRD.md) §4–§5 and never built** (M57.2, M57.3, M57.4, M57.6),
+which this PRD supersedes with a re-scoped, re-measured plan.
+
+**Read §6.F and §6.G before touching the net.** Two confidently-published claims in this document were
+retracted after measurement (the instant-kill explanation, and "γ = 0 is refuted"), both caused by reading Lab
+*defaults* and reporting them as measurements.
 **Owner:** Pieterjan
 **Milestone:** [PLAN.md](PLAN.md) M62 · branch `m62-tetris-authenticity` · builds on
 [TETRIS_PRD.md](TETRIS_PRD.md) (M54 ship, M55 NES input) and [TETRIS_TECHNIQUES_PRD.md](TETRIS_TECHNIQUES_PRD.md)
@@ -451,7 +457,7 @@ search tier ≥ 40%.** Settle this before spending on #2–#4.
 | **G4** | ✅ **PASSED pre-mask** — rolling vs DAS at L19: dellacherie 1.69 → 9.88 tetrises/ep, della-search 0.25 → **20.56 (82×)**, score +216%. **Must be re-measured post-mask** (C3) |
 | **G5** | ⛔ Superseded by **G10** — D9 makes divergence structurally impossible rather than merely bounded |
 | **G6** | Browser: ≤ 50 ms/move for the default tier — now **`della-search`** (D12), which is also the tier D8/D9 make most expensive. **If missed, make della-search fit; do not drop it** (D11) |
-| **G7** | Block Dude: the Prev/Level/Next row does not move vertically when switching between the shortest (19×8) and tallest (29×19) levels |
+| **G7** | ✅ **VERIFIED in the browser.** Measured across all 15 levels: the picker top is a single value (198px) while the stage height swings **384 → 768px**. Owner-confirmed. |
 | **G8** | 🟡 `dotnet build` clean; `tsc --noEmit -p tsconfig.app.json` clean; `dotnet test` green — **all three green as of `0a0d051`**, re-checked per milestone |
 
 ### The concentrated risk in D7–D13
