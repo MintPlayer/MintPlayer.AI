@@ -248,6 +248,51 @@ public class TetrisEngineTests
         Assert.Equal(29, t.levelForLines(230));
     }
 
+    [Theory]
+    // M62: the ROM rule is first level-up at min(start*10 + 10, max(100, start*10 - 50)) lines, then every
+    // 10. The shape looks arbitrary enough to invite "simplification", so the CTWC-relevant starts are
+    // pinned.
+    //
+    // The punchline is the last three rows, and it is an INVARIANT rather than a coincidence: for every
+    // start level from 15 upward the kill screen arrives at EXACTLY 230 lines. Above 15 the first
+    // threshold is start*10 - 50, so the total is (start*10 - 50) + 10*(28 - start) = 230 — the start
+    // level cancels out. That is why 230 is the number every commentator quotes, and why it sounds like a
+    // property of the game rather than of a particular start. Below 15 it does vary (start 14 → 240).
+    [InlineData(0, 10, 290)]
+    [InlineData(9, 100, 290)]
+    [InlineData(14, 100, 240)]
+    [InlineData(15, 100, 230)]
+    [InlineData(18, 130, 230)]
+    [InlineData(19, 140, 230)]
+    public void LevelProgression_MatchesTheRomRule_AtEveryCtwcStart(int start, int firstUp, int killScreenLines)
+    {
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.setStartLevel(start);
+
+        // Stays on the start level until the (irregular) first threshold, then steps exactly there.
+        Assert.Equal(start, t.levelForLines(firstUp - 1));
+        Assert.Equal(start + 1, t.levelForLines(firstUp));
+        // Every 10 lines thereafter.
+        Assert.Equal(start + 2, t.levelForLines(firstUp + 10));
+        // And the kill screen lands where the tournament expects it.
+        Assert.Equal(28, t.levelForLines(killScreenLines - 1));
+        Assert.Equal(29, t.levelForLines(killScreenLines));
+    }
+
+    [Fact]
+    public void LevelProgression_StartZeroSpecialCase_AgreesWithTheGeneralRule()
+    {
+        // levelForLines short-circuits startLevel 0 to floor(lines/10). The general branch produces the same
+        // answer (first = min(10, 100) = 10), so the special case is redundant — pinned so that if anyone
+        // removes it, the equivalence is what is being asserted rather than assumed.
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.setStartLevel(0);
+        foreach (int lines in new[] { 0, 9, 10, 11, 29, 30, 99, 100, 229, 230, 289, 290 })
+            Assert.Equal(lines / 10, t.levelForLines(lines));
+    }
+
     [Fact]
     public void KillscreenVariants_DefaultIsAuthenticAndCostsNothing()
     {
