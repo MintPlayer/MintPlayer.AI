@@ -469,6 +469,65 @@ require rework.
 
 ---
 
+## 6.D Why the search declines tetrises — measured, and it was not what I expected
+
+Built `--decline-census` to count the owner's report ("gets a long bar, could grab a tetris, puts it
+somewhere else — about 1 in 4 times") rather than reason about it. 10 episodes, seeds 5000+e:
+
+| tier | tetris on the table | **took it** | declines on a HOLED board |
+|---|---|---|---|
+| dellacherie (1-ply) | 90 steps | **88 (97.8%)** | 0 of 2 |
+| della-search (2-ply) | 400 steps | **192 (48.0%)** | **1 of 208 (0.5%)** |
+
+Two findings, the first of which killed my own hypothesis:
+
+1. **It is not the DIG gate.** 99.5% of declines happen on CLEAN boards, so "a single hole blinds the
+   evaluator to the well" — plausible, and consistent with the owner's other observation that the agent
+   digs well — is simply wrong as an explanation for this.
+2. **It is the SEARCH.** 1-ply Dellacherie takes 97.8% of available tetrises; adding one ply of look-ahead
+   halves it.
+
+**The mechanism is a double-count.** `tetrisReady` is a *state* bonus paying `EvalReady` per ready row, so a
+multi-ply search counts the same four rows again at every ply it declines to cash them, while taking the
+tetris banks `eroded + EvalTetris` **once** and leaves a board worth zero:
+
+```
+decline   ≈ 13.6 (ply 1) + 13.6 (ply 2)   = 27.2
+take      ≈ 16 eroded + 7.05 EvalTetris   = 23.1
+```
+
+Holding beats cashing by ~4 — but only when there is a second ply to double-count in, which is exactly why
+the 1-ply tier does not show it. **The AI is not undervaluing tetrises; the evaluator pays rent on a well
+you never cash, and the search found the exploit.**
+
+`tetrisPayback` returns the consumed rows on cashing. Monotonic on take-rate: **0.0 → 48.0%, 0.5 → 59.4%,
+1.0 → 70.0%**. Take-rate is a proxy, so tetrises/episode and score are being measured before any default
+changes; `0.0` reproduces the shipped behaviour exactly. Note the baseline already cashes **17.25
+tetrises/episode** despite declining half the offers — offers are frequent — so the fix must raise *that*,
+not merely the ratio.
+
+## 6.E The shipped net's training recipe, recovered from its own checkpoint
+
+`TETRIS_TECHNIQUES_PRD.md` lists as a live defect that **"the training CLI args are recorded nowhere in the
+repo"**, and it bit immediately: three attempts to fine-tune the shipped net failed on argument mismatches
+before one started. What the failures recovered, which is now the only record:
+
+| fact | value | how it was recovered |
+|---|---|---|
+| hidden layers | **256,256** | checkpoint size 1,180,907 B ≈ 283k params × 4 for 854 inputs; `[128,128]` would be ~0.5 MB |
+| n-step | **1** | resume state refused `--nstep 3`: *"Resume state n-step 1 != options 3"* |
+| γ | 0.995 | accepted by the resume |
+| `--dense` | **must NOT be passed** | *"DenseTargets requires Gamma == 0"* — the campaign injects its per-action dense targets through its own path, so this flag is actively wrong for Tetris |
+| resume point | 195,000 placements, baseline 99,598 | run log, matching the M57.5 record |
+
+**Two corrections to the record follow.** The PRD and the Lab default both say **n-step 3**; the net that
+actually shipped used **n-step 1**. And a bare `--game tetris --dense` — the intuitive reading of "dense
+all-action regression" — **throws**, so the documented recipe could not have been the one used.
+
+**Fixed going forward:** `LabHost` now appends the full invocation to `<dataDir>/invocation.txt` on every
+training start. A checkpoint that cannot say how it was made cannot be reproduced, compared against, or
+resumed — which is exactly the position the shipped net was in.
+
 ## 7. Corrections to land in the same PR
 
 Found during the investigation, all currently wrong in the repo:

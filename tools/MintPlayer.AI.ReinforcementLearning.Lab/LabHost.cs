@@ -31,6 +31,25 @@ internal static class LabHost
         // take the lock, so inspecting a directory while a run trains it still works.
         using var directoryLock = evalOnly ? null : TrainingDirectoryLock.Acquire(dataDir);
 
+        // M62.4: persist the INVOCATION next to the run. Without this the flags exist only in whichever
+        // shell started the run, so a finished checkpoint cannot be reproduced, compared against, or
+        // resumed on the same settings — the tet15 net that currently ships is exactly in that position,
+        // and TETRIS_TECHNIQUES_PRD lists it as a live defect ("the training CLI args are recorded
+        // nowhere in the repo"). Appended, not overwritten, so a resumed run keeps its whole history.
+        if (!evalOnly)
+        {
+            try
+            {
+                Directory.CreateDirectory(dataDir);
+                File.AppendAllText(Path.Combine(dataDir, "invocation.txt"),
+                    $"{DateTime.UtcNow:u}\t{Environment.ProcessId}\t{string.Join(' ', args)}{Environment.NewLine}");
+            }
+            catch (IOException)
+            {
+                // Recording the invocation must never be the reason a training run fails to start.
+            }
+        }
+
         // DI all the way: the model store, clock, (optional) GPU backend, CampaignRunner, the games and the
         // campaign itself all come from the container.
         var builder = AIHost.CreateBuilder(dataDir);
