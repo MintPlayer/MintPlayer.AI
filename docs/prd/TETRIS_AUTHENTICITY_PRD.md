@@ -71,7 +71,7 @@ its premises are refuted by current master (`ff36180`):
 
 | Prior claim | Status today |
 |---|---|
-| γ = 0, no bootstrap path | **REFUTED** — γ = 0.995 (`TetrisLab.cs:30`), n-step = 3 (`TetrisLab.cs:45`) |
+| γ = 0, no bootstrap path | ~~REFUTED — γ = 0.995, n-step = 3~~ **THIS ROW WAS WRONG (see §6.F).** Those were the Lab DEFAULTS (`TetrisLab.cs:30/45`), not the recipe. The shipped net trains at **γ = 0 with `--dense`** — measured — so the original claim was correct |
 | dense target has `−20·Δwells`, penalizing the tetris well | **REFUTED** — well column *excluded*, weight now **−0.847** (`.pg:79`, `:700 wellSumExceptWell`); `+7.047` tetris term and `+3.402` tetris-ready-row term added |
 | a tetris is worth less than 4 singles | **REFUTED** — see below |
 
@@ -526,22 +526,35 @@ and the fine-tune directory.
 > The argument itself may still be sound — a dense target at 8× weight really would dominate a terminal
 > signal — but it is now an untested hypothesis, not a finding, and it is not what happened here.
 
-**What actually remains suspect: the reconstructed flags, all of which are mine.** §6.E recovered only what
-the resume state *enforces* — n-step 1, γ 0.995, hidden 256,256. Everything else was guessed, and two
-guesses are strong candidates:
+### ✅ RESOLVED — the recipe is γ=0 with dense targets, and both collapses were my flags
 
-- **`--explore` defaults to 1.0**, so ε restarts at 1.0 on resume and the run collects random play. A
-  resumed run almost certainly needs a low ε.
-- **`--dense-weight 8`** was taken from a PRD note describing it as a patch for a different problem; the
-  Lab default is 1.
+A 5-minute probe settled it. `DenseTargets` is gated: `DenseTargets = Typed.DenseRegression ? … : null`
+(`TetrisDqnCampaign.cs:75`), so the dense per-action targets that make this net work **only exist when
+`--dense` is passed — and `--dense` requires γ = 0**. Every failed attempt ran at γ=0.995, where that flag
+throws, so all of them trained **a γ=0 dense-distilled net as a bootstrapped net with the dense targets
+switched off**.
 
-**Conclusion: the shipped net's training configuration is still unknown, and fine-tuning it blind degrades
-it.** `invocation.txt` (§6.E) stops this recurring for every future run, but it cannot recover the past one.
-The net-side work (M62.4c) should therefore start from a *measured* recipe — sweep ε and dense-weight on
-short runs against the stored baseline before spending hours — rather than from another reconstruction.
+| resume flags | first eval @210k |
+|---|---|
+| `--gamma 0.995 --nstep 1 --dense-weight 8` (mine, twice) | **6,543** · 40 lines · 20/20 top-outs |
+| **`--gamma 0 --dense --dense-weight 8 --nstep 1 --hidden 256,256`** | **98,031 · 194.4 lines · 500/500 pieces · 0/20 top-outs** |
 
-**The owner's instant-kill rule is untested, not refuted.** It ships default-off with its boundary pinned by
-tests, awaiting a training run that is known to work at all.
+**The recipe is therefore `--gamma 0 --dense --dense-weight 8 --nstep 1 --hidden 256,256`**, and it is now
+recorded in `data/tet19train/invocation.txt` by the run that uses it.
+
+> ### A second correction to the record, in the opposite direction to the first.
+> §1.2 of this PRD marked `TETRIS_TECHNIQUES_PRD` §0's "γ = 0" as **REFUTED**, citing γ=0.995 and 3-step
+> returns. **That refutation was wrong** — both numbers were read off *Lab defaults* (`TetrisLab.cs:30/45`),
+> not off the recipe that produced the net. The resume state enforces **n-step 1**, which is exactly what
+> γ=0 implies (nothing to bootstrap), and γ=0 + `--dense` is the only combination that resumes cleanly.
+>
+> **So the original M57 diagnosis was right about γ and wrong only about the well weights.** The genuinely
+> refuted half stands: the dense target no longer carries `−20·Δwells` (it is −0.847 with the well column
+> excluded, plus `+7.047` tetris and `+3.402` ready terms). The γ half should never have been called.
+>
+> Reading a default and reporting it as a measurement is the same error twice in this milestone — it also
+> produced the retracted instant-kill explanation. The defence is `invocation.txt`: a recipe that is written
+> down cannot be confused with a default that merely looks like one.
 
 ## 6.E The shipped net's training recipe, recovered from its own checkpoint
 
