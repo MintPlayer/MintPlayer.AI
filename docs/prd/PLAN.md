@@ -3083,6 +3083,63 @@ keepalives are allowed, 60 fps with no long tasks over ≥30 s is the real check
 
 ---
 
+## M62 — Tetris NES authenticity (gravity variants · CCW · technique dial · the tetris rate) + Block Dude layout  *(planned 2026-09-16; branch `m62-tetris-authenticity`; see `TETRIS_AUTHENTICITY_PRD.md`)* 🔵
+
+Planned from a 4-agent investigation into the owner's five asks. Three of the five were **already designed in
+`TETRIS_TECHNIQUES_PRD.md` §4–§5 and never built** (M57.2/M57.3/M57.4/M57.6); this milestone re-scopes them
+against what the M57.1/M57.5 ship actually changed. **One PR for the arc**, Block Dude included.
+
+**Two asks changed shape under investigation:**
+
+- **Gravity (ask 1) is not a bug.** `gravityFrames` (`tetris_solver.pg:461-469`) is exactly authentic NES NTSC,
+  verified value-by-value, and so is `levelForLines`. **130 and 230 are line thresholds, not levels** — on an
+  18-start the ROM rule `min(start·10+10, max(100, start·10−50))` puts L19 at 130 lines and L29 at 230. The
+  owner's closing observation is correct: **L29 is the last speed change**, flat 1 frame/row from 29 to 255.
+  The real post-29 speed change is a **ROM hack** — CTWC/CTM Masters' level-39 "super killscreen" (2xks,
+  2 rows/frame). Ships as an opt-in variant flag, never as a table edit. Bonus: `setStartLevel` exists
+  (`TetrisBoard.cs:127`) but **the frontend never calls it** — every browser game starts at level 0.
+- **The tetris rate (ask 2) is a distillation problem, not a reward problem.** `TETRIS_TECHNIQUES_PRD.md` §0's
+  headline diagnosis is **stale**: γ is 0.995 with 3-step returns (`TetrisLab.cs:30/45`), the well column is
+  excluded from the dense target (weight −0.847, `.pg:79`), and a tetris now pays 3× four singles in realized
+  reward and 7.5× in NES score. The teacher already tetrises — **exact argmax 17.9–44% TRT, the trained net
+  1.4%**. A tetris needs ~10 consecutive correct argmaxes to hold column 9 open; one error burns the well.
+  Capacity and fit are ruled out (target is exactly linear in the observation, R² 0.868–0.893).
+
+**Two asks are cheap and safe.** CCW rotation (ask 3) touches **no checkpoint**: the RL action space is
+*afterstate* (`ActionCount = 40`, absolute rotation×column), so the agent never picks a direction — only J/L/T
+are even affected. Block Dude (ask 5) is a **pure DOM move**; the page has no page-level flex/grid, and
+`.bd-stage` genuinely has no fixed aspect ratio (bound per level, `block-dude.ts:67-70`, 19×8 → 29×19), which
+is exactly why the row shifts today.
+
+**The technique dial (ask 4) already half-exists, on a fabricated cadence.** Tetris is the repo's one
+**client-side** watch-AI ("Pattern C", `tetris-director.ts:1-6`) — no server path to insert into. The AI does
+not teleport; it taps at `PILOT_INPUT_MS = 90` ≈ 11.1 Hz, which is *accidentally almost exactly hypertapping*.
+A frame-exact `NesInput` (16/10/6, wall charge, spawn carry) exists but is wired to the human path only.
+Researched rates: **DAS 10.02 Hz** (16-frame charge then 6-frame repeat), **hypertapping ~12 Hz** (10–15),
+**rolling ~20–30 Hz**, ceiling 60 Hz. M57.0's spike S3 already measured the payoff: **at the kill screen DAS
+scores 0, rolling 37,135.**
+
+**Milestones:** M62.0 spikes (S1 search-tier TRT — may collapse M62.4 to a default change; S2 pilot divergence;
+S3 reachability per rate; S4 argmax fidelity) · M62.1 CCW · M62.2 gravity variants + start-level picker ·
+M62.3 technique dial · M62.4 tetris rate · M62.5 Block Dude row · M62.6 doc corrections · M62.7 ship.
+
+**Gates:** default gravity path bit-identical (parity checksum `765594964`), CW path byte-identical with
+`ActionCount` 40 / `ObservationSize` 854 unchanged, rolling CI-above DAS at L19, pilot `stuck` bail-outs
+asserted rather than silent, Block Dude row vertically stable across the shortest and tallest levels.
+**G3 needs renegotiating**: the standing 50% TRT target is likely unreachable for a plain net when della-search,
+playing the evaluator's *exact* argmax, only reaches 44% — proposed net ≥ 20% / search ≥ 40%.
+
+**Six open owner decisions** (PRD §8), the two load-bearing ones: **D2** — is the technique dial a client-side
+demo, or a `.pg` legality mask that changes what the evaluator wants (real strength control, but a retrain and
+every `*-state.ckpt` resume file invalidated)? **D3** — accept the G3 renegotiation before spending on it?
+
+**Corrections landing in the same PR:** `TETRIS_PRD.md` (5 sites) asserts an `enumeratePlacements()` seam that
+does not exist (enumeration is inlined at 7 `.pg` sites); `TetrisEnv.cs:23` / `TetrisBoard.cs:27` say the
+observation is 814 when it is 854; `.pg:819` says 454/six planes; `RewardTetrisBonus` (`.pg:63`) is declared and
+never read in the `.pg`.
+
+---
+
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
 `dotnet run --project src/RLDemo.Console -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour|cube]
