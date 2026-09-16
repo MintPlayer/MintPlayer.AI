@@ -572,8 +572,12 @@ class PgTetris {
     return mask
   }
 
+  // M62.3b: under enforcement "no placement the hands can reach" is just as terminal as "no placement
+  // fits". Measured before this fix: the agent silently ran out of reachable actions, the caller took the
+  // -1 and stopped the episode, and it was recorded as NOT a top-out — an episode that ended for an
+  // unexplained reason. Terminality must follow the mask the policy actually plays against.
   fn hasLegalPlacement(): bool {
-    for a in 0..ActionCount { if this.placementLegal(a) { return true } }
+    for a in 0..ActionCount { if this.placementReachable(a) { return true } }
     return false
   }
 
@@ -940,6 +944,44 @@ class PgTetris {
     return this.reachTimeline
   }
 
+  // ── C1 (PRD §8 interference audit): ONE reach model per altitude ────────────────────────────────────
+  // evalAfterstate used to price reach with the maxTapHeight PROXY while the mask used the true
+  // simulation. MEASURED consequence at L19 with rolling hands: della-search committed to a well the proxy
+  // said was serviceable, the true mask then refused every placement that could feed it, and the tier
+  // collapsed from 198 lines to 28. The two models must agree at the root.
+  //
+  // Refreshed ONCE per decision (the root already pays for 40 simulations to build the mask); the
+  // evaluator then reads these cached bounds, so the thousands of evalAfterstate calls inside a search
+  // stay as cheap as they were. When enforcement is off the span stays full-width and every formula below
+  // reduces to the proxy exactly, which is what keeps the default path bit-identical.
+  var reachLo: i32 = 0
+  var reachHi: i32 = 9
+
+  fn refreshReachSpan() {
+    if !this.reachEnforced {
+      this.reachLo = 0
+      this.reachHi = W - 1
+      return
+    }
+    var lo = W
+    var hi = -1
+    for a in 0..ActionCount {
+      if this.placementReachable(a) {
+        let c = this.actionCol(a)
+        if c < lo { lo = c }
+        if c > hi { hi = c }
+      }
+    }
+    if hi < 0 {
+      // Nothing reachable at all — terminal. Keep a degenerate span rather than an inverted one.
+      this.reachLo = 0
+      this.reachHi = -1
+      return
+    }
+    this.reachLo = lo
+    this.reachHi = hi
+  }
+
   fn reachableMask(): List<bool> {
     var mask: List<bool> = List<bool>()
     for a in 0..ActionCount { mask.add(this.placementReachable(a)) }
@@ -960,7 +1002,10 @@ class PgTetris {
     var s = 0.0 - this.simLanding + this.simEroded - this.rowTransitions() - this.colTransitions() + EvalHoles * holeCount + EvalWells * this.wellSumExceptWell()
     let m5 = this.maxTapHeight(5)
     let m4 = this.maxTapHeight(4)
-    let lineout = m5 < 4
+    // C1: under enforcement the WELL COLUMN being physically unreachable is the honest lineout signal —
+    // there is no point valuing a tetris you cannot feed. The proxy's `m5 < 4` height heuristic is kept
+    // for the unenforced path so that path stays bit-identical.
+    let lineout = if this.reachEnforced { this.reachHi < WellCol } else { m5 < 4 }
     let dig = holeCount > 0
     if !lineout {
       if !dig { s = s + EvalReady * this.tetrisReady() }
@@ -972,10 +1017,19 @@ class PgTetris {
     s = s + EvalTetris * (if cleared == 4 { 1 } else { 0 })
     let col9 = this.colHeight(WellCol - 1) - EvalMaxSafeCol9
     if col9 > 0 { s = s + EvalCol9 * col9 }
-    let overLeft = this.colHeight(0) - m5
-    if overLeft > 0 { s = s + EvalInaccessible * overLeft }
-    let overRight = this.colHeight(W - 1) - m4
-    if overRight > 0 { s = s + EvalInaccessible * overRight }
+    // C1: same substitution for the accessibility penalties. Under enforcement a wall is "inaccessible"
+    // when it is literally outside the reachable span, which is a fact rather than a height estimate; the
+    // penalty then scales with how tall that unreachable wall is, exactly as before.
+    let leftBlind = if this.reachEnforced { this.reachLo > 0 } else { this.colHeight(0) - m5 > 0 }
+    if leftBlind {
+      let overLeft = if this.reachEnforced { this.colHeight(0) } else { this.colHeight(0) - m5 }
+      if overLeft > 0 { s = s + EvalInaccessible * overLeft }
+    }
+    let rightBlind = if this.reachEnforced { this.reachHi < W - 1 } else { this.colHeight(W - 1) - m4 > 0 }
+    if rightBlind {
+      let overRight = if this.reachEnforced { this.colHeight(W - 1) } else { this.colHeight(W - 1) - m4 }
+      if overRight > 0 { s = s + EvalInaccessible * overRight }
+    }
     return s
   }
 
@@ -1013,6 +1067,7 @@ class PgTetris {
   fn buildObservation(): List<f64> => this.buildObservationFor(this.current, this.next)
 
   fn buildObservationFor(curPiece: i32, nextPiece: i32): List<f64> {
+    this.refreshReachSpan()
     var obs: List<f64> = List<f64>()
     for y in 0..H {
       for c in 0..W { obs.add(if ((this.rows[y] >> c) & 1) == 1 { 1.0 } else { 0.0 }) }
@@ -1089,6 +1144,7 @@ class PgTetris {
 
   // Uniform-random legal placement. Takes its OWN rng so policy sampling never touches the piece stream.
   fn randomAction(policyRng: PgTetRng): i32 {
+    this.refreshReachSpan()
     var legal: List<i32> = List<i32>()
     for a in 0..ActionCount { if this.placementReachable(a) { legal.add(a) } }
     if legal.count == 0 { return -1 }
@@ -1098,6 +1154,7 @@ class PgTetris {
   // The Dellacherie tier: argmax placement by the canonical evaluator (first strict improvement wins ties
   // — the spike's iteration order: rotation-major, then column).
   fn dellacherieAction(): i32 {
+    this.refreshReachSpan()
     var best = -1
     var bestScore = -1.0e18
     for a in 0..ActionCount {
@@ -1112,6 +1169,7 @@ class PgTetris {
   // beamB over the KNOWN next piece's placements, then expectimax (mean over the 7 pieces' best
   // placement) for the unknown third piece. Deterministic, no RNG, board restored.
   fn dellaSearchAction(beamA: i32, beamB: i32): i32 {
+    this.refreshReachSpan()
     var v1: List<f64> = List<f64>()
     for a in 0..ActionCount {
       // Root ply only — ply 2 below stays on placementLegal (PRD D10: truth at the root, proxy in rollouts).
@@ -1182,6 +1240,7 @@ class PgTetris {
 
   // Trained-net tier: masked greedy argmax over Q for the current observation.
   fn netAction(net: PgTetDuelingNet): i32 {
+    this.refreshReachSpan()
     let q = net.forward(this.buildObservation())
     var best = -1
     var bestQ = -1.0e18
@@ -1199,6 +1258,7 @@ class PgTetris {
   // line reward instead (the pre-pivot γ>0 formulation) double-ignores the placement's own board damage —
   // measured at −65% survival vs the plain net tier before this fix.
   fn netSearchAction(net: PgTetDuelingNet, beamWidth: i32): i32 {
+    this.refreshReachSpan()
     let q1 = net.forward(this.buildObservation())
 
     var beam: List<i32> = List<i32>()

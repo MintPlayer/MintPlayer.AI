@@ -300,7 +300,50 @@ not coincidence: `maxTapHeight` divides `taps · tapFrames · rowsPerStep` by `g
 `6/2 = 3/1`. **Rolling buys exactly one gravity doubling** — it makes the kill screen play like L19 did with
 DAS, which is precisely the real-world claim about the technique.
 
-### ⚠️ The finding that re-scopes M62.3b: the dial changes PREFERENCES, not LEGALITY
+### M62.3b RESULTS — reachability enforced, and the kill-screen claim finally reproduces
+
+With `legalMask` consulting the tap budget (opt-in `--reach`), 12 eps, matched seeds:
+
+**L29, the kill screen — the headline:**
+
+| tier | DAS score (lines) | Rolling score (lines) |
+|---|---|---|
+| dellacherie | **1,200** (0.9) | **193,400** (113.4) |
+| della-search | **1,500** (1.2) | **275,550** (198.3) |
+| net | 200 (0.2) | 202,700 (127.4) |
+| net-search | **0** (0.0) | 280,700 (171.4) |
+
+**This is M57.0's "at the kill screen DAS scores 0, rolling scores 37,135" — reproduced on the shipped
+engine for the first time.** It never reproduced before because nothing stopped DAS from reaching column 9;
+now the mask does. The 6/2 = 3/1 identity survives enforcement exactly: L29+rolling gives dellacherie 113.4
+lines, identical to L19+DAS.
+
+**Latency (G6):** `della-search` **p50 ≈ 11 ms, p99 ≈ 24 ms** — comfortably inside the 50 ms budget, so D12's
+default tier is affordable even paying for root reachability. `net-search` is the expensive one (p50 ≈ 40 ms,
+p99 ≈ 78 ms) but it is not the default.
+
+**Cost of honesty:** at L19/DAS, enforcing reachability takes dellacherie from 196.2 → 113.4 lines. That is
+the real price of making the hands physical, and it should be quoted rather than hidden.
+
+### C1 was not theoretical — it cost 170 lines a game
+
+The interference audit predicted the root would misbehave with legality on truth and valuation on the proxy.
+**Measured:** at L19 with rolling, `della-search` collapsed to **27.8 lines** while the same tier at L29 with
+rolling scored 198.3. Mechanism exactly as predicted — the proxy said the well was serviceable, so the tier
+committed to building one; the true mask then refused every placement that could feed it, and it stranded. At
+L29 the proxy said "lineout", it played flat, and survived.
+
+**Resolved in M62.3b**: `refreshReachSpan()` computes the reachable column span ONCE per decision (the root
+already pays 40 simulations for the mask) and caches it; `evalAfterstate` reads the cached bounds, so the
+thousands of calls inside a search stay cheap. Under enforcement `lineout` becomes *"the well column is
+unreachable"* — a fact, not a height heuristic — and the accessibility penalties key off the span. With
+enforcement off every formula reduces to the proxy exactly, which is what keeps the default bit-identical.
+
+**A second defect this exposed:** running out of *reachable* placements returned −1 and the caller simply
+stopped the episode, recorded as **not a top-out** — an episode ending for no stated reason.
+`hasLegalPlacement` now follows the mask the policy actually plays against.
+
+### ⚠️ The finding that re-scoped M62.3b: the dial changes PREFERENCES, not LEGALITY (pre-fix)
 
 `legalMask` (`.pg:515`) **does not consult the tap budget** — verified by reading it. The tap rate reaches
 only `evalAfterstate` (via `lineout`/`overLeft`/`overRight`) and the observation planes. So the AI still
