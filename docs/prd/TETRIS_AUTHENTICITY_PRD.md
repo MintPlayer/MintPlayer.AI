@@ -262,12 +262,63 @@ Instrument `tetris-game.ts:159` and count, over ~30 watch episodes at levels 0/1
 realized placement differs from the director's chosen one. This is currently unmeasured and silently wrong.
 It also establishes the baseline the technique dial will be judged against.
 
-### S3 — Reachability at the dial's three rates. ~30 min.
-For each technique, at levels 18 / 19 / 29, compute what fraction of the 40 macro placements is physically
-reachable before lock. Reproduces S3's DAS-scores-0 result on the *shipped* engine and tells us whether fork
-(ii) is buying real strategy change or only a visual.
-**GO/NO-GO on fork (ii):** only worth its retrain if reachable-set size differs by ≥ 15% between DAS and
-rolling at L19.
+### S3 — Reachability at the dial's three rates. 🟡 IN PROGRESS.
+
+Measured through `--baselines --tap <frames> --start-level <n>` (both options added in M62.3a) rather than by
+a separate census, so the number reported is the thing we actually care about — score and tetrises under a
+given pair of hands — not a proxy.
+
+> **Method note that nearly produced a false negative.** `maxTapHeight` divides the tap budget by
+> `gravityFrames(level)`, so **at level 0 (48 frames/row) every technique reaches every column and the dial
+> is mathematically a no-op.** An A/B from the default start level would have reported "the dial does
+> nothing" and been wrong. The dial only bites from ~L19 (2 frames/row) — which is exactly where real
+> players switch technique, and why CTWC starts at 18/19 rather than 0.
+
+**Level 0, 12 eps** (dilute by construction, recorded for completeness): rolling vs the DAS default moves
+`della-search` 18.00 → **20.83** tetrises/ep and `net-search` 0.65 → **0.83**. Right direction, small, and
+exactly as small as the gravity argument predicts.
+
+### S3.R — results (16 eps, matched seeds, only `--tap` differing)
+
+**L19 — the dial is a genuine strength control, with no retrain:**
+
+| tier | tetrises/ep DAS → Roll | TRT | A-score DAS → Roll |
+|---|---|---|---|
+| dellacherie | 1.69 → **9.88** (5.8×) | 3.4% → **21.6%** | 229,500 → **401,785** (+75%) |
+| **della-search** | 0.25 → **20.56** (**82×**) | 0.5% → **47.3%** | 191,762 → **605,237** (+216%) |
+| net | 1.69 → 0.94 | 3.5% → 2.0% | 224,686 → 194,229 |
+| net-search | 1.19 → 0.75 | — | 221,974 → 198,362 |
+
+**An exact identity worth keeping.** L29+rolling reproduces L19+DAS *cell for cell* — same lines (196.4),
+same tetrises (1.69), same top-outs; only the score differs, via the level multiplier. That is arithmetic,
+not coincidence: `maxTapHeight` divides `taps · tapFrames · rowsPerStep` by `gravityFrames`, and
+`6/2 = 3/1`. **Rolling buys exactly one gravity doubling** — it makes the kill screen play like L19 did with
+DAS, which is precisely the real-world claim about the technique.
+
+### ⚠️ The finding that re-scopes M62.3b: the dial changes PREFERENCES, not LEGALITY
+
+`legalMask` (`.pg:515`) **does not consult the tap budget** — verified by reading it. The tap rate reaches
+only `evalAfterstate` (via `lineout`/`overLeft`/`overRight`) and the observation planes. So the AI still
+*can* place a piece anywhere; it merely values placements differently.
+
+Consequences, stated plainly because two of them contradict earlier claims in this repo:
+
+1. **M57.0's "at the kill screen DAS scores 0" is not reproducible on the shipped engine.** We measure DAS at
+   L29 scoring **344,550** with 185 lines. Nothing prevents DAS from reaching column 9, because macro
+   placements are applied instantly (`TetrisEnv.cs:9`: the AI's placement decisions have no gravity clock).
+   The spike measured a *hypothetical* constrained agent; the engine never became one.
+2. **M62.3b (the legality mask) is REQUIRED, not optional.** Without it the dial is honest about strategy but
+   dishonest about physics — a visitor selecting DAS at the kill screen watches an AI that still slides
+   pieces to the wall it could not possibly reach. This reverses the draft's "ship the dial, gate the mask".
+3. **The retrain is justified — for a different reason than D2 assumed.** Not "the mask changes behaviour"
+   but: **the net was trained at a single tap rate (6) and cannot exploit the dial at all** — it gets
+   *worse* with rolling (0.94 vs 1.69) while the evaluator tiers get 5.8–82× better. The fix is to
+   **randomize the tap rate across training episodes** so the net learns a policy conditioned on its hands.
+
+**Also measured — the net cannot survive the kill screen.** At L29 with DAS: 112.9 lines, **14/16 top-outs**
+on protocol A, and 101 pieces on B vs `della-search`'s 1,387. `net-search` goes **−70.8%** vs dellacherie
+there. The shipped browser default is the weakest tier at exactly the setting a visitor is most likely to
+find impressive.
 
 ### S4 — Argmax fidelity probe. ~30 min, no training.
 Over held-out rollouts, log how often the net's top-1 equals the exact evaluator's top-1, split by whether
@@ -304,10 +355,16 @@ search tier ≥ 40%.** Settle this before spending on #2–#4.
   a second touch button, CCW round-trip tests (4× CCW = identity for J/L/T; no-op for O; equals CW for I/S/Z).
 - **M62.2 — Gravity variants + start-level picker (LOCK A).** ⬜ Post-29 flag with `rowsPerStep`; frontend
   start-level picker (0 / 9 / 15 / 18 / 19 / 29) wired to the existing `setStartLevel`.
-- **M62.3 — Technique dial (LOCK C/D/E).** ⬜ `Technique = 'das' | 'hypertap' | 'roll'` with a frames table in
-  `tetris-das.ts`; watch mode moved onto the frame clock; three radios mirroring the tier row
-  (`tetris.html:18-25`, `tetris.ts:41/109-112`); localStorage persistence; status line shows the active rate;
-  hint sentence carries the 10 / 12 / 20 Hz numbers. Scope depends on **D2**.
+- **M62.3 — Technique dial (LOCK C/D/E).** 🟡 **M62.3a SHIPPED** (`02bcb35`): `Technique` + frames table in
+  `tetris-das.ts`, three buttons, pilot cadence driven by the dial with DAS paying its 16-frame charge,
+  status line and hint carrying the real rates, `--tap`/`--start-level` in the Lab.
+  **The milestone shrank on discovery:** M57.1 already built the engine half (`tapFramesPerShift`,
+  `setTapRate`, `maxTapHeight`, and `evalAfterstate` already consuming the tap budget via
+  `lineout = m5 < 4` and `overLeft`/`overRight`) — but **`SetTapRate` was never called by any production
+  code**, so only DAS has ever been in effect. Fork (ii) was mostly dead code to wire, not code to write.
+  Also corrected: the pilot ran at `PILOT_INPUT_MS = 90` ≈ 11.1 Hz ≈ 5.4 frames — **the "normal" AI was
+  already hypertapping**, unlabelled.
+  **M62.3b (mask tightening + retrain) is gated on S3**, not assumed.
 - **M62.4 — Tetris rate.** ⬜ Option #1 always; #2/#3 only if S1/S4 say the plain net is worth fixing.
 - **M62.5 — Block Dude control row.** ⬜ Move `block-dude.html:25-34` above `.bd-stage`; accept the margin and
   tab-order changes; check the two-`.actions`-siblings split breaks nothing (no `+`/`~` selectors exist).
