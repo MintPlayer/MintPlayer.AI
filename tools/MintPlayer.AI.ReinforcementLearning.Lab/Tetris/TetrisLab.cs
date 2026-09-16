@@ -82,6 +82,15 @@ internal static class TetrisLab
             return;
         }
 
+        // M62.4 diagnostic (owner-reported): "the AI gets a long bar, could grab a tetris, and instead
+        // puts it somewhere else — about 1 in 4 times". Counts exactly that: steps where SOME legal
+        // placement would clear 4 rows, and whether the policy took one.
+        if (a.Has("--decline-census"))
+        {
+            RunDeclineCensus(a.Int("--decline-census", 12), pieceBudget, a.Int("--tap", 0), a.Has("--reach"), a.Dbl("--ready-dig", 0));
+            return;
+        }
+
         if (baselines > 0)
         {
             // M62.3: --tap <framesPerShift> measures the technique dial's effect on the AI's own play
@@ -126,10 +135,95 @@ internal static class TetrisLab
                     ShapeBoardPotential = pbrs,
                     PotentialGamma = gamma,
                     MixedGarbageTraining = mixGarbage,
+                    // --mandatory-tetris: declining a reachable tetris on a CLEAN stack ends the episode.
+                    // Train env only — the eval env below deliberately leaves it off, so the gates keep
+                    // measuring the same game they always did.
+                    MandatoryTetris = a.Has("--mandatory-tetris"),
                 },
                 evalEnv: new TetrisEnv(pieceBudget),
                 options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "tetris-dqn.csv")));
+    }
+
+    /// <summary>
+    /// M62.4: how often is a 4-line clear on the table and declined? Reports, per tier, the number of
+    /// steps where at least one legal placement cleared 4 rows, how many of those the policy took, and —
+    /// when it declined — what it did instead. Measures the owner's observation directly instead of
+    /// reasoning about the evaluator's arithmetic.
+    /// </summary>
+    private static void RunDeclineCensus(int episodes, int pieceBudget, int tapRate, bool reach, double readyDig)
+    {
+        Console.WriteLine($"Tetris tetris-decline census: {episodes} episodes, seeds 5000+e" +
+                          (tapRate > 0 ? $", tap {tapRate}" : "") + (reach ? ", reachability ENFORCED" : ""));
+
+        var tiers = new (string Name, Func<TetrisBoard, int> Act)[]
+        {
+            ("dellacherie", b => b.DellacherieAction()),
+            ("della-search(8,5)", b => b.DellaSearchAction(8, 5)),
+        };
+
+        foreach (var (name, act) in tiers)
+        {
+            int offered = 0, taken = 0, declinedClearedSomething = 0, declinedClearedNothing = 0;
+            // The hypothesis under test: EvalReady (and observation plane 6) are both switched off while
+            // dig == holes() > 0, so on a holed board nothing values the well and the tetris gets declined.
+            // If that is right, declines should cluster almost entirely on holed boards.
+            int declinedWithHoles = 0, declinedClean = 0, takenWithHoles = 0;
+            for (int e = 0; e < episodes; e++)
+            {
+                var env = new TetrisEnv(pieceBudget, sevenBag: false, garbageEvery: 0);
+                env.Reset((ulong)(5_000 + e));
+                var b = env.Board;
+                if (tapRate > 0) b.SetTapModel(tapRate, tapRate);
+                if (reach) b.SetReachEnforced(true);
+                if (readyDig > 0) b.SetReadyDigScale(readyDig);
+
+                for (int step = 0; step < pieceBudget && !b.GameOver; step++)
+                {
+                    // Which placements would clear four rows? Probe each on a scratch copy of the board.
+                    var rows = new int[TetrisBoard.Height];
+                    for (int y = 0; y < TetrisBoard.Height; y++) rows[y] = b.Row(y);
+                    bool anyTetris = false;
+                    for (int actn = 0; actn < TetrisBoard.ActionCount && !anyTetris; actn++)
+                    {
+                        if (reach ? !b.PlacementReachable(actn) : !b.IsLegal(actn)) continue;
+                        var probe = new TetrisBoard();
+                        probe.Reset(1);
+                        probe.LoadRows(rows);
+                        probe.LoadPieces(b.CurrentPiece, b.NextPiece);
+                        if (probe.ApplyPlacement(actn) == 4) anyTetris = true;
+                    }
+
+                    int holesBefore = b.Holes();
+                    int chosen = act(b);
+                    if (chosen < 0) break;
+                    int clearedNow = b.ApplyPlacement(chosen);
+                    if (clearedNow < 0) break;
+
+                    if (anyTetris)
+                    {
+                        offered++;
+                        if (clearedNow == 4)
+                        {
+                            taken++;
+                            if (holesBefore > 0) takenWithHoles++;
+                        }
+                        else
+                        {
+                            if (clearedNow > 0) declinedClearedSomething++; else declinedClearedNothing++;
+                            if (holesBefore > 0) declinedWithHoles++; else declinedClean++;
+                        }
+                    }
+                }
+            }
+            double rate = offered == 0 ? 0 : 100.0 * taken / offered;
+            int declined = declinedClearedSomething + declinedClearedNothing;
+            double holedShare = declined == 0 ? 0 : 100.0 * declinedWithHoles / declined;
+            Console.WriteLine($"  {name,-20} tetris available on {offered,5} steps · TOOK {taken,5} ({rate,5:F1}%) · " +
+                              $"declined-and-burned {declinedClearedSomething,4} · declined-and-stacked {declinedClearedNothing,4}");
+            Console.WriteLine($"  {"",-20} of {declined,5} declines, {declinedWithHoles,5} were on a HOLED board ({holedShare,5:F1}%) " +
+                              $"and {declinedClean,4} on a clean one · takes on holed boards {takenWithHoles,4}");
+        }
     }
 
     /// <summary>

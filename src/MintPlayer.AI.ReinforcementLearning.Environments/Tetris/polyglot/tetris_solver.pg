@@ -109,6 +109,8 @@ class PgTetris {
   var tapChargeFrames: i32 = 6
   // Reachability enforcement is OPT-IN so the default path stays bit-identical (PRD D7).
   var reachEnforced: bool = false
+  // M62.4: how much of the tetris-ready reward survives DIG mode. 0.0 == the shipped behaviour (none).
+  var readyDigScale: f64 = 0.0
   // Flat (frame, code) pairs from the last simulateReach(capture: true). code 1=L 2=R 3=rotCW 4=rotCCW.
   var reachTimeline: List<i32> = List<i32>()
 
@@ -852,6 +854,10 @@ class PgTetris {
     this.reachEnforced = on
   }
 
+  fn setReadyDigScale(scale: f64) {
+    this.readyDigScale = scale
+  }
+
   // ── M62.3b: true per-placement reachability (PRD D8) ────────────────────────────────────────────────
   // Can the hands ACTUALLY get the piece to (targetRot, targetX) before gravity locks it? Simulates the
   // piece falling while the player rotates and shifts on the technique's cadence, against the REAL stack
@@ -989,6 +995,31 @@ class PgTetris {
     this.reachHi = hi
   }
 
+  // ── M62.4: is a TETRIS actually on the table right now? ─────────────────────────────────────────────
+  // Only a vertical I can clear four rows — every other piece spans at most three — so this early-outs on
+  // six pieces in seven and costs nothing on the rest. Honours reachability, so "within reach" means the
+  // hands can genuinely get there, not merely that the placement is legal.
+  fn tetrisAvailable(): bool {
+    if this.current != 0 { return false }
+    for r in 0..4 {
+      if r < this.rotCount[0] && this.rotW[r] == 1 {
+        for x in 0..W {
+          let a = r * W + x
+          if this.placementReachable(a) {
+            let y = this.dropY(0, r, x)
+            if y >= 0 {
+              let saved = this.saveRows()
+              let cleared = this.simPlace(0, r, x, y)
+              this.restoreRows(saved)
+              if cleared == 4 { return true }
+            }
+          }
+        }
+      }
+    }
+    return false
+  }
+
   fn reachableMask(): List<bool> {
     var mask: List<bool> = List<bool>()
     for a in 0..ActionCount { mask.add(this.placementReachable(a)) }
@@ -1015,7 +1046,14 @@ class PgTetris {
     let lineout = if this.reachEnforced { this.reachHi < WellCol } else { m5 < 4 }
     let dig = holeCount > 0
     if !lineout {
-      if !dig { s = s + EvalReady * this.tetrisReady() }
+      // M62.4: `dig` (any hole at all) used to zero the well incentive OUTRIGHT — the only term that
+      // values keeping column 9 open. Combined with observation plane 6 being gated the same way, the
+      // agent goes completely blind to the well the instant a single hole appears, digs it out (which it
+      // does well), and treats the well as an ordinary column meanwhile. readyDigScale keeps DIG mode's
+      // intent — survival first on a holed board — without abandoning the well entirely. DEFAULT 0.0
+      // reproduces the old behaviour exactly, so this is a knob to measure, not a change in itself.
+      let readyW = if dig { this.readyDigScale } else { 1.0 }
+      if readyW > 0.0 { s = s + EvalReady * readyW * this.tetrisReady() }
       let burnW = if dig { EvalBurnDig } else { EvalBurn }
       s = s + burnW * (if cleared > 0 && cleared < 4 { cleared } else { 0 })
     }

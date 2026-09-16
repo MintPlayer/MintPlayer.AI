@@ -503,6 +503,75 @@ public class TetrisEngineTests
     }
 
     [Fact]
+    public void TetrisAvailable_OnlyForAVerticalIOverAFourDeepWell()
+    {
+        // Four rows complete except column 9 — the canonical tetris setup.
+        var rows = new int[20];
+        for (int y = 16; y < 20; y++) rows[y] = FullRow - (1 << 9);
+
+        // With the I in hand it is on the table.
+        var withI = new TetrisBoard();
+        withI.Reset(1);
+        withI.LoadRows(rows);
+        withI.LoadPieces(current: 0, next: 0);
+        Assert.True(withI.TetrisAvailable());
+
+        // With any other piece it is not — nothing but a vertical I spans four rows. This is what makes
+        // the check cheap enough to run every training step.
+        foreach (int piece in new[] { 1, 2, 3, 4, 5, 6 })
+        {
+            var other = new TetrisBoard();
+            other.Reset(1);
+            other.LoadRows(rows);
+            other.LoadPieces(current: piece, next: 0);
+            Assert.False(other.TetrisAvailable(), $"piece {piece} cannot clear four rows");
+        }
+
+        // A three-deep well is a triple, not a tetris.
+        var shallow = new TetrisBoard();
+        shallow.Reset(1);
+        var three = new int[20];
+        for (int y = 17; y < 20; y++) three[y] = FullRow - (1 << 9);
+        shallow.LoadRows(three);
+        shallow.LoadPieces(current: 0, next: 0);
+        Assert.False(shallow.TetrisAvailable());
+    }
+
+    [Fact]
+    public void MandatoryTetris_KillsOnlyWhenTheStackIsCleanAndTheTetrisWasDeclined()
+    {
+        // M62.4 (owner rule). Declining a reachable tetris on a CLEAN stack ends the episode. With holes
+        // present the agent is digging, which is the right priority, and must NOT be punished.
+        var clean = new int[20];
+        for (int y = 16; y < 20; y++) clean[y] = FullRow - (1 << 9);
+
+        // Same rows, but with a buried hole under the stack so the board is not clean.
+        var holed = new int[20];
+        for (int y = 16; y < 20; y++) holed[y] = FullRow - (1 << 9);
+        holed[15] = 1;      // a cell at column 0 on row 15 …
+        holed[16] &= ~1;    // … with an empty cell beneath it ⇒ a hole
+
+        Assert.True(Decline(clean), "declining a tetris on a clean stack must end the episode");
+        Assert.False(Decline(holed), "declining while digging must NOT end the episode");
+        Assert.False(Take(clean), "taking the tetris must not end the episode");
+
+        static bool Decline(int[] rows) => RunOne(rows, takeTheTetris: false);
+        static bool Take(int[] rows) => RunOne(rows, takeTheTetris: true);
+
+        static bool RunOne(int[] rows, bool takeTheTetris)
+        {
+            var env = new TetrisEnv(pieceBudget: 100) { MandatoryTetris = true };
+            env.Reset(1);
+            env.Board.LoadRows(rows);
+            env.Board.LoadPieces(current: 0, next: 0); // I
+            // Vertical I: rotation with width 1. Column 9 clears four; column 0 does not.
+            int rot = 1;
+            int action = rot * 10 + (takeTheTetris ? 9 : 0);
+            return env.Step(action).Terminated;
+        }
+    }
+
+    [Fact]
     public void Features_PinnedOnAHandDrawnBoard()
     {
         // Single filled cell at (x=0, y=19): rowT = 19 empty rows × 2 + 2 = 40; colT = 1 (col 0) + 9

@@ -165,6 +165,14 @@ public sealed class TetrisBoard
     /// parity checksum bit-identical — see <c>tetris_solver.pg</c> D7.</summary>
     public void SetReachEnforced(bool on) => _core.setReachEnforced(on);
 
+    /// <summary>How much of the tetris-ready reward survives DIG mode (any hole on the board).
+    /// 0.0 is the shipped behaviour: none, so a single hole abandons the well entirely.</summary>
+    public void SetReadyDigScale(double scale) => _core.setReadyDigScale(scale);
+
+    /// <summary>Is a 4-line clear on the table for the current piece? Only a vertical I can clear four
+    /// rows, so this early-outs on six pieces in seven. Honours reachability when it is enforced.</summary>
+    public bool TetrisAvailable() => _core.tetrisAvailable();
+
     /// <summary>Legal AND physically reachable with the current hands. Equals <see cref="IsLegal"/>
     /// when enforcement is off.</summary>
     public bool PlacementReachable(int action) => _core.placementReachable(action);
