@@ -3,6 +3,7 @@ import { Color } from '@mintplayer/ng-bootstrap';
 import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 import { TetrisDirector, Tier } from './tetris-director';
 import { TetrisGame } from './tetris-game';
+import { techniqueHz, type Technique } from './tetris-das';
 import { LOGICAL_H, LOGICAL_W, cellWidthCss, render } from './tetris-render';
 import { ScreenWakeLock } from '../screen-wake-lock';
 
@@ -12,7 +13,7 @@ import { ScreenWakeLock } from '../screen-wake-lock';
  * server inference). The rising-garbage mode (a gapped bottom row every 10 placements — TETRIS_PRD.md §1)
  * is both a playable challenge and the AI's primary evaluation protocol.
  *
- * Input: keyboard (←/→ move, ↑/X rotate, ↓ soft drop, Space hard drop) + unified Pointer Events for touch
+ * Input: keyboard (←/→ move, ↑/X rotate CW, Z/Shift rotate CCW, ↓ soft drop, Space hard drop) + unified Pointer Events for touch
  * (horizontal drag moves cell-by-cell, tap rotates, downward swipe hard-drops).
  */
 @Component({
@@ -38,9 +39,28 @@ export class Tetris implements AfterViewInit {
 
   /** 'human' = play locally; 'watch' = a selectable tier plays — everything runs in the browser. */
   protected readonly mode = signal<'human' | 'watch'>('human');
-  protected readonly tier = signal<Tier>('net');
+  // M62.4a (owner decision D12): Dellacherie + search is the default player. It is the only tier that
+  // reliably builds tetrises — about 51% of the lines it clears come from them, against 18% for plain
+  // Dellacherie and under 3% for the trained net — and it decides in ~11 ms (p99 24 ms), comfortably
+  // inside the 50 ms budget. Every tier stays one click away.
+  protected readonly tier = signal<Tier>('della-search');
   /** Rising-garbage mode: a full bottom row with one random gap every 10 placements. */
   protected readonly garbage = signal(false);
+
+  // M62.2 — NES authenticity controls. The engine has always supported a start level (setStartLevel) but
+  // nothing ever called it, so every game began at 0. The CTWC-relevant starts are 0/9/15/18/19/29.
+  protected readonly startLevel = signal(0);
+  protected readonly startLevels = [0, 9, 15, 18, 19, 29];
+  // Post-level-29 variant. AUTHENTIC NES has no speed change above 29 (flat 1 frame/row to 255); the
+  // faster-than-29 behaviour seen in CTWC Masters is a ROM hack, so it is opt-in and never the default.
+  protected readonly killscreen = signal<0 | 1 | 2>(0);
+
+  // M62.3 — the input technique dial (owner ask 4). Governs the AI's tap budget, which the engine's
+  // evaluator already consults, so this is a strength control and not just an animation speed.
+  // M62.4a: rolling by default — the modern technique, and the one that keeps the AI able to feed a well
+  // once gravity gets fast. Switch to DAS at a high start level to watch it stop being able to.
+  protected readonly technique = signal<Technique>('roll');
+  protected readonly techniqueHz = techniqueHz;
   /** Esc pause: freezes the game AND hides the field (the render covers the canvas). */
   protected readonly paused = signal(false);
 
@@ -121,6 +141,26 @@ export class Tetris implements AfterViewInit {
     this.game.newGame();
   }
 
+  /** Both settings only take effect on a fresh board, so changing either starts a new game. */
+  protected setStartLevel(level: number): void {
+    this.startLevel.set(level);
+    this.game.startLevel = level;
+    this.game.newGame();
+  }
+
+  /** Takes effect immediately — the tap budget is read per placement, so no restart is needed. */
+  protected setTechnique(t: Technique): void {
+    this.technique.set(t);
+    this.game.technique = t;
+    this.game.applyTechnique();
+  }
+
+  protected setKillscreen(mode: 0 | 1 | 2): void {
+    this.killscreen.set(mode);
+    this.game.killscreenMode = mode;
+    this.game.newGame();
+  }
+
   ngAfterViewInit(): void {
     this.ctx = this.canvasRef().nativeElement.getContext('2d');
     // The game draws itself to the canvas every frame — run outside Angular so per-frame change detection
@@ -160,14 +200,17 @@ export class Tetris implements AfterViewInit {
 
   private statusLine(): string {
     if (this.mode() === 'human')
-      return this.garbage() ? 'rising garbage: a gapped row every 10 pieces' : '←/→ move · ↑ rotate · space drop';
+      return this.garbage() ? 'rising garbage: a gapped row every 10 pieces' : '←/→ move · ↑/X rotate · Z rotate back · space drop';
     const d = this.director;
     if (!d) return '';
     const tier = (d.tier === 'net' || d.tier === 'net-search') && d.netStatus !== 'ready'
       ? (d.netStatus === 'loading' ? `${d.tier} (loading…)` : 'net missing → dellacherie')
       : d.effectiveTier;
     const last = d.episodes > 0 ? ` · last: ${d.lastLines} lines` : '';
-    return `AI: ${tier}${this.garbage() ? ' · garbage/10' : ''}${last}`;
+    const t = this.technique();
+    const tapName = t === 'das' ? 'DAS' : t === 'hypertap' ? 'hypertapping' : 'rolling';
+    const tap = ` · ${tapName} (${this.techniqueHz(t)} Hz)`;
+    return `AI: ${tier}${tap}${this.garbage() ? ' · garbage/10' : ''}${last}`;
   }
 
   // Auto-pause when the window/tab loses focus (owner request): a running play-yourself game must not
@@ -206,7 +249,10 @@ export class Tetris implements AfterViewInit {
     switch (event.key) {
       case 'ArrowLeft': case 'a': this.game.input.press(-1); break;
       case 'ArrowRight': case 'd': this.game.input.press(1); break;
-      case 'ArrowUp': case 'x': case 'w': this.game.rotate(); break; // one rotation per press (NES)
+      // One rotation per press (NES). X = the A button = clockwise, Z = the B button = counter-clockwise.
+      case 'ArrowUp': case 'x': case 'w': this.game.rotate(); break;
+      // Shift, not Control: Ctrl triggers Windows' magnifier/lens shortcuts over the page (owner report).
+      case 'z': case 'Shift': this.game.rotateCcw(); break;
       case 'ArrowDown': case 's': this.game.input.pressDown(); break;
       case ' ': this.game.hardDrop(); break;
       default: return;

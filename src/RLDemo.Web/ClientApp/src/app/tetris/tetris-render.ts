@@ -180,9 +180,14 @@ function drawCellAt(ctx: CanvasRenderingContext2D, px: number, py: number, color
   ctx.fill();
 }
 
-function drawPreview(ctx: CanvasRenderingContext2D, b: { cellX: number[]; cellY: number[]; rotW: number[]; rotH: number[] },
+function drawPreview(ctx: CanvasRenderingContext2D,
+  b: { cellX: number[]; cellY: number[]; rotW: number[]; rotH: number[]; spawnRot: number[] },
   piece: number, px: number, py: number): void {
-  const ri = piece * 4; // spawn rotation
+  // M62.4a fix: the preview must show the orientation the piece will ACTUALLY spawn in. This said
+  // "spawn rotation" but indexed rotation 0, which is only right for five of the seven pieces —
+  // spawnRot is [0,0,0,0,0,1,3], so L (rot 1) and J (rot 3) were previewed in an orientation they
+  // never appear in, and the piece visibly changed shape on arrival.
+  const ri = piece * 4 + b.spawnRot[piece];
   const cell = 22;
   const w = b.rotW[ri] * cell;
   ctx.fillStyle = '#0d1017';

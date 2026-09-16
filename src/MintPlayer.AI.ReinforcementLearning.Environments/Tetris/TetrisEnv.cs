@@ -20,7 +20,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.Tetris;
 /// </summary>
 public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider, IStatefulEnvironment
 {
-    public const int ObservationSize = TetrisBoard.ObservationSize; // 814 since M57.5
+    public const int ObservationSize = TetrisBoard.ObservationSize; // 854 since M57.5
     public const int ActionCount = TetrisBoard.ActionCount;         // 40
     /// <summary>Divisor on the realized reward. Kept at 1 (the M54 value).
     /// M57.5 tried 20, on the theory that a realized reward of up to 12 was swamping the CENTRED dense
@@ -112,6 +112,18 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
     /// lesson). Eval envs keep a FIXED garbage setting so both gate protocols stay comparable.</summary>
     public bool MixedGarbageTraining { get; set; }
 
+    /// <summary>
+    /// M62.4, TRAINING ONLY (owner decision): declining a tetris that is within reach ON A CLEAN STACK
+    /// ends the episode immediately. The no-holes condition is what makes the rule safe — with holes on
+    /// the board, digging them out is the right priority and the agent is not punished for choosing it;
+    /// with none, there is no defensible reason to leave four rows on the table.
+    ///
+    /// Scope, stated because it is easy to misread: this changes what the TRAINED NET learns. It does not
+    /// touch the scripted Dellacherie tiers, which do not learn, so it cannot change what the browser's
+    /// default player does. Eval envs must leave it off or the gate protocols stop being comparable.
+    /// </summary>
+    public bool MandatoryTetris { get; set; }
+
     /// <summary>Enable the training-only board-potential shaping. Default off — a plain env scores the bare game.</summary>
     public bool ShapeBoardPotential { get; set; }
     /// <summary>Must match the learner's γ for policy invariance.</summary>
@@ -153,6 +165,9 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
         if (_done)
             throw new InvalidOperationException("Episode is done; call Reset() before stepping.");
         float potentialBefore = ShapeBoardPotential ? Potential() : 0f;
+        // Measured BEFORE the placement: whether a tetris was on the table, and whether the stack was
+        // clean. Both have to be read now — applying the piece destroys the evidence either way.
+        bool tetrisWasOffered = MandatoryTetris && _board.Holes() == 0 && _board.TetrisAvailable();
         int cleared = _board.ApplyPlacement(action);
         if (cleared < 0)
             throw new ArgumentOutOfRangeException(nameof(action), action,
@@ -160,7 +175,11 @@ public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider,
         _pieces++;
         // Top-out (all-masked new piece, or garbage overflow) is TERMINATION — the reward stream ends,
         // which is the death penalty. The budget end is TRUNCATION, so the learner bootstraps.
-        bool terminated = _board.GameOver;
+        // The instant kill. Terminating rather than penalising is deliberate: a terminal state bootstraps
+        // to zero, so the agent forfeits the entire rest of the episode's return, and there is no weight
+        // to tune against the other reward terms.
+        bool declinedTetris = tetrisWasOffered && cleared != 4;
+        bool terminated = _board.GameOver || declinedTetris;
         bool truncated = !terminated && _pieces >= _pieceBudget;
         _done = terminated || truncated;
         float reward = (cleared + (cleared == 4 ? TetrisBoard.TetrisRewardBonus : 0)) / RewardScale;

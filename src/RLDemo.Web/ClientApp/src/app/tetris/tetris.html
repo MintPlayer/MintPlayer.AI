@@ -25,6 +25,50 @@
   }
 </div>
 
+<!-- M62.2: NES authenticity row — visible in BOTH modes, because the start level and the post-29 variant
+     govern the human game and the AI's game alike. Both restart the board, which is why they sit apart
+     from the mode buttons. -->
+<div class="modes">
+  <span class="tier-label">Start level:</span>
+  @for (lvl of startLevels; track lvl) {
+    <button type="button" [color]="startLevel() === lvl ? colors.primary : colors.secondary"
+            (click)="setStartLevel(lvl)">{{ lvl }}</button>
+  }
+  <span class="tier-label">Input:</span>
+  <button type="button" [color]="technique() === 'das' ? colors.primary : colors.secondary"
+          (click)="setTechnique('das')"
+          title="Hold the d-pad and let the ROM auto-repeat: 16 frames to the first shift, then one every 6">
+    Normal (DAS)
+  </button>
+  <button type="button" [color]="technique() === 'hypertap' ? colors.primary : colors.secondary"
+          (click)="setTechnique('hypertap')"
+          title="Tap the d-pad by hand — no charge delay, about 12 taps a second">
+    Hypertapping
+  </button>
+  <button type="button" [color]="technique() === 'roll' ? colors.primary : colors.secondary"
+          (click)="setTechnique('roll')"
+          title="Roll your fingers against the back of the controller — about 20 taps a second">
+    Rolling
+  </button>
+
+  <span class="tier-label">Above 29:</span>
+  <button type="button" [color]="killscreen() === 0 ? colors.primary : colors.secondary"
+          (click)="setKillscreen(0)"
+          title="Authentic NES: gravity never increases above level 29 (flat 1 frame per row up to 255)">
+    Authentic
+  </button>
+  <button type="button" [color]="killscreen() === 1 ? colors.primary : colors.secondary"
+          (click)="setKillscreen(1)"
+          title="Classic Tetris Monthly lower divisions: the game simply stops at level 39">
+    Halt at 39
+  </button>
+  <button type="button" [color]="killscreen() === 2 ? colors.primary : colors.secondary"
+          (click)="setKillscreen(2)"
+          title="CTWC Masters super kill screen: from level 39 the piece falls two rows per gravity step">
+    CTWC 2×ks
+  </button>
+</div>
+
 <div class="tet-stage" #stage [style.--zoom]="zoom()" [class.fullscreen]="isFullscreen()">
   <canvas #board
           [style.aspect-ratio]="stageAspect"
@@ -43,9 +87,17 @@
 
 @if (mode() === 'human') {
   <p class="hint">
-    Keyboard: ←/→ move, ↑ or X rotate, ↓ soft drop, Space hard drop, Esc pause (hides the board). Touch:
+    Keyboard: ←/→ move, ↑ or X rotate clockwise, Z or Shift rotate counter-clockwise, ↓ soft drop, Space hard drop, Esc pause (hides the board). Touch:
     drag sideways to move, tap to rotate, swipe down to drop. NES rules: 40/100/300/1200 points for 1/2/3/4 lines, × (level+1); the level
     rises every 10 lines and the pieces fall faster — a tetris pays 30× a single.
+  </p>
+  <p class="hint">
+    <strong>About the speed:</strong> level 29 is the <em>last</em> speed-up — real NES gravity is one row
+    per frame from 29 all the way to 255, so it never gets faster again. Starting at 18, you reach level 19
+    at 130 lines and level 29 at 230; those line counts are what people usually remember as “130 and 230”.
+    The faster-than-29 screens in CTWC Masters matches come from a <em>ROM hack</em>, not the original game
+    — that is the <strong>CTWC 2×ks</strong> option above, where the piece drops two rows per step from
+    level 39.
   </p>
 } @else {
   <p class="hint">
@@ -54,5 +106,23 @@
     is a masked dueling DQN choosing among all ~23 possible landings of each piece; the
     <strong>search</strong> tiers add a look-ahead over the next piece. Rising garbage is the honest
     benchmark — it separates the players fast.
+  </p>
+  <p class="hint">
+    <strong>Dellacherie + search plays by default, not the trained net</strong> — because on the one skill
+    that matters most it is simply better. Around <strong>51%</strong> of the lines it clears come from
+    tetrises, against <strong>18%</strong> for plain Dellacherie and under <strong>3%</strong> for the net,
+    which clears plenty of lines but burns them one at a time. The net learns to copy the same evaluator,
+    and copying it imperfectly is enough to lose the tetrises: keeping a well open needs about ten correct
+    decisions in a row, and one wrong one fills it in. Pick <strong>Trained net</strong> above to watch the
+    difference.
+  </p>
+  <p class="hint">
+    <strong>Input technique</strong> limits how fast the AI can move a piece sideways, the same way it
+    limits a human. <em>DAS</em> holds the d-pad and waits 16 frames for the ROM to start auto-shifting,
+    then gets one shift every 6 (10 Hz). <em>Hypertapping</em> taps by hand — no waiting, about 12 Hz.
+    <em>Rolling</em>, invented in 2020, rolls the fingers against the back of the controller for about
+    20 Hz, and it is the reason modern scores dwarf the pre-2020 records. Try starting at level 29 and
+    switching between them: DAS cannot get a piece to the far wall before it lands, so it stops being able
+    to feed the well at all — the AI knows this and stops trying to build one.
   </p>
 }

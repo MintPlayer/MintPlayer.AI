@@ -24,7 +24,7 @@ public sealed class TetrisBoard
     /// Must equal <c>PgTetris.ObsPlanes</c>; TetrisEnvTests pins the observation length.</summary>
     public const int ObservationPlanes = 16;
 
-    // 814: 200 board cells + 7 current + 7 next one-hots + fifteen 40-wide per-action feature planes
+    // 854: 200 board cells + 7 current + 7 next one-hots + sixteen 40-wide per-action feature planes
     // (M57.5 — TETRIS_TECHNIQUES_PRD §6.S). Planes are ABSOLUTE afterstate quantities, not deltas, so the
     // dense target reconstructs the evaluator exactly rather than up to a per-state constant.
     public const int ObservationSize = Width * Height + 2 * PieceCount + ObservationPlanes * ActionCount;
@@ -76,6 +76,16 @@ public sealed class TetrisBoard
     }
 
     public bool IsLegal(int action) => _core.placementLegal(action);
+
+    /// <summary>Legality AND reachability per action — the mask a net-based policy must use once
+    /// enforcement is on, or it silently plays a different game than the scripted tiers.</summary>
+    public bool[] ReachableMask()
+    {
+        var core = _core.reachableMask();
+        var mask = new bool[ActionCount];
+        for (int i = 0; i < ActionCount; i++) mask[i] = core[i];
+        return mask;
+    }
     public bool HasLegalPlacement() => _core.hasLegalPlacement();
 
     /// <summary>Apply a placement end-to-end (lock, clear, score, garbage clock, draw). Returns the
@@ -99,6 +109,9 @@ public sealed class TetrisBoard
     public bool MicroShift(int dx) => _core.microShift(dx);
     public bool MicroRotate() => _core.microRotate();
 
+    /// <summary>The NES B-button (counter-clockwise) rotation. No-op for O, identical to CW for I/S/Z.</summary>
+    public bool MicroRotateCcw() => _core.microRotateCcw();
+
     /// <summary>One gravity/soft-drop step; true if the piece locked.</summary>
     public bool MicroDropStep() => _core.microDropStep();
 
@@ -120,7 +133,6 @@ public sealed class TetrisBoard
         return _core.randomAction(rng);
     }
 
-    /// <summary>The Dellacherie tier: argmax placement by the canonical hand-tuned evaluator.</summary>
     /// <summary>NES start level (gate G7). Call AFTER <see cref="Reset"/> — reset clears it to 0.
     /// Tap speed constrains nothing at level 0 (48 frames/row) and is decisive from 19 upward, so a
     /// level-0 protocol cannot see the regime this milestone is about.</summary>
@@ -129,8 +141,49 @@ public sealed class TetrisBoard
     /// <summary>Frames per one-row drop at the current level (the NES gravity curve).</summary>
     public int GravityFrames() => _core.gravityFrames(_core.level);
 
+    /// <summary>Frames per row at an arbitrary level, without needing a board at that level.</summary>
+    public int GravityFramesAt(int level) => _core.gravityFrames(level);
+
+    /// <summary>Post-level-29 variant: 0 = authentic NES (default), 1 = CTM "39 halt", 2 = CTWC 2xks.
+    /// Mode 0 is bit-identical to the shipped engine — see the note in <c>tetris_solver.pg</c>.</summary>
+    public void SetKillscreenMode(int mode) => _core.setKillscreenMode(mode);
+
+    /// <summary>Rows the piece moves per gravity step — 1 except under 2xks at level 39+, where it is 2.</summary>
+    public int GravityRowsPerStep() => _core.gravityRowsPerStep(_core.level);
+
+    /// <summary>True when "39 halt" is armed and the board reached level 39 — the host ends the game.</summary>
+    public bool KillscreenHalted() => _core.killscreenHalted();
+
     /// <summary>Tap budget in frames per shift: 6 = DAS 10Hz, 5 = hypertapping 12Hz, 3 = rolling 20Hz.</summary>
     public void SetTapRate(int framesPerShift) => _core.setTapRate(framesPerShift);
+
+    /// <summary>M62.3b: the full input model. <paramref name="chargeFrames"/> is what the SECOND shift
+    /// costs — 16 under DAS, equal to <paramref name="framesPerShift"/> for hypertapping/rolling.</summary>
+    public void SetTapModel(int framesPerShift, int chargeFrames) => _core.setTapModel(framesPerShift, chargeFrames);
+
+    /// <summary>Opt-in reachability enforcement. Off by default, which keeps the default path and the M54
+    /// parity checksum bit-identical — see <c>tetris_solver.pg</c> D7.</summary>
+    public void SetReachEnforced(bool on) => _core.setReachEnforced(on);
+
+    /// <summary>How much of the tetris-ready reward survives DIG mode (any hole on the board).
+    /// 0.0 is the shipped behaviour: none, so a single hole abandons the well entirely.</summary>
+    public void SetReadyDigScale(double scale) => _core.setReadyDigScale(scale);
+
+    /// <summary>Is a 4-line clear on the table for the current piece? Only a vertical I can clear four
+    /// rows, so this early-outs on six pieces in seven. Honours reachability when it is enforced.</summary>
+    public bool TetrisAvailable() => _core.tetrisAvailable();
+
+    /// <summary>Fraction of the tetris-ready rows a cashed tetris pays back, so a multi-ply search does
+    /// not value HOLDING the well above cashing it. 0.0 is the shipped behaviour.</summary>
+    public void SetTetrisPayback(double scale) => _core.setTetrisPayback(scale);
+
+    /// <summary>Legal AND physically reachable with the current hands. Equals <see cref="IsLegal"/>
+    /// when enforcement is off.</summary>
+    public bool PlacementReachable(int action) => _core.placementReachable(action);
+
+    /// <summary>The input sequence for a placement as flat (frame, code) pairs; empty when unreachable.
+    /// Codes: 1 = left, 2 = right, 3 = rotate CW, 4 = rotate CCW.</summary>
+    public IReadOnlyList<int> ReachTimelineFor(int action) => _core.reachTimelineFor(action);
 
     public int DellacherieAction() => _core.dellacherieAction();
 

@@ -5,6 +5,20 @@
   and a block dropped somewhere unreachable stays there, so think before you put one down.
 </p>
 
+<!-- M62.5: the level picker sits ABOVE the board on purpose. The stage has no fixed aspect ratio — it is
+     bound per level from the grid (19×8 … 29×19), so anything below it moves vertically on every level
+     change. Above it, these buttons stay put. -->
+<div class="actions level-picker">
+  <button type="button" [color]="colors.secondary" (click)="changeLevel(-1)" [disabled]="levelIndex() === 0">
+    ← Previous
+  </button>
+  <span class="level-name">{{ level()?.name }} ({{ levelIndex() + 1 }}/{{ levels().length }})</span>
+  <button type="button" [color]="colors.secondary" (click)="changeLevel(1)"
+          [disabled]="levelIndex() >= levels().length - 1">
+    Next →
+  </button>
+</div>
+
 <div class="bd-stage" [style.aspect-ratio]="aspect()">
   <canvas #bdCanvas
           aria-label="Block Dude level. Tap left or right of the figure to walk, tap his column to climb."
@@ -20,17 +34,6 @@
     {{ carrying() ? 'Put down' : 'Pick up' }}
   </button>
   <button type="button" class="ctl right" (click)="act(1)" aria-label="Walk right">→</button>
-</div>
-
-<div class="actions">
-  <button type="button" [color]="colors.secondary" (click)="changeLevel(-1)" [disabled]="levelIndex() === 0">
-    ← Previous
-  </button>
-  <span class="level-name">{{ level()?.name }} ({{ levelIndex() + 1 }}/{{ levels().length }})</span>
-  <button type="button" [color]="colors.secondary" (click)="changeLevel(1)"
-          [disabled]="levelIndex() >= levels().length - 1">
-    Next →
-  </button>
 </div>
 
 <div class="actions">
@@ -64,8 +67,9 @@
 
 <p class="keys">
   Arrow keys walk, <kbd>↑</kbd> climbs and <kbd>↓</kbd> or <kbd>Space</kbd> picks up and puts down.
-  <kbd>Z</kbd> undoes, <kbd>R</kbd> restarts. Undo matters here: unlike most puzzles, a misplaced block can
-  make a level unsolvable with no way back.
+  <kbd>Z</kbd> undoes, <kbd>R</kbd> restarts, and <kbd>Enter</kbd> moves to the next level once you have
+  solved this one. Undo matters here: unlike most puzzles, a misplaced block can make a level unsolvable
+  with no way back.
 </p>
 
 <p class="keys ai-note">

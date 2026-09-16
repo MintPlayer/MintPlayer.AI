@@ -155,6 +155,422 @@ public class TetrisEngineTests
         Assert.Equal(macro.PiecesPlaced, micro.PiecesPlaced);
     }
 
+    [Theory]
+    // piece order I O T S Z L J; rotCount 2 1 4 2 2 4 4.
+    [InlineData(2)] // T
+    [InlineData(5)] // L
+    [InlineData(6)] // J
+    public void MicroRotateCcw_FourTimesIsIdentity_ForTheFourStatePieces(int piece)
+    {
+        // M62.1: CCW walks the same NRS cycle backwards, so a full loop must restore rot, x and y exactly.
+        var t = new TetrisBoard();
+        t.Reset(7);
+        t.LoadPieces(current: piece, next: 1);
+        Assert.True(t.MicroSpawn());
+        int rot0 = t.ActiveRot, x0 = t.ActiveX;
+
+        for (int i = 0; i < 4; i++) Assert.True(t.MicroRotateCcw());
+
+        Assert.Equal(rot0, t.ActiveRot);
+        Assert.Equal(x0, t.ActiveX);
+    }
+
+    [Fact]
+    public void MicroRotateCcw_IsTheInverseOfMicroRotate()
+    {
+        // CW then CCW returns to the spawn state — the property that makes Z a genuine "undo" of X.
+        foreach (int piece in new[] { 0, 1, 2, 3, 4, 5, 6 })
+        {
+            var t = new TetrisBoard();
+            t.Reset(7);
+            t.LoadPieces(current: piece, next: 1);
+            Assert.True(t.MicroSpawn());
+            int rot0 = t.ActiveRot, x0 = t.ActiveX;
+
+            Assert.True(t.MicroRotate());
+            Assert.True(t.MicroRotateCcw());
+
+            Assert.Equal(rot0, t.ActiveRot);
+            Assert.Equal(x0, t.ActiveX);
+        }
+    }
+
+    [Theory]
+    [InlineData(0)] // I — rotCount 2
+    [InlineData(1)] // O — rotCount 1, a no-op
+    [InlineData(3)] // S — rotCount 2
+    [InlineData(4)] // Z — rotCount 2
+    public void MicroRotateCcw_MatchesMicroRotate_WhenTheCycleIsTwoOrOne(int piece)
+    {
+        // With rotCount ≤ 2 the cycle is its own inverse, so CCW must land on exactly the same state as CW.
+        var cw = new TetrisBoard();
+        cw.Reset(7);
+        cw.LoadPieces(current: piece, next: 1);
+        Assert.True(cw.MicroSpawn());
+        Assert.True(cw.MicroRotate());
+
+        var ccw = new TetrisBoard();
+        ccw.Reset(7);
+        ccw.LoadPieces(current: piece, next: 1);
+        Assert.True(ccw.MicroSpawn());
+        Assert.True(ccw.MicroRotateCcw());
+
+        Assert.Equal(cw.ActiveRot, ccw.ActiveRot);
+        Assert.Equal(cw.ActiveX, ccw.ActiveX);
+    }
+
+    [Fact]
+    public void GravityCurve_IsTheAuthenticNtscTable_AndFlatAboveLevel29()
+    {
+        // M62: pinned value-by-value against the ROM table at $898E. Level 29 is the LAST speed change —
+        // NTSC gravity is a flat 1 frame/row from 29 to 255. This test exists to stop a well-meaning
+        // "the speed should keep increasing past 29" change: it should not.
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        int[] expected = [48, 43, 38, 33, 28, 23, 18, 13, 8, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3];
+        for (int lvl = 0; lvl <= 18; lvl++) Assert.Equal(expected[lvl], t.gravityFrames(lvl));
+        for (int lvl = 19; lvl <= 28; lvl++) Assert.Equal(2, t.gravityFrames(lvl));
+        for (int lvl = 29; lvl <= 255; lvl++) Assert.Equal(1, t.gravityFrames(lvl));
+    }
+
+    [Fact]
+    public void LevelProgression_From18Start_ReachesL19At130LinesAndL29At230()
+    {
+        // M62: this is the fact behind the "speed changes at 130 and 230" report — they are LINE
+        // thresholds of the 18-start ROM progression, not levels and not speed steps.
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.setStartLevel(18);
+
+        Assert.Equal(18, t.levelForLines(129));
+        Assert.Equal(19, t.levelForLines(130));
+        Assert.Equal(28, t.levelForLines(229));
+        Assert.Equal(29, t.levelForLines(230));
+    }
+
+    [Theory]
+    // M62: the ROM rule is first level-up at min(start*10 + 10, max(100, start*10 - 50)) lines, then every
+    // 10. The shape looks arbitrary enough to invite "simplification", so the CTWC-relevant starts are
+    // pinned.
+    //
+    // The punchline is the last three rows, and it is an INVARIANT rather than a coincidence: for every
+    // start level from 15 upward the kill screen arrives at EXACTLY 230 lines. Above 15 the first
+    // threshold is start*10 - 50, so the total is (start*10 - 50) + 10*(28 - start) = 230 — the start
+    // level cancels out. That is why 230 is the number every commentator quotes, and why it sounds like a
+    // property of the game rather than of a particular start. Below 15 it does vary (start 14 → 240).
+    [InlineData(0, 10, 290)]
+    [InlineData(9, 100, 290)]
+    [InlineData(14, 100, 240)]
+    [InlineData(15, 100, 230)]
+    [InlineData(18, 130, 230)]
+    [InlineData(19, 140, 230)]
+    public void LevelProgression_MatchesTheRomRule_AtEveryCtwcStart(int start, int firstUp, int killScreenLines)
+    {
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.setStartLevel(start);
+
+        // Stays on the start level until the (irregular) first threshold, then steps exactly there.
+        Assert.Equal(start, t.levelForLines(firstUp - 1));
+        Assert.Equal(start + 1, t.levelForLines(firstUp));
+        // Every 10 lines thereafter.
+        Assert.Equal(start + 2, t.levelForLines(firstUp + 10));
+        // And the kill screen lands where the tournament expects it.
+        Assert.Equal(28, t.levelForLines(killScreenLines - 1));
+        Assert.Equal(29, t.levelForLines(killScreenLines));
+    }
+
+    [Fact]
+    public void LevelProgression_StartZeroSpecialCase_AgreesWithTheGeneralRule()
+    {
+        // levelForLines short-circuits startLevel 0 to floor(lines/10). The general branch produces the same
+        // answer (first = min(10, 100) = 10), so the special case is redundant — pinned so that if anyone
+        // removes it, the equivalence is what is being asserted rather than assumed.
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.setStartLevel(0);
+        foreach (int lines in new[] { 0, 9, 10, 11, 29, 30, 99, 100, 229, 230, 289, 290 })
+            Assert.Equal(lines / 10, t.levelForLines(lines));
+    }
+
+    [Fact]
+    public void KillscreenVariants_DefaultIsAuthenticAndCostsNothing()
+    {
+        // Mode 0 is the shipped behaviour: one row per step at every level, never halted. The default must
+        // stay this way or every checkpoint and the parity checksum move.
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        Assert.Equal(0, t.killscreenMode);
+        foreach (int lvl in new[] { 0, 18, 29, 39, 100, 255 }) Assert.Equal(1, t.gravityRowsPerStep(lvl));
+        Assert.False(t.killscreenHalted());
+    }
+
+    [Fact]
+    public void KillscreenVariants_2xksDoublesRowsPerStepFrom39()
+    {
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.setKillscreenMode(2);
+        foreach (int lvl in new[] { 0, 29, 38 }) Assert.Equal(1, t.gravityRowsPerStep(lvl));
+        foreach (int lvl in new[] { 39, 40, 255 }) Assert.Equal(2, t.gravityRowsPerStep(lvl));
+        Assert.False(t.killscreenHalted()); // 2xks never halts; it just becomes unsurvivable
+    }
+
+    [Fact]
+    public void KillscreenVariants_HaltStopsAt39_AndOnlyAt39()
+    {
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.setKillscreenMode(1);
+        t.setStartLevel(38);
+        Assert.False(t.killscreenHalted());
+        Assert.Equal(1, t.gravityRowsPerStep(39)); // halt mode never changes gravity
+
+        t.setStartLevel(39);
+        Assert.True(t.killscreenHalted());
+
+        t.forceGameOver();
+        Assert.True(t.gameOver);
+    }
+
+    [Fact]
+    public void Reachability_OffByDefault_IsExactlyPlacementLegal()
+    {
+        // M62.3b D7: enforcement is opt-in precisely so the default path — and therefore every shipped
+        // checkpoint and the parity checksum — is untouched. If this ever fails, the opt-in leaked.
+        var t = new TetrisBoard();
+        t.Reset(11);
+        for (int a = 0; a < TetrisBoard.ActionCount; a++)
+            Assert.Equal(t.IsLegal(a), t.PlacementReachable(a));
+    }
+
+    [Fact]
+    public void Reachability_AtLevelZero_EverythingLegalIsAlsoReachable()
+    {
+        // 48 frames per row is so slow that even DAS crosses the whole board with frames to spare. This is
+        // why an A/B at the default start level shows nothing — the dial cannot bite until gravity is fast.
+        var t = new TetrisBoard();
+        t.Reset(11);
+        t.SetReachEnforced(true);
+        t.SetTapModel(6, 16); // DAS, the most restrictive
+        for (int a = 0; a < TetrisBoard.ActionCount; a++)
+            Assert.Equal(t.IsLegal(a), t.PlacementReachable(a));
+    }
+
+    [Theory]
+    [InlineData(19)]
+    [InlineData(29)]
+    public void Reachability_RollingReachesASupersetOfDas(int startLevel)
+    {
+        // The core ordering property: faster hands never reach LESS. Checked across pieces and seeds so a
+        // sign error or an off-by-one in the shift schedule cannot hide in one lucky board.
+        for (ulong seed = 1; seed <= 12; seed++)
+        {
+            var das = new TetrisBoard();
+            das.Reset(seed);
+            das.SetStartLevel(startLevel);
+            das.SetReachEnforced(true);
+            das.SetTapModel(6, 16);
+
+            var roll = new TetrisBoard();
+            roll.Reset(seed);
+            roll.SetStartLevel(startLevel);
+            roll.SetReachEnforced(true);
+            roll.SetTapModel(3, 3);
+
+            for (int a = 0; a < TetrisBoard.ActionCount; a++)
+                if (das.PlacementReachable(a))
+                    Assert.True(roll.PlacementReachable(a),
+                        $"seed {seed}, action {a}: DAS reached it but rolling did not");
+        }
+    }
+
+    [Fact]
+    public void Reachability_AtTheKillScreen_DasLosesPlacementsThatRollingKeeps()
+    {
+        // The measurable claim behind the whole technique dial. At 1 frame per row DAS pays a 16-frame
+        // charge before its second shift, which is 16 rows of fall — so the far columns go out of reach.
+        var das = new TetrisBoard();
+        das.Reset(5);
+        das.SetStartLevel(29);
+        das.SetReachEnforced(true);
+        das.SetTapModel(6, 16);
+
+        var roll = new TetrisBoard();
+        roll.Reset(5);
+        roll.SetStartLevel(29);
+        roll.SetReachEnforced(true);
+        roll.SetTapModel(3, 3);
+
+        int dasCount = 0, rollCount = 0;
+        for (int a = 0; a < TetrisBoard.ActionCount; a++)
+        {
+            if (das.PlacementReachable(a)) dasCount++;
+            if (roll.PlacementReachable(a)) rollCount++;
+        }
+
+        Assert.True(dasCount > 0, "DAS must always keep the placements near spawn — an empty mask is a top-out");
+        Assert.True(rollCount > dasCount, $"rolling {rollCount} should beat DAS {dasCount} at the kill screen");
+    }
+
+    [Fact]
+    public void ReachTimeline_ReplaysToExactlyTheChosenPlacement()
+    {
+        // D9's guarantee, asserted rather than assumed: replaying the emitted inputs through the MICRO api,
+        // against the same gravity clock, must land the piece on the same board the MACRO placement gives.
+        // This is what makes "the AI chose it" and "the player saw it" the same statement.
+        var t = new TetrisBoard();
+        t.Reset(5);
+        t.SetStartLevel(19);
+        t.SetReachEnforced(true);
+        t.SetTapModel(3, 3);
+
+        int checkedCount = 0;
+        for (int a = 0; a < TetrisBoard.ActionCount && checkedCount < 6; a++)
+        {
+            if (!t.PlacementReachable(a)) continue;
+            var timeline = t.ReachTimelineFor(a);
+
+            var macro = new TetrisBoard();
+            macro.Reset(5);
+            macro.SetStartLevel(19);
+            Assert.Equal(0, macro.ApplyPlacement(a));
+
+            var micro = new TetrisBoard();
+            micro.Reset(5);
+            micro.SetStartLevel(19);
+            Assert.True(micro.MicroSpawn());
+
+            int g = micro.GravityFramesAt(19);
+            int rows = micro.GravityRowsPerStep();
+            int targetRot = a / 10, targetX = a % 10;
+            for (int frame = 0, ev = 0; frame < 1200; frame++)
+            {
+                while (ev + 1 < timeline.Count && timeline[ev] == frame)
+                {
+                    switch (timeline[ev + 1])
+                    {
+                        case 1: micro.MicroShift(-1); break;
+                        case 2: micro.MicroShift(1); break;
+                        case 3: micro.MicroRotate(); break;
+                        case 4: micro.MicroRotateCcw(); break;
+                    }
+                    ev += 2;
+                }
+                if (micro.ActiveRot == targetRot && micro.ActiveX == targetX) break;
+                if ((frame + 1) % g == 0)
+                    for (int r = 0; r < rows; r++) micro.MicroDropStep();
+            }
+
+            Assert.Equal(targetRot, micro.ActiveRot);
+            Assert.Equal(targetX, micro.ActiveX);
+            micro.MicroHardDrop();
+            for (int y = 0; y < 20; y++) Assert.Equal(macro.Row(y), micro.Row(y));
+            checkedCount++;
+        }
+        Assert.True(checkedCount > 0, "no reachable placement was exercised");
+    }
+
+    [Theory]
+    [InlineData(6, 6)] // DAS
+    [InlineData(3, 3)] // rolling
+    public void ReachSpan_CoversTheWholeBoard_WhenNothingIsMasked(int frames, int charge)
+    {
+        // REGRESSION (M62.4a). The span must be measured over the COLUMNS A PIECE WOULD OCCUPY, not over
+        // action indices. actionCol is the placement's LEFT edge, so a piece of width w can never have
+        // actionCol > W - w: an O tops out at 8 and a horizontal I at 6. A span built from action indices
+        // therefore reported reachHi < 9 for nearly every piece at every level, `lineout` became
+        // permanently true, and EvalReady — the only term rewarding an open well — was switched off.
+        // Measured cost at level 0 with rolling, where the census says nothing is masked at all:
+        // della-search fell from 17.62 to 0.12 tetrises per episode.
+        //
+        // Every other gate stayed green through that bug — parity covers the unenforced path, the
+        // reachability tests count set sizes, latency was fine. Nothing asserted that the AI still WANTS a
+        // well. This is that assertion.
+        foreach (int piece in new[] { 0, 1, 2, 3, 4, 5, 6 })
+        {
+            var t = new PgTetris();
+            t.reset(5, false, 0);
+            t.current = piece;
+            t.next = piece;
+            t.setReachEnforced(true);
+            t.setTapModel(frames, charge);
+            t.refreshReachSpan();
+
+            Assert.Equal(0, t.reachLo);
+            Assert.Equal(TetrisBoard.Width - 1, t.reachHi);
+        }
+    }
+
+    [Fact]
+    public void TetrisAvailable_OnlyForAVerticalIOverAFourDeepWell()
+    {
+        // Four rows complete except column 9 — the canonical tetris setup.
+        var rows = new int[20];
+        for (int y = 16; y < 20; y++) rows[y] = FullRow - (1 << 9);
+
+        // With the I in hand it is on the table.
+        var withI = new TetrisBoard();
+        withI.Reset(1);
+        withI.LoadRows(rows);
+        withI.LoadPieces(current: 0, next: 0);
+        Assert.True(withI.TetrisAvailable());
+
+        // With any other piece it is not — nothing but a vertical I spans four rows. This is what makes
+        // the check cheap enough to run every training step.
+        foreach (int piece in new[] { 1, 2, 3, 4, 5, 6 })
+        {
+            var other = new TetrisBoard();
+            other.Reset(1);
+            other.LoadRows(rows);
+            other.LoadPieces(current: piece, next: 0);
+            Assert.False(other.TetrisAvailable(), $"piece {piece} cannot clear four rows");
+        }
+
+        // A three-deep well is a triple, not a tetris.
+        var shallow = new TetrisBoard();
+        shallow.Reset(1);
+        var three = new int[20];
+        for (int y = 17; y < 20; y++) three[y] = FullRow - (1 << 9);
+        shallow.LoadRows(three);
+        shallow.LoadPieces(current: 0, next: 0);
+        Assert.False(shallow.TetrisAvailable());
+    }
+
+    [Fact]
+    public void MandatoryTetris_KillsOnlyWhenTheStackIsCleanAndTheTetrisWasDeclined()
+    {
+        // M62.4 (owner rule). Declining a reachable tetris on a CLEAN stack ends the episode. With holes
+        // present the agent is digging, which is the right priority, and must NOT be punished.
+        var clean = new int[20];
+        for (int y = 16; y < 20; y++) clean[y] = FullRow - (1 << 9);
+
+        // Same rows, but with a buried hole under the stack so the board is not clean.
+        var holed = new int[20];
+        for (int y = 16; y < 20; y++) holed[y] = FullRow - (1 << 9);
+        holed[15] = 1;      // a cell at column 0 on row 15 …
+        holed[16] &= ~1;    // … with an empty cell beneath it ⇒ a hole
+
+        Assert.True(Decline(clean), "declining a tetris on a clean stack must end the episode");
+        Assert.False(Decline(holed), "declining while digging must NOT end the episode");
+        Assert.False(Take(clean), "taking the tetris must not end the episode");
+
+        static bool Decline(int[] rows) => RunOne(rows, takeTheTetris: false);
+        static bool Take(int[] rows) => RunOne(rows, takeTheTetris: true);
+
+        static bool RunOne(int[] rows, bool takeTheTetris)
+        {
+            var env = new TetrisEnv(pieceBudget: 100) { MandatoryTetris = true };
+            env.Reset(1);
+            env.Board.LoadRows(rows);
+            env.Board.LoadPieces(current: 0, next: 0); // I
+            // Vertical I: rotation with width 1. Column 9 clears four; column 0 does not.
+            int rot = 1;
+            int action = rot * 10 + (takeTheTetris ? 9 : 0);
+            return env.Step(action).Terminated;
+        }
+    }
+
     [Fact]
     public void Features_PinnedOnAHandDrawnBoard()
     {

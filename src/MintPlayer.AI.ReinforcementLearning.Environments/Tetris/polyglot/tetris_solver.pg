@@ -56,10 +56,17 @@ class PgTetris {
   const FullRow: i32 = 1023          // (1 << W) − 1
   const PieceCount: i32 = 7          // 0=I 1=O 2=T 3=S 4=Z 5=L 6=J
   const ActionCount: i32 = 40        // rot·10 + col
+  // Upper bound on frames a piece can exist: 20 rows at the slowest gravity (48) plus slack for rotation.
+  const ReachFrameCap: i32 = 1200
   // Training-reward bonus for a 4-line clear, in lines units (owner decision 2026-08-26: the AI should
   // build for and clear tetrises). reward = lines + (lines==4 ? bonus : 0) — a tetris pays 12 vs 4 for
   // four singles. Superlinear SCORE as the raw reward was rejected (the stack-and-camp trap, PRD §3.5);
-  // netSearchAction's rollout reward must use the same units as training (TetrisEnv mirrors this const).
+  // M62.6 — ACCURACY NOTE: this const is the documented SOURCE for the C# mirror
+  // (TetrisBoard.TetrisRewardBonus), which is where the bonus is actually applied, in TetrisEnv's reward.
+  // It is NOT read anywhere inside this .pg. In particular netSearchAction's rollout scores afterstates
+  // through evalAfterstate and never adds this bonus, so the search tier's rollout reward is NOT in the
+  // same units as the training reward. That is a real (small) inconsistency, left unchanged here because
+  // fixing it moves the parity checksum and needs its own measurement — see TETRIS_AUTHENTICITY_PRD §7.
   const RewardTetrisBonus: i32 = 8
 
   // ── M57.1 tetris-aware evaluator (PRD TETRIS_TECHNIQUES §3.1, spike results §6.R) ──────────────────
@@ -92,6 +99,22 @@ class PgTetris {
   // 3 = rolling 20Hz, 2 = the 30Hz hardware ceiling. Drives BOTH the reachability terms below and (M57.3)
   // the legality mask. Default DAS — the ROM behaviour, and the most restrictive human setting.
   var tapFramesPerShift: i32 = 6
+  // M62.3b. Frames the SECOND shift costs. DEFAULTS TO THE CHARGED DAS MODEL (== tapFramesPerShift), which
+  // is what PRD §4.1's timeline table specifies and what a competent player actually does: you hold the
+  // direction through ARE so the piece spawns wall-charged and auto-shifts from frame 0 at the 6-frame
+  // repeat. Modelling a COLD 16-frame charge on every piece was measured (M62.3b) to be wildly too harsh —
+  // it cut Dellacherie from 196 lines to 8 at L19, because a tall stack leaves only ~20 frames and a cold
+  // charge eats 16 of them. Cold DAS remains expressible via setTapModel for anyone who wants to price a
+  // direction change, but it is a PENALTY to be applied deliberately, never the default.
+  var tapChargeFrames: i32 = 6
+  // Reachability enforcement is OPT-IN so the default path stays bit-identical (PRD D7).
+  var reachEnforced: bool = false
+  // M62.4: how much of the tetris-ready reward survives DIG mode. 0.0 == the shipped behaviour (none).
+  var readyDigScale: f64 = 0.0
+  // M62.4: fraction of the tetris-ready rows a cashed tetris pays back. 1.0 (M62.4): cashing returns exactly what it consumes, so a multi-ply search cannot prefer hoarding the well. Measured +45% score, +25% tetrises, top-outs 10/16 -> 3/16.
+  var tetrisPayback: f64 = 1.0
+  // Flat (frame, code) pairs from the last simulateReach(capture: true). code 1=L 2=R 3=rotCW 4=rotCCW.
+  var reachTimeline: List<i32> = List<i32>()
 
   // Piece tables, built in constructor() (instance lists, NOT module-level lets — the module-globals-in-methods
   // fix is post-0.8.1). Rotation slot r of piece p lives at rotIdx = p·4 + r; each rotation holds 4 cells
@@ -455,9 +478,44 @@ class PgTetris {
     return 0
   }
 
+  // M62.2 — post-level-29 variant (owner decision D1, 2026-09-16). AUTHENTIC NES NTSC has NO speed change
+  // above 29: gravity is a flat 1 frame/row from 29 all the way to 255, and the "changes at 130/230" people
+  // report are the 18-start LINE thresholds (L19 at 130 lines, L29 at 230), not speed steps. The real
+  // post-29 speed-up is a ROM HACK used by CTWC/CTM Masters, so it lives behind this flag and never in the
+  // base table.
+  //   0 = authentic (default — bit-identical to every shipped checkpoint and the M54 parity checksum)
+  //   1 = CTM "level 39 halt": the game simply stops at 39 (lower divisions)
+  //   2 = CTWC "2xks" super kill screen: from level 39 the piece falls TWO rows per gravity step
+  // 2xks is why rowsPerStep exists at all — 1/2 frame-per-row is not expressible in this i32 signature,
+  // so the sub-frame case is carried as rows-per-step instead of a fractional frame count.
+  var killscreenMode: i32 = 0
+
+  fn setKillscreenMode(m: i32) {
+    this.killscreenMode = m
+  }
+
+  // Rows moved per gravity step. Always 1 except under 2xks at level 39+, where it is 2.
+  fn gravityRowsPerStep(lvl: i32): i32 {
+    if this.killscreenMode == 2 && lvl >= 39 { return 2 }
+    return 1
+  }
+
+  // True when "39 halt" is armed and the board has reached it — the host ends the game.
+  fn killscreenHalted(): bool {
+    return this.killscreenMode == 1 && this.level >= 39
+  }
+
+  // End the run deliberately, without a top-out. Used by the "39 halt" variant, where the game does not
+  // lose — it simply stops. Kept as an explicit method so hosts never poke `gameOver` directly.
+  fn forceGameOver() {
+    this.gameOver = true
+    this.activeLive = false
+  }
+
   // NES gravity curve: frames per one-row drop at 60 fps (levels 0–8 step down 48→8, then the classic
   // plateaus; 29+ is the "kill screen" 1 frame/row). Single-sourced so the web timer and any future
   // speed-aware logic agree. The AI's placement decisions have no gravity clock (benchmark convention).
+  // VERIFIED value-by-value against the ROM table at $898E (M62) — do not "fix" this for levels > 29.
   fn gravityFrames(lvl: i32): i32 {
     if lvl <= 8 { return 48 - 5 * lvl }
     if lvl == 9 { return 6 }
@@ -518,8 +576,12 @@ class PgTetris {
     return mask
   }
 
+  // M62.3b: under enforcement "no placement the hands can reach" is just as terminal as "no placement
+  // fits". Measured before this fix: the agent silently ran out of reachable actions, the caller took the
+  // -1 and stopped the episode, and it was recorded as NOT a top-out — an episode that ended for an
+  // unexplained reason. Terminality must follow the mask the policy actually plays against.
   fn hasLegalPlacement(): bool {
-    for a in 0..ActionCount { if this.placementLegal(a) { return true } }
+    for a in 0..ActionCount { if this.placementReachable(a) { return true } }
     return false
   }
 
@@ -567,6 +629,24 @@ class PgTetris {
     if !this.activeLive || this.gameOver { return false }
     let cur = this.current * 4 + this.activeRot
     let nr = (this.activeRot + 1) % this.rotCount[this.current]
+    let nxt = this.current * 4 + nr
+    let nx = this.activeX - this.rotOffX[cur] + this.rotOffX[nxt]
+    let ny = this.activeY - this.rotOffY[cur] + this.rotOffY[nxt]
+    if !this.fitsAt(this.current, nr, nx, ny) { return false }
+    this.activeRot = nr
+    this.activeX = nx
+    this.activeY = ny
+    return true
+  }
+
+  // M62.1: the NES B-button (counter-clockwise) rotation. Identical pivot-in-place NRS rule as microRotate
+  // — same offsets, same no-kick semantics — walking the cycle backwards instead of forwards. Only J, L and
+  // T are actually affected: I/S/Z have rotCount 2 (so CCW == CW) and O has rotCount 1 (a no-op). The CW
+  // path above is deliberately left untouched so the M54 parity checksum still holds.
+  fn microRotateCcw(): bool {
+    if !this.activeLive || this.gameOver { return false }
+    let cur = this.current * 4 + this.activeRot
+    let nr = (this.activeRot + this.rotCount[this.current] - 1) % this.rotCount[this.current]
     let nxt = this.current * 4 + nr
     let nx = this.activeX - this.rotOffX[cur] + this.rotOffX[nxt]
     let ny = this.activeY - this.rotOffY[cur] + this.rotOffY[nxt]
@@ -750,12 +830,206 @@ class PgTetris {
   // simply unreachable, and an agent that does not know it keeps trying to feed a well it cannot feed.
   fn maxTapHeight(taps: i32): i32 {
     let g = this.gravityFrames(this.level)
-    let fallen = tetDiv(taps * this.tapFramesPerShift, g)
+    // M62.2: under 2xks the piece covers TWO rows per gravity step, so the same tap budget buys half the
+    // reach. killscreenMode 0/1 leave this at ×1, keeping the default path arithmetically identical.
+    let rows = this.gravityRowsPerStep(this.level)
+    let fallen = tetDiv(taps * this.tapFramesPerShift * rows, g)
     return H - 3 - fallen
   }
 
   fn setTapRate(framesPerShift: i32) {
     this.tapFramesPerShift = framesPerShift
+  }
+
+  // M62.3b — the full input model. `chargeFrames` is what the SECOND shift costs: 16 under DAS (the ROM's
+  // auto-shift charge) and equal to framesPerShift for hypertapping/rolling, which pay no charge at all.
+  // That one number is the entire difference between the techniques, and it is why DAS dies on the kill
+  // screen while rolling does not.
+  fn setTapModel(framesPerShift: i32, chargeFrames: i32) {
+    this.tapFramesPerShift = framesPerShift
+    this.tapChargeFrames = chargeFrames
+  }
+
+  // OPT-IN (PRD D7). Default false keeps every shipped checkpoint, every baseline and the M54 parity
+  // checksum bit-identical — reachability becomes a measurable DELTA rather than a forced migration.
+  fn setReachEnforced(on: bool) {
+    this.reachEnforced = on
+  }
+
+  fn setReadyDigScale(scale: f64) {
+    this.readyDigScale = scale
+  }
+
+  fn setTetrisPayback(scale: f64) {
+    this.tetrisPayback = scale
+  }
+
+  // ── M62.3b: true per-placement reachability (PRD D8) ────────────────────────────────────────────────
+  // Can the hands ACTUALLY get the piece to (targetRot, targetX) before gravity locks it? Simulates the
+  // piece falling while the player rotates and shifts on the technique's cadence, against the REAL stack
+  // via fitsAt — not against the maxTapHeight height threshold, which ignores everything between spawn
+  // and target. Pure geometry: the board is never mutated, so this is safe to call anywhere.
+  //
+  // Input model: rotation and shifting are SEPARATE buttons on the NES, so both may be issued on the same
+  // frame; they run on independent schedules. A fresh direction press shifts immediately, the second shift
+  // costs tapChargeFrames, and every shift after that costs tapFramesPerShift. A blocked press still
+  // consumes its slot — the button was pressed, the piece just did not move.
+  //
+  // With `capture`, the exact input sequence is captured into reachTimeline as flat (frame, code) pairs,
+  // code 1=left 2=right 3=rotate-CW 4=rotate-CCW. The browser pilot REPLAYS that instead of re-deriving a
+  // route, which makes AI-chose-vs-player-saw divergence impossible by construction (PRD D9).
+  fn simulateReach(targetRot: i32, targetX: i32, capture: bool): bool {
+    if capture { this.reachTimeline = List<i32>() }
+    let piece = this.current
+    var rot = this.spawnRot[piece]
+    var x = 5 + this.rotOffX[piece * 4 + rot]
+    var y = 0
+    if !this.fitsAt(piece, rot, x, y) { return false }
+
+    let g = this.gravityFrames(this.level)
+    let rowsPer = this.gravityRowsPerStep(this.level)
+    let rc = this.rotCount[piece]
+    var frame = 0
+    var nextRot = 0
+    var nextShift = 0
+    var shifts = 0
+
+    while frame < ReachFrameCap {
+      if rot != targetRot && frame >= nextRot {
+        // Take the SHORTER way round — M62.1 gave us a B button, so a 3-step CW turn is now a 1-step CCW.
+        let cw = (targetRot - rot + rc) % rc
+        let ccw = (rot - targetRot + rc) % rc
+        let dirCw = cw <= ccw
+        let nr = if dirCw { (rot + 1) % rc } else { (rot + rc - 1) % rc }
+        let cur = piece * 4 + rot
+        let nxt = piece * 4 + nr
+        let nx = x - this.rotOffX[cur] + this.rotOffX[nxt]
+        let ny = y - this.rotOffY[cur] + this.rotOffY[nxt]
+        if this.fitsAt(piece, nr, nx, ny) {
+          rot = nr
+          x = nx
+          y = ny
+          if capture {
+            this.reachTimeline.add(frame)
+            this.reachTimeline.add(if dirCw { 3 } else { 4 })
+          }
+        }
+        nextRot = frame + this.tapFramesPerShift
+      }
+      if x != targetX && frame >= nextShift {
+        let dx = if targetX > x { 1 } else { -1 }
+        if this.fitsAt(piece, rot, x + dx, y) {
+          x = x + dx
+          if capture {
+            this.reachTimeline.add(frame)
+            this.reachTimeline.add(if dx == 1 { 2 } else { 1 })
+          }
+        }
+        if shifts == 0 { nextShift = frame + this.tapChargeFrames } else { nextShift = frame + this.tapFramesPerShift }
+        shifts = shifts + 1
+      }
+      if rot == targetRot && x == targetX { return true }
+      frame = frame + 1
+      if frame % g == 0 {
+        var moved = 0
+        while moved < rowsPer {
+          if !this.fitsAt(piece, rot, x, y + 1) { return false }
+          y = y + 1
+          moved = moved + 1
+        }
+      }
+    }
+    return false
+  }
+
+  // Legal AND physically reachable. With reachEnforced off this is exactly placementLegal, which is what
+  // keeps the default path byte-identical.
+  fn placementReachable(action: i32): bool {
+    if !this.placementLegal(action) { return false }
+    if !this.reachEnforced { return true }
+    return this.simulateReach(this.actionRot(action), this.actionCol(action), false)
+  }
+
+  // The input sequence for one placement, as flat (frame, code) pairs. Empty when unreachable.
+  fn reachTimelineFor(action: i32): List<i32> {
+    if !this.simulateReach(this.actionRot(action), this.actionCol(action), true) { return List<i32>() }
+    return this.reachTimeline
+  }
+
+  // ── C1 (PRD §8 interference audit): ONE reach model per altitude ────────────────────────────────────
+  // evalAfterstate used to price reach with the maxTapHeight PROXY while the mask used the true
+  // simulation. MEASURED consequence at L19 with rolling hands: della-search committed to a well the proxy
+  // said was serviceable, the true mask then refused every placement that could feed it, and the tier
+  // collapsed from 198 lines to 28. The two models must agree at the root.
+  //
+  // Refreshed ONCE per decision (the root already pays for 40 simulations to build the mask); the
+  // evaluator then reads these cached bounds, so the thousands of evalAfterstate calls inside a search
+  // stay as cheap as they were. When enforcement is off the span stays full-width and every formula below
+  // reduces to the proxy exactly, which is what keeps the default path bit-identical.
+  var reachLo: i32 = 0
+  var reachHi: i32 = 9
+
+  fn refreshReachSpan() {
+    if !this.reachEnforced {
+      this.reachLo = 0
+      this.reachHi = W - 1
+      return
+    }
+    var lo = W
+    var hi = -1
+    for a in 0..ActionCount {
+      if this.placementReachable(a) {
+        let c = this.actionCol(a)
+        // The span is over COLUMNS THE PIECE WOULD OCCUPY, not over action indices. actionCol is the
+        // placement's LEFT edge, so a piece of width w can never have actionCol > W - w — an O maxes out
+        // at 8 and a horizontal I at 6. Comparing that left edge against WellCol made "the well is
+        // unreachable" true for almost every piece at every level, which silently disabled well-building
+        // altogether: MEASURED 17.62 -> 0.12 tetrises/episode at level 0 with rolling hands, where the
+        // census says every placement is reachable and nothing should have changed at all.
+        let right = c + this.rotW[this.current * 4 + this.actionRot(a)] - 1
+        if c < lo { lo = c }
+        if right > hi { hi = right }
+      }
+    }
+    if hi < 0 {
+      // Nothing reachable at all — terminal. Keep a degenerate span rather than an inverted one.
+      this.reachLo = 0
+      this.reachHi = -1
+      return
+    }
+    this.reachLo = lo
+    this.reachHi = hi
+  }
+
+  // ── M62.4: is a TETRIS actually on the table right now? ─────────────────────────────────────────────
+  // Only a vertical I can clear four rows — every other piece spans at most three — so this early-outs on
+  // six pieces in seven and costs nothing on the rest. Honours reachability, so "within reach" means the
+  // hands can genuinely get there, not merely that the placement is legal.
+  fn tetrisAvailable(): bool {
+    if this.current != 0 { return false }
+    for r in 0..4 {
+      if r < this.rotCount[0] && this.rotW[r] == 1 {
+        for x in 0..W {
+          let a = r * W + x
+          if this.placementReachable(a) {
+            let y = this.dropY(0, r, x)
+            if y >= 0 {
+              let saved = this.saveRows()
+              let cleared = this.simPlace(0, r, x, y)
+              this.restoreRows(saved)
+              if cleared == 4 { return true }
+            }
+          }
+        }
+      }
+    }
+    return false
+  }
+
+  fn reachableMask(): List<bool> {
+    var mask: List<bool> = List<bool>()
+    for a in 0..ActionCount { mask.add(this.placementReachable(a)) }
+    return mask
   }
 
   // Dellacherie score of placing `piece` at (rot, x) on the CURRENT rows — WIDENED (M57.1).
@@ -772,22 +1046,59 @@ class PgTetris {
     var s = 0.0 - this.simLanding + this.simEroded - this.rowTransitions() - this.colTransitions() + EvalHoles * holeCount + EvalWells * this.wellSumExceptWell()
     let m5 = this.maxTapHeight(5)
     let m4 = this.maxTapHeight(4)
-    let lineout = m5 < 4
+    // C1: under enforcement the WELL COLUMN being physically unreachable is the honest lineout signal —
+    // there is no point valuing a tetris you cannot feed. The proxy's `m5 < 4` height heuristic is kept
+    // for the unenforced path so that path stays bit-identical.
+    let lineout = if this.reachEnforced { this.reachHi < WellCol } else { m5 < 4 }
     let dig = holeCount > 0
     if !lineout {
-      if !dig { s = s + EvalReady * this.tetrisReady() }
+      // M62.4: `dig` (any hole at all) used to zero the well incentive OUTRIGHT — the only term that
+      // values keeping column 9 open. Combined with observation plane 6 being gated the same way, the
+      // agent goes completely blind to the well the instant a single hole appears, digs it out (which it
+      // does well), and treats the well as an ordinary column meanwhile. readyDigScale keeps DIG mode's
+      // intent — survival first on a holed board — without abandoning the well entirely. DEFAULT 0.0
+      // reproduces the old behaviour exactly, so this is a knob to measure, not a change in itself.
+      let readyW = if dig { this.readyDigScale } else { 1.0 }
+      if readyW > 0.0 { s = s + EvalReady * readyW * this.tetrisReady() }
       let burnW = if dig { EvalBurnDig } else { EvalBurn }
       s = s + burnW * (if cleared > 0 && cleared < 4 { cleared } else { 0 })
     }
     if dig { s = s + EvalHoleDig * holeCount }
     s = s + EvalCovered * this.coveredWell()
     s = s + EvalTetris * (if cleared == 4 { 1 } else { 0 })
+    // M62.4 — CASHING A TETRIS MUST NOT LOOK LIKE A LOSS. tetrisReady is a STATE bonus (EvalReady per
+    // ready row), so a multi-ply search counts the four rows again at every ply it declines to cash them,
+    // while taking the tetris banks eroded + EvalTetris ONCE and leaves a board worth zero. Over two plies
+    // that makes declining worth about 27 against taking's 23, which is exactly what the census measured:
+    // 1-ply Dellacherie takes 97.8% of available tetrises, 2-ply della-search only 48.0%, and 99.5% of its
+    // declines are on CLEAN boards (so this is not the DIG gate). Paying the consumed rows back makes the
+    // two horizons agree. Scale 0.0 reproduces the shipped behaviour exactly.
+    if cleared == 4 { s = s + EvalReady * this.tetrisPayback * 4.0 }
     let col9 = this.colHeight(WellCol - 1) - EvalMaxSafeCol9
     if col9 > 0 { s = s + EvalCol9 * col9 }
-    let overLeft = this.colHeight(0) - m5
-    if overLeft > 0 { s = s + EvalInaccessible * overLeft }
-    let overRight = this.colHeight(W - 1) - m4
-    if overRight > 0 { s = s + EvalInaccessible * overRight }
+    // C1: same substitution for the accessibility penalties. Under enforcement a wall is "inaccessible"
+    // when it is literally outside the reachable span, which is a fact rather than a height estimate; the
+    // penalty then scales with how tall that unreachable wall is, exactly as before.
+    // Both TRIGGER and MAGNITUDE from truth under enforcement: an unreachable wall is priced by how tall
+    // it is, because all of it is stack we cannot service — not merely the part exceeding a height
+    // estimate. This was tested against a proxy-scale magnitude (trigger from truth, size from the old
+    // formula) on the suspicion that EvalInaccessible's CEM tuning would not survive the larger numbers.
+    // MEASURED at L19, 12 eps — and it refuted that suspicion:
+    //   della-search rolling: truth 305,508 ± 40,617  vs  proxy-scale 197,483 ± 22,346  (CI-SEPARATED)
+    //   della-search DAS:     truth 114,683 ± 59,257  vs  proxy-scale 165,206 ± 41,285  (OVERLAPPING)
+    // The truth magnitude wins where the CIs separate and ties where they do not, so the apparent DAS
+    // "regression" that motivated the change is not distinguishable at this sample size. A CEM re-tune on
+    // this scale (§4 option 4) is the principled follow-up, not a prerequisite.
+    let leftBlind = if this.reachEnforced { this.reachLo > 0 } else { this.colHeight(0) - m5 > 0 }
+    if leftBlind {
+      let overLeft = if this.reachEnforced { this.colHeight(0) } else { this.colHeight(0) - m5 }
+      if overLeft > 0 { s = s + EvalInaccessible * overLeft }
+    }
+    let rightBlind = if this.reachEnforced { this.reachHi < W - 1 } else { this.colHeight(W - 1) - m4 > 0 }
+    if rightBlind {
+      let overRight = if this.reachEnforced { this.colHeight(W - 1) } else { this.colHeight(W - 1) - m4 }
+      if overRight > 0 { s = s + EvalInaccessible * overRight }
+    }
     return s
   }
 
@@ -816,12 +1127,16 @@ class PgTetris {
     return best
   }
 
-  // ── Observation (PRD §3.4) — 454 floats: 200 board cells + 7 current + 7 next one-hots + six
-  // 40-wide per-action planes (landing/20, eroded/8, ΔrowT/20, ΔcolT/20, Δholes/10, Δwells/20;
-  // illegal action ⇒ 0 in every plane). Plane-major like the other solvers.
+  // ── Observation (PRD §3.4) — 854 floats since M57.5: 200 board cells + 7 current + 7 next one-hots +
+  // SIXTEEN 40-wide per-action planes. Planes 0-5 are the original M54 basis (landing/20, eroded/8,
+  // ΔrowT/20, ΔcolT/20, Δholes/10, Δwells/20); planes 6-15 are the M57 tetris-aware terms, pre-gated —
+  // see the per-plane comments below and the weights at :78-89. Illegal action ⇒ 0 in every plane.
+  // Plane-major like the other solvers. (The 454-float figure below at :858 is the HISTORICAL M54 width,
+  // deliberately preserved there to explain the back-compatible layout — it is not the current size.)
   fn buildObservation(): List<f64> => this.buildObservationFor(this.current, this.next)
 
   fn buildObservationFor(curPiece: i32, nextPiece: i32): List<f64> {
+    this.refreshReachSpan()
     var obs: List<f64> = List<f64>()
     for y in 0..H {
       for c in 0..W { obs.add(if ((this.rows[y] >> c) & 1) == 1 { 1.0 } else { 0.0 }) }
@@ -898,8 +1213,9 @@ class PgTetris {
 
   // Uniform-random legal placement. Takes its OWN rng so policy sampling never touches the piece stream.
   fn randomAction(policyRng: PgTetRng): i32 {
+    this.refreshReachSpan()
     var legal: List<i32> = List<i32>()
-    for a in 0..ActionCount { if this.placementLegal(a) { legal.add(a) } }
+    for a in 0..ActionCount { if this.placementReachable(a) { legal.add(a) } }
     if legal.count == 0 { return -1 }
     return legal[policyRng.nextInt(legal.count)]
   }
@@ -907,10 +1223,11 @@ class PgTetris {
   // The Dellacherie tier: argmax placement by the canonical evaluator (first strict improvement wins ties
   // — the spike's iteration order: rotation-major, then column).
   fn dellacherieAction(): i32 {
+    this.refreshReachSpan()
     var best = -1
     var bestScore = -1.0e18
     for a in 0..ActionCount {
-      if !this.placementLegal(a) { continue }
+      if !this.placementReachable(a) { continue }
       let s = this.dellaScoreFor(this.current, this.actionRot(a), this.actionCol(a))
       if s > bestScore { bestScore = s; best = a }
     }
@@ -921,9 +1238,11 @@ class PgTetris {
   // beamB over the KNOWN next piece's placements, then expectimax (mean over the 7 pieces' best
   // placement) for the unknown third piece. Deterministic, no RNG, board restored.
   fn dellaSearchAction(beamA: i32, beamB: i32): i32 {
+    this.refreshReachSpan()
     var v1: List<f64> = List<f64>()
     for a in 0..ActionCount {
-      v1.add(if this.placementLegal(a) { this.dellaScoreFor(this.current, this.actionRot(a), this.actionCol(a)) } else { -1.0e18 })
+      // Root ply only — ply 2 below stays on placementLegal (PRD D10: truth at the root, proxy in rollouts).
+      v1.add(if this.placementReachable(a) { this.dellaScoreFor(this.current, this.actionRot(a), this.actionCol(a)) } else { -1.0e18 })
     }
 
     var beam: List<i32> = List<i32>()
@@ -990,11 +1309,12 @@ class PgTetris {
 
   // Trained-net tier: masked greedy argmax over Q for the current observation.
   fn netAction(net: PgTetDuelingNet): i32 {
+    this.refreshReachSpan()
     let q = net.forward(this.buildObservation())
     var best = -1
     var bestQ = -1.0e18
     for a in 0..ActionCount {
-      if !this.placementLegal(a) { continue }
+      if !this.placementReachable(a) { continue }
       if q[a] > bestQ { bestQ = q[a]; best = a }
     }
     return best
@@ -1007,6 +1327,7 @@ class PgTetris {
   // line reward instead (the pre-pivot γ>0 formulation) double-ignores the placement's own board damage —
   // measured at −65% survival vs the plain net tier before this fix.
   fn netSearchAction(net: PgTetDuelingNet, beamWidth: i32): i32 {
+    this.refreshReachSpan()
     let q1 = net.forward(this.buildObservation())
 
     var beam: List<i32> = List<i32>()
@@ -1014,7 +1335,7 @@ class PgTetris {
       var bestA = -1
       var bestQ = -1.0e18
       for a in 0..ActionCount {
-        if !this.placementLegal(a) { continue }
+        if !this.placementReachable(a) { continue }
         var taken = false
         for j in 0..beam.count { if beam[j] == a { taken = true } }
         if !taken && q1[a] > bestQ { bestQ = q1[a]; bestA = a }

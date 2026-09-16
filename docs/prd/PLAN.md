@@ -3083,6 +3083,146 @@ keepalives are allowed, 60 fps with no long tasks over ≥30 s is the real check
 
 ---
 
+## M62 — Tetris NES authenticity (gravity variants · CCW · technique dial · the tetris rate) + Block Dude layout  *(2026-09-16; branch `m62-tetris-authenticity`; see `TETRIS_AUTHENTICITY_PRD.md`)* 🟡 — M62.0–M62.3, M62.4a/b, M62.5 and M62.6 shipped; **M62.4c (net retrain) blocked on an unrecoverable training recipe**; M62.7 ship pending
+
+Planned from a 4-agent investigation into the owner's five asks. Three of the five were **already designed in
+`TETRIS_TECHNIQUES_PRD.md` §4–§5 and never built** (M57.2/M57.3/M57.4/M57.6); this milestone re-scopes them
+against what the M57.1/M57.5 ship actually changed. **One PR for the arc**, Block Dude included.
+
+**Two asks changed shape under investigation:**
+
+- **Gravity (ask 1) is not a bug.** `gravityFrames` (`tetris_solver.pg:461-469`) is exactly authentic NES NTSC,
+  verified value-by-value, and so is `levelForLines`. **130 and 230 are line thresholds, not levels** — on an
+  18-start the ROM rule `min(start·10+10, max(100, start·10−50))` puts L19 at 130 lines and L29 at 230. The
+  owner's closing observation is correct: **L29 is the last speed change**, flat 1 frame/row from 29 to 255.
+  The real post-29 speed change is a **ROM hack** — CTWC/CTM Masters' level-39 "super killscreen" (2xks,
+  2 rows/frame). Ships as an opt-in variant flag, never as a table edit. Bonus: `setStartLevel` exists
+  (`TetrisBoard.cs:127`) but **the frontend never calls it** — every browser game starts at level 0.
+- **The tetris rate (ask 2) is a distillation problem, not a reward problem.** `TETRIS_TECHNIQUES_PRD.md` §0's
+  headline diagnosis is **stale**: γ is 0.995 with 3-step returns (`TetrisLab.cs:30/45`), the well column is
+  excluded from the dense target (weight −0.847, `.pg:79`), and a tetris now pays 3× four singles in realized
+  reward and 7.5× in NES score. The teacher already tetrises — **exact argmax 17.9–44% TRT, the trained net
+  1.4%**. A tetris needs ~10 consecutive correct argmaxes to hold column 9 open; one error burns the well.
+  Capacity and fit are ruled out (target is exactly linear in the observation, R² 0.868–0.893).
+
+**Two asks are cheap and safe.** CCW rotation (ask 3) touches **no checkpoint**: the RL action space is
+*afterstate* (`ActionCount = 40`, absolute rotation×column), so the agent never picks a direction — only J/L/T
+are even affected. Block Dude (ask 5) is a **pure DOM move**; the page has no page-level flex/grid, and
+`.bd-stage` genuinely has no fixed aspect ratio (bound per level, `block-dude.ts:67-70`, 19×8 → 29×19), which
+is exactly why the row shifts today.
+
+**The technique dial (ask 4) already half-exists, on a fabricated cadence.** Tetris is the repo's one
+**client-side** watch-AI ("Pattern C", `tetris-director.ts:1-6`) — no server path to insert into. The AI does
+not teleport; it taps at `PILOT_INPUT_MS = 90` ≈ 11.1 Hz, which is *accidentally almost exactly hypertapping*.
+A frame-exact `NesInput` (16/10/6, wall charge, spawn carry) exists but is wired to the human path only.
+Researched rates: **DAS 10.02 Hz** (16-frame charge then 6-frame repeat), **hypertapping ~12 Hz** (10–15),
+**rolling ~20–30 Hz**, ceiling 60 Hz. M57.0's spike S3 already measured the payoff: **at the kill screen DAS
+scores 0, rolling 37,135.**
+
+**Milestones.** ✅ M62.0 spikes (S1 **killed** the "promote net-search" option at 1.3% TRT, *worse* than the
+plain net; S3 proved the dial is a real strength control; S2 absorbed by D9) · ✅ M62.1 CCW (bound to **Z or
+Shift** — Ctrl triggers Windows' magnifier) · ✅ M62.2 gravity variants + start-level picker, level
+progression pinned at every CTWC start · ✅ M62.3 dial (**a** wiring, **b** true reachability + input
+timeline + C1) · 🟡 M62.4 tetris rate — **(a)** default tier `della-search` + rolling, reachability live in
+the browser, preview-orientation fix ✅; **(b)** the decline diagnosis and the `tetrisPayback` fix ✅;
+**(c)** the net retrain ⬜ **blocked, see below** · ✅ M62.5 Block Dude row (+ **Enter** advances after a
+solve) · ✅ M62.6 doc corrections · ⬜ M62.7 ship.
+
+**M62.3b — reachability became physical, and the kill-screen claim finally reproduced.** `legalMask` now
+consults the tap budget (opt-in `setReachEnforced`, so the default path stays bit-identical and needed no
+checksum re-pin), the engine emits the **input timeline** and the browser pilot REPLAYS it — making
+AI-chose-vs-player-saw divergence impossible by construction rather than merely bounded. At L29 enforced:
+**DAS 1,200 vs rolling 275,550**, which is M57.0's "DAS scores 0" reproduced for the first time. Latency for
+the default tier is fine: `della-search` p50 ≈ 11 ms, p99 ≈ 24 ms.
+
+**Three bugs found by measurement, two of them self-inflicted this milestone.**
+*(1)* The DAS model charged a **cold 16-frame** auto-shift on every piece; wall-charging means a competent
+player spawns already charged (PRD §4.1's own table), and the cold model cut Dellacherie 196 → 8 lines at
+L19. *(2)* The reach span was measured over `actionCol` — the piece's **left edge** — so `reachHi < WellCol`
+was true for nearly every piece at every level, `lineout` was permanently true, and `EvalReady` (the only
+term valuing an open well) was permanently off: **17.62 → 0.12 tetrises/ep at level 0**, where nothing should
+have changed. The owner caught this by watching the game; no gate did, because none asserted *"the AI still
+wants a well"*. *(3)* Running out of *reachable* placements returned −1 and the caller stopped the episode
+**without recording a top-out**.
+
+**M62.4b — why the SEARCH declines tetrises, and the fix.** Built `--decline-census`: 1-ply Dellacherie takes
+**97.8%** of available tetrises, 2-ply della-search only **48.0%**, and **99.5% of its declines are on CLEAN
+boards** — refuting the "a hole blinds it" theory. `tetrisReady` is a **state** bonus, so a multi-ply search
+re-counts the same four rows at every ply it declines to cash them (~27) while cashing banks
+`eroded + EvalTetris` once (~23). **The evaluator paid rent on a well you never cash, and the search found
+the exploit.** `tetrisPayback = 1.0` returns the consumed rows on cashing; `TetrisDqnCampaign.WTetris` moves
+with it (written as `7.047f + WReady * 4f`) because the dense target *is* the evaluator read back out of the
+observation planes. **Measured on della-search: score 205,632 → 298,625 (+45%), lines 134 → 175, tetrises
+17.25 → 21.56, top-outs 10/16 → 3/16** — more tetrises *and* better survival. 1-ply is unchanged, as it must
+be. Owner-confirmed in the browser.
+
+**M62.4c is BLOCKED, and the blocker is a repo defect rather than a training problem.** Two fine-tunes of the
+shipped net collapsed it (99,598 → 6,543 → 2,323); nothing was promoted and the checkpoint is byte-identical
+(md5 `ecb3a81b…`) everywhere. **The published explanation — that the owner's `--mandatory-tetris` rule fought
+the 8×-weighted dense target — was RETRACTED: the control run without the rule produced the identical eval to
+the digit.** The real problem is that **the shipped net's training recipe is unrecoverable**: the resume state
+enforces only n-step **1** (the PRD and the Lab default both say 3), γ 0.995 and hidden 256,256, and
+`--game tetris --dense` — the intuitive reading of the documented recipe — *throws* (`DenseTargets requires
+Gamma == 0`). Everything else was guessed; `--explore` defaulting to **1.0** (ε restarts at full random on
+resume) and a guessed `--dense-weight 8` are the prime suspects. **Fixed going forward:** `LabHost` appends
+every invocation to `<dataDir>/invocation.txt`. M62.4c should **sweep ε and dense-weight on short runs against
+the stored baseline** before spending hours. The owner's instant-kill rule is therefore **untested, not
+refuted** — it ships default-off with its boundary pinned by tests.
+
+**Measured (pre-mask, 16 eps, matched seeds, only `--tap` differing).** At L19 the dial separates decisively:
+dellacherie 1.69 → **9.88** tetrises/ep and della-search 0.25 → **20.56 (82×)**, score +216%. An exact
+identity fell out — **L29+rolling reproduces L19+DAS cell for cell** (same lines, tetrises, top-outs; only the
+level multiplier differs), because `6/2 == 3/1`: **rolling buys exactly one gravity doubling**, which is the
+real-world claim about the technique. But `legalMask` never consults the budget, so the dial changes
+PREFERENCES and not PHYSICS — which is why M57.0's "at the kill screen DAS scores 0" **does not reproduce**
+(DAS at L29 measures 344,550), and why D7 exists. The net does not respond to the dial at all — it gets
+*worse* with rolling — and cannot survive the kill screen (L29/DAS: 112.9 lines, **14/16 top-outs**; 101
+pieces on garbage against della-search's 1,387).
+
+**Gates.** ✅ default gravity path bit-identical (parity checksum unchanged — it hashes the RULES, not the
+evaluator, so neither reachability nor the payback change needed a re-pin) · ✅ CW path byte-identical,
+`ActionCount` 40 and `ObservationSize` 854 unchanged (C2 would break the latter deliberately, at M62.4c) ·
+✅ rolling CI-above DAS at L19 · ✅ pilot divergence structurally impossible (D9) rather than merely bounded,
+0 console errors over ~130 placements live · ✅ `della-search` inside the 50 ms budget · ✅ 63/63 tests,
+clean build and `tsc --noEmit` · ✅ **Block Dude row stability, the L/J preview orientation and CCW-on-Shift all verified in the browser** — the picker sits at a single vertical position (198px) across all 15 levels while the stage height swings 384→768px, and the owner confirmed the preview and rotation by eye.
+
+**G3 settled by D3** — gate the tier, not the number: search tier ≥ 40% TRT (measured **51.4%**, PASS), plain
+net ≥ 20% + ≥ 4 tetrises/ep (measured 2.7%, FAIL, and the target of the blocked M62.4c).
+
+**Still open:** M62.4c (net retrain, blocked on the recipe sweep), M62.7 (ship), D4 (CCW on touch — second
+button vs two-zone tap), D6 (SRS mode, out of scope). The browser keeps reachability enforced by default,
+which is more authentic (real spawn-blocking, real hand limits) but visibly harder — an owner call that can
+be revisited from `setReachEnforced`.
+
+**Decisions (D1–D3 2026-09-16; D7–D13 by interview the same day).** D1 both gravity variants behind a flag ·
+D2 dial into the `.pg` · D3 gate the tier not the number · **D7** tap budget constrains legality **in the
+engine** · **D8** true per-placement reachability, not the `maxTapHeight` proxy · **D9** the sim emits the
+input timeline and **the pilot replays it**, so divergence is zero by construction (absorbs S2 and D5) ·
+**D10** truth at the root, proxy in rollouts *(provisional)* · **D11** instrument latency + root/search
+disagreement, 5% is calibration not a gate, and if latency misses **make `della-search` fit rather than
+dropping it** · **D12** `della-search` becomes the browser default, all five tiers stay selectable ·
+**D13** retrain with randomized tap rate, sequenced AFTER the mask.
+
+**Compiling those decisions surfaced three interferences none of them showed alone.** (1) The root would have
+been internally inconsistent — D8 masks on truth while `evalAfterstate` still gates LINEOUT/DIG on the proxy;
+resolved by computing reach ONCE at the root and feeding both, **one model per altitude rather than one per
+consumer**. (2) D13's randomization needs the net to *know its own hands*, which today it can only infer from
+plane 11 — too weak a signal would make the randomization silently buy nothing, so an explicit tap-rate input
+is added, **ending the no-checkpoint-invalidation property** (transplant via `GrowInput`, M57.5 precedent).
+(3) Every S3 figure is **pre-mask** and stops being reproducible once `--tap` affects legality — labelled,
+because this repo has twice been misled by comparing across exactly such a boundary.
+
+**The concentrated risk:** D8+D9 put a per-placement simulation and a variable-length timeline on the hot
+path, and D12 makes the tier that hits it hardest the default — so the fidelity, latency and default-tier
+risks are now one risk, concentrated in G6.
+
+**Corrections landing in the same PR:** `TETRIS_PRD.md` (5 sites) asserts an `enumeratePlacements()` seam that
+does not exist (enumeration is inlined at 7 `.pg` sites); `TetrisEnv.cs:23` / `TetrisBoard.cs:27` say the
+observation is 814 when it is 854; `.pg:819` says 454/six planes; `RewardTetrisBonus` (`.pg:63`) is declared and
+never read in the `.pg`.
+
+---
+
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
 the Angular dev server itself — do not run `ng serve`). Console demos:
 `dotnet run --project src/RLDemo.Console -c Release -- [grid|lake|cartpole|ppo|2048|2048dqn|rushhour|cube]

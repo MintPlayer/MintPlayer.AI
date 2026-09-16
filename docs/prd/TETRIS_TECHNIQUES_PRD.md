@@ -22,6 +22,18 @@ The owner's request, verbatim in substance:
 3. it can't do **T-spins or tuck-spins** to clear a line;
 4. professional players use **DAS, hypertapping and rolling** — the AI should know about these too.
 
+> ## ⚠️ SUPERSEDED (M62.6, 2026-09-16) — do not re-apply the diagnosis below
+>
+> The boxed finding that follows was **correct when written and has since been fixed by M57.1/M57.5.** All three
+> of its premises are false on current master: γ is **0.995** with 3-step returns (`TetrisLab.cs:30/45`), the
+> dense target **excludes** the well column (weight −0.847, `.pg:79`) and carries `+7.047` tetris and `+3.402`
+> tetris-ready terms, and a tetris now pays **3× four singles** in realized reward (12 vs 4) and 7.5× in NES
+> score. It is kept here as the historical record of *why* the evaluator was widened.
+>
+> **The live diagnosis is distillation fidelity, not the target function:** the same evaluator scores
+> 17.9–44% tetris-rate under exact argmax and **1.4%** through the trained net. See
+> [TETRIS_AUTHENTICITY_PRD.md](TETRIS_AUTHENTICITY_PRD.md) §1.2.
+
 The investigation produced one finding that reorders all four:
 
 > ### The dense regression target is anti-tetris by construction.
