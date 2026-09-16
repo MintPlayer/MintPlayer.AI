@@ -556,6 +556,35 @@ recorded in `data/tet19train/invocation.txt` by the run that uses it.
 > produced the retracted instant-kill explanation. The defence is `invocation.txt`: a recipe that is written
 > down cannot be confused with a default that merely looks like one.
 
+### 6.G RESUMING THE SHIPPED CHECKPOINT IS UNSOUND — three hypotheses, all refuted
+
+Finding the recipe did **not** make the resume work. Every continuation from `tet15`'s state collapses the
+net, and the diagnostic tell is that **the first eval is 98,031 in every single run**: it lands before
+meaningful training, so it measures the resumed net intact. *Any* subsequent training destroys it.
+
+| hypothesis | test | result |
+|---|---|---|
+| the instant-kill rule fights the dense target | control run without it | **refuted** — identical eval to the digit |
+| wrong γ / dense targets silently off | `--gamma 0 --dense` | **refuted as the whole story** — resumes and evals at 98,031, then still collapses |
+| ε restarts at 1.0 on resume | `--explore 0.05` | **refuted** — still collapses, 98,031 → 3,007 |
+
+Loss *rises* through every collapse (0.73 → 1.5–1.8), which points at **learning rate** — `--lr` defaults to
+1e-3 against a net 195,000 steps into a decayed schedule — but that is a fourth hypothesis and is **untested**.
+Do not treat it as the answer; treat it as the next thing to measure.
+
+**Decision: stop resuming, cold-start instead.** A fresh run has no stored optimizer state to mismatch, and
+trains against the *improved* evaluator (`tetrisPayback = 1.0`) from the beginning, which is the teacher we
+actually want distilled. `data/tet21cold`, 9 hours, `--steps 5000000` so the step cap does not silently end
+the run early — which it did once, at 400,000, making `--hours 9` meaningless.
+
+**Nothing degraded was ever promoted:** the campaign only re-saves on beating the stored baseline, and the
+shipped checkpoint stayed byte-identical (`ecb3a81b…`) through all five attempts.
+
+**If the cold start also fails**, the next step is a deliberate **LR sweep** on short runs against the stored
+baseline — not another single-flag guess. Five runs were spent on single-flag guesses in this milestone, and
+the lesson is that a recipe with no written record has to be *measured* dimension by dimension, not inferred
+from what the defaults happen to be.
+
 ## 6.E The shipped net's training recipe, recovered from its own checkpoint
 
 `TETRIS_TECHNIQUES_PRD.md` lists as a live defect that **"the training CLI args are recorded nowhere in the
