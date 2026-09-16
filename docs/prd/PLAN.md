@@ -3119,9 +3119,23 @@ Researched rates: **DAS 10.02 Hz** (16-frame charge then 6-frame repeat), **hype
 **rolling ~20–30 Hz**, ceiling 60 Hz. M57.0's spike S3 already measured the payoff: **at the kill screen DAS
 scores 0, rolling 37,135.**
 
-**Milestones:** M62.0 spikes (S1 search-tier TRT — may collapse M62.4 to a default change; S2 pilot divergence;
-S3 reachability per rate; S4 argmax fidelity) · M62.1 CCW · M62.2 gravity variants + start-level picker ·
-M62.3 technique dial · M62.4 tetris rate · M62.5 Block Dude row · M62.6 doc corrections · M62.7 ship.
+**Milestones.** ✅ M62.0 spikes (S1 + S3 run — S1 **killed** the "promote net-search" option at 1.3% TRT,
+*worse* than the plain net; S3 proved the dial is a real strength control; S2 absorbed by D9; S4 now optional) ·
+✅ M62.1 CCW · ✅ M62.2 gravity variants + start-level picker · 🟡 M62.3 dial (**a** shipped, **b** = the
+reachability mask + timeline, next) · ⬜ M62.4 tetris rate, in three parts: **(a)** flip the default to
+`della-search`, **(b)** baseline the existing net *under* the mask (free — needed anyway, and doubles as the
+pre-training baseline), **(c)** retrain with randomized tap rate + explicit tap-rate input ·
+✅ M62.5 Block Dude row · ✅ M62.6 doc corrections · ⬜ M62.7 ship.
+
+**Measured (pre-mask, 16 eps, matched seeds, only `--tap` differing).** At L19 the dial separates decisively:
+dellacherie 1.69 → **9.88** tetrises/ep and della-search 0.25 → **20.56 (82×)**, score +216%. An exact
+identity fell out — **L29+rolling reproduces L19+DAS cell for cell** (same lines, tetrises, top-outs; only the
+level multiplier differs), because `6/2 == 3/1`: **rolling buys exactly one gravity doubling**, which is the
+real-world claim about the technique. But `legalMask` never consults the budget, so the dial changes
+PREFERENCES and not PHYSICS — which is why M57.0's "at the kill screen DAS scores 0" **does not reproduce**
+(DAS at L29 measures 344,550), and why D7 exists. The net does not respond to the dial at all — it gets
+*worse* with rolling — and cannot survive the kill screen (L29/DAS: 112.9 lines, **14/16 top-outs**; 101
+pieces on garbage against della-search's 1,387).
 
 **Gates:** default gravity path bit-identical (parity checksum `765594964`), CW path byte-identical with
 `ActionCount` 40 / `ObservationSize` 854 unchanged, rolling CI-above DAS at L19, pilot `stuck` bail-outs
@@ -3129,9 +3143,27 @@ asserted rather than silent, Block Dude row vertically stable across the shortes
 **G3 needs renegotiating**: the standing 50% TRT target is likely unreachable for a plain net when della-search,
 playing the evaluator's *exact* argmax, only reaches 44% — proposed net ≥ 20% / search ≥ 40%.
 
-**Six open owner decisions** (PRD §8), the two load-bearing ones: **D2** — is the technique dial a client-side
-demo, or a `.pg` legality mask that changes what the evaluator wants (real strength control, but a retrain and
-every `*-state.ckpt` resume file invalidated)? **D3** — accept the G3 renegotiation before spending on it?
+**Decisions (D1–D3 2026-09-16; D7–D13 by interview the same day).** D1 both gravity variants behind a flag ·
+D2 dial into the `.pg` · D3 gate the tier not the number · **D7** tap budget constrains legality **in the
+engine** · **D8** true per-placement reachability, not the `maxTapHeight` proxy · **D9** the sim emits the
+input timeline and **the pilot replays it**, so divergence is zero by construction (absorbs S2 and D5) ·
+**D10** truth at the root, proxy in rollouts *(provisional)* · **D11** instrument latency + root/search
+disagreement, 5% is calibration not a gate, and if latency misses **make `della-search` fit rather than
+dropping it** · **D12** `della-search` becomes the browser default, all five tiers stay selectable ·
+**D13** retrain with randomized tap rate, sequenced AFTER the mask.
+
+**Compiling those decisions surfaced three interferences none of them showed alone.** (1) The root would have
+been internally inconsistent — D8 masks on truth while `evalAfterstate` still gates LINEOUT/DIG on the proxy;
+resolved by computing reach ONCE at the root and feeding both, **one model per altitude rather than one per
+consumer**. (2) D13's randomization needs the net to *know its own hands*, which today it can only infer from
+plane 11 — too weak a signal would make the randomization silently buy nothing, so an explicit tap-rate input
+is added, **ending the no-checkpoint-invalidation property** (transplant via `GrowInput`, M57.5 precedent).
+(3) Every S3 figure is **pre-mask** and stops being reproducible once `--tap` affects legality — labelled,
+because this repo has twice been misled by comparing across exactly such a boundary.
+
+**The concentrated risk:** D8+D9 put a per-placement simulation and a variable-length timeline on the hot
+path, and D12 makes the tier that hits it hardest the default — so the fidelity, latency and default-tier
+risks are now one risk, concentrated in G6.
 
 **Corrections landing in the same PR:** `TETRIS_PRD.md` (5 sites) asserts an `enumeratePlacements()` seam that
 does not exist (enumeration is inlined at 7 `.pg` sites); `TetrisEnv.cs:23` / `TetrisBoard.cs:27` say the

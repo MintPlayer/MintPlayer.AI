@@ -280,6 +280,11 @@ exactly as small as the gravity argument predicts.
 
 ### S3.R — results (16 eps, matched seeds, only `--tap` differing)
 
+> **⚠️ PRE-MASK NUMBERS — not comparable to anything measured after M62.3b.** These were taken while the tap
+> rate affected only *preference* (`evalAfterstate` + observation planes). Once D7 lands and `legalMask`
+> consults the budget, `--tap` changes which placements are legal, and every figure below describes an
+> engine that no longer exists. Re-measure rather than compare.
+
 **L19 — the dial is a genuine strength control, with no retrain:**
 
 | tier | tetrises/ep DAS → Roll | TRT | A-score DAS → Roll |
@@ -350,11 +355,19 @@ search tier ≥ 40%.** Settle this before spending on #2–#4.
 
 ## 5. Milestones
 
-- **M62.0 — Spikes S1–S4.** ⬜ Gate the rest of the arc. S1 may collapse M62.4 to a one-line default change.
-- **M62.1 — CCW rotation (LOCK B).** ⬜ `.pg` sibling fn, C# facade, `rotateCcw()`, Z/X keys, help strings,
-  a second touch button, CCW round-trip tests (4× CCW = identity for J/L/T; no-op for O; equals CW for I/S/Z).
-- **M62.2 — Gravity variants + start-level picker (LOCK A).** ⬜ Post-29 flag with `rowsPerStep`; frontend
-  start-level picker (0 / 9 / 15 / 18 / 19 / 29) wired to the existing `setStartLevel`.
+- **M62.0 — Spikes.** ✅ **S1 + S3 RUN** (`0a0d051`), and both changed the plan: S1 killed the "promote
+  net-search" option (1.3% TRT, *worse* than the plain net), S3 proved the dial is a real strength control
+  but only over *preference*, which is what forced D7. **S2 is absorbed** — D9's replay makes the divergence
+  census moot. **S4 (argmax fidelity) not run**, and is now optional: D12 routes around the net rather than
+  through it.
+- **M62.1 — CCW rotation (LOCK B).** ✅ SHIPPED (`8afc107`). `.pg` sibling fn, C# facade, `rotateCcw()`,
+  Z/X keys, three help strings, 8 new test cases. CW path byte-identical; `ActionCount` 40 and
+  `ObservationSize` 854 unchanged — **though C2 will now widen the observation, so the no-invalidation
+  property ends at M62.4c.** Touch CCW deferred (D4 still open).
+- **M62.2 — Gravity variants + start-level picker (LOCK A).** ✅ SHIPPED (`dc4621d`). `killscreenMode` 0/1/2
+  with the `rowsPerStep` companion, `forceGameOver`, web gravity loops honouring both, start-level picker
+  (0/9/15/18/19/29) wired to the previously-uncalled `setStartLevel`. Authentic table pinned across
+  levels 0–255 and the 18-start line thresholds (130/230) pinned by test.
 - **M62.3 — Technique dial (LOCK C/D/E).** 🟡 **M62.3a SHIPPED** (`02bcb35`): `Technique` + frames table in
   `tetris-das.ts`, three buttons, pilot cadence driven by the dial with DAS paying its 16-frame charge,
   status line and hint carrying the real rates, `--tap`/`--start-level` in the Lab.
@@ -364,11 +377,20 @@ search tier ≥ 40%.** Settle this before spending on #2–#4.
   code**, so only DAS has ever been in effect. Fork (ii) was mostly dead code to wire, not code to write.
   Also corrected: the pilot ran at `PILOT_INPUT_MS = 90` ≈ 11.1 Hz ≈ 5.4 frames — **the "normal" AI was
   already hypertapping**, unlabelled.
-  **M62.3b (mask tightening + retrain) is gated on S3**, not assumed.
-- **M62.4 — Tetris rate.** ⬜ Option #1 always; #2/#3 only if S1/S4 say the plain net is worth fixing.
-- **M62.5 — Block Dude control row.** ⬜ Move `block-dude.html:25-34` above `.bd-stage`; accept the margin and
-  tab-order changes; check the two-`.actions`-siblings split breaks nothing (no `+`/`~` selectors exist).
-- **M62.6 — Doc/code defect corrections** (§7). ⬜
+  **M62.3b — reachability mask + timeline (D7–D11).** ⬜ Next. Factor the inlined enumeration into ONE seam
+  (finally making `TETRIS_PRD.md`'s long-false claim true), have it run a true shift-while-falling simulation
+  honouring `rowsPerStep` and both rotation directions, return legality **and** the input timeline, and feed
+  the root evaluator's reach terms from the same computation (C1). Rollouts keep the proxy. Re-pin the parity
+  checksum; instrument latency + root/search disagreement (D11).
+- **M62.4 — Tetris rate + the default tier.** ⬜ Split in three, in order: **(a)** point the browser default at
+  `della-search` (D12, one line) and add the hint sentence; **(b)** baseline the existing net *under the mask*
+  — free, since the run is needed anyway to show the mask regressed nothing, and it doubles as the
+  pre-training baseline; **(c)** retrain with randomized tap rate plus an explicit tap-rate input (D13 + C2),
+  accepting the observation widening and using `GrowInput` to transplant the shipped net.
+- **M62.5 — Block Dude control row.** ✅ SHIPPED (`8afc107`). Pure DOM move above `.bd-stage`; margin-collapse
+  and tab-order changes accepted deliberately.
+- **M62.6 — Doc/code defect corrections** (§7). ✅ SHIPPED (`8afc107`). Four verified before editing; one
+  (`RewardTetrisBonus`) turned out to be a live inconsistency, not a dead declaration — deferred to M62.4.
 - **M62.7 — Ship.** ⬜ One PR, `ARCHITECTURE.md` + PLAN sync.
 
 ---
@@ -377,14 +399,30 @@ search tier ≥ 40%.** Settle this before spending on #2–#4.
 
 | # | Gate |
 |---|---|
-| **G1** | Default gravity path **bit-identical**: parity checksum `765594964` unchanged, same seed ⇒ same trajectory |
-| **G2** | CW rotation path byte-identical; `ActionCount` 40 and `ObservationSize` 854 unchanged; `wwwroot/models/tetris.dqn.ckpt` still loads |
+| **G1** | ✅ Default gravity path **bit-identical** — 46/46 tests green including the parity checksum |
+| **G2** | 🟡 CW rotation path byte-identical and `ActionCount` 40 — **permanent**. `ObservationSize` 854 holds through M62.3b, then **deliberately breaks at M62.4c** (C2 adds the tap-rate input); the shipped `.ckpt` is transplanted via `GrowInput`, not loaded as-is |
+| **G1b** | **The parity checksum is re-pinned, not abandoned.** M62.3b moves it (the mask changes behaviour); the gate is that both twins agree on the NEW value over a 1000-move seeded episode. A checksum that cannot be reproduced in TS is a failed gate, not a new baseline |
+| **G9** | **Root/search disagreement is reported** in the Lab baselines (D11). First reading is calibration; a value is recorded before any threshold is set |
+| **G10** | **Pilot divergence is zero** — under D9 the pilot replays the engine's timeline, so `stuck` firing is a hard error, not a fallback |
 | **G3** | **(settled by D3)** search tier TRT ≥ 40% — `della-search` **51.4% PASS** · plain net TRT ≥ 20% and ≥ 4 tetrises/ep — **2.7% FAIL**, the target of M62.4 |
-| **G4** | Technique dial measurably changes outcomes: rolling CI-above DAS on protocol A at L19 start |
-| **G5** | Pilot divergence (S2) does not regress; `stuck >= 2` bail-outs are asserted, not silent |
-| **G6** | Browser: ≤ 50 ms/move for whichever tier is default; no long tasks over ≥ 30 s of watching |
+| **G4** | ✅ **PASSED pre-mask** — rolling vs DAS at L19: dellacherie 1.69 → 9.88 tetrises/ep, della-search 0.25 → **20.56 (82×)**, score +216%. **Must be re-measured post-mask** (C3) |
+| **G5** | ⛔ Superseded by **G10** — D9 makes divergence structurally impossible rather than merely bounded |
+| **G6** | Browser: ≤ 50 ms/move for the default tier — now **`della-search`** (D12), which is also the tier D8/D9 make most expensive. **If missed, make della-search fit; do not drop it** (D11) |
 | **G7** | Block Dude: the Prev/Level/Next row does not move vertically when switching between the shortest (19×8) and tallest (29×19) levels |
-| **G8** | `dotnet build` clean; `tsc --noEmit -p tsconfig.app.json` clean; `dotnet test` green (`Category=Slow` for gates) |
+| **G8** | 🟡 `dotnet build` clean; `tsc --noEmit -p tsconfig.app.json` clean; `dotnet test` green — **all three green as of `0a0d051`**, re-checked per milestone |
+
+### The concentrated risk in D7–D13
+
+Worth stating separately because it is not visible in any single gate: **D8 + D9 put a per-placement
+simulation and a variable-length timeline on the hot path, and D12 makes the tier that hits that path
+hardest (`della-search`, ~7K afterstates/move) the browser default.** The fidelity risk and the latency risk
+and the default-tier risk are now *the same risk*. G6 is therefore the gate most likely to fail, and D11
+already fixes the response (make it fit, don't drop it) so that the failure does not silently re-open D12.
+
+Second-order: **D10 is provisional.** If the disagreement metric (G9) comes back high, the fix is truth
+everywhere, which is the one outcome that genuinely forces `della-search` out of the browser — the thing D12
+and the owner's stated preference both depend on. That is the single seam in this design most likely to
+require rework.
 
 ---
 
@@ -420,6 +458,44 @@ Found during the investigation, all currently wrong in the repo:
 | **D1** | Gravity variants | ✅ **Add both behind a flag.** `killscreenMode`: `0 = authentic` (default, bit-identical), `1 = CTM "39 halt"`, `2 = CTWC 2xks` (2 rows/frame from L39). Needs the `rowsPerStep` companion |
 | **D2** | Where the technique dial lives | ✅ **Fork (ii): into the `.pg` as a legality mask + retrain.** The dial becomes a real strength control feeding `scareHeight`/`maxSafeCol9`, not a rendering effect. Accepts the retrain cost and the loss of every `data/tet*train/*-state.ckpt` **resume** file (model checkpoints survive). S3 no longer gates it — it now informs the mask's shape instead |
 | **D3** | The tetris-rate gate | ✅ **Gate the tier, not the number.** G3 becomes: **search tier TRT ≥ 40%** (della-search measured **51.4% — PASS**) and **plain net TRT ≥ 20% + ≥ 4 tetrises/ep** (measured 2.7% — FAIL, and the target of M62.4's training work) |
+
+### D7–D13 — the reachability design (decided 2026-09-16, by interview)
+
+| # | Decision | Resolution |
+|---|---|---|
+| **D7** | Where the tap budget becomes a constraint | **In the engine.** `legalMask` consults it, so training, the Lab, all five tiers and the browser share one rule. Rejected: masking only in the browser director (would leave two different AIs — the benchmarked one and the watched one) |
+| **D8** | What the mask computes | **True per-placement reachability** — simulate the piece shifting while falling against the real stack profile. Rejected: the `maxTapHeight` proxy, which ignores the stack between spawn and target |
+| **D9** | Does the sim emit the input sequence | **Yes — and the pilot replays it.** Divergence becomes zero by construction; `stuck` becomes an assertion rather than a swallowed substitution. Closes G5 and makes S2 moot. Flat `List<i32>` with a stride convention (the engine has no nested lists) |
+| **D10** | Does the search pay for truth too | **Truth at the root, proxy inside rollouts** — beam and expectimax are already approximations, so a cheaper legality model there is consistent with what search is. ⚠️ **PROVISIONAL**, falsified by D11 |
+| **D11** | What overturns D10 | Instrument **latency** and **root/search disagreement**. Overturn if > 50 ms/move or disagreement is judged excessive. **The 5% figure is CALIBRATION on first read, not a gate** — an uncalibrated gate on a new metric would read as failure and cost the search tier. **If latency misses, make `della-search` fit** (timeline only for the chosen action, narrower beam, per-move cache) rather than dropping it |
+| **D12** | Browser default tier | **`della-search`**, with all five tiers still selectable and one factual line in the hint noting the hand-tuned evaluator currently out-tetrises the trained net |
+| **D13** | Retrain | **Yes, with tap rate randomized per episode**, sequenced AFTER the mask — the signal it must learn does not exist until `legalMask` consults the budget, so training now would reproduce the net we already have |
+
+### Interference audit — three conflicts found when compiling D7–D13
+
+Recorded because each was invisible while the decisions were taken one at a time.
+
+1. **The root would have been internally inconsistent (C1).** D8 puts *legality* on truth, but `evalAfterstate`
+   derives `lineout = m5 < 4`, `overLeft` and `overRight` from the **proxy** — so the same root decision would
+   mask on one model and decide *whether to want tetrises at all* on another, firing the LINEOUT/DIG/STANDARD
+   switch at the wrong time. D10 framed this as root-vs-rollout; it is actually inside the root.
+   **Resolved:** compute reach ONCE at the root, feed both the mask and the evaluator's reach terms from it.
+   Rollouts keep the proxy for both. **One model per altitude, not one per consumer.**
+2. **D13's randomization needs the net to know its own hands (C2).** With the rate varying per episode the net
+   must be able to tell which technique is live; today it can only infer this implicitly from plane 11
+   (`rowsAboveTapReachableHeight`). If that signal is too weak it learns one averaged policy and the
+   randomization **silently buys nothing** — indistinguishable from success until the dial fails to move it.
+   **Resolved:** add an explicit tap-rate input. This widens the observation past 854 and **invalidates the
+   "no checkpoint invalidation" property M62.1 enjoyed** — acceptable because D13 already accepts a retrain,
+   and M57.5 precedent (`DuelingQNet.GrowInput`) transplants the old net function-preservingly.
+3. **The S3 table stops being reproducible (C3).** Once `--tap` affects legality rather than only preference,
+   every S3.R figure describes a different engine. They are labelled **pre-mask** below. This repo has twice
+   been misled by comparing across exactly such a boundary (the stale γ=0 diagnosis, the phantom
+   `enumeratePlacements` seam) — the label is the cheap defence.
+
+**Two couplings, no conflict:** the truth sim must honour `rowsPerStep` so 2xks halves *real* reach and not
+only proxy reach; and it must consider **both rotation directions** now that M62.1 shipped CCW — which is what
+**absorbs D5** (the pilot no longer chooses a rotation direction; the simulation does, and the pilot replays).
 
 ### Still open
 
