@@ -471,6 +471,37 @@ public class TetrisEngineTests
         Assert.True(checkedCount > 0, "no reachable placement was exercised");
     }
 
+    [Theory]
+    [InlineData(6, 6)] // DAS
+    [InlineData(3, 3)] // rolling
+    public void ReachSpan_CoversTheWholeBoard_WhenNothingIsMasked(int frames, int charge)
+    {
+        // REGRESSION (M62.4a). The span must be measured over the COLUMNS A PIECE WOULD OCCUPY, not over
+        // action indices. actionCol is the placement's LEFT edge, so a piece of width w can never have
+        // actionCol > W - w: an O tops out at 8 and a horizontal I at 6. A span built from action indices
+        // therefore reported reachHi < 9 for nearly every piece at every level, `lineout` became
+        // permanently true, and EvalReady — the only term rewarding an open well — was switched off.
+        // Measured cost at level 0 with rolling, where the census says nothing is masked at all:
+        // della-search fell from 17.62 to 0.12 tetrises per episode.
+        //
+        // Every other gate stayed green through that bug — parity covers the unenforced path, the
+        // reachability tests count set sizes, latency was fine. Nothing asserted that the AI still WANTS a
+        // well. This is that assertion.
+        foreach (int piece in new[] { 0, 1, 2, 3, 4, 5, 6 })
+        {
+            var t = new PgTetris();
+            t.reset(5, false, 0);
+            t.current = piece;
+            t.next = piece;
+            t.setReachEnforced(true);
+            t.setTapModel(frames, charge);
+            t.refreshReachSpan();
+
+            Assert.Equal(0, t.reachLo);
+            Assert.Equal(TetrisBoard.Width - 1, t.reachHi);
+        }
+    }
+
     [Fact]
     public void Features_PinnedOnAHandDrawnBoard()
     {

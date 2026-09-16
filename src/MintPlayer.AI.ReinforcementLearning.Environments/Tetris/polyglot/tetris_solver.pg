@@ -968,8 +968,15 @@ class PgTetris {
     for a in 0..ActionCount {
       if this.placementReachable(a) {
         let c = this.actionCol(a)
+        // The span is over COLUMNS THE PIECE WOULD OCCUPY, not over action indices. actionCol is the
+        // placement's LEFT edge, so a piece of width w can never have actionCol > W - w — an O maxes out
+        // at 8 and a horizontal I at 6. Comparing that left edge against WellCol made "the well is
+        // unreachable" true for almost every piece at every level, which silently disabled well-building
+        // altogether: MEASURED 17.62 -> 0.12 tetrises/episode at level 0 with rolling hands, where the
+        // census says every placement is reachable and nothing should have changed at all.
+        let right = c + this.rotW[this.current * 4 + this.actionRot(a)] - 1
         if c < lo { lo = c }
-        if c > hi { hi = c }
+        if right > hi { hi = right }
       }
     }
     if hi < 0 {
