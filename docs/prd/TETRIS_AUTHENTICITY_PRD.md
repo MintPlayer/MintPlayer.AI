@@ -506,38 +506,42 @@ changes; `0.0` reproduces the shipped behaviour exactly. Note the baseline alrea
 tetrises/episode** despite declining half the offers — offers are frequent — so the fix must raise *that*,
 not merely the ratio.
 
-## 6.F NEGATIVE RESULT — the instant-kill cannot teach the net while the dense target disagrees
+## 6.F NEGATIVE RESULT — the fine-tune recipe is not recoverable, and the collapse is NOT the instant-kill
 
-Fine-tuned the shipped net (resumed at 195,000 placements, baseline 99,598) with `--mandatory-tetris`.
-**First eval: mean score 6,543, 40 lines, 20/20 top-outs.** A 15× collapse in 15,000 placements. Run
-stopped; nothing promoted.
+Fine-tuned the shipped net (resumed at 195,000 placements, stored baseline 99,598) twice. Both collapsed;
+nothing was promoted, and the shipped `.ckpt` is byte-identical (md5 `ecb3a81b…`) in `wwwroot`, `tet15train`
+and the fine-tune directory.
 
-**Why, and it is structural rather than a tuning problem.** The net is distilled from the Dellacherie
-evaluator through **dense all-action targets weighted 8×** the sampled arm (`--dense-weight 8`). The
-instant-kill changes only the *realized* reward path. So the two supervisions contradict each other on
-exactly the states the rule is about:
+| run | flags | first eval @210k | later |
+|---|---|---|---|
+| A | `--mandatory-tetris`, WTetris 7.047 | **6,543** · 40.0 lines · 0.15 tetrises · 20/20 top-outs · loss 0.1252 | stopped |
+| B | no kill rule, WTetris 20.655 | **6,543** · 40.0 lines · 0.15 tetrises · 20/20 top-outs · loss 0.1252 | 2,801 → 2,323 |
 
-| signal | weight | says about declining a tetris |
-|---|---|---|
-| dense all-action target | **8×** | "fine — here is the evaluator's value for every action" |
-| terminal on decline | 1× | "the episode ends, value 0" |
+> ### ⚠️ A correction, recorded because the wrong explanation was published first.
+> The first write-up attributed run A's collapse to the instant-kill, with a confident mechanism: the dense
+> all-action target outweighs the realized reward 8:1, so a termination rule cannot teach a distilled net.
+> **The control run refutes it.** Run B has no kill rule, a different WTetris, and produces the *identical*
+> eval to the digit. Neither the owner's rule nor the evaluator change caused this.
+>
+> The argument itself may still be sound — a dense target at 8× weight really would dominate a terminal
+> signal — but it is now an untested hypothesis, not a finding, and it is not what happened here.
 
-The dense target outweighs the rule 8:1, so the net learns neither and the value function degrades
-everywhere. **A termination rule cannot teach a distilled net anything its teacher disagrees with.**
+**What actually remains suspect: the reconstructed flags, all of which are mine.** §6.E recovered only what
+the resume state *enforces* — n-step 1, γ 0.995, hidden 256,256. Everything else was guessed, and two
+guesses are strong candidates:
 
-**The consequence for the design.** The way to make the *net* take tetrises is to make the *evaluator*
-prefer cashing — which is what `tetrisPayback` does — because the dense target is computed from the
-evaluator and would then teach it for free. The instant-kill is not wrong, it is simply addressed to the
-wrong layer: it shapes the realized reward, and this net barely learns from the realized reward.
+- **`--explore` defaults to 1.0**, so ε restarts at 1.0 on resume and the run collects random play. A
+  resumed run almost certainly needs a low ε.
+- **`--dense-weight 8`** was taken from a PRD note describing it as a patch for a different problem; the
+  Lab default is 1.
 
-Two ways to keep the owner's rule if it is still wanted:
-1. **Encode it in the dense target too** — give declining actions a floor-low dense label on a clean board,
-   so both supervisions agree. This is the faithful version of the rule.
-2. **Drop it for the net and rely on the evaluator fix**, keeping `MandatoryTetris` for any future
-   training recipe that is not evaluator-distilled.
+**Conclusion: the shipped net's training configuration is still unknown, and fine-tuning it blind degrades
+it.** `invocation.txt` (§6.E) stops this recurring for every future run, but it cannot recover the past one.
+The net-side work (M62.4c) should therefore start from a *measured* recipe — sweep ε and dense-weight on
+short runs against the stored baseline before spending hours — rather than from another reconstruction.
 
-Recommendation: (2) first, because it is already built and costs nothing; (1) only if the evaluator fix
-leaves the net's take-rate short.
+**The owner's instant-kill rule is untested, not refuted.** It ships default-off with its boundary pinned by
+tests, awaiting a training run that is known to work at all.
 
 ## 6.E The shipped net's training recipe, recovered from its own checkpoint
 
