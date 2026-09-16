@@ -506,6 +506,39 @@ changes; `0.0` reproduces the shipped behaviour exactly. Note the baseline alrea
 tetrises/episode** despite declining half the offers — offers are frequent — so the fix must raise *that*,
 not merely the ratio.
 
+## 6.F NEGATIVE RESULT — the instant-kill cannot teach the net while the dense target disagrees
+
+Fine-tuned the shipped net (resumed at 195,000 placements, baseline 99,598) with `--mandatory-tetris`.
+**First eval: mean score 6,543, 40 lines, 20/20 top-outs.** A 15× collapse in 15,000 placements. Run
+stopped; nothing promoted.
+
+**Why, and it is structural rather than a tuning problem.** The net is distilled from the Dellacherie
+evaluator through **dense all-action targets weighted 8×** the sampled arm (`--dense-weight 8`). The
+instant-kill changes only the *realized* reward path. So the two supervisions contradict each other on
+exactly the states the rule is about:
+
+| signal | weight | says about declining a tetris |
+|---|---|---|
+| dense all-action target | **8×** | "fine — here is the evaluator's value for every action" |
+| terminal on decline | 1× | "the episode ends, value 0" |
+
+The dense target outweighs the rule 8:1, so the net learns neither and the value function degrades
+everywhere. **A termination rule cannot teach a distilled net anything its teacher disagrees with.**
+
+**The consequence for the design.** The way to make the *net* take tetrises is to make the *evaluator*
+prefer cashing — which is what `tetrisPayback` does — because the dense target is computed from the
+evaluator and would then teach it for free. The instant-kill is not wrong, it is simply addressed to the
+wrong layer: it shapes the realized reward, and this net barely learns from the realized reward.
+
+Two ways to keep the owner's rule if it is still wanted:
+1. **Encode it in the dense target too** — give declining actions a floor-low dense label on a clean board,
+   so both supervisions agree. This is the faithful version of the rule.
+2. **Drop it for the net and rely on the evaluator fix**, keeping `MandatoryTetris` for any future
+   training recipe that is not evaluator-distilled.
+
+Recommendation: (2) first, because it is already built and costs nothing; (1) only if the evaluator fix
+leaves the net's take-rate short.
+
 ## 6.E The shipped net's training recipe, recovered from its own checkpoint
 
 `TETRIS_TECHNIQUES_PRD.md` lists as a live defect that **"the training CLI args are recorded nowhere in the

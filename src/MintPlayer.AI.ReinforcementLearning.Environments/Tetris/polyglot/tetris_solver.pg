@@ -111,8 +111,8 @@ class PgTetris {
   var reachEnforced: bool = false
   // M62.4: how much of the tetris-ready reward survives DIG mode. 0.0 == the shipped behaviour (none).
   var readyDigScale: f64 = 0.0
-  // M62.4: fraction of the tetris-ready rows a cashed tetris pays back. 0.0 == the shipped behaviour.
-  var tetrisPayback: f64 = 0.0
+  // M62.4: fraction of the tetris-ready rows a cashed tetris pays back. 1.0 (M62.4): cashing returns exactly what it consumes, so a multi-ply search cannot prefer hoarding the well. Measured +45% score, +25% tetrises, top-outs 10/16 -> 3/16.
+  var tetrisPayback: f64 = 1.0
   // Flat (frame, code) pairs from the last simulateReach(capture: true). code 1=L 2=R 3=rotCW 4=rotCCW.
   var reachTimeline: List<i32> = List<i32>()
 

@@ -91,7 +91,11 @@ public sealed partial class TetrisDqnCampaign : DqnScoreCampaign
     // Weights MUST match the .pg consts; TetrisEnvTests pins agreement against the engine's own scores.
     private const float WHoles = -5.582f, WWells = -0.847f, WReady = 3.402f, WCovered = -0.201f;
     private const float WBurn = -3.700f, WBurnDig = -0.650f, WHoleDig = -0.505f, WCol9 = -0.355f;
-    private const float WTetris = 7.047f, WInacc = -0.975f;
+    // M62.4: WTetris is EvalTetris (7.047) PLUS the tetris-ready rows a cashed tetris pays back
+    // (WReady × 4 = 13.608), mirroring `tetrisPayback = 1.0` in tetris_solver.pg. These MUST move together:
+    // the dense target is the evaluator read back out of the observation planes, and plane 9 is exactly
+    // [cleared == 4], so a mismatch here trains the net toward a function its own teacher does not use.
+    private const float WTetris = 7.047f + WReady * 4f, WInacc = -0.975f;
 
     internal static float[] DenseTargetsFromObservation(float[] obs)
     {
