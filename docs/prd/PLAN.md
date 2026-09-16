@@ -3083,7 +3083,7 @@ keepalives are allowed, 60 fps with no long tasks over ≥30 s is the real check
 
 ---
 
-## M62 — Tetris NES authenticity (gravity variants · CCW · technique dial · the tetris rate) + Block Dude layout  *(planned 2026-09-16; branch `m62-tetris-authenticity`; see `TETRIS_AUTHENTICITY_PRD.md`)* 🔵
+## M62 — Tetris NES authenticity (gravity variants · CCW · technique dial · the tetris rate) + Block Dude layout  *(2026-09-16; branch `m62-tetris-authenticity`; see `TETRIS_AUTHENTICITY_PRD.md`)* 🟡 — M62.0–M62.3, M62.4a/b, M62.5 and M62.6 shipped; **M62.4c (net retrain) blocked on an unrecoverable training recipe**; M62.7 ship pending
 
 Planned from a 4-agent investigation into the owner's five asks. Three of the five were **already designed in
 `TETRIS_TECHNIQUES_PRD.md` §4–§5 and never built** (M57.2/M57.3/M57.4/M57.6); this milestone re-scopes them
@@ -3119,13 +3119,55 @@ Researched rates: **DAS 10.02 Hz** (16-frame charge then 6-frame repeat), **hype
 **rolling ~20–30 Hz**, ceiling 60 Hz. M57.0's spike S3 already measured the payoff: **at the kill screen DAS
 scores 0, rolling 37,135.**
 
-**Milestones.** ✅ M62.0 spikes (S1 + S3 run — S1 **killed** the "promote net-search" option at 1.3% TRT,
-*worse* than the plain net; S3 proved the dial is a real strength control; S2 absorbed by D9; S4 now optional) ·
-✅ M62.1 CCW · ✅ M62.2 gravity variants + start-level picker · 🟡 M62.3 dial (**a** shipped, **b** = the
-reachability mask + timeline, next) · ⬜ M62.4 tetris rate, in three parts: **(a)** flip the default to
-`della-search`, **(b)** baseline the existing net *under* the mask (free — needed anyway, and doubles as the
-pre-training baseline), **(c)** retrain with randomized tap rate + explicit tap-rate input ·
-✅ M62.5 Block Dude row · ✅ M62.6 doc corrections · ⬜ M62.7 ship.
+**Milestones.** ✅ M62.0 spikes (S1 **killed** the "promote net-search" option at 1.3% TRT, *worse* than the
+plain net; S3 proved the dial is a real strength control; S2 absorbed by D9) · ✅ M62.1 CCW (bound to **Z or
+Shift** — Ctrl triggers Windows' magnifier) · ✅ M62.2 gravity variants + start-level picker, level
+progression pinned at every CTWC start · ✅ M62.3 dial (**a** wiring, **b** true reachability + input
+timeline + C1) · 🟡 M62.4 tetris rate — **(a)** default tier `della-search` + rolling, reachability live in
+the browser, preview-orientation fix ✅; **(b)** the decline diagnosis and the `tetrisPayback` fix ✅;
+**(c)** the net retrain ⬜ **blocked, see below** · ✅ M62.5 Block Dude row (+ **Enter** advances after a
+solve) · ✅ M62.6 doc corrections · ⬜ M62.7 ship.
+
+**M62.3b — reachability became physical, and the kill-screen claim finally reproduced.** `legalMask` now
+consults the tap budget (opt-in `setReachEnforced`, so the default path stays bit-identical and needed no
+checksum re-pin), the engine emits the **input timeline** and the browser pilot REPLAYS it — making
+AI-chose-vs-player-saw divergence impossible by construction rather than merely bounded. At L29 enforced:
+**DAS 1,200 vs rolling 275,550**, which is M57.0's "DAS scores 0" reproduced for the first time. Latency for
+the default tier is fine: `della-search` p50 ≈ 11 ms, p99 ≈ 24 ms.
+
+**Three bugs found by measurement, two of them self-inflicted this milestone.**
+*(1)* The DAS model charged a **cold 16-frame** auto-shift on every piece; wall-charging means a competent
+player spawns already charged (PRD §4.1's own table), and the cold model cut Dellacherie 196 → 8 lines at
+L19. *(2)* The reach span was measured over `actionCol` — the piece's **left edge** — so `reachHi < WellCol`
+was true for nearly every piece at every level, `lineout` was permanently true, and `EvalReady` (the only
+term valuing an open well) was permanently off: **17.62 → 0.12 tetrises/ep at level 0**, where nothing should
+have changed. The owner caught this by watching the game; no gate did, because none asserted *"the AI still
+wants a well"*. *(3)* Running out of *reachable* placements returned −1 and the caller stopped the episode
+**without recording a top-out**.
+
+**M62.4b — why the SEARCH declines tetrises, and the fix.** Built `--decline-census`: 1-ply Dellacherie takes
+**97.8%** of available tetrises, 2-ply della-search only **48.0%**, and **99.5% of its declines are on CLEAN
+boards** — refuting the "a hole blinds it" theory. `tetrisReady` is a **state** bonus, so a multi-ply search
+re-counts the same four rows at every ply it declines to cash them (~27) while cashing banks
+`eroded + EvalTetris` once (~23). **The evaluator paid rent on a well you never cash, and the search found
+the exploit.** `tetrisPayback = 1.0` returns the consumed rows on cashing; `TetrisDqnCampaign.WTetris` moves
+with it (written as `7.047f + WReady * 4f`) because the dense target *is* the evaluator read back out of the
+observation planes. **Measured on della-search: score 205,632 → 298,625 (+45%), lines 134 → 175, tetrises
+17.25 → 21.56, top-outs 10/16 → 3/16** — more tetrises *and* better survival. 1-ply is unchanged, as it must
+be. Owner-confirmed in the browser.
+
+**M62.4c is BLOCKED, and the blocker is a repo defect rather than a training problem.** Two fine-tunes of the
+shipped net collapsed it (99,598 → 6,543 → 2,323); nothing was promoted and the checkpoint is byte-identical
+(md5 `ecb3a81b…`) everywhere. **The published explanation — that the owner's `--mandatory-tetris` rule fought
+the 8×-weighted dense target — was RETRACTED: the control run without the rule produced the identical eval to
+the digit.** The real problem is that **the shipped net's training recipe is unrecoverable**: the resume state
+enforces only n-step **1** (the PRD and the Lab default both say 3), γ 0.995 and hidden 256,256, and
+`--game tetris --dense` — the intuitive reading of the documented recipe — *throws* (`DenseTargets requires
+Gamma == 0`). Everything else was guessed; `--explore` defaulting to **1.0** (ε restarts at full random on
+resume) and a guessed `--dense-weight 8` are the prime suspects. **Fixed going forward:** `LabHost` appends
+every invocation to `<dataDir>/invocation.txt`. M62.4c should **sweep ε and dense-weight on short runs against
+the stored baseline** before spending hours. The owner's instant-kill rule is therefore **untested, not
+refuted** — it ships default-off with its boundary pinned by tests.
 
 **Measured (pre-mask, 16 eps, matched seeds, only `--tap` differing).** At L19 the dial separates decisively:
 dellacherie 1.69 → **9.88** tetrises/ep and della-search 0.25 → **20.56 (82×)**, score +216%. An exact
@@ -3137,11 +3179,21 @@ PREFERENCES and not PHYSICS — which is why M57.0's "at the kill screen DAS sco
 *worse* with rolling — and cannot survive the kill screen (L29/DAS: 112.9 lines, **14/16 top-outs**; 101
 pieces on garbage against della-search's 1,387).
 
-**Gates:** default gravity path bit-identical (parity checksum `765594964`), CW path byte-identical with
-`ActionCount` 40 / `ObservationSize` 854 unchanged, rolling CI-above DAS at L19, pilot `stuck` bail-outs
-asserted rather than silent, Block Dude row vertically stable across the shortest and tallest levels.
-**G3 needs renegotiating**: the standing 50% TRT target is likely unreachable for a plain net when della-search,
-playing the evaluator's *exact* argmax, only reaches 44% — proposed net ≥ 20% / search ≥ 40%.
+**Gates.** ✅ default gravity path bit-identical (parity checksum unchanged — it hashes the RULES, not the
+evaluator, so neither reachability nor the payback change needed a re-pin) · ✅ CW path byte-identical,
+`ActionCount` 40 and `ObservationSize` 854 unchanged (C2 would break the latter deliberately, at M62.4c) ·
+✅ rolling CI-above DAS at L19 · ✅ pilot divergence structurally impossible (D9) rather than merely bounded,
+0 console errors over ~130 placements live · ✅ `della-search` inside the 50 ms budget · ✅ 63/63 tests,
+clean build and `tsc --noEmit` · ⬜ Block Dude row stability and the L/J preview verified by eye (code +
+typecheck only — five sampled previews never drew either affected piece).
+
+**G3 settled by D3** — gate the tier, not the number: search tier ≥ 40% TRT (measured **51.4%**, PASS), plain
+net ≥ 20% + ≥ 4 tetrises/ep (measured 2.7%, FAIL, and the target of the blocked M62.4c).
+
+**Still open:** M62.4c (net retrain, blocked on the recipe sweep), M62.7 (ship), D4 (CCW on touch — second
+button vs two-zone tap), D6 (SRS mode, out of scope). The browser keeps reachability enforced by default,
+which is more authentic (real spawn-blocking, real hand limits) but visibly harder — an owner call that can
+be revisited from `setReachEnforced`.
 
 **Decisions (D1–D3 2026-09-16; D7–D13 by interview the same day).** D1 both gravity variants behind a flag ·
 D2 dial into the `.pg` · D3 gate the tier not the number · **D7** tap budget constrains legality **in the
