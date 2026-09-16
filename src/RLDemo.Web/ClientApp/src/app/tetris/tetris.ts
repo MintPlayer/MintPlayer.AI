@@ -39,11 +39,11 @@ export class Tetris implements AfterViewInit {
 
   /** 'human' = play locally; 'watch' = a selectable tier plays — everything runs in the browser. */
   protected readonly mode = signal<'human' | 'watch'>('human');
-  // M62.4a (owner decision, supersedes D12's della-search): the hand-tuned Dellacherie evaluator is the
-  // default player. It builds tetrises — the trained net measurably does not (18.1% vs 2.7% of lines
-  // cleared as tetrises) — and it decides in ~0.06 ms, so the board never stalls. Every tier stays one
-  // click away.
-  protected readonly tier = signal<Tier>('dellacherie');
+  // M62.4a (owner decision D12): Dellacherie + search is the default player. It is the only tier that
+  // reliably builds tetrises — about 51% of the lines it clears come from them, against 18% for plain
+  // Dellacherie and under 3% for the trained net — and it decides in ~11 ms (p99 24 ms), comfortably
+  // inside the 50 ms budget. Every tier stays one click away.
+  protected readonly tier = signal<Tier>('della-search');
   /** Rising-garbage mode: a full bottom row with one random gap every 10 placements. */
   protected readonly garbage = signal(false);
 
