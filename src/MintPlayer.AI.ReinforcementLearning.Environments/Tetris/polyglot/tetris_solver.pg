@@ -1020,6 +1020,16 @@ class PgTetris {
     // C1: same substitution for the accessibility penalties. Under enforcement a wall is "inaccessible"
     // when it is literally outside the reachable span, which is a fact rather than a height estimate; the
     // penalty then scales with how tall that unreachable wall is, exactly as before.
+    // Both TRIGGER and MAGNITUDE from truth under enforcement: an unreachable wall is priced by how tall
+    // it is, because all of it is stack we cannot service — not merely the part exceeding a height
+    // estimate. This was tested against a proxy-scale magnitude (trigger from truth, size from the old
+    // formula) on the suspicion that EvalInaccessible's CEM tuning would not survive the larger numbers.
+    // MEASURED at L19, 12 eps — and it refuted that suspicion:
+    //   della-search rolling: truth 305,508 ± 40,617  vs  proxy-scale 197,483 ± 22,346  (CI-SEPARATED)
+    //   della-search DAS:     truth 114,683 ± 59,257  vs  proxy-scale 165,206 ± 41,285  (OVERLAPPING)
+    // The truth magnitude wins where the CIs separate and ties where they do not, so the apparent DAS
+    // "regression" that motivated the change is not distinguishable at this sample size. A CEM re-tune on
+    // this scale (§4 option 4) is the principled follow-up, not a prerequisite.
     let leftBlind = if this.reachEnforced { this.reachLo > 0 } else { this.colHeight(0) - m5 > 0 }
     if leftBlind {
       let overLeft = if this.reachEnforced { this.colHeight(0) } else { this.colHeight(0) - m5 }
