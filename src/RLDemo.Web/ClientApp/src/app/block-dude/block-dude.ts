@@ -146,6 +146,11 @@ export class BlockDude {
     this.renderer?.reset(this.snapshot());
   }
 
+  /** Advertises the Enter shortcut on the win message — but only while there IS a next level. */
+  private nextLevelHint(): string {
+    return this.levelIndex() < this.levels().length - 1 ? ' Press Enter for the next level.' : '';
+  }
+
   protected changeLevel(delta: number): void {
     const next = this.levelIndex() + delta;
     if (next < 0 || next >= this.levels().length) return;
@@ -225,6 +230,20 @@ export class BlockDude {
    */
   protected onKeyDown(event: KeyboardEvent): void {
     if (isTypingTarget(event.target)) return;
+
+    // Enter advances to the next level ONCE THIS ONE IS SOLVED, and does nothing at all otherwise —
+    // including not counting as the "any deliberate key stops the AI" gesture below, so a stray Enter
+    // mid-solve neither interrupts the AI nor moves you off the level.
+    // The button check matters: a focused button (you just clicked "Next →") receives Enter as a click of
+    // its own, so handling it here as well would advance two levels at once.
+    if (event.key === 'Enter') {
+      const onButton = (event.target as HTMLElement | null)?.tagName === 'BUTTON';
+      if (this.won() && !onButton && this.levelIndex() < this.levels().length - 1) {
+        event.preventDefault();
+        this.changeLevel(1);
+      }
+      return;
+    }
 
     // Any deliberate input takes the board back. Silently ignoring keys while the AI plays would read as the
     // page being broken, and stopping is what someone reaching for the arrows actually wants.
@@ -336,11 +355,11 @@ export class BlockDude {
       this.won.set(true);
       if (this.aiPlaying()) {
         this.stopAi();
-        this.status.set(`The AI solved ${this.level()?.name ?? 'it'} in ${this.moves()} moves.`);
+        this.status.set(`The AI solved ${this.level()?.name ?? 'it'} in ${this.moves()} moves.${this.nextLevelHint()}`);
         return;
       }
       this.recordSolution();
-      this.status.set(`Level complete in ${this.moves()} move${this.moves() === 1 ? '' : 's'} — solution recorded.`);
+      this.status.set(`Level complete in ${this.moves()} move${this.moves() === 1 ? '' : 's'} — solution recorded.${this.nextLevelHint()}`);
     } else if (next.carrying !== before.carrying) {
       this.status.set(next.carrying ? 'Carrying a block.' : 'Block placed.');
     } else {
