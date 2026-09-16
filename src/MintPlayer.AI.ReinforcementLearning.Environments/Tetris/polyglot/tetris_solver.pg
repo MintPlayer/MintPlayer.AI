@@ -59,7 +59,12 @@ class PgTetris {
   // Training-reward bonus for a 4-line clear, in lines units (owner decision 2026-08-26: the AI should
   // build for and clear tetrises). reward = lines + (lines==4 ? bonus : 0) — a tetris pays 12 vs 4 for
   // four singles. Superlinear SCORE as the raw reward was rejected (the stack-and-camp trap, PRD §3.5);
-  // netSearchAction's rollout reward must use the same units as training (TetrisEnv mirrors this const).
+  // M62.6 — ACCURACY NOTE: this const is the documented SOURCE for the C# mirror
+  // (TetrisBoard.TetrisRewardBonus), which is where the bonus is actually applied, in TetrisEnv's reward.
+  // It is NOT read anywhere inside this .pg. In particular netSearchAction's rollout scores afterstates
+  // through evalAfterstate and never adds this bonus, so the search tier's rollout reward is NOT in the
+  // same units as the training reward. That is a real (small) inconsistency, left unchanged here because
+  // fixing it moves the parity checksum and needs its own measurement — see TETRIS_AUTHENTICITY_PRD §7.
   const RewardTetrisBonus: i32 = 8
 
   // ── M57.1 tetris-aware evaluator (PRD TETRIS_TECHNIQUES §3.1, spike results §6.R) ──────────────────
@@ -577,6 +582,24 @@ class PgTetris {
     return true
   }
 
+  // M62.1: the NES B-button (counter-clockwise) rotation. Identical pivot-in-place NRS rule as microRotate
+  // — same offsets, same no-kick semantics — walking the cycle backwards instead of forwards. Only J, L and
+  // T are actually affected: I/S/Z have rotCount 2 (so CCW == CW) and O has rotCount 1 (a no-op). The CW
+  // path above is deliberately left untouched so the M54 parity checksum still holds.
+  fn microRotateCcw(): bool {
+    if !this.activeLive || this.gameOver { return false }
+    let cur = this.current * 4 + this.activeRot
+    let nr = (this.activeRot + this.rotCount[this.current] - 1) % this.rotCount[this.current]
+    let nxt = this.current * 4 + nr
+    let nx = this.activeX - this.rotOffX[cur] + this.rotOffX[nxt]
+    let ny = this.activeY - this.rotOffY[cur] + this.rotOffY[nxt]
+    if !this.fitsAt(this.current, nr, nx, ny) { return false }
+    this.activeRot = nr
+    this.activeX = nx
+    this.activeY = ny
+    return true
+  }
+
   // One gravity/soft-drop step: true if the piece LOCKED (lastLinesCleared holds the clear count).
   fn microDropStep(): bool {
     if !this.activeLive || this.gameOver { return false }
@@ -816,9 +839,12 @@ class PgTetris {
     return best
   }
 
-  // ── Observation (PRD §3.4) — 454 floats: 200 board cells + 7 current + 7 next one-hots + six
-  // 40-wide per-action planes (landing/20, eroded/8, ΔrowT/20, ΔcolT/20, Δholes/10, Δwells/20;
-  // illegal action ⇒ 0 in every plane). Plane-major like the other solvers.
+  // ── Observation (PRD §3.4) — 854 floats since M57.5: 200 board cells + 7 current + 7 next one-hots +
+  // SIXTEEN 40-wide per-action planes. Planes 0-5 are the original M54 basis (landing/20, eroded/8,
+  // ΔrowT/20, ΔcolT/20, Δholes/10, Δwells/20); planes 6-15 are the M57 tetris-aware terms, pre-gated —
+  // see the per-plane comments below and the weights at :78-89. Illegal action ⇒ 0 in every plane.
+  // Plane-major like the other solvers. (The 454-float figure below at :858 is the HISTORICAL M54 width,
+  // deliberately preserved there to explain the back-compatible layout — it is not the current size.)
   fn buildObservation(): List<f64> => this.buildObservationFor(this.current, this.next)
 
   fn buildObservationFor(curPiece: i32, nextPiece: i32): List<f64> {

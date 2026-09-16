@@ -155,6 +155,70 @@ public class TetrisEngineTests
         Assert.Equal(macro.PiecesPlaced, micro.PiecesPlaced);
     }
 
+    [Theory]
+    // piece order I O T S Z L J; rotCount 2 1 4 2 2 4 4.
+    [InlineData(2)] // T
+    [InlineData(5)] // L
+    [InlineData(6)] // J
+    public void MicroRotateCcw_FourTimesIsIdentity_ForTheFourStatePieces(int piece)
+    {
+        // M62.1: CCW walks the same NRS cycle backwards, so a full loop must restore rot, x and y exactly.
+        var t = new TetrisBoard();
+        t.Reset(7);
+        t.LoadPieces(current: piece, next: 1);
+        Assert.True(t.MicroSpawn());
+        int rot0 = t.ActiveRot, x0 = t.ActiveX;
+
+        for (int i = 0; i < 4; i++) Assert.True(t.MicroRotateCcw());
+
+        Assert.Equal(rot0, t.ActiveRot);
+        Assert.Equal(x0, t.ActiveX);
+    }
+
+    [Fact]
+    public void MicroRotateCcw_IsTheInverseOfMicroRotate()
+    {
+        // CW then CCW returns to the spawn state — the property that makes Z a genuine "undo" of X.
+        foreach (int piece in new[] { 0, 1, 2, 3, 4, 5, 6 })
+        {
+            var t = new TetrisBoard();
+            t.Reset(7);
+            t.LoadPieces(current: piece, next: 1);
+            Assert.True(t.MicroSpawn());
+            int rot0 = t.ActiveRot, x0 = t.ActiveX;
+
+            Assert.True(t.MicroRotate());
+            Assert.True(t.MicroRotateCcw());
+
+            Assert.Equal(rot0, t.ActiveRot);
+            Assert.Equal(x0, t.ActiveX);
+        }
+    }
+
+    [Theory]
+    [InlineData(0)] // I — rotCount 2
+    [InlineData(1)] // O — rotCount 1, a no-op
+    [InlineData(3)] // S — rotCount 2
+    [InlineData(4)] // Z — rotCount 2
+    public void MicroRotateCcw_MatchesMicroRotate_WhenTheCycleIsTwoOrOne(int piece)
+    {
+        // With rotCount ≤ 2 the cycle is its own inverse, so CCW must land on exactly the same state as CW.
+        var cw = new TetrisBoard();
+        cw.Reset(7);
+        cw.LoadPieces(current: piece, next: 1);
+        Assert.True(cw.MicroSpawn());
+        Assert.True(cw.MicroRotate());
+
+        var ccw = new TetrisBoard();
+        ccw.Reset(7);
+        ccw.LoadPieces(current: piece, next: 1);
+        Assert.True(ccw.MicroSpawn());
+        Assert.True(ccw.MicroRotateCcw());
+
+        Assert.Equal(cw.ActiveRot, ccw.ActiveRot);
+        Assert.Equal(cw.ActiveX, ccw.ActiveX);
+    }
+
     [Fact]
     public void Features_PinnedOnAHandDrawnBoard()
     {

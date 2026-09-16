@@ -84,6 +84,8 @@ export class TetrisGame {
   moveLeft(): void { if (!this.gameOver) this.board.microShift(-1); }
   moveRight(): void { if (!this.gameOver) this.board.microShift(1); }
   rotate(): void { if (!this.gameOver) this.board.microRotate(); }
+  // M62.1: the B button. On NES, A rotates clockwise and B counter-clockwise.
+  rotateCcw(): void { if (!this.gameOver) this.board.microRotateCcw(); }
 
   hardDrop(): void {
     if (this.gameOver) return;

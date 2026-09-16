@@ -12,7 +12,7 @@ import { ScreenWakeLock } from '../screen-wake-lock';
  * server inference). The rising-garbage mode (a gapped bottom row every 10 placements — TETRIS_PRD.md §1)
  * is both a playable challenge and the AI's primary evaluation protocol.
  *
- * Input: keyboard (←/→ move, ↑/X rotate, ↓ soft drop, Space hard drop) + unified Pointer Events for touch
+ * Input: keyboard (←/→ move, ↑/X rotate CW, Z rotate CCW, ↓ soft drop, Space hard drop) + unified Pointer Events for touch
  * (horizontal drag moves cell-by-cell, tap rotates, downward swipe hard-drops).
  */
 @Component({
@@ -160,7 +160,7 @@ export class Tetris implements AfterViewInit {
 
   private statusLine(): string {
     if (this.mode() === 'human')
-      return this.garbage() ? 'rising garbage: a gapped row every 10 pieces' : '←/→ move · ↑ rotate · space drop';
+      return this.garbage() ? 'rising garbage: a gapped row every 10 pieces' : '←/→ move · ↑/X rotate · Z rotate back · space drop';
     const d = this.director;
     if (!d) return '';
     const tier = (d.tier === 'net' || d.tier === 'net-search') && d.netStatus !== 'ready'
@@ -206,7 +206,9 @@ export class Tetris implements AfterViewInit {
     switch (event.key) {
       case 'ArrowLeft': case 'a': this.game.input.press(-1); break;
       case 'ArrowRight': case 'd': this.game.input.press(1); break;
-      case 'ArrowUp': case 'x': case 'w': this.game.rotate(); break; // one rotation per press (NES)
+      // One rotation per press (NES). X = the A button = clockwise, Z = the B button = counter-clockwise.
+      case 'ArrowUp': case 'x': case 'w': this.game.rotate(); break;
+      case 'z': case 'Control': this.game.rotateCcw(); break;
       case 'ArrowDown': case 's': this.game.input.pressDown(); break;
       case ' ': this.game.hardDrop(); break;
       default: return;

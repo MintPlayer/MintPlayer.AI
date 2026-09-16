@@ -24,7 +24,7 @@ public sealed class TetrisBoard
     /// Must equal <c>PgTetris.ObsPlanes</c>; TetrisEnvTests pins the observation length.</summary>
     public const int ObservationPlanes = 16;
 
-    // 814: 200 board cells + 7 current + 7 next one-hots + fifteen 40-wide per-action feature planes
+    // 854: 200 board cells + 7 current + 7 next one-hots + sixteen 40-wide per-action feature planes
     // (M57.5 — TETRIS_TECHNIQUES_PRD §6.S). Planes are ABSOLUTE afterstate quantities, not deltas, so the
     // dense target reconstructs the evaluator exactly rather than up to a per-state constant.
     public const int ObservationSize = Width * Height + 2 * PieceCount + ObservationPlanes * ActionCount;
@@ -98,6 +98,9 @@ public sealed class TetrisBoard
 
     public bool MicroShift(int dx) => _core.microShift(dx);
     public bool MicroRotate() => _core.microRotate();
+
+    /// <summary>The NES B-button (counter-clockwise) rotation. No-op for O, identical to CW for I/S/Z.</summary>
+    public bool MicroRotateCcw() => _core.microRotateCcw();
 
     /// <summary>One gravity/soft-drop step; true if the piece locked.</summary>
     public bool MicroDropStep() => _core.microDropStep();

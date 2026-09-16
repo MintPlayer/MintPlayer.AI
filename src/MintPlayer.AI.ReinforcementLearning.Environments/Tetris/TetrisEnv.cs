@@ -20,7 +20,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.Tetris;
 /// </summary>
 public sealed class TetrisEnv : IEnvironment<float[], int>, IActionMaskProvider, IStatefulEnvironment
 {
-    public const int ObservationSize = TetrisBoard.ObservationSize; // 814 since M57.5
+    public const int ObservationSize = TetrisBoard.ObservationSize; // 854 since M57.5
     public const int ActionCount = TetrisBoard.ActionCount;         // 40
     /// <summary>Divisor on the realized reward. Kept at 1 (the M54 value).
     /// M57.5 tried 20, on the theory that a realized reward of up to 12 was swamping the CENTRED dense

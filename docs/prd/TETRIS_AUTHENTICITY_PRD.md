@@ -311,7 +311,14 @@ Found during the investigation, all currently wrong in the repo:
 2. `TetrisEnv.cs:23` and `TetrisBoard.cs:27` say the observation is **814**; it is **854**.
 3. `.pg:819` comment still says 454 / six planes.
 4. `RewardTetrisBonus` (`.pg:63`) is declared and never read in the `.pg`; only the C# copy
-   (`TetrisBoard.cs:44`) is live, via `TetrisEnv.cs:166`. Either wire it or delete the dead declaration.
+   (`TetrisBoard.cs:44`) is live, via `TetrisEnv.cs:166`. **This is more than a dead declaration.** Its own
+   comment asserted that *"netSearchAction's rollout reward must use the same units as training"* — but
+   `netSearchAction` scores afterstates through `evalAfterstate` and never adds the bonus, so **the search
+   tier's rollout reward is not in training units**: a 4-line clear is worth 4 to the rollout and 12 to the
+   learner. M62.6 corrects the comment to state this truthfully rather than silently changing rollout
+   semantics, because fixing it moves the parity checksum and needs its own before/after measurement.
+   **Deferred to M62.4**, where the search tier is already under measurement — a plausible (untested)
+   contributor to the search tier under-valuing tetrises.
 5. `TETRIS_TECHNIQUES_PRD.md` §0's headline diagnosis (γ=0, `−20·Δwells`, tetris < 4 singles) is **stale** and
    actively misleading — it was fixed by M57.1/M57.5. Mark it superseded, pointing at §1.2 here.
 
