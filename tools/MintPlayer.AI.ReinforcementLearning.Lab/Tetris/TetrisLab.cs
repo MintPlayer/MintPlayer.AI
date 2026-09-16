@@ -87,7 +87,7 @@ internal static class TetrisLab
         // placement would clear 4 rows, and whether the policy took one.
         if (a.Has("--decline-census"))
         {
-            RunDeclineCensus(a.Int("--decline-census", 12), pieceBudget, a.Int("--tap", 0), a.Has("--reach"), a.Dbl("--ready-dig", 0));
+            RunDeclineCensus(a.Int("--decline-census", 12), pieceBudget, a.Int("--tap", 0), a.Has("--reach"), a.Dbl("--ready-dig", 0), a.Dbl("--payback", 0));
             return;
         }
 
@@ -100,7 +100,7 @@ internal static class TetrisLab
             // from ~L19 (2 frames/row) upward, which is exactly where real players change technique.
             // --reach turns on M62.3b reachability enforcement (opt-in, PRD D7) so the mask's effect is a
             // measurable delta against the same command without it.
-            RunBaselines(baselines, pieceBudget, seed, netPath, a.Int("--tap", 0), a.Int("--start-level", 0), a.Has("--reach"));
+            RunBaselines(baselines, pieceBudget, seed, netPath, a.Int("--tap", 0), a.Int("--start-level", 0), a.Has("--reach"), a.Dbl("--payback", 0));
             return;
         }
 
@@ -151,7 +151,7 @@ internal static class TetrisLab
     /// when it declined — what it did instead. Measures the owner's observation directly instead of
     /// reasoning about the evaluator's arithmetic.
     /// </summary>
-    private static void RunDeclineCensus(int episodes, int pieceBudget, int tapRate, bool reach, double readyDig)
+    private static void RunDeclineCensus(int episodes, int pieceBudget, int tapRate, bool reach, double readyDig, double payback)
     {
         Console.WriteLine($"Tetris tetris-decline census: {episodes} episodes, seeds 5000+e" +
                           (tapRate > 0 ? $", tap {tapRate}" : "") + (reach ? ", reachability ENFORCED" : ""));
@@ -177,6 +177,7 @@ internal static class TetrisLab
                 if (tapRate > 0) b.SetTapModel(tapRate, tapRate);
                 if (reach) b.SetReachEnforced(true);
                 if (readyDig > 0) b.SetReadyDigScale(readyDig);
+                if (payback > 0) b.SetTetrisPayback(payback);
 
                 for (int step = 0; step < pieceBudget && !b.GameOver; step++)
                 {
@@ -233,7 +234,7 @@ internal static class TetrisLab
     /// M54.3 gates: net survival ≥ 100 pieces, ≥ 4× random, CI-separated; gap-share vs Dellacherie ≥ 25%;
     /// protocol A net ≥ 50 lines. M54.4 gate: search > plain, CI-separated, ≥ Dellacherie on B.
     /// </summary>
-    private static void RunBaselines(int episodes, int pieceBudget, ulong seed, string netPath, int tapRate = 0, int startLevel = 0, bool reach = false)
+    private static void RunBaselines(int episodes, int pieceBudget, ulong seed, string netPath, int tapRate = 0, int startLevel = 0, bool reach = false, double payback = 0)
     {
         Console.WriteLine($"Tetris baselines: {episodes} episodes (eval seeds 5000+e), protocol A = {pieceBudget}-piece lines, protocol B = garbage/10 survival");
         if (tapRate > 0)
@@ -288,12 +289,12 @@ internal static class TetrisLab
         Console.WriteLine("Protocol A — uniform pieces, no garbage, capped: NES score (lines · tetrises annotated):");
         var linesA = new List<(string Name, double Mean, double Ci)>();
         foreach (var (name, act, eps, _) in policies)
-            linesA.Add(RunProtocol(name, eps, act, garbageEvery: 0, pieceCap: pieceBudget, metricScore: true, tapRate: tapRate, startLevel: startLevel, reach: reach));
+            linesA.Add(RunProtocol(name, eps, act, garbageEvery: 0, pieceCap: pieceBudget, metricScore: true, tapRate: tapRate, startLevel: startLevel, reach: reach, payback: payback));
 
         Console.WriteLine("Protocol B — garbage every 10, survival (pieces placed):");
         var survB = new List<(string Name, double Mean, double Ci)>();
         foreach (var (name, act, eps, capB) in policies)
-            survB.Add(RunProtocol(name, eps, act, garbageEvery: 10, pieceCap: capB, metricScore: false, tapRate: tapRate, startLevel: startLevel, reach: reach));
+            survB.Add(RunProtocol(name, eps, act, garbageEvery: 10, pieceCap: capB, metricScore: false, tapRate: tapRate, startLevel: startLevel, reach: reach, payback: payback));
 
         var randomB = survB[0];
         var dellaB = survB[1];
@@ -322,7 +323,7 @@ internal static class TetrisLab
     }
 
     private static (string, double, double) RunProtocol(string name, int episodes,
-        Func<TetrisBoard, int, int> policy, int garbageEvery, int pieceCap, bool metricScore, int tapRate = 0, int startLevel = 0, bool reach = false)
+        Func<TetrisBoard, int, int> policy, int garbageEvery, int pieceCap, bool metricScore, int tapRate = 0, int startLevel = 0, bool reach = false, double payback = 0)
     {
         double sum = 0, sumSq = 0, lines = 0, tetrises = 0;
         int topOuts = 0;
@@ -340,6 +341,7 @@ internal static class TetrisLab
             if (tapRate > 0) b.SetTapModel(tapRate, tapRate);
             if (startLevel > 0) b.SetStartLevel(startLevel);
             if (reach) b.SetReachEnforced(true);
+            if (payback > 0) b.SetTetrisPayback(payback);
             for (int step = 0; step < pieceCap && !b.GameOver; step++)
             {
                 // G6 is the gate most at risk once reachability runs at the root, so time the DECISION

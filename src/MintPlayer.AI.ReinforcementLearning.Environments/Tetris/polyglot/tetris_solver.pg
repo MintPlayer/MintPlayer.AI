@@ -111,6 +111,8 @@ class PgTetris {
   var reachEnforced: bool = false
   // M62.4: how much of the tetris-ready reward survives DIG mode. 0.0 == the shipped behaviour (none).
   var readyDigScale: f64 = 0.0
+  // M62.4: fraction of the tetris-ready rows a cashed tetris pays back. 0.0 == the shipped behaviour.
+  var tetrisPayback: f64 = 0.0
   // Flat (frame, code) pairs from the last simulateReach(capture: true). code 1=L 2=R 3=rotCW 4=rotCCW.
   var reachTimeline: List<i32> = List<i32>()
 
@@ -858,6 +860,10 @@ class PgTetris {
     this.readyDigScale = scale
   }
 
+  fn setTetrisPayback(scale: f64) {
+    this.tetrisPayback = scale
+  }
+
   // ── M62.3b: true per-placement reachability (PRD D8) ────────────────────────────────────────────────
   // Can the hands ACTUALLY get the piece to (targetRot, targetX) before gravity locks it? Simulates the
   // piece falling while the player rotates and shifts on the technique's cadence, against the REAL stack
@@ -1060,6 +1066,14 @@ class PgTetris {
     if dig { s = s + EvalHoleDig * holeCount }
     s = s + EvalCovered * this.coveredWell()
     s = s + EvalTetris * (if cleared == 4 { 1 } else { 0 })
+    // M62.4 — CASHING A TETRIS MUST NOT LOOK LIKE A LOSS. tetrisReady is a STATE bonus (EvalReady per
+    // ready row), so a multi-ply search counts the four rows again at every ply it declines to cash them,
+    // while taking the tetris banks eroded + EvalTetris ONCE and leaves a board worth zero. Over two plies
+    // that makes declining worth about 27 against taking's 23, which is exactly what the census measured:
+    // 1-ply Dellacherie takes 97.8% of available tetrises, 2-ply della-search only 48.0%, and 99.5% of its
+    // declines are on CLEAN boards (so this is not the DIG gate). Paying the consumed rows back makes the
+    // two horizons agree. Scale 0.0 reproduces the shipped behaviour exactly.
+    if cleared == 4 { s = s + EvalReady * this.tetrisPayback * 4.0 }
     let col9 = this.colHeight(WellCol - 1) - EvalMaxSafeCol9
     if col9 > 0 { s = s + EvalCol9 * col9 }
     // C1: same substitution for the accessibility penalties. Under enforcement a wall is "inaccessible"

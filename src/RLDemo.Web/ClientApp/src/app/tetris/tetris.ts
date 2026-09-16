@@ -13,7 +13,7 @@ import { ScreenWakeLock } from '../screen-wake-lock';
  * server inference). The rising-garbage mode (a gapped bottom row every 10 placements — TETRIS_PRD.md §1)
  * is both a playable challenge and the AI's primary evaluation protocol.
  *
- * Input: keyboard (←/→ move, ↑/X rotate CW, Z rotate CCW, ↓ soft drop, Space hard drop) + unified Pointer Events for touch
+ * Input: keyboard (←/→ move, ↑/X rotate CW, Z/Shift rotate CCW, ↓ soft drop, Space hard drop) + unified Pointer Events for touch
  * (horizontal drag moves cell-by-cell, tap rotates, downward swipe hard-drops).
  */
 @Component({
@@ -251,7 +251,8 @@ export class Tetris implements AfterViewInit {
       case 'ArrowRight': case 'd': this.game.input.press(1); break;
       // One rotation per press (NES). X = the A button = clockwise, Z = the B button = counter-clockwise.
       case 'ArrowUp': case 'x': case 'w': this.game.rotate(); break;
-      case 'z': case 'Control': this.game.rotateCcw(); break;
+      // Shift, not Control: Ctrl triggers Windows' magnifier/lens shortcuts over the page (owner report).
+      case 'z': case 'Shift': this.game.rotateCcw(); break;
       case 'ArrowDown': case 's': this.game.input.pressDown(); break;
       case ' ': this.game.hardDrop(); break;
       default: return;

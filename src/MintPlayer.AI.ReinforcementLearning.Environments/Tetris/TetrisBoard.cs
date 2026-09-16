@@ -173,6 +173,10 @@ public sealed class TetrisBoard
     /// rows, so this early-outs on six pieces in seven. Honours reachability when it is enforced.</summary>
     public bool TetrisAvailable() => _core.tetrisAvailable();
 
+    /// <summary>Fraction of the tetris-ready rows a cashed tetris pays back, so a multi-ply search does
+    /// not value HOLDING the well above cashing it. 0.0 is the shipped behaviour.</summary>
+    public void SetTetrisPayback(double scale) => _core.setTetrisPayback(scale);
+
     /// <summary>Legal AND physically reachable with the current hands. Equals <see cref="IsLegal"/>
     /// when enforcement is off.</summary>
     public bool PlacementReachable(int action) => _core.placementReachable(action);
