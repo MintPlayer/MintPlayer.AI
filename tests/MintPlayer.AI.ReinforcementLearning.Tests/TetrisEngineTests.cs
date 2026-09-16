@@ -220,6 +220,75 @@ public class TetrisEngineTests
     }
 
     [Fact]
+    public void GravityCurve_IsTheAuthenticNtscTable_AndFlatAboveLevel29()
+    {
+        // M62: pinned value-by-value against the ROM table at $898E. Level 29 is the LAST speed change —
+        // NTSC gravity is a flat 1 frame/row from 29 to 255. This test exists to stop a well-meaning
+        // "the speed should keep increasing past 29" change: it should not.
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        int[] expected = [48, 43, 38, 33, 28, 23, 18, 13, 8, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3];
+        for (int lvl = 0; lvl <= 18; lvl++) Assert.Equal(expected[lvl], t.gravityFrames(lvl));
+        for (int lvl = 19; lvl <= 28; lvl++) Assert.Equal(2, t.gravityFrames(lvl));
+        for (int lvl = 29; lvl <= 255; lvl++) Assert.Equal(1, t.gravityFrames(lvl));
+    }
+
+    [Fact]
+    public void LevelProgression_From18Start_ReachesL19At130LinesAndL29At230()
+    {
+        // M62: this is the fact behind the "speed changes at 130 and 230" report — they are LINE
+        // thresholds of the 18-start ROM progression, not levels and not speed steps.
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.setStartLevel(18);
+
+        Assert.Equal(18, t.levelForLines(129));
+        Assert.Equal(19, t.levelForLines(130));
+        Assert.Equal(28, t.levelForLines(229));
+        Assert.Equal(29, t.levelForLines(230));
+    }
+
+    [Fact]
+    public void KillscreenVariants_DefaultIsAuthenticAndCostsNothing()
+    {
+        // Mode 0 is the shipped behaviour: one row per step at every level, never halted. The default must
+        // stay this way or every checkpoint and the parity checksum move.
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        Assert.Equal(0, t.killscreenMode);
+        foreach (int lvl in new[] { 0, 18, 29, 39, 100, 255 }) Assert.Equal(1, t.gravityRowsPerStep(lvl));
+        Assert.False(t.killscreenHalted());
+    }
+
+    [Fact]
+    public void KillscreenVariants_2xksDoublesRowsPerStepFrom39()
+    {
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.setKillscreenMode(2);
+        foreach (int lvl in new[] { 0, 29, 38 }) Assert.Equal(1, t.gravityRowsPerStep(lvl));
+        foreach (int lvl in new[] { 39, 40, 255 }) Assert.Equal(2, t.gravityRowsPerStep(lvl));
+        Assert.False(t.killscreenHalted()); // 2xks never halts; it just becomes unsurvivable
+    }
+
+    [Fact]
+    public void KillscreenVariants_HaltStopsAt39_AndOnlyAt39()
+    {
+        var t = new PgTetris();
+        t.reset(1, false, 0);
+        t.setKillscreenMode(1);
+        t.setStartLevel(38);
+        Assert.False(t.killscreenHalted());
+        Assert.Equal(1, t.gravityRowsPerStep(39)); // halt mode never changes gravity
+
+        t.setStartLevel(39);
+        Assert.True(t.killscreenHalted());
+
+        t.forceGameOver();
+        Assert.True(t.gameOver);
+    }
+
+    [Fact]
     public void Features_PinnedOnAHandDrawnBoard()
     {
         // Single filled cell at (x=0, y=19): rowT = 19 empty rows × 2 + 2 = 40; colT = 1 (col 0) + 9

@@ -221,11 +221,41 @@ explicitly rejected.
 
 ## 3. Spikes — run before any engine work, in this order
 
-### S1 — Measure the search tier's tetris rate. ~0 effort, and it may resolve ask (2) outright.
-`net-search(8)` tetris-rate is **unmeasured** since M57.1. One `--baselines 30` run on held-out seeds 9000+.
-If it lands near della-search's 44%, then **changing the browser's default tier delivers tetrises today**, and
-M62.4 shrinks to a default change plus a latency check.
-**GO/NO-GO:** GO to tier-default if TRT ≥ 40% and ≥ 8 tetrises/ep at ≤ 50 ms/move in the browser.
+### S1 — Measure the search tier's tetris rate. ✅ RUN 2026-09-16 — and it refuted the cheap option.
+
+`--baselines 30`, eval seeds 5000+e (the standard baseline protocol; the draft said 9000+, which is not what
+`RunProtocol` uses — corrected here rather than in the harness). Protocol A, TRT = 4·tetrises/lines:
+
+| tier | A score | lines | tetrises/ep | **TRT** | B survival |
+|---|---|---|---|---|---|
+| random | 2.7 | 0.1 | 0.00 | 0.0% | 22.2 |
+| dellacherie | 175,217 ± 26,427 | 184.6 | 8.33 | **18.1%** | 343.1 |
+| **della-search(8,5)** | **232,479 ± 66,780** | 140.1 | **18.00** | **51.4%** | **1412.0 ± 94.2** |
+| net *(browser default)* | 103,327 ± 8,180 | 192.5 | 1.30 | **2.7%** | 220.1 |
+| **net-search(8)** | 97,470 ± 3,960 | 198.2 | **0.65** | **1.3%** | 343.7 |
+
+> ### NO-GO on net-search — and the reason matters.
+> **Wrapping the net in search makes tetrises RARER, not commoner** (1.3% vs the plain net's 2.7%), and its
+> A-score is *lower* than the plain net's. Search amplifies whatever the value function already wants; the net
+> does not want wells, so searching harder over it just finds better ways not to build one.
+>
+> **The tetrises come from the Dellacherie evaluator, not from search.** `della-search` — the same beam, the
+> same depth, but scoring afterstates with the widened *scripted* evaluator — reaches **51.4% TRT and 18.0
+> tetrises/ep**, and dominates protocol B by **+311%** over plain Dellacherie (1412 vs 343).
+>
+> This is the same mechanism as §1.2 seen from the other side: the evaluator knows how to tetris and the net
+> does not, so every tier that routes through the net inherits the blindness.
+
+**Consequence for M62.4:** the cheap win is real but it is a different change than planned — the browser's best
+tier must become **della-search(8,5)**, which drops the net out of the recommended path entirely. Under D3's
+revised gate that tier passes (51.4% ≥ 40%). Remaining check is **latency** (G6, ≤ 50 ms/move): della-search
+costs ~7K board sims per move and is currently a selectable tier, not the default, so its in-browser cost is
+unmeasured.
+
+**Honest note:** della-search trades lines for tetrises on protocol A (140.1 lines vs the net's 192.5) and
+tops out more often (11/20 vs 2/30). It scores far higher because a tetris pays 1200 vs 40 — but a visitor
+watching will see a shorter, denser game. That is the correct trade for "make tetrises", and it should be
+stated rather than hidden.
 
 ### S2 — Pilot divergence census. ~20 min.
 Instrument `tetris-game.ts:159` and count, over ~30 watch episodes at levels 0/19/29, how often the pilot's
@@ -292,7 +322,7 @@ search tier ≥ 40%.** Settle this before spending on #2–#4.
 |---|---|
 | **G1** | Default gravity path **bit-identical**: parity checksum `765594964` unchanged, same seed ⇒ same trajectory |
 | **G2** | CW rotation path byte-identical; `ActionCount` 40 and `ObservationSize` 854 unchanged; `wwwroot/models/tetris.dqn.ckpt` still loads |
-| **G3** | **(renegotiate, §4)** plain net TRT ≥ 20% and ≥ 4 tetrises/ep; search tier ≥ 40% |
+| **G3** | **(settled by D3)** search tier TRT ≥ 40% — `della-search` **51.4% PASS** · plain net TRT ≥ 20% and ≥ 4 tetrises/ep — **2.7% FAIL**, the target of M62.4 |
 | **G4** | Technique dial measurably changes outcomes: rolling CI-above DAS on protocol A at L19 start |
 | **G5** | Pilot divergence (S2) does not regress; `stuck >= 2` bail-outs are asserted, not silent |
 | **G6** | Browser: ≤ 50 ms/move for whichever tier is default; no long tasks over ≥ 30 s of watching |
@@ -324,13 +354,20 @@ Found during the investigation, all currently wrong in the repo:
 
 ---
 
-## 8. Open owner decisions
+## 8. Owner decisions
+
+**D1, D2 and D3 were decided 2026-09-16.** D4–D6 remain open.
+
+| # | Decision | Resolution |
+|---|---|---|
+| **D1** | Gravity variants | ✅ **Add both behind a flag.** `killscreenMode`: `0 = authentic` (default, bit-identical), `1 = CTM "39 halt"`, `2 = CTWC 2xks` (2 rows/frame from L39). Needs the `rowsPerStep` companion |
+| **D2** | Where the technique dial lives | ✅ **Fork (ii): into the `.pg` as a legality mask + retrain.** The dial becomes a real strength control feeding `scareHeight`/`maxSafeCol9`, not a rendering effect. Accepts the retrain cost and the loss of every `data/tet*train/*-state.ckpt` **resume** file (model checkpoints survive). S3 no longer gates it — it now informs the mask's shape instead |
+| **D3** | The tetris-rate gate | ✅ **Gate the tier, not the number.** G3 becomes: **search tier TRT ≥ 40%** (della-search measured **51.4% — PASS**) and **plain net TRT ≥ 20% + ≥ 4 tetrises/ep** (measured 2.7% — FAIL, and the target of M62.4's training work) |
+
+### Still open
 
 | # | Decision | Why it matters |
 |---|---|---|
-| **D1** | Gravity variants: authentic-only, or add "39 halt" and/or CTWC 2xks? | Determines whether M62.2 needs the `rowsPerStep` structural change at all |
-| **D2** | Technique dial: **(i)** client-side demo, or **(ii)** `.pg` legality mask + retrain? | (ii) makes the dial a real strength control but costs a retrain and invalidates every `*-state.ckpt` resume file. S3 gates it |
-| **D3** | Accept the G3 renegotiation (50% → net 20% / search 40%)? | The standing gate is probably unreachable; spending on options #2–#4 against it would be spending against an impossible target |
 | **D4** | CCW on touch — second on-screen button, or two-zone tap? | Two-zone tap overloads an existing gesture |
 | **D5** | Should the pilot pick the *shorter* rotation direction once CCW exists? | Cosmetic at low levels, but it **changes watch-mode outcomes at killscreen speeds** — a deliberate call, not a freebie |
 | **D6** | **Carried over from `TETRIS_TECHNIQUES_PRD.md` §1.1, still unanswered:** SRS mode as a strength lever (Guideline scoring) or as a movement model (NES scoring)? | Under NES scoring a T-spin double pays **100** vs a tetris's **1200**, so spins are correctly near-worthless. Only relevant if M57.4 is ever revived; that PRD recommends the movement-model reading |

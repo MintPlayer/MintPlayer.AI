@@ -132,6 +132,16 @@ public sealed class TetrisBoard
     /// <summary>Frames per one-row drop at the current level (the NES gravity curve).</summary>
     public int GravityFrames() => _core.gravityFrames(_core.level);
 
+    /// <summary>Post-level-29 variant: 0 = authentic NES (default), 1 = CTM "39 halt", 2 = CTWC 2xks.
+    /// Mode 0 is bit-identical to the shipped engine — see the note in <c>tetris_solver.pg</c>.</summary>
+    public void SetKillscreenMode(int mode) => _core.setKillscreenMode(mode);
+
+    /// <summary>Rows the piece moves per gravity step — 1 except under 2xks at level 39+, where it is 2.</summary>
+    public int GravityRowsPerStep() => _core.gravityRowsPerStep(_core.level);
+
+    /// <summary>True when "39 halt" is armed and the board reached level 39 — the host ends the game.</summary>
+    public bool KillscreenHalted() => _core.killscreenHalted();
+
     /// <summary>Tap budget in frames per shift: 6 = DAS 10Hz, 5 = hypertapping 12Hz, 3 = rolling 20Hz.</summary>
     public void SetTapRate(int framesPerShift) => _core.setTapRate(framesPerShift);
 

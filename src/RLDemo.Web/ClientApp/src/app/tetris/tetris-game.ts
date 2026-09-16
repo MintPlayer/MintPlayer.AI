@@ -49,15 +49,24 @@ export class TetrisGame {
     shift: (dir: -1 | 1) => this.board.microShift(dir),
     dropStep: () => this.board.microDropStep(),
     gravityFrames: () => this.board.gravityFrames(this.board.level),
+    gravityRowsPerStep: () => this.board.gravityRowsPerStep(this.board.level),
   };
 
   constructor() {
     this.newGame();
   }
 
+  /** M62.2: NES start level (CTWC picks one per match). `reset` clears it, so newGame reapplies it. */
+  startLevel = 0;
+  /** M62.2: post-29 variant — 0 authentic, 1 CTM "39 halt", 2 CTWC 2xks. Survives reset by design. */
+  killscreenMode = 0;
+
   newGame(): void {
     const seed = (Date.now() % 2147483646) + 1;
     this.board.reset(seed, this.sevenBag, this.garbageEvery);
+    // Order matters: reset() zeroes startLevel and level, so both settings are reapplied afterwards.
+    this.board.setKillscreenMode(this.killscreenMode);
+    if (this.startLevel > 0) this.board.setStartLevel(this.startLevel);
     this.board.microSpawn();
     this.pilot = null;
     this.flashMs = 0;
@@ -126,12 +135,16 @@ export class TetrisGame {
     if (this.pilot && this.board.activeLive) {
       this.gravityAcc += dtMs;
       const gravityMs = this.board.gravityFrames(this.board.level) * FRAME_MS;
-      while (this.gravityAcc >= gravityMs) {
+      const rows = this.board.gravityRowsPerStep(this.board.level); // M62.2: 2 under the 2xks variant
+      let locked = false;
+      while (this.gravityAcc >= gravityMs && !locked) {
         this.gravityAcc -= gravityMs;
-        if (this.board.microDropStep()) {
-          this.pilot = null; // gravity locked the piece (possibly short of the target — authentic)
-          this.afterLock();
-          break;
+        for (let i = 0; i < rows && !locked; i++) {
+          if (this.board.microDropStep()) {
+            this.pilot = null; // gravity locked the piece (possibly short of the target — authentic)
+            this.afterLock();
+            locked = true;
+          }
         }
       }
     }
@@ -174,6 +187,9 @@ export class TetrisGame {
       this.flashMs = FLASH_MS;
       this.flashLines = this.board.lastLinesCleared;
     }
+    // M62.2: the CTM "level 39 halt" variant ends the run the moment 39 is reached — the game does not
+    // top out, it simply stops, which is how the lower divisions bound a match.
+    if (this.board.killscreenHalted()) this.board.forceGameOver();
   }
 
   /** Ghost landing row for the human piece (render draws the outline). Scans from the piece's CURRENT

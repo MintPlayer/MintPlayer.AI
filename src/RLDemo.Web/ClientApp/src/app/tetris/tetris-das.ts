@@ -27,6 +27,8 @@ export interface DasHost {
   shift(dir: -1 | 1): boolean;
   dropStep(): boolean; // one row down; true = the piece locked
   gravityFrames(): number;
+  /** M62.2: rows moved per gravity step — 1 except under the CTWC 2xks variant at level 39+, where it is 2. */
+  gravityRowsPerStep(): number;
 }
 
 export class NesInput {
@@ -119,7 +121,12 @@ export class NesInput {
     this.gravCounter++;
     if (this.gravCounter >= host.gravityFrames()) {
       this.gravCounter = 0;
-      if (!rowMoved && host.dropStep()) return true;
+      // Under 2xks the piece covers two rows per step. The soft-drop row (rowMoved) still counts as the
+      // first of them, so a held Down never makes the piece fall SLOWER than gravity alone.
+      const rows = host.gravityRowsPerStep();
+      for (let i = rowMoved ? 1 : 0; i < rows; i++) {
+        if (host.dropStep()) return true;
+      }
     }
     return false;
   }

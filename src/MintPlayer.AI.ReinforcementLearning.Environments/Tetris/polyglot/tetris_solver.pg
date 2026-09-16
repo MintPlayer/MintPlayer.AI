@@ -460,9 +460,44 @@ class PgTetris {
     return 0
   }
 
+  // M62.2 — post-level-29 variant (owner decision D1, 2026-09-16). AUTHENTIC NES NTSC has NO speed change
+  // above 29: gravity is a flat 1 frame/row from 29 all the way to 255, and the "changes at 130/230" people
+  // report are the 18-start LINE thresholds (L19 at 130 lines, L29 at 230), not speed steps. The real
+  // post-29 speed-up is a ROM HACK used by CTWC/CTM Masters, so it lives behind this flag and never in the
+  // base table.
+  //   0 = authentic (default — bit-identical to every shipped checkpoint and the M54 parity checksum)
+  //   1 = CTM "level 39 halt": the game simply stops at 39 (lower divisions)
+  //   2 = CTWC "2xks" super kill screen: from level 39 the piece falls TWO rows per gravity step
+  // 2xks is why rowsPerStep exists at all — 1/2 frame-per-row is not expressible in this i32 signature,
+  // so the sub-frame case is carried as rows-per-step instead of a fractional frame count.
+  var killscreenMode: i32 = 0
+
+  fn setKillscreenMode(m: i32) {
+    this.killscreenMode = m
+  }
+
+  // Rows moved per gravity step. Always 1 except under 2xks at level 39+, where it is 2.
+  fn gravityRowsPerStep(lvl: i32): i32 {
+    if this.killscreenMode == 2 && lvl >= 39 { return 2 }
+    return 1
+  }
+
+  // True when "39 halt" is armed and the board has reached it — the host ends the game.
+  fn killscreenHalted(): bool {
+    return this.killscreenMode == 1 && this.level >= 39
+  }
+
+  // End the run deliberately, without a top-out. Used by the "39 halt" variant, where the game does not
+  // lose — it simply stops. Kept as an explicit method so hosts never poke `gameOver` directly.
+  fn forceGameOver() {
+    this.gameOver = true
+    this.activeLive = false
+  }
+
   // NES gravity curve: frames per one-row drop at 60 fps (levels 0–8 step down 48→8, then the classic
   // plateaus; 29+ is the "kill screen" 1 frame/row). Single-sourced so the web timer and any future
   // speed-aware logic agree. The AI's placement decisions have no gravity clock (benchmark convention).
+  // VERIFIED value-by-value against the ROM table at $898E (M62) — do not "fix" this for levels > 29.
   fn gravityFrames(lvl: i32): i32 {
     if lvl <= 8 { return 48 - 5 * lvl }
     if lvl == 9 { return 6 }
@@ -773,7 +808,10 @@ class PgTetris {
   // simply unreachable, and an agent that does not know it keeps trying to feed a well it cannot feed.
   fn maxTapHeight(taps: i32): i32 {
     let g = this.gravityFrames(this.level)
-    let fallen = tetDiv(taps * this.tapFramesPerShift, g)
+    // M62.2: under 2xks the piece covers TWO rows per gravity step, so the same tap budget buys half the
+    // reach. killscreenMode 0/1 leave this at ×1, keeping the default path arithmetically identical.
+    let rows = this.gravityRowsPerStep(this.level)
+    let fallen = tetDiv(taps * this.tapFramesPerShift * rows, g)
     return H - 3 - fallen
   }
 

@@ -41,6 +41,14 @@ export class Tetris implements AfterViewInit {
   protected readonly tier = signal<Tier>('net');
   /** Rising-garbage mode: a full bottom row with one random gap every 10 placements. */
   protected readonly garbage = signal(false);
+
+  // M62.2 — NES authenticity controls. The engine has always supported a start level (setStartLevel) but
+  // nothing ever called it, so every game began at 0. The CTWC-relevant starts are 0/9/15/18/19/29.
+  protected readonly startLevel = signal(0);
+  protected readonly startLevels = [0, 9, 15, 18, 19, 29];
+  // Post-level-29 variant. AUTHENTIC NES has no speed change above 29 (flat 1 frame/row to 255); the
+  // faster-than-29 behaviour seen in CTWC Masters is a ROM hack, so it is opt-in and never the default.
+  protected readonly killscreen = signal<0 | 1 | 2>(0);
   /** Esc pause: freezes the game AND hides the field (the render covers the canvas). */
   protected readonly paused = signal(false);
 
@@ -118,6 +126,19 @@ export class Tetris implements AfterViewInit {
   }
 
   protected newGame(): void {
+    this.game.newGame();
+  }
+
+  /** Both settings only take effect on a fresh board, so changing either starts a new game. */
+  protected setStartLevel(level: number): void {
+    this.startLevel.set(level);
+    this.game.startLevel = level;
+    this.game.newGame();
+  }
+
+  protected setKillscreen(mode: 0 | 1 | 2): void {
+    this.killscreen.set(mode);
+    this.game.killscreenMode = mode;
     this.game.newGame();
   }
 
