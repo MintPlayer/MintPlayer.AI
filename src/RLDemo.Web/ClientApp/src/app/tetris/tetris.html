@@ -34,6 +34,23 @@
     <button type="button" [color]="startLevel() === lvl ? colors.primary : colors.secondary"
             (click)="setStartLevel(lvl)">{{ lvl }}</button>
   }
+  <span class="tier-label">Input:</span>
+  <button type="button" [color]="technique() === 'das' ? colors.primary : colors.secondary"
+          (click)="setTechnique('das')"
+          title="Hold the d-pad and let the ROM auto-repeat: 16 frames to the first shift, then one every 6">
+    Normal (DAS)
+  </button>
+  <button type="button" [color]="technique() === 'hypertap' ? colors.primary : colors.secondary"
+          (click)="setTechnique('hypertap')"
+          title="Tap the d-pad by hand — no charge delay, about 12 taps a second">
+    Hypertapping
+  </button>
+  <button type="button" [color]="technique() === 'roll' ? colors.primary : colors.secondary"
+          (click)="setTechnique('roll')"
+          title="Roll your fingers against the back of the controller — about 20 taps a second">
+    Rolling
+  </button>
+
   <span class="tier-label">Above 29:</span>
   <button type="button" [color]="killscreen() === 0 ? colors.primary : colors.secondary"
           (click)="setKillscreen(0)"
@@ -89,5 +106,14 @@
     is a masked dueling DQN choosing among all ~23 possible landings of each piece; the
     <strong>search</strong> tiers add a look-ahead over the next piece. Rising garbage is the honest
     benchmark — it separates the players fast.
+  </p>
+  <p class="hint">
+    <strong>Input technique</strong> limits how fast the AI can move a piece sideways, the same way it
+    limits a human. <em>DAS</em> holds the d-pad and waits 16 frames for the ROM to start auto-shifting,
+    then gets one shift every 6 (10 Hz). <em>Hypertapping</em> taps by hand — no waiting, about 12 Hz.
+    <em>Rolling</em>, invented in 2020, rolls the fingers against the back of the controller for about
+    20 Hz, and it is the reason modern scores dwarf the pre-2020 records. Try starting at level 29 and
+    switching between them: DAS cannot get a piece to the far wall before it lands, so it stops being able
+    to feed the well at all — the AI knows this and stops trying to build one.
   </p>
 }

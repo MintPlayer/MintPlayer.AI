@@ -132,6 +132,9 @@ public sealed class TetrisBoard
     /// <summary>Frames per one-row drop at the current level (the NES gravity curve).</summary>
     public int GravityFrames() => _core.gravityFrames(_core.level);
 
+    /// <summary>Frames per row at an arbitrary level, without needing a board at that level.</summary>
+    public int GravityFramesAt(int level) => _core.gravityFrames(level);
+
     /// <summary>Post-level-29 variant: 0 = authentic NES (default), 1 = CTM "39 halt", 2 = CTWC 2xks.
     /// Mode 0 is bit-identical to the shipped engine — see the note in <c>tetris_solver.pg</c>.</summary>
     public void SetKillscreenMode(int mode) => _core.setKillscreenMode(mode);

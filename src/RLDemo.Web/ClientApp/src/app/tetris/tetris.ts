@@ -3,6 +3,7 @@ import { Color } from '@mintplayer/ng-bootstrap';
 import { BsButtonTypeDirective } from '@mintplayer/ng-bootstrap/button-type';
 import { TetrisDirector, Tier } from './tetris-director';
 import { TetrisGame } from './tetris-game';
+import { techniqueHz, type Technique } from './tetris-das';
 import { LOGICAL_H, LOGICAL_W, cellWidthCss, render } from './tetris-render';
 import { ScreenWakeLock } from '../screen-wake-lock';
 
@@ -49,6 +50,11 @@ export class Tetris implements AfterViewInit {
   // Post-level-29 variant. AUTHENTIC NES has no speed change above 29 (flat 1 frame/row to 255); the
   // faster-than-29 behaviour seen in CTWC Masters is a ROM hack, so it is opt-in and never the default.
   protected readonly killscreen = signal<0 | 1 | 2>(0);
+
+  // M62.3 — the input technique dial (owner ask 4). Governs the AI's tap budget, which the engine's
+  // evaluator already consults, so this is a strength control and not just an animation speed.
+  protected readonly technique = signal<Technique>('das');
+  protected readonly techniqueHz = techniqueHz;
   /** Esc pause: freezes the game AND hides the field (the render covers the canvas). */
   protected readonly paused = signal(false);
 
@@ -136,6 +142,13 @@ export class Tetris implements AfterViewInit {
     this.game.newGame();
   }
 
+  /** Takes effect immediately — the tap budget is read per placement, so no restart is needed. */
+  protected setTechnique(t: Technique): void {
+    this.technique.set(t);
+    this.game.technique = t;
+    this.game.applyTechnique();
+  }
+
   protected setKillscreen(mode: 0 | 1 | 2): void {
     this.killscreen.set(mode);
     this.game.killscreenMode = mode;
@@ -188,7 +201,10 @@ export class Tetris implements AfterViewInit {
       ? (d.netStatus === 'loading' ? `${d.tier} (loading…)` : 'net missing → dellacherie')
       : d.effectiveTier;
     const last = d.episodes > 0 ? ` · last: ${d.lastLines} lines` : '';
-    return `AI: ${tier}${this.garbage() ? ' · garbage/10' : ''}${last}`;
+    const t = this.technique();
+    const tapName = t === 'das' ? 'DAS' : t === 'hypertap' ? 'hypertapping' : 'rolling';
+    const tap = ` · ${tapName} (${this.techniqueHz(t)} Hz)`;
+    return `AI: ${tier}${tap}${this.garbage() ? ' · garbage/10' : ''}${last}`;
   }
 
   // Auto-pause when the window/tab loses focus (owner request): a running play-yourself game must not

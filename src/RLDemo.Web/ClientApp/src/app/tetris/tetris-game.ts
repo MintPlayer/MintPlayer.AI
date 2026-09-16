@@ -10,17 +10,21 @@
 //    moves achieve: at kill-screen gravity even the AI's "fingers" can be outrun, authentically.
 
 import { PgTetris } from './tetris_solver';
-import { NES_FRAME_MS, NesInput } from './tetris-das';
+import { NES_FRAME_MS, NesInput, TECHNIQUE_FRAMES, type Technique } from './tetris-das';
 
 export const W = 10;
 export const H = 20;
 
 const FRAME_MS = NES_FRAME_MS; // one NES frame (60.0988 Hz)
 const FLASH_MS = 220;          // line-clear highlight
-const PILOT_INPUT_MS = 90;     // watch-mode cadence between the AI's simulated key presses
+// M62.3 — the watch-mode pilot's cadence now comes from the technique dial rather than this constant.
+// It used to be a flat 90 ms (≈11.1 Hz ≈ 5.4 frames), which was fiction: it sat almost exactly at
+// hypertapping speed, so the "normal" AI was quietly hypertapping while being presented as ordinary play.
 
 /** Watch-mode pilot: the placement the AI chose, played through the micro path. */
 interface Pilot {
+  /** M62.3: DAS only — whether this piece has already paid its 16-frame auto-shift charge. */
+  charged: boolean;
   rot: number;
   x: number;
   stuck: number; // consecutive no-progress inputs (blocked rotate/shift) — bail to hard drop at 2
@@ -56,6 +60,24 @@ export class TetrisGame {
     this.newGame();
   }
 
+  /**
+   * M62.3 — the input technique. It governs BOTH the watch-mode pilot's tap cadence AND, through
+   * `setTapRate`, the engine's own reachability budget, which the evaluator already consults
+   * (`maxTapHeight` gates the tetris-ready reward and prices unreachable stacks). So the dial does not
+   * merely slow the AI's hands down — it changes which placements the AI considers worth wanting.
+   */
+  technique: Technique = 'das';
+
+  /** Push the current technique into the engine's reachability budget. Safe to call mid-game. */
+  applyTechnique(): void {
+    this.board.setTapRate(TECHNIQUE_FRAMES[this.technique]);
+  }
+
+  /** ms between the pilot's simulated presses, derived from the technique. */
+  private get pilotInputMs(): number {
+    return TECHNIQUE_FRAMES[this.technique] * FRAME_MS;
+  }
+
   /** M62.2: NES start level (CTWC picks one per match). `reset` clears it, so newGame reapplies it. */
   startLevel = 0;
   /** M62.2: post-29 variant — 0 authentic, 1 CTM "39 halt", 2 CTWC 2xks. Survives reset by design. */
@@ -66,6 +88,7 @@ export class TetrisGame {
     this.board.reset(seed, this.sevenBag, this.garbageEvery);
     // Order matters: reset() zeroes startLevel and level, so both settings are reapplied afterwards.
     this.board.setKillscreenMode(this.killscreenMode);
+    this.board.setTapRate(TECHNIQUE_FRAMES[this.technique]);
     if (this.startLevel > 0) this.board.setStartLevel(this.startLevel);
     this.board.microSpawn();
     this.pilot = null;
@@ -126,8 +149,9 @@ export class TetrisGame {
     // hard-drop. Two consecutive blocked inputs (a wall of stack in the way) bail to an immediate drop.
     if (this.pilot && this.board.activeLive) {
       this.pilotAcc += dtMs;
-      while (this.pilotAcc >= PILOT_INPUT_MS && this.pilot) {
-        this.pilotAcc -= PILOT_INPUT_MS;
+      const pilotMs = this.pilotInputMs;
+      while (this.pilotAcc >= pilotMs && this.pilot) {
+        this.pilotAcc -= pilotMs;
         this.pilotStep();
       }
     }
@@ -154,13 +178,22 @@ export class TetrisGame {
   pilotTo(action: number): void {
     if (!this.board.activeLive && !this.gameOver) this.board.microSpawn();
     if (this.gameOver) return;
-    this.pilot = { rot: this.board.actionRot(action), x: this.board.actionCol(action), stuck: 0 };
+    this.pilot = { rot: this.board.actionRot(action), x: this.board.actionCol(action), stuck: 0, charged: false };
     this.pilotAcc = 0;
   }
 
   private pilotStep(): void {
     const b = this.board;
     const p = this.pilot!;
+    // M62.3 — DAS pays the 16-frame charge before its FIRST lateral shift of a piece (a fresh direction,
+    // uncharged). Hypertapping and rolling pay nothing: every tap shifts immediately. Modelled by burning
+    // one pilot slot and pushing the accumulator back by the remaining charge, so the cost is in frames
+    // rather than in skipped inputs. Rotation is one-per-press in every technique and is not charged.
+    if (this.technique === 'das' && !p.charged && b.activeRot === p.rot && b.activeX !== p.x) {
+      p.charged = true;
+      this.pilotAcc -= (16 - TECHNIQUE_FRAMES.das) * FRAME_MS;
+      return;
+    }
     let acted: boolean;
     if (b.activeRot !== p.rot) acted = b.microRotate();
     else if (b.activeX < p.x) acted = b.microShift(1);

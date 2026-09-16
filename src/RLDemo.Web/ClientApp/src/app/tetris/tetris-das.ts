@@ -22,6 +22,38 @@ const DAS_RESET = 10;  // counter value after an auto-shift ⇒ 16 − 10 = 6-fr
 const SOFT_FIRST = 3;  // frames from engaging Down to the first soft-dropped row
 const SOFT_REPEAT = 2; // frames per row afterwards (1/2G)
 
+/**
+ * M62.3 — the input technique dial (owner ask 4).
+ *
+ * How fast a human can move a piece sideways is the single constraint that separates NES Tetris eras, and
+ * above level 19 it decides whether the well on column 9 can be fed at all. Expressed in FRAMES per shift
+ * so it stays commensurable with gravity, which is also frames-based.
+ *
+ *  • DAS — hold the direction and let the ROM auto-repeat: 16 frames to the first shift, then one every
+ *    6 (16 − 10). Steady-state 10.02 Hz, but every direction CHANGE pays the 16-frame charge again unless
+ *    it was pre-charged against a wall. That charge is the whole reason DAS dies on the kill screen.
+ *  • Hypertapping — tap the d-pad manually. No charge, every shift immediate. Sustained ~12 Hz by good
+ *    players (the 10–15 Hz band), so 5 frames.
+ *  • Rolling — Cheez's 2020 technique: rest the controller on the fingers and roll them against the back
+ *    so the d-pad is struck repeatedly. 20 Hz sustained, top players 25–30, i.e. 3 frames. This is what
+ *    made level-29+ play survivable and it is why scores jumped an order of magnitude after 2020.
+ *
+ * The NES samples input once per NMI, so 1 shift/frame (60 Hz) is the hard ceiling for any technique.
+ */
+export type Technique = 'das' | 'hypertap' | 'roll';
+
+/** Frames per lateral shift, used both for the AI's reachability budget and the watch-mode pilot. */
+export const TECHNIQUE_FRAMES: Readonly<Record<Technique, number>> = {
+  das: DAS_FULL - DAS_RESET, // 6 — the charged auto-repeat rate
+  hypertap: 5,
+  roll: 3,
+};
+
+/** Human-facing rate, for the status line and the hint text. */
+export function techniqueHz(t: Technique): number {
+  return Math.round((1000 / NES_FRAME_MS / TECHNIQUE_FRAMES[t]) * 10) / 10;
+}
+
 /** What the machine drives each frame: shift/drop return false when blocked / true when LOCKED. */
 export interface DasHost {
   shift(dir: -1 | 1): boolean;

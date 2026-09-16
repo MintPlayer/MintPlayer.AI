@@ -34,7 +34,12 @@ internal static class TetrisLab
 
         if (baselines > 0)
         {
-            RunBaselines(baselines, pieceBudget, seed, netPath);
+            // M62.3: --tap <framesPerShift> measures the technique dial's effect on the AI's own play
+            // (6 = DAS, 5 = hypertapping, 3 = rolling). 0 leaves the engine default (6).
+            // --start-level matters for --tap: the tap budget is measured against GRAVITY, so at level 0
+            // (48 frames/row) every technique reaches every column and the dial is a no-op. It only bites
+            // from ~L19 (2 frames/row) upward, which is exactly where real players change technique.
+            RunBaselines(baselines, pieceBudget, seed, netPath, a.Int("--tap", 0), a.Int("--start-level", 0));
             return;
         }
 
@@ -82,9 +87,16 @@ internal static class TetrisLab
     /// M54.3 gates: net survival ≥ 100 pieces, ≥ 4× random, CI-separated; gap-share vs Dellacherie ≥ 25%;
     /// protocol A net ≥ 50 lines. M54.4 gate: search > plain, CI-separated, ≥ Dellacherie on B.
     /// </summary>
-    private static void RunBaselines(int episodes, int pieceBudget, ulong seed, string netPath)
+    private static void RunBaselines(int episodes, int pieceBudget, ulong seed, string netPath, int tapRate = 0, int startLevel = 0)
     {
         Console.WriteLine($"Tetris baselines: {episodes} episodes (eval seeds 5000+e), protocol A = {pieceBudget}-piece lines, protocol B = garbage/10 survival");
+        if (tapRate > 0)
+        {
+            string name = tapRate == 6 ? "DAS" : tapRate == 5 ? "hypertapping" : tapRate == 3 ? "rolling" : "custom";
+            Console.WriteLine($"  tap budget: {tapRate} frames/shift ({60.0988 / tapRate:F1} Hz — {name})");
+        }
+        if (startLevel > 0)
+            Console.WriteLine($"  start level: {startLevel} (gravity {new TetrisBoard().GravityFramesAt(startLevel)} frames/row)");
 
         DuelingQNet? net = null;
         if (File.Exists(netPath))
@@ -126,12 +138,12 @@ internal static class TetrisLab
         Console.WriteLine("Protocol A — uniform pieces, no garbage, capped: NES score (lines · tetrises annotated):");
         var linesA = new List<(string Name, double Mean, double Ci)>();
         foreach (var (name, act, eps, _) in policies)
-            linesA.Add(RunProtocol(name, eps, act, garbageEvery: 0, pieceCap: pieceBudget, metricScore: true));
+            linesA.Add(RunProtocol(name, eps, act, garbageEvery: 0, pieceCap: pieceBudget, metricScore: true, tapRate: tapRate, startLevel: startLevel));
 
         Console.WriteLine("Protocol B — garbage every 10, survival (pieces placed):");
         var survB = new List<(string Name, double Mean, double Ci)>();
         foreach (var (name, act, eps, capB) in policies)
-            survB.Add(RunProtocol(name, eps, act, garbageEvery: 10, pieceCap: capB, metricScore: false));
+            survB.Add(RunProtocol(name, eps, act, garbageEvery: 10, pieceCap: capB, metricScore: false, tapRate: tapRate, startLevel: startLevel));
 
         var randomB = survB[0];
         var dellaB = survB[1];
@@ -160,7 +172,7 @@ internal static class TetrisLab
     }
 
     private static (string, double, double) RunProtocol(string name, int episodes,
-        Func<TetrisBoard, int, int> policy, int garbageEvery, int pieceCap, bool metricScore)
+        Func<TetrisBoard, int, int> policy, int garbageEvery, int pieceCap, bool metricScore, int tapRate = 0, int startLevel = 0)
     {
         double sum = 0, sumSq = 0, lines = 0, tetrises = 0;
         int topOuts = 0;
@@ -170,6 +182,10 @@ internal static class TetrisLab
             var env = new TetrisEnv(pieceCap, sevenBag: false, garbageEvery: garbageEvery);
             env.Reset((ulong)(5_000 + e));
             var b = env.Board;
+            // M62.3. Reset does not clear the tap rate (only startLevel), but each episode builds a fresh
+            // TetrisEnv, so the rate has to be set per episode regardless.
+            if (tapRate > 0) b.SetTapRate(tapRate);
+            if (startLevel > 0) b.SetStartLevel(startLevel);
             for (int step = 0; step < pieceCap && !b.GameOver; step++)
             {
                 int action = policy(b, e * pieceCap + step);
