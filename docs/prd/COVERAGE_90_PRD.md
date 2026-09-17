@@ -141,9 +141,9 @@ Work items, with the four real obstacles called out:
 
 | Item | Where | Size |
 |---|---|---|
-| Set `curPos_` in `emitStmt`; emit `#line` from `line()` on source-line change | `emitter_base.cpp:1598,1683` | small |
+| Set `curPos_` in `emitStmt`; emit a directive from `line()` **on every output line** — `#line N` when a position is known, `#line hidden` when not (see S1: emitting only on *change* causes drift that silently marks innocent `.pg` lines covered) | `emitter_base.cpp:1598,1683` | small |
 | **Obstacle 1** — thread a real `SourceMap` through `compile()` (today passes `nullptr`, so every build-path token is stamped `fileId = 0`; `#line` needs real filenames) | `compiler.cpp:629,353` | small |
-| **Obstacle 2** — preludes are *prepended after* the walk (`out_ = prelude + out_`) so line numbers need shifting; `inlineBlock` flattens newlines into a scratch buffer and must suppress mapping; `line()` is sometimes handed strings containing `\n` | `emitter_base.cpp:1594,1643` | small |
+| **Obstacle 2** — `inlineBlock` (`emitter_base.cpp:1643`) flattens `\n` → space in a scratch buffer, so directives emitted inside it would be **spliced into the middle of a code line and break compilation** — suppression there is mandatory, not cosmetic. `line()` is also sometimes handed strings containing `\n`. *(The prelude-prepend shift is no longer an obstacle: per-line absolute directives have nothing to shift — see S1.)* | `emitter_base.cpp:1594,1643` | small |
 | **Obstacle 3** — scaffolding with no `.pg` origin (prelude, `partial class PolyglotProgram`, `__polyglot_prelude.cs`) needs `#line hidden` / `#line default` or it is misattributed | `emitter_base.cpp` | small |
 | Add `SourcePos` to the 8 IR decl structs + populate from AST `pos`/`namePos` (maps *signature* lines; bodies already map) | `ir.hpp:459+`, `lower.cpp` | medium, optional |
 | Widen `Backend::emit` / `EmitResult` / `ModuleFile` to carry mappings (TS only) | `backend.hpp`, `polyglot.hpp:61-77` | small |
@@ -160,17 +160,44 @@ publishing, the `PolyglotTool` MSBuild property can point at a locally built CLI
 Each spike is cheap, answers one question that would otherwise be discovered late, and has a
 written pass criterion. **Run targeted slices only — never the full suite.**
 
-### S1 — Many-to-one collapse *(highest risk; do first)*
+### S1 — Many-to-one collapse ✅ **RUN 2026-09-17 — PASSED, and changed the design**
 
 `#line` maps ~8,466 generated C# lines onto 6,828 `.pg` lines, so **multiple sequence points land on
 the same `(document, line)`**. Unknown: does coverlet emit duplicate `<line number>` elements, sum
-them, take the max, or emit a last-writer-wins value — and does the service's max-merge then behave?
+them, take the max, or emit last-writer-wins?
 
-Extend the scratchpad probe so one `.pg` line is the target of *three* generated statements, one
-covered and two not. **Pass:** exactly one `<line number="N">` element for that line, with
-`hits > 0`. **Fail (any other shape):** record it; a `.pg` line may need "covered if *any*
-contributing generated line was hit" normalisation before upload, which reintroduces a small
-post-process tool for the C# side.
+**Results** (scratchpad probe, coverlet.collector 10.0.1, `lib/Collapse.cs` + `lib/Drift.cs`):
+
+| Case | Shape | Observed |
+|---|---|---|
+| A | 4 sequence points on `.pg` line 200, three executed, one not | `<line number="200" hits="3"/>` — **one element; covered if *any* contributor ran** |
+| B | 3 sequence points on line 300, none executed | `<line number="300" hits="0"/>` |
+| C | loop body, 2 statements × 5 iterations on line 400 | `hits="10"` — **hits SUM, they do not max** |
+| D | two *different methods* sharing line 500, one called | `hits="1"` — merged into one element |
+
+So the core semantics are exactly what we need: one `<line>` per number, no duplicates, and
+**"covered if any contributing generated line was hit"** comes for free. No normalisation tool.
+
+**But the probe surfaced a defect the naive design would have shipped.** Case E emitted `#line 600`
+before a 4-line `if` block and left the braces to drift:
+
+```
+line 600 hits 1   ← real
+line 601 hits 1   ← PHANTOM (the `{`)
+line 602 hits 1   ← PHANTOM (the body)
+line 603 hits 1   ← PHANTOM (the `}`)
+line 610 hits 1   ← real
+```
+
+Lines 601–603 are *different, innocent source lines* in a real `.pg`, silently marked covered —
+**misattribution that inflates the number**. Case F wrapped the scaffolding in `#line hidden` and
+reported **only 700 and 710**. `#line hidden` suppresses phantoms completely.
+
+**Design consequence (folded into §5):** the emitter must emit a directive for **every** output
+line — `#line N` where a source position is known, `#line hidden` where it is not (braces,
+scaffolding, prelude). Emitting only on *change* is not merely less precise, it is wrong. A welcome
+side effect: because every line carries an absolute directive, the prelude-prepend shift problem
+(§5 obstacle 2) disappears entirely — there is nothing left to shift.
 
 ### S2 — `#line` end-to-end on one real solver
 
@@ -228,7 +255,7 @@ Only adopt this if S6 is red — it adds a tool and a CI step that the server ro
 
 ## 8. Milestones
 
-- **M63.1 — Spikes S1 + S4.** The two independent risk probes (collapse semantics; vitest wiring).
+- **M63.1 — Spikes S1 ✅ + S4.** The two independent risk probes (collapse semantics; vitest wiring).
   Both are scratchpad/local; neither touches the Polyglot compiler. Gate: both pass criteria
   recorded in this file, including negative results.
 - **M63.2 — Polyglot `#line` (flag-gated).** §5 items 1–4 + the CLI flag, conformance fixtures kept
