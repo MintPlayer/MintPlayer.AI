@@ -3221,6 +3221,65 @@ does not exist (enumeration is inlined at 7 `.pg` sites); `TetrisEnv.cs:23` / `T
 observation is 814 when it is 854; `.pg:819` says 454/six planes; `RewardTetrisBonus` (`.pg:63`) is declared and
 never read in the `.pg`.
 
+
+## M63 — Coverage 60% → 90%, and teaching coverage to speak Polyglot  *(2026-09-17; branch `m63-coverage-90`; see `COVERAGE_90_PRD.md`)* 📋
+
+Planned from a 4-agent investigation (baseline audit · Polyglot compiler feasibility · coverlet mechanics ·
+tooling survey). Successor to M56, which built the collection/upload pipeline and explicitly left the `.pg`
+sources measuring as nothing and the frontend measuring as nothing at all.
+
+**The headline finding — the merge tool the request anticipated is not needed for the C# half.** It was
+verified empirically (scratchpad probe, coverlet.collector 10.0.1) that a `#line <n> "<path>.pg"` directive in
+generated C# makes coverlet report `filename="….pg"` with line numbers **remapped into `.pg` numbering** —
+Roslyn writes `#line` into the PDB sequence points and coverlet reads them verbatim. Two further observed
+consequences: `ExcludeByFile` matches the **PDB-recorded** path, not the physical file (so the existing
+`**/obj/**/*.cs` rule stops applying by itself), and one physical `.cs` splits into multiple `<class>` entries
+keyed by filename (so partial remapping is well-defined). `.pg` files are in `git ls-files`, which is what
+coverage.mintplayer.com needs to resolve a path.
+
+**The union is free.** The service already merges multiple reports under one `(repo, sha, runId, runAttempt)`
+with max semantics (M56 §2). Two uploads — C# cobertura and TS lcov, both already keyed on `.pg` lines — union
+per-line server-side. No `pg-union.xml`, no bespoke unioner, no ReportGenerator in the hot path. *Caveat
+recorded in the PRD: union means "tested somewhere", not "tested in both targets", and it is only honest
+because the parity suites assert the two emissions agree bitwise.*
+
+**Polyglot is moderate, not a rewrite** — because both prerequisites already hold. `SourcePos` is a base-class
+field on `ir::Expr` (`ir.hpp:27-33`) and `ir::Stmt` (`ir.hpp:277-282`), propagated at 72 sites in `lower.cpp`
+with zero default-constructed `SourcePos{}`; and there is exactly one line-writing chokepoint,
+`EmitterBase::line()` (`emitter_base.cpp:1598`, 27 call sites). **One investigating agent reported the
+opposite — that no IR node carries a location — which would have made this a whole-IR rewrite. That report was
+checked and is wrong.** Four real obstacles remain: `compile()` passes `nullptr` for the `SourceMap` so every
+build-path token is stamped `fileId = 0`; preludes are prepended *after* the walk so line numbers need
+shifting; scaffolding needs `#line hidden`; and — the biggest cost item — the conformance suite compares
+emitted output byte-for-byte, so the feature must be flag-gated off by default.
+
+**Counter-intuitive expectation, made falsifiable as spike S3:** bringing the `.pg` solvers in should *raise*
+the percentage. Those 8,466 generated lines are among the most heavily exercised code in the repo (parity +
+perft) and today count in neither numerator nor denominator.
+
+- **M63.1 — Spikes S1 + S4**: many-to-one collapse semantics (~8,466 generated lines → 6,828 `.pg` lines, so
+  multiple sequence points share a `(document, line)`); vitest wiring from zero.
+- **M63.2 — Polyglot `#line`**, flag-gated, conformance fixtures byte-identical with the flag off (spike S2 on
+  `mountaincar_solver.pg`, the smallest at 152 lines).
+- **M63.3 — Adopt**: tag `v0.10.0`, bump `MintPlayer.Polyglot.MSBuild` from `0.9.9` (spikes S3 + S6).
+- **M63.4 — Denominator decisions** (see PRD §10 — owner's call, not made unilaterally).
+- **M63.5 — C# push to 90%**: Campaigns, Kociemba (~1.7k), RLDemo.Web Services.
+- **M63.6 — Frontend tests + TS `.pg` mapping** (spike S5, the chained `.pg → .ts → .js` remap — the weak
+  link; if it fails the `.pg` union ships C#-only and M63 is not blocked).
+- **M63.7 — README/badge note** + this PLAN entry.
+
+**Four open decisions deliberately left to the owner** (PRD §10): `tools/Lab` (~3.2k lines, in the denominator
+only because the test project references it for `CliArgs` — the single largest lever, and a metric-definition
+change); whether to add a `Category=Medium` bucket so existing Campaigns tests start counting; whether
+`RLDemo.Console` (631 lines, currently invisible) comes in; and whether 90% is still the right bar once the
+denominator is honest.
+
+**Corrections landing in the same PR:** `COVERAGE_PRD.md` §3.1 ("the `.pg` sources stay effectively measured
+through nothing — accepted") and §6 ("Angular test coverage — there is no `ng test` in CI to instrument") are
+both superseded; the `ExcludeByFile` comment in `coverlet.runsettings` becomes actively misleading once
+`#line` ships, because the rule silently stops applying to Polyglot output while still applying to
+source-generator output.
+
 ---
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
