@@ -36,7 +36,12 @@ public class BlockDudeGateBoardLabellingTests
         for (int stage = 0; stage <= BlockDudeCurriculum.LastStage; stage++)
         {
             var spec = BlockDudeCurriculum.Stages[stage].Spec;
-            foreach (var board in BlockDudeCurriculum.GateBoardsFor(stage, count: 8))
+            // M64: 8 -> 3 boards per stage. Measured at 223s instrumented, which WAS the suite's
+            // wall clock (the floor is the longest single test once classes run in parallel), against
+            // a 180s budget. The invariant is unchanged and still checked on every returned board --
+            // what shrinks is how much of the generator's output space each run samples. Raise it
+            // back if the gate ever misses a truncating board that a wider sample would have caught.
+            foreach (var board in BlockDudeCurriculum.GateBoardsFor(stage, count: 3))
             {
                 var oracle = new BlockDudeOracle(board, spec.OracleMaxStates);
                 Assert.False(oracle.Truncated,
@@ -81,7 +86,10 @@ public class BlockDudeGateBoardStarvationTests
     {
         // The filter rejects boards, so it could in principle empty the hold-out at the hardest rung and turn the
         // gate into a silent 0. The attempt budget must be generous enough that it does not.
-        var boards = BlockDudeCurriculum.GateBoardsFor(BlockDudeCurriculum.LastStage, count: 8);
+        // M64: 8 -> 2. The assertion is NotEmpty -- that the filter cannot starve the hold-out at the
+        // hardest rung -- and two boards demonstrate non-starvation exactly as well as eight, at a
+        // quarter of the 209s this cost instrumented.
+        var boards = BlockDudeCurriculum.GateBoardsFor(BlockDudeCurriculum.LastStage, count: 2);
 
         Assert.NotEmpty(boards);
     }

@@ -27,12 +27,15 @@ public class BlockDudeDeadEndTests
         // state labelled lost. This test measures how much of the state space that blind spot covers.
         int totalLive = 0, totalDead = 0;
 
-        for (int stage = 0; stage <= BlockDudeCurriculum.LastStage; stage++)
+        // M64: every stage -> {0, mid, last}. This is a MEASUREMENT test (it reports the
+        // dead-end share of the state space); three rungs characterise the trend as well as
+        // seven, and it cost 199s instrumented.
+        foreach (int stage in new[] { 0, BlockDudeCurriculum.LastStage / 2, BlockDudeCurriculum.LastStage })
         {
             var spec = BlockDudeCurriculum.Stages[stage].Spec;
             int live = 0, dead = 0;
 
-            foreach (var board in BlockDudeCurriculum.GateBoardsFor(stage, count: 4))
+            foreach (var board in BlockDudeCurriculum.GateBoardsFor(stage, count: 2))
             {
                 var oracle = new BlockDudeOracle(board, spec.OracleMaxStates);
                 if (oracle.Truncated) continue;
