@@ -61,3 +61,6 @@ src/RLDemo.Web/wwwroot/levels/
 
 # Python bytecode from the level-pack importer tools.
 __pycache__/
+
+# M63.7: the TS-side .pg cobertura produced by tools/pg_coverage_remap.mjs in CI.
+coverage-ts/

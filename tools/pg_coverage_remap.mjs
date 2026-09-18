@@ -22,7 +22,7 @@
 // USAGE
 //   node tools/pg_coverage_remap.mjs <coverage-final.json> <output.cobertura.xml> [repoRoot]
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, resolve, relative, isAbsolute } from 'node:path';
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -187,6 +187,9 @@ function main() {
     `  <packages>\n    <package name="Polyglot" line-rate="${rate}" branch-rate="0" complexity="0">\n` +
     `      <classes>\n${classes.join('\n')}\n      </classes>\n    </package>\n  </packages>\n</coverage>\n`;
 
+  // CI writes into a directory that does not exist yet.
+  const outDir = dirname(resolve(outPath));
+  if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
   writeFileSync(outPath, xml, 'utf-8');
   console.log(
     `\n${mappedFiles} twin(s) remapped -> ${perFile.size} .pg file(s), ` +
