@@ -82,44 +82,63 @@ hardcoded `switch` over "istanbul JSON for TypeScript, `coverage json` for Pytho
 compiled-in list of supported languages wearing a different hat: a new target would transpile fine and
 then be invisible to coverage until someone released the tool.
 
-So the plugin declares its own coverage adapter, beside `originMapping`:
+### The fix: two orthogonal axes
 
-```json
-"coverage": { "reportFormat": "cobertura" }
+The mistake in an earlier draft of this PRD was to put a `reportFormat` in the plugin manifest. **A
+plugin cannot know what report format its consumer emits** — that is a per-repo CI choice. This repo
+alone could reasonably run cobertura for C#, lcov for TypeScript, and `coverage json` for Python, and
+change any of them tomorrow without touching Polyglot.
+
+So there are two axes, and they do not interact:
+
+| axis | varies with | declared by | determines |
+|---|---|---|---|
+| **origin** | the **language** | the **plugin** (`originMapping`) | *how to project* generated lines onto `.pg` lines |
+| **format** | the **consumer's toolchain** | the **invocation** (`--format`, or sniffed) | *how to read* the report, and how to write the result |
+
+`originMapping` stays exactly as it is. Nothing about coverage formats belongs in the manifest.
+
+**This preserves the property that matters, and strengthens it.** Format readers are
+*language-independent*: a new target declares `originMapping` and immediately reuses every reader that
+already exists. Adding a language still needs **zero engine code** — and now for a better reason than
+"they all happen to emit cobertura", which was never going to stay true.
+
+### Why the reader set stays small
+
+Formats are a small, stable, shared set — far fewer than languages, and several languages emit the same
+one. Verified against real artefacts in this repo rather than from documentation:
+
+| format | emitted by | line data | branch data |
+|---|---|---|---|
+| **cobertura** | coverlet, vitest, `coverage xml`, php-code-coverage | `<line number= hits=>` | `condition-coverage="100% (4/4)"` |
+| **lcov** | vitest, `coverage lcov`, most JS/Python tooling | `DA:<line>,<hits>` | `BRDA:<line>,<block>,<branch>,<taken>` |
+| **istanbul JSON** | vitest, nyc, jest | `statementMap` + `s` (statement-level) | `branchMap` + `b` |
+| **clover** | php-code-coverage, some JS tooling | `<line num= count=>` | `<line type="cond" truecount= falsecount=>` |
+
+Both of this repo's current reports were checked directly: vitest's lcov carries **1,176 `BRDA:`
+records**, exactly matching its cobertura's `branches-valid="1176"`. **The same data, differently
+spelled.**
+
+That corrects a claim carried from the earlier coverage PRD, that *"lcov is line-only and cannot be
+remapped faithfully."* It is line-keyed, which is all a line-granular map needs, and it carries branch
+data. The real reason istanbul JSON was chosen there was statement-level granularity — which §4.2
+settles a better way (the denominator comes from the map's mapped-line set, not from the report).
+
+**Minimum viable reader set: cobertura and lcov.** Those two cover every target ecosystem in play.
+istanbul JSON and clover are additions, not prerequisites.
+
+### The tool's interface follows from this
+
+```
+polyglot-coverage remap <report> --target <name> [--format <fmt>] [--out-format <fmt>] --out <path>
 ```
 
-### This is nearly free, because report formats are far fewer than languages
-
-Verified against real artefacts rather than documentation — **all four target ecosystems already emit
-cobertura, and all four carry per-line branch data in it**:
-
-| target | producer | verified |
-|---|---|---|
-| C# | coverlet | `condition-coverage="50% (1/2)"` in this repo's report |
-| TypeScript | vitest / `@vitest/coverage-v8` | `<line number="111" hits="8" branch="true" condition-coverage="100% (4/4)"/>` |
-| Python | `coverage xml` | cobertura is its XML reporter |
-| PHP | `php-code-coverage` | Cobertura is a first-class report type |
-
-**Languages vary without bound; coverage report formats vary slowly and are shared.** One cobertura
-reader therefore serves every target today, and a new language usually needs **nothing but a manifest
-entry** — which is exactly the property the JSON-plugin design exists to protect.
-
-`reportFormat` stays an open vocabulary (`cobertura`, `lcov`, `istanbul-json`, `clover`) so a future
-ecosystem that cannot emit cobertura is a reader added once, not a redesign. What it must **not**
-become is a config DSL describing how to parse an arbitrary report — that is the trap of letting
-configuration grow into a programming language, and the format enum is deliberately the cheaper line to
-hold.
-
-### Two consequences
-
-1. **Branch projection needs no richer input.** Cobertura's `condition-coverage="k% (c/n)"` is exactly
-   the per-line `(coveredArms, totalArms)` pair §4.4 specifies. The interim tool reached for istanbul's
-   `branchMap` and still emitted no branches; cobertura supplies it directly, from every target.
-2. **Statement-level input becomes an optimisation, not a requirement.** istanbul JSON remains useful
-   (it distinguishes "line has no mapped statement" from "line at zero hits"), but §4.2 already settles
-   that question a better way: **the denominator comes from the map's own mapped-line set**, not from
-   the report. So line-granular input is sufficient, and no target is excluded for lacking a
-   statement-level reporter.
+- `--format` sniffed by default (`TN:`/`SF:` ⇒ lcov; `<coverage>` ⇒ cobertura or clover; a JSON object
+  of paths ⇒ istanbul), overridable because sniffing should never be the only option.
+- `--out-format` **defaults to the input format.** The consumer's pipeline already consumes that
+  format; handing back something else makes the tool a format converter it was never asked to be.
+- `--target` names the plugin whose `originMapping` to use. For a `directive` target the command exits
+  0 with *"needs no remap — its compiler attributes natively"*, which is the whole C# story.
 
 ### Plugin resolution should be reused, not reimplemented
 
@@ -248,20 +267,25 @@ existing `run-cli-smoke.ps1` P38 check, extended to all four targets.
 `directive` **exit 0 with a clear "this target needs no remap — its compiler attributes natively"**
 rather than pretending to work. That message is the whole C# story and should be impossible to miss.
 
-**PG-C3 — the cobertura reader, and the projector.** One reader serves every target (§3), so this is
-the whole of what used to be three per-ecosystem adapters. Cobertura in, `.pg`-keyed cobertura out,
-including branch data. Must fix the three known defects of the interim implementation: credit **all**
-map segments rather than first-wins (§4.3), prefer `sourcesContent` over on-disk path resolution
-(§4.5), and identify generated files by *footer + sidecar* rather than a name glob (§4.6).
+**PG-C3 — the projector, and two format readers.** The projector is language- and format-neutral: it
+consumes `(file, line, hits, branches)` and the plugin's `originMapping`, and emits the same shape
+keyed on `.pg`. Around it, **cobertura and lcov** readers/writers — those two cover every target
+ecosystem in play (§3). `--out-format` defaults to the input format.
 
-**PG-C4 — branch projection.** Per-`.pg`-line `(coveredArms, totalArms)` from cobertura's
-`condition-coverage`, merged per-component with `max`; never arm-level while `column: 0` holds (§4.4).
-No longer needs a richer input format — it falls out of PG-C3's reader.
+Must fix the three known defects of the interim implementation: credit **all** map segments rather than
+first-wins (§4.3), prefer `sourcesContent` over on-disk path resolution (§4.5), and identify generated
+files by *footer + sidecar* rather than a name glob (§4.6).
 
-**PG-C5 — prove it on Python and PHP end to end.** *Not* new adapters: a manifest entry from PG-C1 plus
-`coverage.reportFormat: "cobertura"`, then a real `coverage xml` / php-code-coverage run projected onto
-a `.pg`. **The gate is that neither needs a line of engine code** — if either does, §3's claim is wrong
-and the design needs revisiting before more targets are added.
+**PG-C4 — branch projection.** Per-`.pg`-line `(coveredArms, totalArms)`, merged per-component with
+`max`; never arm-level while `column: 0` holds (§4.4). Both readers supply it — cobertura as
+`condition-coverage="k% (c/n)"`, lcov as `BRDA:` records — so this is a property of the neutral
+intermediate, not of either format.
+
+**PG-C5 — prove it on Python and PHP end to end.** *Not* new adapters: a manifest entry from PG-C1, then
+a real `coverage.py` / php-code-coverage run — **in whichever format that consumer happens to emit** —
+projected onto a `.pg`. **The gate is that neither needs a line of engine code.** If a new *format*
+turns up that is a reader; if a new *language* needs engine work, §3's claim is wrong and the design
+needs revisiting before more targets are added.
 
 **PG-C6 — automation.** *(scope 3)* Two seams, in order of value:
 1. **A `polyglot-coverage` npm bin** a consumer calls in one CI line — already achieved by PG-C2.
@@ -292,14 +316,13 @@ targets where a remap is actually needed? **Expected answer: no on the last poin
 PG-C6.2 — worth ten minutes to find out rather than building it.
 
 **SP4 — adopt or build?** `istanbul-lib-source-maps` (maintained, used by nyc) projects an istanbul
-coverage map through source maps — ~80% of the projector, including the many-to-one merge. **But §3
-changes the calculus**: if the input is cobertura for every target, an istanbul-shaped library means
-converting *into* istanbul and back out, and the language-agnostic path stops being the primary one.
-Weigh: adopt for the JS route and hand-roll the generic one (two code paths), or hand-roll one projector
-over a format-neutral `(file, line, hits, branches)` intermediate (one code path, ~150 lines of VLQ and
-merge that already exist and are proven). **Lean to the latter**, contrary to the earlier
-recommendation. (`remap-istanbul` is the obvious name-match and is **dead** — ~7 years unpublished,
-istanbul 0.x. Do not.)
+coverage map through source maps — ~80% of the projector, including the many-to-one merge. **But it is
+istanbul-shaped**, and the design centres on a format-neutral intermediate fed by cobertura and lcov
+readers; adopting it would mean converting into istanbul and back out on every path except the JS one.
+Weigh that against ~150 lines of VLQ and merge code that already exist and are proven in the interim
+tool. **Lean to hand-rolling the projector** and keeping the library in mind only if the JS route ever
+needs bundler-map composition. (`remap-istanbul` is the obvious name-match and is **dead** — ~7 years
+unpublished, istanbul 0.x. Do not.)
 
 **SP5 — the `sourcesContent` shortcut.** Polyglot embeds `sourcesContent` deliberately, so *"the
 consumer then needs no path resolution at all"*. Confirm a report can be produced using only the
