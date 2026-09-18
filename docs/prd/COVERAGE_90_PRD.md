@@ -505,7 +505,17 @@ with `--collect`** — see §12.7 for what happened when it was not.
    covered lines — a materially bigger job than if `tools/**` had been excluded. Worth revisiting
    the target once M63.4 lands and the true denominator is known.
 
-### 10a. Runtime budget — a hard constraint, not a preference
+### 10a. Runtime budget — **softened by the owner 2026-09-18 (M65)**
+
+> **Correction.** This section's heading and its "CI wiring is blocked until…" clause are no longer
+> accurate, and are left below only because decisions elsewhere in this PRD were made under them.
+> The owner's position as of M65: **"3 minutes is just a suggestion, not a hard requirement"** — the
+> Nx cache can serve several test results, so a suite that grows past the bar is not automatically a
+> problem. The 180s figure is a target to steer by, not a gate. What survives unchanged is the
+> *reasoning*: a test that is slow **and** shallow is still not worth its seconds (§12.7), and the
+> Amdahl floor still means the longest single test bounds the suite (§6 S3f).
+
+#### The original framing, as decided on 2026-09-18 (superseded above)
 
 The owner's bar: **~3 minutes is acceptable, 16 minutes is "waaay too long."** `SingleHit` already
 took the fast bucket from 15m55s to 5m07s at zero cost to the number (§6 S3c). The remaining ~2
@@ -723,3 +733,165 @@ The three honest options, unchanged from §10.4 but now priced:
 **Recommendation: (2) or (3), not (1).** Excluding `tools/**` now would reverse a decision made
 deliberately and would move the number without covering a line — the exact kind of metric change this
 PRD has argued against throughout. The number is only worth having if it means something.
+
+---
+
+## 15. M65 — the test-writing pass, and the frontend joins the number *(2026-09-18)*
+
+M63 built the measurement and M64 made the campaigns testable. M65 is the milestone that actually
+writes tests, on the targets the service's own per-file ranking named.
+
+| | before | after |
+|---|---|---|
+| C# line coverage | 74.18% (11,423 / 15,398) | **78.70% (12,180 / 15,476)** |
+| C# branch coverage | 69.11% | **72.04%** |
+| Tests (fast bucket) | 837 | **1,044** |
+| Fast-bucket wall clock | 2m26s | **2m04s** |
+| Frontend | not measured | **144 tests, 644/644 lines over 13 modules** |
+| Combined, as the service will merge it | — | **12,824 / 16,120 = 79.55%** |
+
+The denominator grew by 78 lines (the Lab `Parse` extractions), so the percentage is not flattered by a
+shrinking base. The suite got **faster**, not slower — the new tests are pure-logic and sub-second, and
+they spread across new xUnit collections, which the S3f class-split finding predicts.
+
+### 15.1 What moved, and why these targets
+
+Targets came from the service's per-file uncovered ranking at `b50fe5e`, not from guesswork. The
+ranking also **corrected the plan before any code was written**: §2 and the M65 seam analysis both
+expected the Kociemba block to be the headline (~435 lines), but the real report showed `K_CubieCube`
+already at 347/444 — it is exercised end-to-end by `CubeApiTests`' scramble-and-solve. The block was
+worth ~190, not ~435, and the effort went elsewhere.
+
+| gain | file | how |
+|---|---|---|
+| +86 | `BlockDudeExpertIterationCampaign` | lifecycle without `TrainChunk` — resume, `--fresh`, the frontier sidecar, `Evaluate` |
+| +72 | `ReinforceTrainer` (now 79/79) | a 3-step toy env; the loop's *bookkeeping*, never "does it learn" |
+| +69 | `K_CubieCube` | coordinate round-trips, `verify()`'s error branches, move order-4 |
+| +68 | `NetworkTelemetry` (was 0/72) | `NetworkInspector`'s layer pairing, topology arithmetic, heatmap block-mean |
+| +61/+57/+52/+33/+33/+20 | `BlockDudeLab`, `DraughtsLab`, `ChessLab`, `SnakeLab`, `CrazyFruitsLab`, `TetrisLab` | the M63.5 `Parse` seam pattern, applied to six more labs |
+| +38 | `CubeImitationCampaign` | lifecycle + progress sidecar |
+| +35 | `BlockDudeGreedy` (was 0/35) | ending classification, the move log, the no-revisit invariant |
+| +26 | `K_Tools` (was 0/30) | `verify` per error code |
+| +11 | `CubeModelService` | the `static Rollout` only — never the `AdaptiveBackend` constructor |
+
+Also newly covered and absent from the old top-60: `ModelServiceInfrastructure`, `BlockDudeController`,
+`VersionController`.
+
+**Six Lab production files gained `Parse`/`Options` seams** (`ChessLab`, `DraughtsLab`, `BlockDudeLab`,
+`SnakeLab`, `TetrisLab`, `CrazyFruitsLab`), each a mechanical extraction of the pure flag-reading head
+of `Run` — same defaults, same order, no control flow changed. Chess and Draughts needed *two* seams
+each rather than one, because their flag head is split by the demo/bench/strength dispatches; folding
+the later reads upward would have made a malformed *training* flag throw inside a read-only mode, which
+is a behaviour change, not a refactor.
+
+**Two production changes beyond the seams.** `K_CubieCube.getURFtoDLB`/`getURtoBR` widened from private
+to `internal` — their setters were already public, so the set/get pair could not be asserted at all.
+That is preferred to the reflection the first draft used, which would have pinned the method *names*
+rather than the behaviour. And the `StartupCheckpoint` fix in §15.4.
+
+### 15.2 The TypeScript half — §13 is partly reversed, and one of its claims was wrong
+
+§13 removed the frontend upload and gave two reasons. The first still stands; the second did not
+survive measurement.
+
+**Still true: never upload the generated twins.** The `*_solver.ts` files are transpiled from the same
+`.pg` the C# side already covers at 93.9% through `#line` pragmas, so uploading both double-counts one
+source file for +0.1pp. They are now excluded explicitly (`coverageExclude` in `angular.json`) rather
+than by omission, and `tools/pg_coverage_remap.mjs` stays unused — it exists to rewrite `.ts`
+coordinates onto `.pg` line numbers, which is only needed because the twins are gitignored.
+
+**Wrong: "it would add a large uncovered denominator and drop the number sharply."** That was reasoned,
+not measured, and it is not how this builder behaves. `@angular/build`'s unit-test builder pre-bundles
+with esbuild before vitest starts, so a source file **no spec imports never becomes a module the v8
+provider can synthesise empty coverage for**, and `excludeAfterRemap: true` then drops it. Evidence:
+`coverageInclude` was `src/app/**/*_solver.ts`, which matches 9 files; the report contained exactly 1 —
+the only one with a spec.
+
+That is a double-edged finding and the PRD should say so. It de-risks widening the globs, but it also
+means **`coverageInclude` cannot be used to hold the frontend honest**: a module with no spec is not
+counted as uncovered, it is simply absent, so the percentage cannot fall when someone adds untested
+code. A frontend coverage number here measures *the files that have tests*, not the app. Treat it as a
+regression guard on tested modules, never as an answer to "how much of the frontend is tested".
+It is also a behaviour of this `@angular/build` 22 + vitest 4 combination, not a contract.
+
+**So the globs are scoped to what actually has specs** rather than to `src/**/*.ts`. Deliberately out:
+the 14 Canvas/Three.js/WebSocket renderers and 15 Angular components (~8,200 lines). Covering those
+means faking a 2D context to assert "it called `fillRect`", which measures nothing; jsdom's
+`getContext('2d')` returns null, and there is no TestBed precedent anywhere in the repo to build on.
+
+**The one thing that nearly broke it.** The cobertura reporter writes filenames **relative to the
+Angular project root, with the platform separator** — `src\app\chess\chess-net.ts` on a Windows agent,
+verified in the real report. The service resolves a path by suffix-matching against `git ls-files`,
+which stores forward-slashed repo-root-relative paths, so every file would have been silently dropped
+as unmatched: no error, no warning, just a frontend report covering nothing.
+`tools/reroot_frontend_coverage.mjs` normalises the separators and re-roots the paths (and is
+idempotent, since the upload step runs under `always()`). It warns loudly when it finds no filenames at
+all, because an empty report that uploads cleanly is indistinguishable from a healthy one.
+
+`finish: true` moves to the frontend upload in **both** workflows — the last upload of a build closes
+it. `build-master.yml` gains the frontend suite for the first time, so master and a PR measure the
+same thing; a badge that disagreed with the PR number for wiring reasons would be worse than the
+minute it costs.
+
+### 15.3 What was deliberately left
+
+- **`CubeDaviCampaign` (286 uncovered, still the largest single file)** and `CubeEfficientCampaign`
+  (102): both take a concrete `AdaptiveBackend`. Constructing ILGPU under coverage instrumentation is
+  the documented 37-CI-failure hazard. Reaching these needs the §12/§6 recommendation — extract the
+  pure decision logic into a static, the way `BlockDudeCurriculum.Advance` was — which is a production
+  change for a later milestone, not a test.
+- **`CubeImitationCampaign.Evaluate`** (most of its remaining 79): an untrained net fails every greedy
+  rollout, so each of 160 eval episodes pays a full 2,000-expansion A* at 11 net forwards per
+  expansion. Needs eval budgets on the options record before it is affordable.
+- **`BlockDudeLevelBench` (136), `FruitCakeSearchEval` (75), `FruitCakeAb`, `BlockDudeValueCalibration`**:
+  §12.4's deliberate exclusions — they play real episodes or load checkpoints.
+- **`VizServer`'s socket lifecycle**: never bind a port; it would collide with the owner's own `--viz`.
+- **The 14 Canvas/Three.js/WebSocket renderers and 15 Angular components** (~8,200 TS lines): see §15.2.
+
+### 15.4 Bugs the test-writing surfaced
+
+Writing tests against code that had none is the cheapest bug-finding this repo has done. Nine real
+defects fell out; one was fixed here, the rest are recorded with the reasoning rather than quietly
+encoded as expected behaviour.
+
+**Fixed in this PR** *(one-PR rule — a defect found while testing is in scope)*:
+
+- **`StartupCheckpoint<T>.TryLoad` did not guard the loader**, while its sibling
+  `RefreshingCheckpoint<T>` did. A checkpoint that *exists but cannot be read* — a truncated Git-LFS
+  pointer in `models/` is enough — propagated straight out of `Initialize`, which faults
+  `ModelStartupHostedService`; under .NET's default `BackgroundServiceExceptionBehavior.StopHost`
+  **that takes the whole web host down at boot**. If the host survived, `Status` stayed `Loading`, so
+  the lazy `Value` getter re-read and re-threw on *every request* — a 500 per click, against a class
+  whose own doc comment promises it "turns a missing checkpoint into 'unavailable' rather than an
+  exception". Now caught, with `Status = Failed` and an `Error` naming the real fault; `Initialize`
+  no longer overwrites that message with "no checkpoint in the store", which would send a reader to
+  entirely the wrong problem. `Failed` is terminal, so a known-bad checkpoint is not re-read per
+  request.
+
+**Recorded, not fixed** — each is either latent, arguably intended, or needs a decision:
+
+| | |
+|---|---|
+| `SelfPlayCampaign` | A genuine **0.0 win rate is indistinguishable from "never evaluated"**: `Checkpoint` stores `IsNaN ? 0 : rate` and `Resume` maps a stored `0` back to `NaN`. A net that truly scores 0% vs random resumes as "unknown", which *disables the winRate signal in `MaybePromoteDifficulty`* — so the worst possible net is treated as an unmeasured one. |
+| `TrainWindow.MeanAndReset` | Returns **0, not NaN, for an empty window**, so `SelfPlayCampaign.Evaluate` reports `policyLoss = valueLoss = 0.0000` before any batch has run — indistinguishable from a collapsed loss. The BlockDude campaigns get this right with NaN; §15 argues at length that NaN and 0 are different facts. Also affects `CubeImitationCampaign`'s `ce`/`acc`/`huber`. |
+| `CubeImitationCampaign.Resume` | Unconditionally calls `CubeSolver.WarmUp()`, building the Kociemba tables (multi-second on the first call in a process) even for a run that will never reach the oracle. Shared static tables mean only the first test in the assembly pays it, but it is what stops this campaign being properly unit-testable in isolation. |
+| `Kociemba K_CubieCube.multiply` | **Only multiplies corners** — `// edgeMultiply(b);` is commented out. Private and unused today, so nothing is broken; the name lies, which is how it will eventually be used wrongly. |
+| `Kociemba setPruning` | An **AND, not an assignment**: an entry can be written exactly once, only from the pre-filled `-1`. The table builder happens to respect this (`== 0x0f` guard), so it is pinned as the designed contract — but it is a fragile interface. Its two nibble halves are also inconsistently guarded (`unchecked` on the even branch only), which would throw under `<CheckForOverflowUnderflow>`. |
+| `Tools.randomCube` | Unseeded `new Random()`. Tests assert only that the result verifies as valid, never a specific cube. |
+| `game-2048-logic.ts` | Exponent saturation at `Math.min(pending + 1, 15)`: merging two 32768 tiles yields **32768 again while still awarding the points**, silently eating a tile. 65536 is reachable in real 4×4 2048. `ClassicEngine` has **no such cap**, so the two implementations provably diverge above exponent 15 — despite `game-2048-classic.ts`'s header claiming identical merge results. The cross-check fixtures stay at exponent ≤ 7 rather than blessing either side. |
+| `snake-logic.ts` | `SnakeGame.reset()` with `size < 3` walks the body off the board (negative cells, body longer than the board). Board size is a visitor setting; if the UI can offer < 3 this is a live crash path. |
+| TS checkpoint readers | The four dueling-Q readers **accept any version byte** — only `>= 2` gates the noisy flag, so version 0 or 99 parses. Looks like an oversight rather than intent; left untested pending a decision. |
+
+### 15.5 §14 revisited: ~80% is where this lands, and it is now nearly there
+
+§14 priced three options and recommended (2) *move the target to ~80%* or (3) *a multi-milestone arc*,
+against (1) *exclude `tools/**`*. M65 is evidence for (2): **79.55% combined**, reached in one milestone
+without excluding a single line from the denominator.
+
+What is left between here and 90% is ~3,300 C# lines, and it is no longer a matter of writing more of
+the same tests. It is concentrated in `CubeDaviCampaign`, the Lab's episode-playing `Run` bodies, and
+the campaign `TrainChunk`s — each of which needs either a production seam or a slow test, and §12.7 has
+already measured what slow-and-shallow buys. **The recommendation is now firmly (2): declare ~80% the
+target, treat it as met, and make any further rise a by-product of seams that are worth having anyway.**
+Excluding `tools/**` would still move the number ~7 points without covering a line, and is still wrong
+for the same reason.

@@ -77,9 +77,45 @@ jobs:
         # With search on, a glob that matches nothing silently falls back to auto-detection
         # and would upload stray unparsable reports.
         disable-search: true
-        # Closes the build now instead of waiting out the ~2-minute server debounce.
-        finish: true
+        # M65: the frontend uploads a second report under the same (repo, sha, runId, runAttempt) and
+        # the service merges them, so this one no longer closes the build -- the last upload does.
+        finish: false
         # A coverage-service outage must never block a NuGet release.
+        fail-ci-if-error: false
+
+    # M65: master must measure the SAME thing a PR does, or the badge and the PR number disagree for
+    # reasons that have nothing to do with the code. That is worth ~a minute on the release path.
+    # Scope and rationale: see the matching block in pull-request.yml.
+    - name: Setup Node
+      if: always()
+      uses: actions/setup-node@v5
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: src/RLDemo.Web/ClientApp/package-lock.json
+
+    - name: Test Angular app
+      if: always()
+      working-directory: src/RLDemo.Web/ClientApp
+      run: npm ci && npm run test:coverage
+
+    - name: Re-root the frontend coverage paths
+      if: always()
+      working-directory: src/RLDemo.Web/ClientApp
+      run: node ../../../tools/reroot_frontend_coverage.mjs coverage/ClientApp/cobertura-coverage.xml src/RLDemo.Web/ClientApp
+
+    - name: Upload frontend coverage
+      if: always() && hashFiles('src/RLDemo.Web/ClientApp/coverage/ClientApp/cobertura-coverage.xml') != ''
+      continue-on-error: true
+      uses: MintPlayer/MintPlayer.Spark/apps/CodeCoverage/action@coverage-upload-v1
+      with:
+        url: https://coverage.mintplayer.com
+        use-oidc: true
+        files: |
+          src/RLDemo.Web/ClientApp/coverage/ClientApp/cobertura-coverage.xml
+        disable-search: true
+        # The last upload of the build closes it.
+        finish: true
         fail-ci-if-error: false
 
     # Only the two library projects are packable (IsPackable=false everywhere else).

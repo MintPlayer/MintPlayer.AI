@@ -721,7 +721,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube.Kociemba
         }
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-        int getURFtoDLB()
+        internal int getURFtoDLB()
         {
             Corner[] perm = new Corner[8];
             int b = 0;
@@ -758,7 +758,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube.Kociemba
         }
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-        int getURtoBR()
+        internal int getURtoBR()
         {
             Edge[] perm = new Edge[12];
             int b = 0;

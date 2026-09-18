@@ -3402,6 +3402,65 @@ by `..._MatchesPerSuccessorSolve` — best moved out to a benchmark); one wide D
 Lab `--eval-only` cube smokes. **Any future "win rate > X" threshold belongs in a Lab gate, never the fast
 bucket — a shrunk version of such a test is a coin flip with a green tick.**
 
+## M65 — Writing the tests, and the frontend joins the number  *(2026-09-18; see `COVERAGE_90_PRD.md` §15)* ✅ — **repo 74.18% → 78.70%, 79.55% combined with the frontend**
+
+M63 built the measurement, M64 made the campaigns testable, M65 writes the tests. Targets came from the
+coverage service's own per-file uncovered ranking rather than from guesswork — which paid for itself
+immediately: the ranking showed `K_CubieCube` already at 347/444 (exercised end-to-end by `CubeApiTests`),
+so the Kociemba block was worth ~190 lines rather than the ~435 both earlier analyses had assumed, and the
+effort moved elsewhere.
+
+| | before | after |
+|---|---|---|
+| C# lines | 74.18% (11,423 / 15,398) | **78.70% (12,180 / 15,476)** |
+| C# branches | 69.11% | **72.04%** |
+| Fast-bucket tests | 837 | **1,044** |
+| Fast-bucket wall clock | 2m26s | **2m04s** |
+| Frontend | not measured | **144 tests, 644/644 lines, 13 modules** |
+
+- **M65.1 — Core and Environments**: `NetworkInspector` (was 0/72 — the live viewer's whole layer-recovery
+  rule, which is an *assumption* about every net rather than anything a net declares), `ReinforceTrainer`
+  (7/79 → 79/79), `BlockDudeGreedy` (0/35), Kociemba internals (`K_CubieCube` +69, `K_Tools` 0→26,
+  `K_SearchRunTime` +18, pruning-nibble round-trips).
+- **M65.2 — Campaigns without `TrainChunk`**: `BlockDudeExpertIterationCampaign` (5/227 → 91/227) and
+  `CubeImitationCampaign` (7/124 → 45/124) — resume, `--fresh`, sidecar round-trip, truncated and
+  wrong-version sidecars, `Evaluate`'s metric set. The oracle is never run.
+- **M65.3 — six more Lab `Parse` seams** (`ChessLab`, `DraughtsLab`, `BlockDudeLab`, `SnakeLab`, `TetrisLab`,
+  `CrazyFruitsLab`), extending the M63.5 pattern. Chess and Draughts need *two* seams each: their flag head
+  is split by the read-only dispatches, and hoisting the later reads would make a malformed **training** flag
+  throw inside `--demo`.
+- **M65.4 — RLDemo.Web**: `ModelServiceInfrastructure` (was 0/131), `BlockDudeController`, `VersionController`,
+  and `CubeModelService.Rollout` — the `static` only, never the `AdaptiveBackend` constructor.
+- **M65.5 — the frontend joins the number.** `angular.json` emits cobertura; `coverageInclude` is scoped to
+  the modules that have specs and `coverageExclude` keeps the Polyglot-generated `*_solver.ts` twins out
+  (they would double-count the `.pg` the C# side already covers). `finish: true` moves to the frontend
+  upload in **both** workflows, and `build-master.yml` gains the frontend suite so master and a PR measure
+  the same thing.
+
+**The trap that would have made it all silently worthless:** the cobertura reporter writes filenames
+*project-relative with the platform separator* (`src\app\chess\chess-net.ts`, verified in the real report).
+The service resolves paths by suffix-matching `git ls-files`, so every file would have been dropped as
+unmatched — no error, just a frontend report covering nothing. `tools/reroot_frontend_coverage.mjs`
+normalises and re-roots them, and warns loudly if it ever finds no filenames at all.
+
+**A measured correction to `COVERAGE_90_PRD.md` §13:** its claim that widening the frontend globs "would add
+a large uncovered denominator and drop the number sharply" is **wrong for this builder** — a file no spec
+imports never enters the report. That de-risks the change but cuts both ways, and §15.2 records it: frontend
+`coverageInclude` **cannot** hold the app honest, because untested code is absent rather than uncovered.
+
+**One production bug found and fixed** (one-PR rule): `StartupCheckpoint<T>.TryLoad` did not guard its
+loader while its sibling `RefreshingCheckpoint<T>` did, so a corrupt checkpoint faulted the startup
+`BackgroundService` — under the default `StopHost` behaviour, **the whole web host went down at boot**.
+Eight further defects are recorded in §15.4 rather than encoded as expected behaviour.
+
+**§10a softened by the owner:** 3 minutes is a suggestion, not a gate — the Nx cache can serve several test
+results. The reasoning it protected still stands: slow **and** shallow is still not worth the seconds.
+
+**Where 90% stands.** §14's three options are now priced by evidence, and the answer is option 2. The
+remaining ~3,300 lines sit in `CubeDaviCampaign` (286, blocked on the ILGPU × coverlet hazard), the Lab's
+episode-playing `Run` bodies, and the campaign `TrainChunk`s — each needing a production seam or a slow test.
+**~80% is the honest target, and it is met.**
+
 ---
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies

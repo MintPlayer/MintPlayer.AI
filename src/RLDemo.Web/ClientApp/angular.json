@@ -110,10 +110,19 @@
             "coverageReporters": [
               "lcovonly",
               "json",
+              "cobertura",
               "text-summary"
             ],
             "coverageInclude": [
-              "src/app/**/*_solver.ts"
+              "src/app/**/*-logic.ts",
+              "src/app/**/*-net.ts",
+              "src/app/**/*-das.ts",
+              "src/app/game-2048/game-2048-classic.ts"
+            ],
+            "coverageExclude": [
+              "src/app/**/*_solver.ts",
+              "src/**/*.spec.ts",
+              "src/**/*.d.ts"
             ]
           }
         }

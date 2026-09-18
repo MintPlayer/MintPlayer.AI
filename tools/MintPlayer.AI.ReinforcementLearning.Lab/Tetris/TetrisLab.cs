@@ -17,20 +17,9 @@ internal static class TetrisLab
     public static void Run(string[] args)
     {
         var a = new CliArgs(args);
-        double hours = a.Dbl("--hours", 1);
-        string dataDir = a.Str("--data", "data");
-        ulong seed = a.ULong("--seed", 1);
-        int pieceBudget = a.Int("--piece-budget", 500);
-        int chunkSteps = a.Int("--chunk-steps", 5_000);
-        long targetSteps = a.Long("--steps", 400_000);
-        int evalEpisodes = a.Int("--episodes", 20);
-        float learningRate = a.Flt("--lr", 1e-3f);
-        float explore = a.Flt("--explore", 1.0f);
-        int[] hidden = a.Ints("--hidden", [128, 128]);
-        double gamma = a.Dbl("--gamma", 0.995);
-        bool evalOnly = a.Has("--eval-only");
-        int baselines = a.Int("--baselines", 0);
-        string netPath = a.Str("--net", Path.Combine("src", "RLDemo.Web", "wwwroot", "models", "tetris.dqn.ckpt"));
+        var f = Parse(a);
+        (double hours, string dataDir, ulong seed, int pieceBudget) = (f.Hours, f.DataDir, f.Seed, f.PieceBudget);
+        (double gamma, bool evalOnly, int baselines, string netPath) = (f.Gamma, f.EvalOnly, f.Baselines, f.NetPath);
 
         // M62.3b diagnostic: how many placements does each technique actually reach, per level? The mask
         // is only believable if these counts match hand-arithmetic on the frame budget.
@@ -105,32 +94,63 @@ internal static class TetrisLab
         }
 
         var options = Options(a);
-        // Training + eval both uniform-random pieces, no garbage (the benchmark-honest protocol; garbage is
-        // an eval protocol and a web mode, not a training distribution — PRD §3.6). PBRS shaping defaults ON
-        // (M54.3 escalation: the bare reward is too sparse — 180K steps measured near-random) and lives on
-        // the TRAIN env only, so gates stay honest; --no-pbrs reverts to the bare reward.
-        bool pbrs = !a.Has("--no-pbrs");
-        // Mixed garbage on/off per training episode. MEASURED WORSE on both protocols (tet5train head-to-
-        // head vs tet4train, 30 seeds: A 17,022 vs 21,739 · B survival 101.3 vs 105.0): the dense target is
-        // the same function on any board, so the clean-trained net already generalizes to garbage — the
-        // garbage ceiling is γ=0 MYOPIA, which search fixes, not state coverage. Kept as an opt-in flag.
-        bool mixGarbage = a.Has("--mix-garbage");
+        var shaping = Shaping(a);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             services => services.AddTetrisDqnCampaign(
                 trainEnv: new TetrisEnv(pieceBudget)
                 {
-                    ShapeBoardPotential = pbrs,
+                    ShapeBoardPotential = shaping.Pbrs,
                     PotentialGamma = gamma,
-                    MixedGarbageTraining = mixGarbage,
-                    // --mandatory-tetris: declining a reachable tetris on a CLEAN stack ends the episode.
-                    // Train env only — the eval env below deliberately leaves it off, so the gates keep
-                    // measuring the same game they always did.
-                    MandatoryTetris = a.Has("--mandatory-tetris"),
+                    MixedGarbageTraining = shaping.MixGarbage,
+                    MandatoryTetris = shaping.MandatoryTetris,
                 },
                 evalEnv: new TetrisEnv(pieceBudget),
                 options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "tetris-dqn.csv")));
     }
+
+    /// <summary>The flags read before any mode dispatch: the run's budget, where it writes, and the piece
+    /// budget / checkpoint path the census and baseline modes share with training.</summary>
+    /// <remarks>M63.6: extracted from <see cref="Run"/>. The net sizing knobs are re-read by
+    /// <see cref="Options"/>, exactly as they were before the extraction.</remarks>
+    internal sealed record Flags(
+        double Hours, string DataDir, ulong Seed, int PieceBudget, int ChunkSteps, long TargetSteps,
+        int EvalEpisodes, float LearningRate, float Explore, int[] Hidden, double Gamma, bool EvalOnly,
+        int Baselines, string NetPath);
+
+    /// <summary>Reads the pure head of <see cref="Run"/> — no board, net or episode is touched.</summary>
+    internal static Flags Parse(CliArgs a)
+        => new(
+            Hours: a.Dbl("--hours", 1),
+            DataDir: a.Str("--data", "data"),
+            Seed: a.ULong("--seed", 1),
+            PieceBudget: a.Int("--piece-budget", 500),
+            ChunkSteps: a.Int("--chunk-steps", 5_000),
+            TargetSteps: a.Long("--steps", 400_000),
+            EvalEpisodes: a.Int("--episodes", 20),
+            LearningRate: a.Flt("--lr", 1e-3f),
+            Explore: a.Flt("--explore", 1.0f),
+            Hidden: a.Ints("--hidden", [128, 128]),
+            Gamma: a.Dbl("--gamma", 0.995),
+            EvalOnly: a.Has("--eval-only"),
+            Baselines: a.Int("--baselines", 0),
+            NetPath: a.Str("--net", Path.Combine("src", "RLDemo.Web", "wwwroot", "models", "tetris.dqn.ckpt")));
+
+    /// <summary>
+    /// The three switches that shape the TRAIN env only — the eval env deliberately gets none of them, so the
+    /// gates keep measuring the same game they always did.
+    /// </summary>
+    /// <remarks>
+    /// M63.6: extracted from <see cref="Run"/>, where they were read inside the registration lambda.
+    /// <para>PBRS defaults ON (M54.3 escalation: the bare reward is too sparse — 180K steps measured
+    /// near-random); <c>--no-pbrs</c> reverts to the bare reward.</para>
+    /// <para>Mixed garbage per training episode was MEASURED WORSE on both protocols (tet5train vs
+    /// tet4train, 30 seeds: A 17,022 vs 21,739 · B survival 101.3 vs 105.0) — the garbage ceiling is γ=0
+    /// MYOPIA, which search fixes, not state coverage. Kept as an opt-in flag, hence default OFF.</para>
+    /// <para><c>--mandatory-tetris</c>: declining a reachable tetris on a CLEAN stack ends the episode.</para>
+    /// </remarks>
+    internal static (bool Pbrs, bool MixGarbage, bool MandatoryTetris) Shaping(CliArgs a)
+        => (!a.Has("--no-pbrs"), a.Has("--mix-garbage"), a.Has("--mandatory-tetris"));
 
     /// <summary>
     /// M62.4: how often is a 4-line clear on the table and declined? Reports, per tier, the number of
