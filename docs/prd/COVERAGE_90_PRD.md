@@ -335,25 +335,38 @@ milestone; intermediate milestones verify by targeted slice + type-check.
 - **A debugger/editor story for `#line`.** Stepping will land in `.pg`, which no editor renders with
   C# semantics. Noted, not solved here.
 
-## 10. Open decisions for the owner
+## 10. Denominator decisions — **settled by the owner 2026-09-18**
 
-These change the shape of the work and are **not** being decided unilaterally:
+1. **`tools/Lab` (~3.2k lines): TEST IT.** Not excluded. The owner declined the "exclude `tools/**`
+   as dev tooling" recommendation, so Lab stays in the denominator and M63.5 must genuinely cover
+   it. This is the largest single block of work in the milestone — `VizServer.cs` 479,
+   `Tetris/TetrisLab.cs` 372, `CrazyFruits/CrazyFruitsLab.cs` 297, `BlockDude/BlockDudeLevelBench.cs`
+   277. Consequence to plan for: much of Lab is `HttpListener`/WebSocket/console-rendering glue, so
+   expect a seam-extraction pass (pull the testable logic out from behind the IO) rather than
+   straight unit tests against the current shapes.
+2. **`Category=Slow`: ADD A `Medium` BUCKET.** Reclassify the Slow tests that run in seconds rather
+   than minutes and include them in the coverage run, converting existing tests into coverage at
+   near-zero cost. Needs a measurement pass first — the 27 `Category=Slow` traits across 16 files
+   have never been individually timed.
+3. **`src/RLDemo.Console` (631 lines): OUT OF SCOPE.** Stays unreferenced and therefore absent from
+   the report. It is a demo CLI, not shipped library surface. *(Note the deliberate asymmetry with
+   §10.1: Console is out, Lab is in and gets tested. The distinguishing line is that Lab is already
+   referenced by the test project and Console is not.)* To be recorded in `coverlet.runsettings` so
+   the exclusion is a written decision rather than an accident of project references.
+4. **Re-baseline 90% after M63.4.** Still open, deliberately. With §10.1 resolving to "test it"
+   rather than "exclude", the denominator stays large (15,355 lines today), so 90% means +3,361
+   covered lines — a materially bigger job than if `tools/**` had been excluded. Worth revisiting
+   the target once M63.4 lands and the true denominator is known.
 
-1. **`tools/Lab` (~3.2k lines, near-zero covered).** It is in the denominator only because the test
-   project references it to test `CliArgs`. Three options: (a) exclude `tools/**` as dev tooling and
-   state that coverage measures the shipped library surface; (b) genuinely test it; (c) leave it and
-   absorb the drag. **Recommendation: (a)** — it is the single largest lever and the most defensible
-   scoping statement, but it *is* a metric-definition change and should be the owner's call, made
-   explicitly rather than absorbed into a refactor.
-2. **The `Category=Slow` filter.** Several Campaigns tests exist but never count. Introduce a
-   `Category=Medium` bucket for ones that run in seconds rather than minutes? That converts existing
-   tests into coverage at near-zero cost — likely the cheapest single step toward 90%.
-3. **`src/RLDemo.Console` (631 lines)** is invisible because nothing references it. Bring it in
-   (honest, lowers the number short-term) or declare it out of scope alongside `tools/**`?
-4. **Is 90% the right target *after* the denominator is fixed?** If §10.1 and §10.3 both resolve to
-   "exclude", 90% of a smaller, shipped-code-only denominator is a meaningfully stricter bar than
-   90% of today's. Worth re-baselining after M63.4 rather than steering by a number set before the
-   denominator was known.
+### 10a. Runtime budget — a hard constraint, not a preference
+
+The owner's bar: **~3 minutes is acceptable, 16 minutes is "waaay too long."** `SingleHit` already
+took the fast bucket from 15m55s to 5m07s at zero cost to the number (§6 S3c). The remaining ~2
+minutes over baseline is under active investigation (four-agent sweep, 2026-09-18): whether the
+28.5bn `.pg` hits are genuine execution volume, a codegen/`#line` amplification artifact, or a
+handful of tests with needlessly large iteration constants. **CI wiring (M63.7) is blocked until
+the fast bucket is back near 3 minutes** — putting a 5–16 minute job on every PR contradicts the
+repo's standing "CI cost is the bottleneck" rule.
 
 ## 11. Corrections to existing docs landing in this PR
 

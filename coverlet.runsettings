@@ -24,6 +24,18 @@
           <UseSourceLink>false</UseSourceLink>
           <DeterministicReport>false</DeterministicReport>
           <SkipAutoProps>false</SkipAutoProps>
+          <!-- M63: stop recording a line once it has been hit, instead of counting every pass.
+               Required, not an optimisation. Since PolyglotOriginInfo=true brought the `.pg` solvers
+               into the report they are instrumented for the first time, and they are the hot path —
+               the parity and perft suites push millions of simulation steps through those inner
+               loops. Measured 2026-09-18 on the fast bucket (707 tests, Release): 3m08s before the
+               solvers were instrumented, 15m55s after, 5m07s with this on — and the line rate is
+               bit-identical with and without it (10,458/15,355 = 68.11%), because coverage consumes
+               covered-vs-not, never the counts. Cost: `hits` in the report becomes 0/1 rather than a
+               tally, so the cobertura is no longer a profiler. Nothing here or on
+               coverage.mintplayer.com (which merges with max semantics) reads it as one.
+               Related: without this, several `.pg` lines saturated at int.MaxValue anyway. -->
+          <SingleHit>true</SingleHit>
         </Configuration>
       </DataCollector>
     </DataCollectors>
