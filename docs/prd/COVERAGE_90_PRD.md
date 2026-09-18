@@ -587,3 +587,49 @@ Campaigns is long training loops deliberately excluded from the measured bucket.
 - **Keep 90% as a multi-milestone arc**, with M63 landing the infrastructure and the Lab seams.
 
 **Still open.** Recorded here so the decision is made against arithmetic rather than optimism.
+
+### 12.7 M63.4 — `Category=Medium` was tried and REJECTED *(2026-09-18)*
+
+§10.2 settled on adding a `Medium` bucket so the `Category=Slow` tests that run in seconds would
+start counting. It was implemented, measured, and **reverted**. Recorded here because the reasons are
+not obvious and the idea will otherwise be re-proposed.
+
+**The candidates were real.** Six of the 21 `Slow` tests are determinism checks, bitwise-identical
+checkpoint checks and a bounded scramble solve — no training loop — and timed at 1.83s / 3.83s /
+4.18s / 7.37s / 8.34s / 10.33s, 17s of wall clock in parallel. Retagging alone would have sufficed,
+since the CI filter is `Category!=Slow`.
+
+**Two findings killed it.**
+
+**1. A timing-assertion test cannot live in the instrumented bucket — at any speed.**
+`DaviTrainerTests.BatchedGreedySolve_IsFasterThanPerSuccessor` asserts that batched solving beats
+per-successor solving. Under coverage instrumentation the relative timings **invert** and it fails:
+
+```
+batched (6488 ms) should beat per-successor (5906 ms)
+```
+
+This is a permanent property, not a threshold to tune: instrumentation does not slow both paths
+equally. Any test whose assertion is a *performance comparison* belongs in the uninstrumented bucket
+by construction. Worth remembering before the next attempt to move something into the fast bucket.
+
+**2. The timings that justified the move were measured WITHOUT coverage.** The probe ran
+`dotnet test` with no `--collect`, and those numbers were then used to argue for adding the tests to
+an *instrumented* run. The same test measured **10.33s uninstrumented and 45s instrumented**. The
+whole bucket went:
+
+| | wall clock | line rate |
+|---|---|---|
+| before | 213s | 70.72% |
+| with `Medium` | **380s (6m 20s)** | 71.90% (+1.18 pp) |
+
+**+167 seconds, not the +17s predicted** — decisively over the §10a budget for +1.18 pp. (This is the
+same probe-versus-suite extrapolation error that got the MS `Code Coverage` collector rejected in
+S3e; it was then repeated one spike later. Any future timing claim about this suite must be measured
+*with* `--collect`.)
+
+**Status: §10.2's decision is superseded by measurement.** The `Medium` bucket is not worth its cost
+at the current budget. If it is revisited, the route is (a) measure instrumented, always, and
+(b) exclude any test whose assertion is a timing comparison. The +1.18 pp it would have bought
+came mostly from Campaigns (34.3% → 40.0%), which remains the largest uncovered pool and is better
+attacked with fast tests written for the purpose than by reclassifying slow ones.
