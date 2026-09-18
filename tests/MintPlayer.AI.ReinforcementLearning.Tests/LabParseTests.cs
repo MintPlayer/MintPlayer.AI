@@ -8,6 +8,7 @@ using DraughtsLab = Lab::DraughtsLab;
 using FruitCakeLab = Lab::FruitCakeLab;
 using RushHourLab = Lab::RushHourLab;
 using SnakeLab = Lab::SnakeLab;
+using TetrisLab = Lab::TetrisLab;
 
 using MintPlayer.AI.ReinforcementLearning.Environments.Draughts;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
@@ -214,5 +215,101 @@ public class LabParseTests
         Assert.Equal(DraughtsVariant.International10, variant);
         Assert.Equal("draughts", envId);
         Assert.Equal(10, board);
+    }
+
+    // ── Tetris: the largest uncovered Lab file, and the statistics behind its gate verdicts ──
+
+    [Fact]
+    public void Tetris_dqn_defaults()
+    {
+        var o = TetrisLab.Options(new CliArgs([]));
+
+        Assert.Equal(1UL, o.Seed);
+        Assert.Equal(5_000, o.ChunkSteps);
+        Assert.Equal(400_000, o.TargetSteps);
+        Assert.Equal(20, o.EvalEpisodes);
+        Assert.Equal([128, 128], o.Hidden);
+        Assert.Equal(0.995, o.Gamma);
+        Assert.Equal(3, o.NStep);            // Tetris trains on 3-step returns, unlike the other games
+        Assert.Equal(100_000, o.BufferCapacity);
+        Assert.False(o.DenseRegression);
+    }
+
+    [Fact]
+    public void Tetris_dense_regression_is_opt_in_with_its_own_weight()
+    {
+        // The M49/M51 recipe. --dense-weight must be able to drown unit conflicts, so it is a separate
+        // knob from the flag itself.
+        var off = TetrisLab.Options(new CliArgs([]));
+        Assert.False(off.DenseRegression);
+        Assert.Equal(1.0f, off.DenseTargetWeight);
+
+        var on = TetrisLab.Options(new CliArgs(["--dense", "--dense-weight", "25"]));
+        Assert.True(on.DenseRegression);
+        Assert.Equal(25f, on.DenseTargetWeight);
+    }
+
+    [Fact]
+    public void Ci_is_zero_for_a_constant_sample()
+    {
+        // Ten episodes that all scored 5. Catastrophic cancellation can push sumSq/n - mean² slightly
+        // negative here; the Math.Max(0, ...) guard is what keeps this from becoming NaN.
+        Assert.Equal(0, TetrisLab.Ci(sum: 50, sumSq: 250, episodes: 10), 12);
+    }
+
+    [Fact]
+    public void Ci_grows_with_the_spread_and_is_never_negative()
+    {
+        double wide = TetrisLab.Ci(sum: 50, sumSq: 400, episodes: 10);
+        double narrow = TetrisLab.Ci(sum: 50, sumSq: 260, episodes: 10);
+
+        Assert.True(wide > narrow, $"expected the wider sample to have the larger interval ({wide} vs {narrow})");
+        Assert.True(narrow >= 0);
+    }
+
+    [Fact]
+    public void Ci_of_no_episodes_is_zero_rather_than_a_divide_by_zero()
+    {
+        Assert.Equal(0, TetrisLab.Ci(sum: 0, sumSq: 0, episodes: 0));
+    }
+
+    [Fact]
+    public void Percentiles_of_an_empty_sample_are_zero()
+    {
+        var (p50, p99) = TetrisLab.Percentiles([], msPerTick: 1.0);
+
+        Assert.Equal(0, p50);
+        Assert.Equal(0, p99);
+    }
+
+    [Fact]
+    public void Percentiles_index_a_sorted_sample_and_scale_to_milliseconds()
+    {
+        long[] ticks = [.. Enumerable.Range(1, 100).Select(i => (long)i)];
+
+        var (p50, p99) = TetrisLab.Percentiles(ticks, msPerTick: 2.0);
+
+        Assert.Equal(51 * 2.0, p50); // index 50 of 0..99
+        Assert.Equal(100 * 2.0, p99); // index 99
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(99)]
+    [InlineData(100)]
+    [InlineData(101)]
+    [InlineData(1000)]
+    public void Percentiles_never_index_past_the_end(int count)
+    {
+        // p99 indexes (int)(count * 0.99), which is one rounding away from count itself. A short run is
+        // exactly when a lab is being smoke-tested, so this must not be the moment it throws.
+        long[] ticks = [.. Enumerable.Range(1, count).Select(i => (long)i)];
+
+        var (p50, p99) = TetrisLab.Percentiles(ticks, msPerTick: 1.0);
+
+        Assert.InRange(p50, 1, count);
+        Assert.InRange(p99, 1, count);
     }
 }

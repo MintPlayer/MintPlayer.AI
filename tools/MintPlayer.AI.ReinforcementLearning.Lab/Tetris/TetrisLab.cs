@@ -104,20 +104,7 @@ internal static class TetrisLab
             return;
         }
 
-        var options = new TetrisDqnOptions
-        {
-            Seed = seed, ChunkSteps = chunkSteps, TargetSteps = targetSteps, EvalEpisodes = evalEpisodes,
-            LearningRate = learningRate, EpsilonStart = explore, Hidden = hidden, Gamma = gamma,
-            Grow = a.Has("--grow"), GrowEvery = a.Int("--grow-every", 5000),
-            NStep = a.Int("--nstep", 3),
-            Noisy = a.Has("--noisy"),
-            // The M49/M51 recipe (γ=0 only): dense all-action regression toward the Dellacherie-basis
-            // value read back from the observation planes.
-            DenseRegression = a.Has("--dense"),
-            DenseTargetWeight = a.Flt("--dense-weight", 1.0f),
-            EpsilonEnd = a.Flt("--eps-end", 0.05f),
-            BufferCapacity = a.Int("--buffer", 100_000),
-        };
+        var options = Options(a);
         // Training + eval both uniform-random pieces, no garbage (the benchmark-honest protocol; garbage is
         // an eval protocol and a web mode, not a training distribution — PRD §3.6). PBRS shaping defaults ON
         // (M54.3 escalation: the bare reward is too sparse — 180K steps measured near-random) and lives on
@@ -359,14 +346,71 @@ internal static class TetrisLab
             tetrises += b.Tetrises;
         }
         double mean = sum / episodes;
-        double ci = 1.96 * Math.Sqrt(Math.Max(0, sumSq / episodes - mean * mean) / episodes);
+        double ci = Ci(sum, sumSq, episodes);
         moveTicks.Sort();
         double msPerTick = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-        double p50 = moveTicks.Count == 0 ? 0 : moveTicks[moveTicks.Count / 2] * msPerTick;
-        double p99 = moveTicks.Count == 0 ? 0 : moveTicks[(int)(moveTicks.Count * 0.99)] * msPerTick;
+        var (p50, p99) = Percentiles(moveTicks, msPerTick);
         Console.WriteLine($"  {name,-20} mean {mean,9:F1} ± {ci:F1} (95% CI), " +
                           $"lines {lines / episodes:F1} · tetrises {tetrises / episodes:F2} · top-outs {topOuts}/{episodes} · " +
                           $"ms/move p50 {p50:F2} p99 {p99:F2}");
         return (name, mean, ci);
+    }
+
+    /// <summary>The DQN options this entry point's flags resolve to (M63.5: extracted from
+    /// <see cref="Run"/>, where every default was reachable only by starting a real training run).</summary>
+    internal static TetrisDqnOptions Options(CliArgs a)
+        => new()
+        {
+            Seed = a.ULong("--seed", 1),
+            ChunkSteps = a.Int("--chunk-steps", 5_000),
+            TargetSteps = a.Long("--steps", 400_000),
+            EvalEpisodes = a.Int("--episodes", 20),
+            LearningRate = a.Flt("--lr", 1e-3f),
+            EpsilonStart = a.Flt("--explore", 1.0f),
+            Hidden = a.Ints("--hidden", [128, 128]),
+            Gamma = a.Dbl("--gamma", 0.995),
+            Grow = a.Has("--grow"),
+            GrowEvery = a.Int("--grow-every", 5000),
+            NStep = a.Int("--nstep", 3),
+            Noisy = a.Has("--noisy"),
+            // The M49/M51 recipe (γ=0 only): dense all-action regression toward the Dellacherie-basis
+            // value read back from the observation planes.
+            DenseRegression = a.Has("--dense"),
+            DenseTargetWeight = a.Flt("--dense-weight", 1.0f),
+            EpsilonEnd = a.Flt("--eps-end", 0.05f),
+            BufferCapacity = a.Int("--buffer", 100_000),
+        };
+
+    /// <summary>
+    /// The 95% confidence half-width for an episode metric, from its running sum and sum of squares.
+    /// </summary>
+    /// <remarks>
+    /// M63.5: extracted from <c>RunProtocol</c>. This is the quantity every "CI-SEPARATED" /
+    /// "OVERLAPPING" baseline verdict is decided on, so a sign or divisor slip here silently changes a
+    /// gate result. The <c>Math.Max(0, ...)</c> guards the catastrophic-cancellation case where
+    /// <c>sumSq/n - mean²</c> goes slightly negative on a constant sample.
+    /// </remarks>
+    internal static double Ci(double sum, double sumSq, int episodes)
+    {
+        if (episodes <= 0) return 0;
+        double mean = sum / episodes;
+        return 1.96 * Math.Sqrt(Math.Max(0, sumSq / episodes - mean * mean) / episodes);
+    }
+
+    /// <summary>
+    /// Median and 99th-percentile move time, in milliseconds. Empty input reports (0, 0).
+    /// </summary>
+    /// <remarks>
+    /// M63.5: the p99 index is <c>(int)(count * 0.99)</c>, which reaches <c>count</c> itself once
+    /// <c>count * 0.99</c> rounds up to it — the input must be clamped, not trusted. Extracted so that
+    /// boundary is assertable rather than discovered on a short run.
+    /// </remarks>
+    internal static (double P50, double P99) Percentiles(IReadOnlyList<long> sortedTicks, double msPerTick)
+    {
+        if (sortedTicks.Count == 0) return (0, 0);
+        int last = sortedTicks.Count - 1;
+        int i50 = Math.Min(sortedTicks.Count / 2, last);
+        int i99 = Math.Min((int)(sortedTicks.Count * 0.99), last);
+        return (sortedTicks[i50] * msPerTick, sortedTicks[i99] * msPerTick);
     }
 }
