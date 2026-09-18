@@ -283,6 +283,61 @@ covered/not-covered — all this repo and the server's max-merge consume — mus
 **Fail:** the 5× is intrinsic, and the choice becomes explicit: pay it, or collect coverage on a
 reduced filter and accept a partial number.
 
+**Result: PASSED — 15m55s → 5m07s, line rate bit-identical (10,458/15,355).** Mechanism, measured on
+an isolated 20M-iteration probe: coverlet injects `ldc.i4` + `call RecordHit` per *sequence point*,
+and `RecordHit` is an `Interlocked.Increment`. Under xUnit's parallel execution several threads hit
+the same `HitsArray` slots, so each atomic forces exclusive ownership of that cache line away from
+the other cores.
+
+| probe (20M iterations) | 1 thread | 4 threads |
+|---|---|---|
+| coverage off | 100 ms | 48 ms |
+| coverlet default | 990 ms (9.9×) | **3411 ms (71×)** |
+| coverlet `SingleHit` | 186 ms (1.9×) | 111 ms (2.3×) |
+
+Note the multi-hit 4-thread case is *slower in absolute terms* than 1 thread — a textbook
+false-sharing signature, and the real reason the regression was 5× rather than ~1.3×. `SingleHit`
+keeps the call and replaces the atomic with a plain read + predicted branch, hence its ~1.9× floor.
+
+### S3e — Would Microsoft's `Code Coverage` collector be faster? ❌ **RUN 2026-09-18 — REJECTED**
+
+An isolated probe suggested MS `Code Coverage` (basic-block probes, non-atomic byte flags, dynamic
+instrumentation) would run at ~1.0–1.5× uninstrumented against coverlet-SingleHit's 1.9–2.3×, i.e.
+roughly 2× better. **It did not survive contact with the real suite.**
+
+| collector | fast bucket wall clock | line rate |
+|---|---|---|
+| coverlet + `SingleHit` | **4m 39s** | 68.11% (10,458/15,355) |
+| MS `Code Coverage;Format=cobertura` | **5m 57s** | 68.29% (10,445/15,295) |
+
+Fidelity was fine — it honours `#line` and attributed all nine `.pg` files — but it is **28% slower
+here**, and its cobertura emits absolute backslash paths with an empty `<sources>` element, which
+would additionally break the server's `git ls-files` suffix matching without a normalisation pass.
+Recorded so the idea is not re-proposed: the probe-level extrapolation was simply wrong at suite
+scale. **Coverlet + `SingleHit` stays.**
+
+### S3f — Class split: the free parallelism win ✅ **RUN 2026-09-18 — 279s → 192s, nothing traded**
+
+xUnit's unit of parallelism is the test *collection*, which by default is the class; tests inside one
+class run strictly serially. `BlockDudeGateBoardsTests` held 188.2s + 81.4s + 2.4s = **272s of serial
+work against a 279s wall clock for all 707 tests** — it *was* the critical path, and the observed
+"parallelism of 3.0 on 8 cores" was a consequence of it, not a scheduler weakness. Given that
+structure the best achievable was `max(272, 835.8/8) = 272s`, so xUnit was already at ~98% of
+optimal: **the runner had nothing left to give, and switching to NUnit/MSTest/TUnit would buy only
+what splitting the class buys, at the cost of migrating 707 tests.** (Playwright is browser
+automation and cannot run these tests at all.)
+
+Splitting the three tests into three classes **in the same file** (the collection is keyed on the
+class, not the file) lets them run concurrently. No assertion touched, no constant changed, no
+sampling lost. Expected bound afterwards: `max(188.2, 835.8/8) = 188.2s`.
+
+**Result: 192s wall / 3m02s reported, line rate bit-identical at 10,458/15,355, 707/707 pass.** Full `.pg` coverage now costs ~4s over the 188s baseline that measured none of it. This meets §10a and retires the need for both the sampling-constant cuts and the solver fixes.
+
+**The ceiling this exposed remains worth recording.** Amdahl's floor for the suite is the longest
+*single* test, so while `EveryGateBoardIsOneTheExactOracleCanFullyLabel` takes 188s, **no runner,
+scheduler or core count can get below ~3m08s.** Reaching the ~3-minute bar therefore requires that
+one test to get cheaper — via its sampling constants, or by making the oracle itself faster (§10b).
+
 ## 7. Fallback if the server route fails (S6 red)
 
 ReportGenerator 5.5.x is **not** in this repo today, but it is the escape hatch:
