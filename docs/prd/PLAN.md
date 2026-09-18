@@ -3319,7 +3319,7 @@ both superseded; the `ExcludeByFile` comment in `coverlet.runsettings` becomes a
 `#line` ships, because the rule silently stops applying to Polyglot output while still applying to
 source-generator output.
 
-## M64 — Making the training campaigns unit-testable  *(2026-09-18; see `CAMPAIGN_TESTABILITY_PRD.md`)* 📋
+## M64 — Making the training campaigns unit-testable  *(2026-09-18; see `CAMPAIGN_TESTABILITY_PRD.md`)* 🟡 — **Campaigns 34.3% → 54.0%, repo 70.72% → 74.18%**; M64.0–M64.6 done, M64.7 half done (CubeDavi GPU seam deferred)
 
 Planned from a 4-agent sweep (M46 DI audit · campaign hard-coded deps · determinism contract · fast-test
 strategy). `Campaigns` is **2,454 coverable lines at ~34%**, the largest uncovered pool and the reason M63

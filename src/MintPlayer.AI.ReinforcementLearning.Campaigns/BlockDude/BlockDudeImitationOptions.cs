@@ -51,4 +51,8 @@ public sealed record BlockDudeImitationOptions
 
     /// <summary>Give up on a generated board after this many rejected candidates.</summary>
     public int MaxGenerationAttempts { get; init; } = 400;
+
+    /// <summary>Training batch size. A chunk trains nothing until it has collected this many
+    /// samples, so lowering it is what lets a test drive a real chunk cheaply (M64.7).</summary>
+    public int BatchSize { get; init; } = 256;
 }

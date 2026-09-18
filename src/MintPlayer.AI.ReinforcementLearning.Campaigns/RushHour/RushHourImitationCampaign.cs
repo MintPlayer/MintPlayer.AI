@@ -21,7 +21,10 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 public sealed class RushHourImitationCampaign(RushHourImitationOptions options, ILogger? logger = null) : ITrainingCampaign, INetworkTelemetrySource
 {
     private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
-    private const int BatchSize = 256;
+    // M64.7: was a const. `TrainChunk` RETURNS EARLY DOING NOTHING while fewer than this many samples
+    // have been collected, so a hard-coded value made a small-batch test silently train nothing while
+    // still looking like it passed. Shipped value 256 stays the default, so training is unchanged.
+    private int BatchSize => options.BatchSize;
     private const int SamplesPerConfig = 1024;
     private const int MaxStatesPerConfig = 150_000;
 
