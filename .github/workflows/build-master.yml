@@ -51,6 +51,19 @@ jobs:
         --settings coverlet.runsettings
         --collect:"XPlat Code Coverage" --results-directory coverage
 
+    # M64.0c -- the bitwise-identity gate. Runs UNINSTRUMENTED and separately from the coverage
+    # bucket: these compare checkpoint bytes against checked-in hash literals, so instrumentation
+    # would cost time and change nothing. Until now this gate existed only as Slow-tagged tests that
+    # CI never ran, which meant a change breaking training reproducibility shipped green.
+    #
+    # A failure here is NOT a flake. It means the trained bytes moved. Either that was intended (a
+    # deliberate change to the training recipe -- update the literal and say so in the commit) or it
+    # is exactly the regression this step exists to catch.
+    - name: Determinism gate
+      run: >
+        dotnet test --configuration Release --no-build --filter "Category=Determinism"
+        --verbosity normal
+
     - name: Upload coverage
       # always(): a Test failure must still not lose the datapoint (if a report was written).
       # hashFiles guard: a run that produced no report is a no-op, not an upload of nothing.
