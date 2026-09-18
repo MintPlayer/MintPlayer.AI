@@ -31,10 +31,11 @@ Three deliverables, matching the three scopes requested:
 2. **Overlaying the `.pg`-mapped reports** — one `.pg`-keyed report per target, merged downstream
    (§5 is emphatic about what "merging" does and does not mean here).
 3. **Automate as much as possible** — one CI line per consumer, and an MSBuild hook only if it earns
-   its keep (§7 PG-C7, gated by SP3).
+   its keep (§7 PG-C6, gated by SP3).
 
 **Status of the consuming work:** `MintPlayer.AI` PR #54 stays open with the interim tool in place. It
 is not blocked on this, and this is not blocked on it.
+
 ## 2. What is already true (and reframes the work)
 
 Three facts, verified in the Polyglot source rather than assumed. Each one shrinks the job.
@@ -69,24 +70,71 @@ ONLY (PRD N1). Every mapping segment points at column 0 of both sides."* Column 
 threading positions through the expression-rule interpreter, which returns bare strings. Every design
 decision below assumes line granularity and must degrade gracefully, not pretend otherwise.
 
-## 3. Where the real per-target work is
+## 3. The architectural constraint: a language must be addable without touching the engine
 
-Not in the mapping — in the **input adapter**. The projection (VLQ-decode, build
-`generatedLine → (source, sourceLine)`, project, combine) is byte-identical for TS, Python and PHP.
-What differs is the report each ecosystem produces:
+Polyglot's backends used to be C++. They were moved to declarative JSON published as npm packages
+precisely so that **the set of supported languages is not compiled into the CLI** — `pgconfig.json`
+names the targets, the CLI resolves and downloads the plugin packages, and the packages carry the
+transpile instructions. Adding a language is a package, not a release of the compiler.
 
-| target | coverage tool | report to read | granularity | branch data |
-|---|---|---|---|---|
-| C# | coverlet | *(none — solved)* | — | native, already on `.pg` |
-| TypeScript | vitest + `@vitest/coverage-v8` | `coverage-final.json` (istanbul) | **statement** (`statementMap` + `s`) | `branchMap`/`b` available |
-| Python | `coverage.py` | `coverage json`, or Cobertura XML | line | `executed_branches`/`missing_branches` |
-| PHP | PHPUnit + Xdebug/PCOV | Clover XML, or Cobertura | line | Xdebug yes, PCOV no |
+**Coverage must obey the same rule, or it silently reintroduces the problem.** An engine with a
+hardcoded `switch` over "istanbul JSON for TypeScript, `coverage json` for Python, Clover for PHP" is a
+compiled-in list of supported languages wearing a different hat: a new target would transpile fine and
+then be invisible to coverage until someone released the tool.
 
-**The contract should accept line-level input and use statement-level opportunistically.** Requiring
-statement-level would exclude PHP entirely (Clover is line-keyed) and force a specific reporter on
-Python. Line-level input remaps *identically* while the maps stay column-0 — the only thing lost is the
-distinction between "this line has no mapped statement" and "this line was never executed", which
-matters for the denominator (see §4.2).
+So the plugin declares its own coverage adapter, beside `originMapping`:
+
+```json
+"coverage": { "reportFormat": "cobertura" }
+```
+
+### This is nearly free, because report formats are far fewer than languages
+
+Verified against real artefacts rather than documentation — **all four target ecosystems already emit
+cobertura, and all four carry per-line branch data in it**:
+
+| target | producer | verified |
+|---|---|---|
+| C# | coverlet | `condition-coverage="50% (1/2)"` in this repo's report |
+| TypeScript | vitest / `@vitest/coverage-v8` | `<line number="111" hits="8" branch="true" condition-coverage="100% (4/4)"/>` |
+| Python | `coverage xml` | cobertura is its XML reporter |
+| PHP | `php-code-coverage` | Cobertura is a first-class report type |
+
+**Languages vary without bound; coverage report formats vary slowly and are shared.** One cobertura
+reader therefore serves every target today, and a new language usually needs **nothing but a manifest
+entry** — which is exactly the property the JSON-plugin design exists to protect.
+
+`reportFormat` stays an open vocabulary (`cobertura`, `lcov`, `istanbul-json`, `clover`) so a future
+ecosystem that cannot emit cobertura is a reader added once, not a redesign. What it must **not**
+become is a config DSL describing how to parse an arbitrary report — that is the trap of letting
+configuration grow into a programming language, and the format enum is deliberately the cheaper line to
+hold.
+
+### Two consequences
+
+1. **Branch projection needs no richer input.** Cobertura's `condition-coverage="k% (c/n)"` is exactly
+   the per-line `(coveredArms, totalArms)` pair §4.4 specifies. The interim tool reached for istanbul's
+   `branchMap` and still emitted no branches; cobertura supplies it directly, from every target.
+2. **Statement-level input becomes an optimisation, not a requirement.** istanbul JSON remains useful
+   (it distinguishes "line has no mapped statement" from "line at zero hits"), but §4.2 already settles
+   that question a better way: **the denominator comes from the map's own mapped-line set**, not from
+   the report. So line-granular input is sufficient, and no target is excluded for lacking a
+   statement-level reporter.
+
+### Plugin resolution should be reused, not reimplemented
+
+The CLI already resolves plugins through `pgconfig.json` — `file:` refs, the in-box set, a verified
+versioned cache, npm-registry downloads pinned by `pgconfig.lock.json`. The coverage tool must **not**
+grow a second implementation of that. Two options, to settle in **SP6**:
+
+- read the already-resolved plugin directory (`node_modules/`, the user cache, or the nupkg's
+  `tools/<rid>/plugins/`) via a `--plugin-dir` flag; or
+- add a small CLI introspection surface (`polyglot plugins --json`) printing each resolved target's
+  `originMapping` and `coverage` blocks, and let the tool shell out to it.
+
+The second keeps one resolver and one closed `style` vocabulary in C++ where they already live, while
+leaving all report munging outside it. It is the only part of this that has a good case for touching
+the CLI.
 
 ## 4. The rules the projection must follow
 
@@ -200,22 +248,22 @@ existing `run-cli-smoke.ps1` P38 check, extended to all four targets.
 `directive` **exit 0 with a clear "this target needs no remap — its compiler attributes natively"**
 rather than pretending to work. That message is the whole C# story and should be impossible to miss.
 
-**PG-C3 — the TypeScript adapter**, i.e. parity with what MintPlayer.AI runs today: istanbul
-`coverage-final.json` in, `.pg`-keyed cobertura out. Must fix the three known defects of the interim
-implementation: credit **all** map segments rather than first-wins (§4.3), prefer `sourcesContent` over
-on-disk path resolution (§4.5), and identify generated files by *footer + sidecar* rather than a name
-glob (§4.6).
+**PG-C3 — the cobertura reader, and the projector.** One reader serves every target (§3), so this is
+the whole of what used to be three per-ecosystem adapters. Cobertura in, `.pg`-keyed cobertura out,
+including branch data. Must fix the three known defects of the interim implementation: credit **all**
+map segments rather than first-wins (§4.3), prefer `sourcesContent` over on-disk path resolution
+(§4.5), and identify generated files by *footer + sidecar* rather than a name glob (§4.6).
 
-**PG-C4 — branch projection.** Per-`.pg`-line `(coveredArms, totalArms)`, merged per-component with
-`max`; never arm-level while `column: 0` holds (§4.4). This is the one place the current interim tool
-is not merely unpolished but **absent** — it emits `branches-valid="0"`.
+**PG-C4 — branch projection.** Per-`.pg`-line `(coveredArms, totalArms)` from cobertura's
+`condition-coverage`, merged per-component with `max`; never arm-level while `column: 0` holds (§4.4).
+No longer needs a richer input format — it falls out of PG-C3's reader.
 
-**PG-C5 — the Python adapter.** `coverage json` (or its cobertura) in, `.pg` cobertura out. First mover:
-nothing like this exists in the Python ecosystem.
+**PG-C5 — prove it on Python and PHP end to end.** *Not* new adapters: a manifest entry from PG-C1 plus
+`coverage.reportFormat: "cobertura"`, then a real `coverage xml` / php-code-coverage run projected onto
+a `.pg`. **The gate is that neither needs a line of engine code** — if either does, §3's claim is wrong
+and the design needs revisiting before more targets are added.
 
-**PG-C6 — the PHP adapter.** Clover XML in. Also first mover.
-
-**PG-C7 — automation.** *(scope 3)* Two seams, in order of value:
+**PG-C6 — automation.** *(scope 3)* Two seams, in order of value:
 1. **A `polyglot-coverage` npm bin** a consumer calls in one CI line — already achieved by PG-C2.
 2. **An MSBuild hook**, *only if SP3 says it is worth it.* The `.targets` is transpile-only today:
    every target hangs off `CoreCompile` and nothing touches `VSTest`/`Test`. Note the hook would be
@@ -241,21 +289,29 @@ lands, including a file ending in `?>`. Cheap, and the only PHP-specific unknown
 **SP3 — is the MSBuild hook worth it?** Prototype an `AfterTargets="VSTest"` hook and answer: can it see
 the coverage report's path, does it survive `dotnet test --collect`, and does it fire for the *non*-C#
 targets where a remap is actually needed? **Expected answer: no on the last point**, which would kill
-PG-C7.2 — worth ten minutes to find out rather than building it.
+PG-C6.2 — worth ten minutes to find out rather than building it.
 
-**SP4 — adopt or build, for the JS path?** `istanbul-lib-source-maps` (maintained, used by nyc) does
-"project an istanbul coverage map through source maps", which is ~80% of PG-C3 including the
-many-to-one merge. Paired with `istanbul-reports`' cobertura reporter it may remove the hand-rolled VLQ
-code entirely. **Prefer adopting.** (`remap-istanbul` is the obvious name-match and is **dead** —
-~7 years unpublished, targets istanbul 0.x. Do not.) The question is whether its map-registration API
-accommodates a sidecar found by convention, and whether it can be fed a non-JS adapter's output for
-PG-C5/6 — if not, one shared projector with per-ecosystem adapters is better than two codebases.
+**SP4 — adopt or build?** `istanbul-lib-source-maps` (maintained, used by nyc) projects an istanbul
+coverage map through source maps — ~80% of the projector, including the many-to-one merge. **But §3
+changes the calculus**: if the input is cobertura for every target, an istanbul-shaped library means
+converting *into* istanbul and back out, and the language-agnostic path stops being the primary one.
+Weigh: adopt for the JS route and hand-roll the generic one (two code paths), or hand-roll one projector
+over a format-neutral `(file, line, hits, branches)` intermediate (one code path, ~150 lines of VLQ and
+merge that already exist and are proven). **Lean to the latter**, contrary to the earlier
+recommendation. (`remap-istanbul` is the obvious name-match and is **dead** — ~7 years unpublished,
+istanbul 0.x. Do not.)
 
 **SP5 — the `sourcesContent` shortcut.** Polyglot embeds `sourcesContent` deliberately, so *"the
 consumer then needs no path resolution at all"*. Confirm a report can be produced using only the
 sidecar's own contents, with on-disk resolution as fallback. If it holds, it removes the entire class of
 path-rooting bug — which has already bitten once (the cobertura reporter writes project-relative
 backslash paths that a `git ls-files` suffix match silently drops).
+
+**SP6 — reuse plugin resolution, do not reimplement it.** The CLI already resolves plugins through
+`pgconfig.json` (`file:` refs, in-box set, verified cache, npm downloads pinned by `pgconfig.lock.json`).
+Decide between a `--plugin-dir` flag over the already-resolved directory and a `polyglot plugins --json`
+introspection surface. The latter keeps one resolver and one closed `style` vocabulary in C++ where they
+live, and is the only part of this work with a good case for touching the CLI.
 
 ## 9. Out of scope / genuinely not being done
 
