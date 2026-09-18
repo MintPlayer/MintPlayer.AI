@@ -9,16 +9,36 @@
         <Configuration>
           <!-- The only format both coverlet and coverage.mintplayer.com speak natively. -->
           <Format>cobertura</Format>
-          <!-- **/obj/**: this repo compiles generated code out of obj/ — the Polyglot
-               transpiler's C# (obj/**/polyglot/*.cs) and MintPlayer.SourceGenerators output.
-               None of it is in `git ls-files`, so the server could never resolve those paths;
-               excluding keeps the total meaningful instead of diluted by unmatchable lines. -->
+          <!-- **/obj/**: this repo compiles generated code out of obj/ — MintPlayer.SourceGenerators
+               output, and (until M63) the Polyglot transpiler's C#. None of it is in `git ls-files`,
+               so the server could never resolve those paths; excluding keeps the total meaningful
+               instead of diluted by unmatchable lines.
+
+               M63 NOTE — this rule NO LONGER APPLIES to the Polyglot output, and that is deliberate.
+               With `PolyglotOriginInfo=true` the generated C# carries `#line` pragmas naming the
+               `.pg`, so Roslyn records the `.pg` as the PDB document — and coverlet matches
+               ExcludeByFile against the PDB-recorded path, not the file on disk (verified). The
+               solvers therefore enter the report as `src/**/polyglot/*_solver.pg`, which IS in
+               `git ls-files`, so the server resolves them. The rule still covers the source
+               generators. Do not "fix" it to catch polyglot again. -->
           <ExcludeByFile>**/obj/**/*.cs,**/*.g.cs,**/*.Designer.cs</ExcludeByFile>
           <!-- ILGPU compiles this assembly's kernel methods from their IL at runtime; coverlet's
                injected RecordHit tracker calls make that compile throw InternalCompilerException
                (37 CI test failures). The whole assembly must stay uninstrumented — excluding only
                kernel methods is fragile because any helper a kernel calls breaks it too. -->
           <Exclude>[MintPlayer.AI.ReinforcementLearning.Ilgpu]*</Exclude>
+          <!-- SCOPE, decided by the owner 2026-09-18 (M63 §10), written here so it is a decision
+               rather than an accident of which projects the test assembly happens to reference:
+
+               · src/RLDemo.Console — OUT. A demo CLI, not shipped library surface. It is absent
+                 from the report today only because nothing references it; that is recorded as
+                 intentional. If it ever gains a project reference, exclude it explicitly here
+                 rather than letting ~630 uncovered lines silently enter the denominator.
+               · tools/**Lab — IN, and to be genuinely tested (M63.5). The recommendation to
+                 exclude it as dev tooling was considered and DECLINED, so it stays in the
+                 denominator and its ~3.2k lines count against the 90% target.
+               · tools/**Bench — not referenced, same status as RLDemo.Console. -->
+
           <!-- SourceLink would rewrite report paths to raw.githubusercontent.com URLs, which
                breaks the server's suffix-matching against `git ls-files`. -->
           <UseSourceLink>false</UseSourceLink>
