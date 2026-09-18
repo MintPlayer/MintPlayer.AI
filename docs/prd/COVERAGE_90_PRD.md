@@ -148,7 +148,7 @@ Work items, with the four real obstacles called out:
 | Add `SourcePos` to the 8 IR decl structs + populate from AST `pos`/`namePos` (maps *signature* lines; bodies already map) | `ir.hpp:459+`, `lower.cpp` | medium, optional |
 | Widen `Backend::emit` / `EmitResult` / `ModuleFile` to carry mappings (TS only) | `backend.hpp`, `polyglot.hpp:61-77` | small |
 | Base64-VLQ v3 source-map writer + sibling `.map` write (TS only; ~80 new lines, repo has its own JSON writer, no third-party dep) | new; `Cli/src/main.cpp:167-241` | medium |
-| `--source-map` / `--line-directives` CLI flag or `pgconfig.json` key + `.targets` `<Exec>` | `main.cpp`, `.targets` | small |
+| `--origin-info` CLI flag / `pgconfig.json` `"originInfo"` / MSBuild `PolyglotOriginInfo` + `.targets` `<Exec>` — **shipped in [Polyglot#70](https://github.com/MintPlayer/MintPlayer.Polyglot/pull/70)**; one flag drives both the C# `#line` sink and the TS source map | `main.cpp`, `.targets` | small |
 | **Obstacle 4 — the biggest cost item** — the conformance suite compares emitted output **byte-for-byte**, so inserting `#line` churns a large fixture set. Must be flag-gated **off by default**. | `tests/**` | **medium–large** |
 
 Shipping: land in Polyglot → tag `v0.10.0` (release workflow auto-pushes to nuget.org) → bump
