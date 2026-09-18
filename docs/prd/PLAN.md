@@ -3222,7 +3222,7 @@ observation is 814 when it is 854; `.pg:819` says 454/six planes; `RewardTetrisB
 never read in the `.pg`.
 
 
-## M63 — Coverage 60% → 90%, and teaching coverage to speak Polyglot  *(2026-09-17; branch `m63-coverage-90`; see `COVERAGE_90_PRD.md`)* 📋
+## M63 — Coverage 60% → 90%, and teaching coverage to speak Polyglot  *(2026-09-17; branch `m63-coverage-90`; PR #54; see `COVERAGE_90_PRD.md`)* 🟡 — **59.86% → 70.8% shipped**; M63.1–M63.3 and M63.6–M63.7 done, M63.4 partly rejected on measurement, M63.5 ongoing
 
 Planned from a 4-agent investigation (baseline audit · Polyglot compiler feasibility · coverlet mechanics ·
 tooling survey). Successor to M56, which built the collection/upload pipeline and explicitly left the `.pg`
@@ -3257,16 +3257,55 @@ emitted output byte-for-byte, so the feature must be flag-gated off by default.
 the percentage. Those 8,466 generated lines are among the most heavily exercised code in the repo (parity +
 perft) and today count in neither numerator nor denominator.
 
-- **M63.1 — Spikes S1 + S4**: many-to-one collapse semantics (~8,466 generated lines → 6,828 `.pg` lines, so
-  multiple sequence points share a `(document, line)`); vitest wiring from zero.
-- **M63.2 — Polyglot `#line`**, flag-gated, conformance fixtures byte-identical with the flag off (spike S2 on
-  `mountaincar_solver.pg`, the smallest at 152 lines).
-- **M63.3 — Adopt**: tag `v0.10.0`, bump `MintPlayer.Polyglot.MSBuild` from `0.9.9` (spikes S3 + S6).
-- **M63.4 — Denominator decisions** (see PRD §10 — owner's call, not made unilaterally).
-- **M63.5 — C# push to 90%**: Campaigns, Kociemba (~1.7k), RLDemo.Web Services.
-- **M63.6 — Frontend tests + TS `.pg` mapping** (spike S5, the chained `.pg → .ts → .js` remap — the weak
-  link; if it fails the `.pg` union ships C#-only and M63 is not blocked).
-- **M63.7 — README/badge note** + this PLAN entry.
+### Outcome
+
+- **M63.1 — Spikes S1 + S4** ✅. S1 answered the collapse question favourably (one `<line>` element, hits SUM,
+  covered if ANY contributor ran) **and falsified the plan**: emitting `#line` only on source-line *change*
+  lets braces drift onto unrelated `.pg` lines and report them as covered. The rule became a directive on
+  EVERY line — `#line N` where known, `#line hidden` where not.
+- **M63.2 — Polyglot `#line`** ✅, shipped as [Polyglot#70](https://github.com/MintPlayer/MintPlayer.Polyglot/pull/70)
+  / `v0.10.0`, option renamed to `--origin-info` during review.
+- **M63.3 — Adopt** ✅ **59.86% → 68.11%**. 8,466 directives over 8,466 generated lines, all nine `.pg` files
+  attributed, zero misattribution. The nine solvers entered at **93.9% covered**, confirming they had been
+  depressing the number purely by being invisible.
+- **M63.4 — Denominator decisions** 🟡. Scope recorded in `coverlet.runsettings` (RLDemo.Console out,
+  `tools/Lab` in and tested — the recommendation to exclude it was declined). The `Category=Medium` half was
+  implemented, measured and **REJECTED** (PRD §12.7): +167s for +1.18 pp, and a timing-assertion test
+  *inverts and fails* under instrumentation.
+- **M63.5 — C# push** 🟡 ongoing. `tools/Lab` 0.6% → 23.3% via seams across ten files (`Parse` ×8,
+  `CubeDavi.Resolve`, `GateLines`, `EvalStats`, `VizServer.SampleOnce`, `TetrisLab`), plus four real bugs
+  found because coverage finally reached that code. **Not done:** ChessLab seams; Campaigns (1,473 uncovered,
+  the largest remaining pool) is under investigation for DI-driven testability.
+- **M63.6 — Frontend + TS `.pg` mapping** ✅. Vitest from zero (there were no frontend tests at all) plus
+  `tools/pg_coverage_remap.mjs`. S5's clean route **structurally cannot work** —
+  `@angular/build:unit-test` pre-builds with esbuild before Vitest starts, so a Vite plugin feeding the
+  Polyglot map in as an input map never fires; the composition is done post-hoc instead.
+- **M63.7 — CI wiring** ✅. Two uploads per commit (C# then TS) merged server-side with max semantics, which
+  is the union architecture rather than a workaround; `finish: true` moved to the last upload.
+
+**Verified against the live service (spike S6):** `coverage/project` reported **70.7%** on the C#-only run,
+matching the local figure to the decimal — which is only possible if the `.pg` paths resolved, since dropping
+them would have given 63.3%. The TS upload then moved it to **70.8%**, proving the service also **unions** two
+reports naming the same `.pg`. Both checks report `conclusion: neutral`, which GitHub renders as *skipping*;
+that reads like a failure but means informational-only, because Blocking is off in the repository gate.
+
+**Cost:** the fast bucket went 188s → 279s once the solvers were instrumented (coverlet's per-sequence-point
+`Interlocked.Increment` contending across xUnit threads — measured 71× at 4 threads on an isolated probe,
+*slower in absolute terms than 1 thread*, a false-sharing signature). `SingleHit` plus splitting
+`BlockDudeGateBoardsTests` into three classes (it held 272s of serial work against a 279s wall clock) brought
+it back to **192s with nothing traded** — no assertion removed, no sampling constant reduced. It is 213s after
+M63.5's new tests, and the CI job is 4m50s with the frontend step.
+
+**90% is not reachable in this milestone, and the PRD says so with arithmetic** (§12.6): the gap is +2,785
+lines and closing it needs most of Campaigns, whose real tests are `Category=Slow` — and §12.7 now shows those
+cannot simply be reclassified in. Whether to exclude `tools/**`, move the target, or treat 90% as a
+multi-milestone arc is **open** (§10.4).
+
+**Rejected on measurement, recorded so they are not re-proposed:** Microsoft's `Code Coverage` collector (28%
+*slower* on the real suite than coverlet+`SingleHit`, despite an isolated probe predicting 2× better, and its
+absolute backslash paths would break the server's `git ls-files` matching); and the `Category=Medium` bucket
+above. Both were killed by the same error — extrapolating a probe measurement to the whole suite — which is
+now a written rule: **any timing claim about this suite must be measured with `--collect`.**
 
 **Four open decisions deliberately left to the owner** (PRD §10): `tools/Lab` (~3.2k lines, in the denominator
 only because the test project references it for `CliArgs` — the single largest lever, and a metric-definition
