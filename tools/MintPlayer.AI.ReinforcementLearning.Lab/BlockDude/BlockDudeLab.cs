@@ -109,7 +109,7 @@ internal static class BlockDudeLab
     /// <summary>Moves an existing CSV aside. <see cref="CampaignCli.ConsoleAndCsv"/> APPENDS when the file
     /// exists, so without this a blank-slate run would continue the previous run's log and quietly present two
     /// different trajectories as one.</summary>
-    private static void RotateLog(string csv)
+    internal static void RotateLog(string csv)
     {
         if (!File.Exists(csv)) return;
         string stamped = Path.Combine(

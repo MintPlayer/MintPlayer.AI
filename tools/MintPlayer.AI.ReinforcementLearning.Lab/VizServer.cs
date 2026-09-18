@@ -50,7 +50,7 @@ internal sealed class VizServer : IDisposable
 
     public string Url { get; }
 
-    private VizServer(int port, INetworkTelemetrySource source, int intervalMs)
+    internal VizServer(int port, INetworkTelemetrySource source, int intervalMs)
     {
         _source = source;
         _intervalMs = intervalMs;
@@ -166,7 +166,7 @@ internal sealed class VizServer : IDisposable
     }
 
     /// <summary>The current graph as a ready-to-send topology envelope, or null if the net doesn't exist yet.</summary>
-    private byte[]? CurrentTopology()
+    internal byte[]? CurrentTopology()
     {
         try
         {
@@ -187,7 +187,7 @@ internal sealed class VizServer : IDisposable
 
     // WebSocket has no SSE-style event names, so each message self-describes: {"type":<t>,"data":<payload>}.
     // `json` is already-serialized, so this splices it in without a second serialize pass.
-    private static byte[] Envelope(string type, string json)
+    internal static byte[] Envelope(string type, string json)
         => Encoding.UTF8.GetBytes($"{{\"type\":\"{type}\",\"data\":{json}}}");
 
     private void Drop(Client client)

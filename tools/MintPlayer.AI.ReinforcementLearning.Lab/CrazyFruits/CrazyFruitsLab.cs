@@ -287,7 +287,7 @@ internal static class CrazyFruitsLab
         return Summarize(name, episodes, sum, sumSq);
     }
 
-    private static (string, double, double) Summarize(string name, int n, double sum, double sumSq)
+    internal static (string, double, double) Summarize(string name, int n, double sum, double sumSq)
     {
         double mean = sum / n;
         double variance = Math.Max(0, sumSq / n - mean * mean);

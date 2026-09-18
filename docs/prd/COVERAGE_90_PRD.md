@@ -469,3 +469,97 @@ repo's standing "CI cost is the bottleneck" rule.
   paths are unresolvable against `git ls-files`. Once `#line` ships, that rule **silently stops
   applying to the Polyglot output** (§3) while still applying to source-generator output. The
   comment becomes actively misleading and must be rewritten to say so.
+
+## 12. M63.5 — the `tools/Lab` plan *(two-agent seam analysis, 2026-09-18)*
+
+The owner chose to **test** Lab rather than exclude it (§10.1), so this is the bulk of M63.5. Measured
+baseline from the M63.3 run: **Lab is 10/1,715 coverable lines = 0.6% covered.** (The oft-quoted
+3,352 is *raw* lines; coverlet counts sequence points. `VizServer.cs` is 479 raw lines of which
+**262 are one `private const string Page` HTML literal** — a const field has no sequence points, so
+it is 105 coverable, not 479. Budget against 1,715.)
+
+### 12.1 The structural finding
+
+Every `*Lab.cs` has the same shape: `new CliArgs(args)` → 20–60 lines of flag reads → build an
+options **record** → hand it to `LabHost.Run(...)` **inside a lambda**. The parsed values are never
+returned and never observable, so 60–90% of each file — pure logic, and where every default lives —
+is unreachable without booting DI and starting a training run. There is no `Parse` seam anywhere in
+the project.
+
+**One extraction per file, `internal static XOptions Parse(CliArgs a)`, converts ~600 lines from
+untestable to trivially testable.** It is the same change eight times, it returns option records
+that already live in the Campaigns library (so Lab gains no new types), and it changes no control
+flow. `InternalsVisibleTo` for the test assembly **already exists** in the Lab `.csproj`, so nothing
+needs widening to `public`; test files need `extern alias Lab;` because the project is referenced
+with `Aliases="Lab"` (the Lab exe's generated `Program` would otherwise collide with RLDemo.Web's
+under `WebApplicationFactory`).
+
+### 12.2 Ranked work
+
+| # | Target | Unlocks | Refactor cost |
+|---|---|---|---|
+| 1 | `CubeDaviLab.Resolve(args, cfg, …)` + `CubeDaviConfig.Load(dirs, out source)` | ~225 | ~10 lines — two halves of one config contract, test together |
+| 2 | The `Parse` seam ×8 (Chess, Draughts, Snake, FruitCake, BlockDude, Cube, CubePolicy, RushHour, Connect4) | ~600 | ~6 lines each |
+| 3 | `GateLines(...)` in Tetris + CrazyFruits `RunBaselines` | ~60 | ~12 lines |
+| 4 | `private`→`internal` only: `Summarize`, `Emit`/`ExistingLength`, `Envelope`/`CurrentTopology`, `ParsePort`, `RotateLog` | ~50 | **zero** |
+| 5 | `VizServer.SampleOnce(ref string?)` + `internal` ctor | ~30 | ~10 lines |
+| 6 | `CampaignCli` CSV contract, `EvalStats` (dedupe `Std`/`Report`), `BlockDudeValueCalibration.Score` | ~65 | ~20 lines |
+
+### 12.3 Constraints that shape the tests
+
+- **Never capture `Console.Out`.** It is process-global; a `Console.SetOut` strategy would force test
+  serialisation, undoing the parallelism M63 just bought (S3f). This is why item 3 returns
+  `IEnumerable<string>` and the caller prints — the verdict strings become assertable without
+  touching the console at all.
+- **Never bind a port.** `HttpListener.Start()` on a fixed port would collide with the owner's own
+  `--viz` session. The `VizServer` ctor does no IO (`Prefixes.Add` does not bind; `_listener.Start()`
+  is in `Start()`), so an `internal` ctor gives tests a full object that never opens a socket.
+- **Never call `LabHost.Run`.** It takes `TrainingDirectoryLock` on the data dir and may hit
+  `Console.ReadLine`.
+- `Category=Slow` is required for anything loading a checkpoint (`FileModelStore`), touching
+  ILGPU/GPU, or running real episodes. `Backend.Current` is process-global static state — a test
+  mutating it can corrupt others in the same assembly.
+- RNG is explicitly seeded everywhere in Lab; no unseeded RNG was found. Determinism is not a risk.
+
+### 12.4 Deliberately not tested (~550 of 1,715 lines)
+
+Socket lifecycle (`AcceptLoop`, `ServeWebSocket`, `SendPump`, `Drop`, `Dispose`), `HeldOut` and the
+search tiers in `BlockDudeLevelBench`, both Snake eval methods, `BlockDudeDemoProbe`,
+`ConvForwardBench`, `StrengthCli`, `ChessDemo`'s body. These need real checkpoints, a GPU, or
+minutes of episodes, and the assertions would be tautologies. **Recorded here rather than papered
+over with `Assert.NotNull` smoke tests** — the owner wants the number to mean something.
+
+### 12.5 Bugs the analysis surfaced *(fix in this PR, per the one-PR rule)*
+
+1. **`Std` uses the population divisor `N`**, then the caller computes `SE = Std/√N`, understating
+   the standard error (should be the sample SD, `N−1`). It feeds the "SIGNIFICANTLY BETTER → ship
+   it" verdict in `FruitCakeAb`. Duplicated **verbatim** in `FruitCakeAb.cs` and
+   `FruitCakeSearchEval.cs` — dedupe into `EvalStats` and fix once.
+2. **`CliArgs.Value` has no `StartsWith("--")` guard** — `--data --seed 7` makes `Str("--data")`
+   return `"--seed"`, and `Has("--grow")` is true when `--grow` appears as a *value*.
+3. **`CampaignCli`: `headerWritten = File.Exists(csvPath)`** treats a zero-byte file as
+   already-headered, so the CSV silently loses its header row.
+4. `median = sorted[Length/2]` is the **upper** median for even N, not the mean of the middle two.
+5. `CubeDaviLab` is the only file bypassing `CliArgs`, with a hand-rolled 35-branch loop whose
+   `int.Parse`/`ulong.Parse` calls omit `InvariantCulture` while its `double.Parse`/`float.Parse`
+   calls include it. **Not the live bug it first appeared to be** — `int.Parse` defaults to
+   `NumberStyles.Integer`, which disallows thousands separators on every culture, so `"1.024"`
+   throws regardless of locale; the only real exposure is a culture whose negative sign is not `-`.
+   Worth fixing as consistency, and migrating the file to `CliArgs` is the actual fix.
+
+### 12.6 Feasibility — this is the §10.4 re-baseline, with numbers
+
+Cover **everything worth covering** in Lab (1,715 − ~550) and the repo reaches:
+
+**10,458 → ~11,623 = 75.7%.** Still **2,196 short of 90%.**
+
+Closing that gap needs ~69% of Campaigns + Environments + Core + Web on top (pool 3,188), where
+Campaigns is long training loops deliberately excluded from the measured bucket. So 90% with
+`tools/**` *in* the denominator is not reachable inside M63. The honest options:
+
+- **Exclude `tools/**`** — denominator 13,640, today's figure becomes 76.6%, and 90% needs +1,828
+  from a 3,182-line pool. Reverses §10.1.
+- **Move the target** to ~80%, which the Lab work alone very nearly reaches.
+- **Keep 90% as a multi-milestone arc**, with M63 landing the infrastructure and the Lab seams.
+
+**Still open.** Recorded here so the decision is made against arithmetic rather than optimism.
