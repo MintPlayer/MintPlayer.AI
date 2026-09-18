@@ -3461,6 +3461,69 @@ remaining ~3,300 lines sit in `CubeDaviCampaign` (286, blocked on the ILGPU × c
 episode-playing `Run` bodies, and the campaign `TrainChunk`s — each needing a production seam or a slow test.
 **~80% is the honest target, and it is met.**
 
+## M66 — The `.pg` coverage union, properly  *(2026-09-18; see `COVERAGE_90_PRD.md` §16)* ✅ — **`.pg` 93.95% → 98.12%, repo 78.70% → 79.70%**
+
+§1's first goal was that each `.pg` line carry the **union** of hits from its generated C# and its
+generated TypeScript. M63 delivered the C# half; §13 then retired the TypeScript half on a measurement
+that was real but misread. M66 puts it back.
+
+**Why §13 was wrong.** It called uploading both targets "double-counting one source file". It *is* one
+file, but the union is over **execution paths, not reports**: the generated C# runs the training agent,
+the generated TypeScript runs a visitor playing in the browser. A `.pg` line only a player reaches is
+genuinely uncovered on the C# side. The +0.1pp that retired it was measured when the repo held **one**
+frontend spec, which constructed no net — it measured the absence of browser-side tests, not the value
+of the union.
+
+| | C# only | union |
+|---|---|---|
+| `mountaincar_solver.pg` | 40/69 | **69/69** |
+| `snake_solver.pg` | 374/496 | **493/496** |
+| `tetris_solver.pg` | 729/749 | **734/749** |
+| `fruitcake_solver.pg` | 315/322 | **317/322** |
+| **all nine** | **3,494/3,719 = 93.95%** | **3,649/3,719 = 98.12%** |
+
+**155 `.pg` lines are covered by the browser and by nothing else**, and the denominator does not move —
+these are lines the C# report already listed and already scored uncovered. Frontend 144 → **202 tests**.
+
+- **M66.1 — the overlay is provably sound.** Extracted the set of `.pg` lines each target emits origin
+  info for, across all nine solvers: **symmetric difference is zero** (3,949 lines, C#-only 0, TS-only 0).
+  One emitter, one origin table, two renderers. Line-granular only — the C# plugin declares `column: 0`.
+  The denominator must be the *mapped* set: `class`/`record` heads sit under `#line hidden` and map from
+  neither side.
+- **M66.2 — identification.** `pgconfig.json` is **not** the source of truth: it is a routing table for
+  the TypeScript target and names no C# output path at all. The robust markers are intrinsic — C# = any
+  `#line N "….pg"`; TS = the `//# sourceMappingURL=` footer **plus** a `.ts.map` sidecar. That second
+  test matters: it excludes the hand-written `mountaincar_solver.spec.ts`, which a naive
+  `*_solver*.ts` glob swallows.
+- **M66.3 — a third target would be invisible.** Polyglot ships `php` and `python` plugins whose
+  manifests have **no `originMapping`** — no `#line`, no source map. Enabling one would produce coverage
+  that cannot be attributed, and the failure would be silent. A tool should dispatch on
+  `originMapping.style` and warn when a declared target has none.
+- **M66.4 — the twin specs**, which are what actually buys the 155: `snake_solver.spec.ts` (31 tests —
+  the M34 beam planner, `pruneBeam` top-k, flood fill, death paths), `tetris_solver.spec.ts` (9 —
+  human-play micro-moves and top-out), `fruitcake_solver.spec.ts` (6 — rotation physics), and
+  `mountaincar_solver.spec.ts` extended (13 — `PgMlpNet` and `chooseAction`).
+- **M66.5 — three reports, one merge.** The twins go back into `coverageInclude` (excluding them is what
+  made `pg_coverage_remap.mjs` a silent no-op), are **stripped** from the frontend report by
+  `reroot_frontend_coverage.mjs`, and are uploaded as a separate `.pg`-keyed report. Exactly one upload
+  carries `finish: true` and it is the last. Four hardening fixes to the remap tool, none changing a
+  number: `sourceRoot` honoured, warn-and-exit-0 instead of failing CI, `<source>` = `.`, and the
+  summary no longer multiplies a string by 100.
+
+**The real find is not the percentage.** The 155 lines are **two entire shipped features with no tests
+on either side**: the snake receding-horizon beam planner (M34's biggest strength lever — beam pruning,
+flood-fill survival scoring, the anti-fragmentation ratio term) and the mountaincar client-side policy
+net (a hand-rolled matmul where a transposed index would have shipped silently).
+
+**Deliberately not covered:** the **draughts MLP tier** (~22 lines) looks like net code the browser runs
+and is not — `draughts-net.ts:127` is conv-only, so those lines **ship dead** and should be deleted
+rather than tested. ~36 lines are unreachable by anyone (`tetris:1029-1032 reachableMask`,
+`chess:102-105 clone` have no callers at all). ~52 more are reachable only by unit-testing the twin with
+no browser path behind it, which is a weaker claim than this union makes.
+
+**Known gap:** the `.pg` report carries no branch data. If the service merged branch rates by average
+rather than max, a 0/0 report could dilute the branch figure — unverified, worth one check.
+
 ---
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies

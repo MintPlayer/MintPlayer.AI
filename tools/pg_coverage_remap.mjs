@@ -112,8 +112,13 @@ function main() {
 
     const sm = JSON.parse(readFileSync(mapPath, 'utf-8'));
     const lineMap = buildLineMap(sm.mappings ?? '');
+    // `sourceRoot` is prepended to every relative `sources` entry per the v3 spec. Polyglot emits ""
+    // today, so honouring it changes nothing — but if that ever changes, ignoring it would silently
+    // rewrite every path to a file that does not exist, and the whole report would vanish with no
+    // error (the service simply drops paths it cannot resolve).
+    const sourceRoot = sm.sourceRoot ?? '';
     const sources = (sm.sources ?? []).map((s) =>
-      isAbsolute(s) ? resolve(s) : resolve(dirname(mapPath), s),
+      isAbsolute(s) ? resolve(s) : resolve(dirname(mapPath), sourceRoot, s),
     );
 
     const statementMap = entry.statementMap ?? {};
@@ -149,8 +154,16 @@ function main() {
   for (const s of skipped) console.warn(`  SKIPPED ${s}`);
 
   if (perFile.size === 0) {
-    console.error('no .pg coverage produced -- nothing was remapped');
-    process.exit(1);
+    // A warning, not a failure. No twin spec having run is a legitimate state (the suite may have
+    // been skipped, or the globs may not match), and turning the CI step red for it would be noise.
+    // The upload step's own hashFiles guard makes a missing report a no-op. Same precedent as
+    // tools/reroot_frontend_coverage.mjs.
+    console.warn(
+      'WARNING: no .pg coverage produced -- no *_solver.ts twin appeared in the istanbul report.\n' +
+        "         Check that angular.json's coverageInclude still matches the twins, and that at\n" +
+        '         least one *_solver.spec.ts imports one. Writing no report.',
+    );
+    process.exit(0);
   }
 
   // ---- cobertura ------------------------------------------------------------------------
@@ -183,7 +196,9 @@ function main() {
     `<coverage line-rate="${rate}" branch-rate="0" lines-covered="${totalCovered}" ` +
     `lines-valid="${totalValid}" branches-covered="0" branches-valid="0" complexity="0" ` +
     `version="1.9" timestamp="${Math.floor(Date.now() / 1000)}">\n` +
-    `  <sources>\n    <source>${toPosix(repoRoot)}</source>\n  </sources>\n` +
+    // The repo root, not the absolute agent path: filenames below are already repo-relative, and an
+    // absolute path means nothing to the service and only misleads a reader of the raw report.
+    `  <sources>\n    <source>.</source>\n  </sources>\n` +
     `  <packages>\n    <package name="Polyglot" line-rate="${rate}" branch-rate="0" complexity="0">\n` +
     `      <classes>\n${classes.join('\n')}\n      </classes>\n    </package>\n  </packages>\n</coverage>\n`;
 
@@ -193,7 +208,8 @@ function main() {
   writeFileSync(outPath, xml, 'utf-8');
   console.log(
     `\n${mappedFiles} twin(s) remapped -> ${perFile.size} .pg file(s), ` +
-      `${totalCovered}/${totalValid} lines (${(rate * 100).toFixed(2)}%)`,
+      `${totalCovered}/${totalValid} lines ` +
+      `(${(totalValid ? (totalCovered / totalValid) * 100 : 0).toFixed(2)}%)`,
   );
   console.log(`wrote ${outPath}`);
 }

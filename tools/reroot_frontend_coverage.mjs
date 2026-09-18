@@ -38,7 +38,25 @@ const xml = readFileSync(reportPath, 'utf8');
 let rerooted = 0;
 let alreadyRooted = 0;
 
-const out = xml
+// Drop the Polyglot-generated twins from THIS report. They are in `coverageInclude` so that
+// `pg_coverage_remap.mjs` can project them onto their `.pg` sources, but they must not be uploaded
+// under their own `.ts` paths: those are gitignored build outputs, so the service — which resolves a
+// path by suffix-matching `git ls-files` — would drop them as unmatched anyway. Keeping them here
+// would also double-count, since the remapped `.pg` report already carries their hits.
+// A twin is identified by the `_solver.ts` suffix; `*_solver.spec.ts` is hand-written and is
+// excluded from coverage upstream, so it cannot reach this file.
+const TWIN = /_solver\.ts$/;
+let twinsDropped = 0;
+
+const withoutTwins = xml.replace(/[ \t]*<class\b[^>]*\bfilename="([^"]*)"[\s\S]*?<\/class>\s*/g, (whole, raw) => {
+  if (TWIN.test(raw.replace(/\\/g, '/'))) {
+    twinsDropped++;
+    return '';
+  }
+  return whole;
+});
+
+const out = withoutTwins
   // <class ... filename="src\app\x.ts"> → filename="src/RLDemo.Web/ClientApp/src/app/x.ts"
   .replace(/filename="([^"]*)"/g, (whole, raw) => {
     const path = raw.replace(/\\/g, '/');
@@ -57,7 +75,8 @@ writeFileSync(reportPath, out, 'utf8');
 
 console.log(
   `re-rooted ${rerooted} path(s) under ${prefix}/` +
-    (alreadyRooted ? `; ${alreadyRooted} already rooted` : ''),
+    (alreadyRooted ? `; ${alreadyRooted} already rooted` : '') +
+    (twinsDropped ? `; dropped ${twinsDropped} Polyglot twin(s) (the .pg report owns those)` : ''),
 );
 
 if (rerooted === 0 && alreadyRooted === 0) {

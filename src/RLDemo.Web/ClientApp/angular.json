@@ -117,10 +117,10 @@
               "src/app/**/*-logic.ts",
               "src/app/**/*-net.ts",
               "src/app/**/*-das.ts",
-              "src/app/game-2048/game-2048-classic.ts"
+              "src/app/game-2048/game-2048-classic.ts",
+              "src/app/**/*_solver.ts"
             ],
             "coverageExclude": [
-              "src/app/**/*_solver.ts",
               "src/**/*.spec.ts",
               "src/**/*.d.ts"
             ]

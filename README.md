@@ -5,9 +5,11 @@
 <sub>The coverage figure is the **fast test bucket** (`Category!=Slow`) — the multi-minute training and
 perft gates are excluded, so it measures the code a PR run actually exercises. It **includes the nine
 `.pg` solver sources**: since M63 the Polyglot transpiler emits `#line` pragmas into the generated C#,
-so hits are attributed to the `.pg` rather than to the generated file. The generated TypeScript twins
-are deliberately *not* uploaded — they would double-count the same `.pg` lines — but since M65 the
-**hand-written** ClientApp modules that have specs are merged in as a second report.
+so hits are attributed to the `.pg` rather than to the generated file, and since M66 the generated
+TypeScript twins are projected back onto the same `.pg` lines through Polyglot's source maps. A `.pg`
+line counts as covered if **either** target reached it — the C# runs the training agent, the TypeScript
+runs a visitor playing in the browser, and 155 lines are reachable only from the latter. The
+hand-written ClientApp modules that have specs are merged in as a third report.
 `src/**Ilgpu` is excluded (its kernels are JIT-compiled from IL at runtime and coverage instrumentation
 makes that throw).</sub>
 

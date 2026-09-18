@@ -15,6 +15,9 @@ coverage*.xml
 *.coverage
 # `dotnet test --results-directory coverage` output (CI coverage collection)
 coverage/
+# The .pg union report: the Polyglot twins' TypeScript coverage projected onto their .pg sources
+# (tools/pg_coverage_remap.mjs). A CI artefact, like everything else under coverage/.
+coverage-pg/
 
 ## Node / Angular
 node_modules/

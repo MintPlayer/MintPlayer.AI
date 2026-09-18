@@ -137,6 +137,26 @@ jobs:
       working-directory: src/RLDemo.Web/ClientApp
       run: node ../../../tools/reroot_frontend_coverage.mjs coverage/ClientApp/cobertura-coverage.xml src/RLDemo.Web/ClientApp
 
+    # The THIRD report, and the one that completes the .pg union.
+    #
+    # Each *_solver.ts is transpiled from a .pg that also produces the C# the backend runs, but the
+    # two targets serve different callers: C# is the training agent, TypeScript is a visitor playing
+    # in the browser. So a .pg line the browser reaches and training never does is genuinely
+    # uncovered on the C# side -- measured, 137 such lines exist (the snake look-ahead planner and
+    # the mountaincar policy net, neither of which had ANY test before M66).
+    #
+    # This projects the twins' coverage back onto .pg line numbers through the v3 source maps
+    # Polyglot emits beside them. It has to be a separate report because the twins are gitignored
+    # build outputs: the service resolves a path by suffix-matching `git ls-files`, so a report
+    # naming a .ts twin is dropped without an error. The .pg IS tracked, so this one resolves.
+    # (reroot_frontend_coverage.mjs strips the twins from the report above, so nothing double-counts.)
+    - name: Project the Polyglot twins onto their .pg sources
+      if: always()
+      run: >
+        node tools/pg_coverage_remap.mjs
+        src/RLDemo.Web/ClientApp/coverage/ClientApp/coverage-final.json
+        coverage-pg/pg.cobertura.xml .
+
     - name: Upload frontend coverage
       # Same guards as the C# upload: fork PRs have no OIDC, and a run that produced no report is a
       # no-op rather than an upload of nothing.
@@ -151,6 +171,27 @@ jobs:
         use-oidc: true
         files: |
           src/RLDemo.Web/ClientApp/coverage/ClientApp/cobertura-coverage.xml
+        disable-search: true
+        base-sha: ${{ github.event.pull_request.base.sha }}
+        # The .pg report below is the last one, so it closes the build.
+        finish: false
+        fail-ci-if-error: false
+
+    # Merged under the same (repo, sha, runId, runAttempt) as the C# report, which names the SAME
+    # .pg files. The service's max semantics is what turns the two into a per-line union: a .pg line
+    # counts as covered if either the training path or the browser path reached it.
+    - name: Upload the .pg union coverage
+      if: >
+        always()
+        && github.event.pull_request.head.repo.full_name == github.repository
+        && hashFiles('coverage-pg/pg.cobertura.xml') != ''
+      continue-on-error: true
+      uses: MintPlayer/MintPlayer.Spark/apps/CodeCoverage/action@coverage-upload-v1
+      with:
+        url: https://coverage.mintplayer.com
+        use-oidc: true
+        files: |
+          coverage-pg/pg.cobertura.xml
         disable-search: true
         base-sha: ${{ github.event.pull_request.base.sha }}
         # The last upload of the build closes it.

@@ -679,7 +679,13 @@ attacked with fast tests written for the purpose than by reclassifying slow ones
 
 ---
 
-## 13. The TypeScript upload was removed *(2026-09-18, owner's call)*
+## 13. ~~ The TypeScript upload was removed *(2026-09-18, owner's call)*~~
+
+> **SUPERSEDED by §16 (M66).** The measurement below is correct; the conclusion drawn from it is
+> not. It was taken when the repo held one frontend spec that constructed no net, so the
+> TypeScript side contributed almost nothing — it measured the absence of browser-side tests, not
+> the value of the union. Measured properly in §16, the union covers **155 `.pg` lines the C#
+> side can never reach**. Read §16 first.
 
 M63.7 uploaded a second report projecting the TypeScript twins' coverage back onto the `.pg` sources,
 so each `.pg` line carried the union of its C# and TS hits. It worked — spike S6 proved the service
@@ -791,6 +797,11 @@ rather than the behaviour. And the `StartupCheckpoint` fix in §15.4.
 
 ### 15.2 The TypeScript half — §13 is partly reversed, and one of its claims was wrong
 
+> **Partly superseded by §16 (M66).** What this section says about the *hand-written* ClientApp
+> modules still holds. What it says about excluding the generated twins does not: that exclusion
+> made `pg_coverage_remap.mjs` a silent no-op, and the twins are back in `coverageInclude` as of
+> §16 (stripped from *this* report, and uploaded as a separate `.pg`-keyed one).
+
 §13 removed the frontend upload and gave two reasons. The first still stands; the second did not
 survive measurement.
 
@@ -895,3 +906,215 @@ already measured what slow-and-shallow buys. **The recommendation is now firmly 
 target, treat it as met, and make any further rise a by-product of seams that are worth having anyway.**
 Excluding `tools/**` would still move the number ~7 points without covering a line, and is still wrong
 for the same reason.
+
+---
+
+## 16. M66 — the `.pg` union, properly *(2026-09-18)*
+
+§1's first goal was that each `.pg` line should carry the **union** of hits from its generated C# and
+its generated TypeScript. M63 delivered the C# half and built the TypeScript half; §13 then retired the
+TypeScript half on a measurement that was real but meant something other than what it was read to mean.
+M66 puts it back, and it works.
+
+| | C# only | **union** |
+|---|---|---|
+| `blockdude_solver.pg` | 358/360 | 358/360 |
+| `chess_solver.pg` | 499/509 | 499/509 |
+| `crazyfruits_solver.pg` | 617/622 | 617/622 |
+| `draughts_solver.pg` | 385/413 | 385/413 |
+| `fruitcake_solver.pg` | 315/322 | **317/322** |
+| `lunarlockout_solver.pg` | 177/179 | 177/179 |
+| `mountaincar_solver.pg` | 40/69 | **69/69** |
+| `snake_solver.pg` | 374/496 | **493/496** |
+| `tetris_solver.pg` | 729/749 | **734/749** |
+| **total** | **3,494/3,719 = 93.95%** | **3,649/3,719 = 98.12%** |
+
+**155 `.pg` lines are covered by the browser and by nothing else.** Repo-wide that is
+**78.70% → 79.70%**, and — this is the part that matters — **the denominator does not move**. These are
+not new lines being added to be counted; they are lines the C# report already listed and already scored
+as uncovered, which a second execution path turns out to reach. Frontend suite: 144 → **202 tests**.
+
+The clearest single result is `mountaincar_solver.pg` going from **40/69 to 69/69**. Its remaining 29
+lines were the entire client-side policy net, which the training path cannot reach by construction.
+
+### 16.1 The overlay is sound — the two targets agree exactly on `.pg` line numbers
+
+The precondition for overlaying anything is that both targets mean the same thing by "`.pg` line 271".
+Verified exhaustively rather than assumed, by extracting the set of `.pg` lines each target emits origin
+info for, in all nine solvers:
+
+| solver | `.pg` LOC | C# `#line` distinct | TS map distinct | in both | C#-only | TS-only |
+|---|---|---|---|---|---|---|
+| blockdude | 656 | 381 | 381 | 381 | 0 | 0 |
+| chess | 926 | 548 | 548 | 548 | 0 | 0 |
+| crazyfruits | 1104 | 657 | 657 | 657 | 0 | 0 |
+| draughts | 754 | 445 | 445 | 445 | 0 | 0 |
+| fruitcake | 624 | 341 | 341 | 341 | 0 | 0 |
+| lunarlockout | 342 | 190 | 190 | 190 | 0 | 0 |
+| mountaincar | 153 | 74 | 74 | 74 | 0 | 0 |
+| snake | 831 | 516 | 516 | 516 | 0 | 0 |
+| tetris | 1447 | 797 | 797 | 797 | 0 | 0 |
+| **total** | | **3,949** | **3,949** | **3,949** | **0** | **0** |
+
+**Symmetric difference is zero in every solver.** That is not a coincidence to be re-checked each release —
+it follows from the architecture: one emitter and one origin table, rendered by two backends. Worked
+example: `fn reachableFreeSpace(...)` at `snake_solver.pg:271` appears as `#line 271` at
+`snake_solver.cs:583` and as a mapping to `snake_solver.ts:271`.
+
+Two limits on what the overlay may claim:
+
+- **Line granularity only.** The C# plugin manifest declares `"column": 0`, so there is no column fidelity
+  to union even though the TS map carries generated columns.
+- **The denominator is the *mapped* set, not the file's raw line count.** Type declarations (`class
+  PgSnakeEnv` at `snake_solver.pg:92`, and every other `class`/`record` head) sit under `#line hidden` in
+  C# and have no mapping in the TS map — neither target can ever cover them. Snake is 516 mappable lines
+  of 831 physical. A tool that used raw LOC would report a permanent, meaningless shortfall.
+
+### 16.2 How a generated file is identified — and why `pgconfig.json` is not the answer
+
+`pgconfig.json` looks like the source of truth and is not. It is a **routing override table for the
+TypeScript target only**: nine `include` entries, every one `"target": "typescript"`, and **no C# output
+path at all** — the C# location comes from MSBuild (`PolyglotOutDir` =
+`obj/<Config>/<TFM>/polyglot/`). A tool keyed on `pgconfig.json` would silently cover only half the
+problem. It also omits `__polyglot_prelude.cs`, which has no `.pg` origin and must be skipped.
+
+**The robust markers are intrinsic to the output**, and the plugin manifests make them contractual rather
+than incidental (`plugins/csharp/polyglot-plugin.json` declares
+`originMapping: {style:"directive", line:"#line $n \"$f\""}`; `plugins/typescript` declares
+`{style:"sourceMapV3", sidecarExtension:".map", footer:"//# sourceMappingURL=$f"}`):
+
+| target | identify a generated file by | catches | misses |
+|---|---|---|---|
+| C# | any `#line N "….pg"` | all 9 solvers | `__polyglot_prelude.cs` — correctly, it has no origin |
+| TypeScript | `//# sourceMappingURL=` footer **and** a `.ts.map` beside it | all 9 twins | — |
+
+The TypeScript marker matters for a reason a glob would get wrong: `mountaincar_solver.spec.ts` is a
+**hand-written, git-tracked test** that any naive `*_solver*.ts` pattern swallows. The sidecar test
+excludes it. (`docs/prd/polyglot-pilot/fruitcake_solver.pg` is a similar decoy on the source side — a
+tracked documentation copy that generates nothing and is absent from `pgconfig.json`.)
+
+### 16.3 A third target would be invisible today
+
+Polyglot ships four plugins: `csharp`, `typescript`, `php`, `python`. **The `php` and `python` manifests
+have no `originMapping` key at all** — they emit no `#line`, no source map, nothing tying output back to
+`.pg`. Enabling either today would produce coverage that the overlay could not attribute, and the `.pg`
+denominator would not change, so the failure would be silent rather than loud.
+
+So the overlay tool should **read `originMapping.style` and dispatch on it** (`"directive"` →
+scan pragmas; `"sourceMapV3"` → decode the sidecar) rather than hard-coding two languages, and should
+**warn when a declared target has no `originMapping`** — that is the condition under which a new target's
+coverage would vanish without trace.
+
+### 16.4 Why the TypeScript report must be translated before upload
+
+Every generated artefact is gitignored — `obj/` for the C#, and an explicit rule for
+`src/RLDemo.Web/ClientApp/src/app/**/*_solver.ts(.map)`. Only the nine `.pg` sources are in
+`git ls-files`. The coverage service resolves a report path by suffix-matching against `git ls-files`, so
+**a report naming a `.ts` twin resolves to nothing and is dropped without an error**.
+
+The C# side already satisfies this for free: Roslyn carries `#line` into the PDB, coverlet reads it, and
+the emitted cobertura already names
+`src/MintPlayer.AI.ReinforcementLearning.Environments/Snake/polyglot/snake_solver.pg` — a repo-relative
+`.pg` path. (`coverlet.runsettings` documents why `ExcludeByFile`'s `**/obj/**/*.cs` no longer matches
+these files, and `UseSourceLink=false` exists for the same suffix-matching reason.)
+
+The TypeScript side has the mapping infrastructure but **no coverage producer pointed at it today**, and
+its raw report would name gitignored `.ts` paths. That translation step is what
+`tools/pg_coverage_remap.mjs` exists to do, and it is why the twins cannot simply be added to
+`coverageInclude` and uploaded like the hand-written modules in §15.2.
+
+### 16.5 §13 and §15.2 were wrong about the twins, and this is the correction
+
+Two earlier sections retired the TypeScript→`.pg` projection. Both are superseded. The reasoning is
+worth keeping because the mistake is an easy one to repeat.
+
+**What §13 said:** the twins are transpiled from the same `.pg` the C# already covers at 93.9%, so
+uploading both "double-counts one source file" for +0.1pp at a cost of +57s.
+
+**Why that is wrong.** It *is* one source file, but the union is over **execution paths, not reports**.
+The C# and the TypeScript are the same source compiled for two different callers:
+
+| | runs | exercises |
+|---|---|---|
+| generated **C#** | the training agent | env dynamics, reward, observation encoding |
+| generated **TypeScript** | a visitor playing in the browser | the serving-side net forward, the look-ahead planner, human-input micro-moves, rotation physics |
+
+A `.pg` line only a player reaches is genuinely uncovered in the C# report, and the union is the only
+thing that can see it. Measured: **137 of the 225 `.pg` lines C# never reaches are on real browser call
+paths**, traced to their call sites.
+
+**What the +0.1pp measurement actually measured.** It was taken when the repo contained exactly ONE
+frontend spec — `mountaincar_solver.spec.ts` — and that spec constructs no net, so it reached none of
+the 29 lines that matter in its own file. The number was real; it measured **the absence of
+browser-side tests**, not the value of the union. Retiring the mechanism on the strength of it was the
+wrong conclusion drawn from a correct measurement, and that is the part worth remembering: a
+near-zero delta from a pipeline with nothing feeding it says nothing about the pipeline.
+
+**What §15.2 got right and kept:** the hand-written ClientApp modules are a separate concern and are
+still uploaded under their own `.ts` paths. What it got wrong was excluding the twins from
+`coverageInclude` entirely, which made `pg_coverage_remap.mjs` a silent no-op — the tool was audited
+as correct, and was producing nothing purely because nothing was feeding it.
+
+### 16.6 What the two untested features actually were
+
+The percentage is the least interesting part of this. The 137 lines are not scattered noise; they are
+**two whole shipped features with zero tests on either side**:
+
+- **The snake receding-horizon beam planner** (~101 lines) — `chooseActionSearch`, `leafScoreSearch`,
+  `pruneBeam`'s manual top-k, `freeSpaceAhead`'s flood fill, and the anti-fragmentation
+  space-ratio term that M34 measured as *the* biggest strength lever (~81 food, +60% over the
+  plateau). Subtle, hand-rolled, and until now never asserted anywhere.
+- **The mountaincar policy net** (29 lines) — `PgMlpNet.forward`/`linear`/`tanhv` plus `chooseAction`.
+  It exists *only* so the browser can run the PPO policy client-side; C# training uses the real tensor
+  library. A transposed weight index or a tanh applied to the output layer would have shipped silently.
+
+Two smaller ones: tetris's human-play micro-move locking and top-out (training only uses the macro
+`applyPlacement`), and fruitcake's angular-velocity integration (training constructs the world with
+rotation off; all three browser call sites construct it on).
+
+### 16.7 What is deliberately NOT covered, and one thing to delete instead
+
+- **The draughts MLP tier (~22 lines) is a trap.** It looks like net code the browser obviously runs,
+  and it does not: `draughts-net.ts:127` returns `PgDraughtsNet.withConv(...)`, and the covered line
+  `draughts_solver.pg:582` short-circuits to the conv path. Testing it would cover a branch that
+  **ships dead**. The right move is to delete the MLP tier or exclude it, not to test it.
+- **~36 lines cannot be reached by anyone** and should leave the denominator or the codebase:
+  `tetris_solver.pg:1029-1032 reachableMask()` and `chess_solver.pg:102-105 clone()` have no caller in
+  any `.pg` and none in ClientApp — dead code, not a coverage gap. The rest are defensive MCTS
+  fallbacks ("all visit counts zero"), unused accessors, and ~5 declaration-line artifacts where the
+  body is covered but the signature line holds a sequence point that never executes.
+- **~52 lines are reachable only by unit-testing the twin directly**, with no browser path — snake's
+  `safeMask` shield (the director hard-codes it off), snake's unused masked-greedy `chooseAction`, and
+  three tetris training setters. Covering them would be honest only under "unit-test reachability",
+  which is a weaker claim than this union is making. Left alone.
+
+### 16.8 How the three reports fit together
+
+One `dotnet test` and one `vitest` run now produce **three** reports, merged by the service under one
+`(repo, sha, runId, runAttempt)` with max semantics:
+
+| report | keyed by | produced by | covers |
+|---|---|---|---|
+| C# | `.pg` **and** `.cs` paths | coverlet, via `#line` in the PDB | the whole backend, incl. the `.pg` training path |
+| frontend | `.ts` paths | vitest cobertura → `reroot_frontend_coverage.mjs` | hand-written ClientApp modules |
+| **`.pg` union** | `.pg` paths | vitest istanbul JSON → `pg_coverage_remap.mjs` | the twins' browser path, projected through the v3 source maps |
+
+Three details that make it work, each of which would fail *silently* if got wrong:
+
+1. **The twins are in `coverageInclude` but stripped from the frontend report.** They must be measured
+   (so the remap has input) but must not upload under `.ts` paths — those are gitignored, so the
+   service would drop them unmatched, and keeping them would double-count against the `.pg` report.
+   `reroot_frontend_coverage.mjs` drops any `_solver.ts` class and says how many.
+2. **Exactly one upload carries `finish: true`**, and it is the last one. The `.pg` report now holds it.
+3. **The remap warns and exits 0 when it finds no twin**, rather than failing the build — no twin spec
+   having run is a legitimate state, and the upload's `hashFiles` guard already makes it a no-op.
+
+Hardening applied to `pg_coverage_remap.mjs` while it was out of service (none of which changes a
+number): `sourceRoot` is now honoured (Polyglot emits `""`, so ignoring it was harmless *today* and
+would have silently voided the whole report if that ever changed); `<source>` is `.` rather than the
+absolute agent path; the summary percentage no longer multiplies a string by 100.
+
+**Known gap, stated rather than assumed:** the `.pg` report carries **no branch data**
+(`branches-valid="0"`). If the service ever merged branch rates by average rather than by max, a 0/0
+report could dilute the branch number. Unverified — worth one check against a real run before the
+branch figure is trusted.

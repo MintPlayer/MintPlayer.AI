@@ -104,6 +104,15 @@ jobs:
       working-directory: src/RLDemo.Web/ClientApp
       run: node ../../../tools/reroot_frontend_coverage.mjs coverage/ClientApp/cobertura-coverage.xml src/RLDemo.Web/ClientApp
 
+    # The .pg union: the twins' coverage projected back onto their .pg sources through Polyglot's v3
+    # source maps. Rationale and why it must be its own report: see pull-request.yml.
+    - name: Project the Polyglot twins onto their .pg sources
+      if: always()
+      run: >
+        node tools/pg_coverage_remap.mjs
+        src/RLDemo.Web/ClientApp/coverage/ClientApp/coverage-final.json
+        coverage-pg/pg.cobertura.xml .
+
     - name: Upload frontend coverage
       if: always() && hashFiles('src/RLDemo.Web/ClientApp/coverage/ClientApp/cobertura-coverage.xml') != ''
       continue-on-error: true
@@ -113,6 +122,20 @@ jobs:
         use-oidc: true
         files: |
           src/RLDemo.Web/ClientApp/coverage/ClientApp/cobertura-coverage.xml
+        disable-search: true
+        # The .pg report below is the last one, so it closes the build.
+        finish: false
+        fail-ci-if-error: false
+
+    - name: Upload the .pg union coverage
+      if: always() && hashFiles('coverage-pg/pg.cobertura.xml') != ''
+      continue-on-error: true
+      uses: MintPlayer/MintPlayer.Spark/apps/CodeCoverage/action@coverage-upload-v1
+      with:
+        url: https://coverage.mintplayer.com
+        use-oidc: true
+        files: |
+          coverage-pg/pg.cobertura.xml
         disable-search: true
         # The last upload of the build closes it.
         finish: true
