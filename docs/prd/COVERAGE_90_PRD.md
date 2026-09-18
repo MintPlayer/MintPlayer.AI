@@ -199,20 +199,51 @@ scaffolding, prelude). Emitting only on *change* is not merely less precise, it 
 side effect: because every line carries an absolute directive, the prelude-prepend shift problem
 (§5 obstacle 2) disappears entirely — there is nothing left to shift.
 
-### S2 — `#line` end-to-end on one real solver
+### S2 — `#line` end-to-end on a real solver ✅ **RUN 2026-09-18 — PASSED, superseded in scope**
 
-Build Polyglot locally with `#line` behind a flag, transpile **`mountaincar_solver.pg` only** (152
-lines, the smallest), point `PolyglotTool` at the local CLI, run a targeted parity slice with
-coverage. **Pass:** `coverage.cobertura.xml` contains a class whose `filename` ends
-`MountainCar/polyglot/mountaincar_solver.pg`, the C# still compiles, and the existing parity test
-still passes. **Also record:** whether compiler *errors* in generated code now report against the
-`.pg` (expected, arguably desirable) and whether `#line hidden` correctly suppresses the prelude.
+The compiler work shipped as [Polyglot#70](https://github.com/MintPlayer/MintPlayer.Polyglot/pull/70)
+(`v0.10.0`), so this ran against the released package on **all nine** solvers rather than only
+`mountaincar`. Observed on `PolyglotOriginInfo=true`:
 
-### S3 — Does the number actually go up?
+- **8,466 directives over 8,466 generated lines** — 7,841 positioned + 625 `#line hidden`, i.e.
+  exactly one per line, which is the invariant that prevents drift.
+- All nine `.pg` files named with absolute, forward-slashed paths; **multi-file attribution works**,
+  so the `fileId = 0` prerequisite (Polyglot `compiler.cpp`) is genuinely fixed rather than masked
+  by single-file testing.
+- The report's `<sources>` root is `C:/Repos/MintPlayer.AI/` with **repo-relative** `filename`
+  values — the shape the coverage service needs (feeds S6).
+- The polyglot `obj/` paths are **gone** from the report. The one remaining `obj/` entry is the
+  pre-existing `Inject.g.cs` leak that `COVERAGE_PRD.md` already documents, unchanged.
+- 707/707 tests pass with directives on — no behavioural change.
+- The option-tagged stamp works in this repo: `obj/Release/net10.0/polyglot/__polyglot-origin.stamp`.
 
-With S2 green, transpile all 9 solvers and run the fast bucket locally. **Pass:** total line rate
-does not *drop*. This is the falsifiable version of §2's claim that the `.pg` cores are well tested.
-If it drops, the `.pg` bodies are less exercised than believed and §8's milestone ordering changes.
+### S3 — Does the number actually go up? ✅ **RUN 2026-09-18 — PASSED (+8.25 pp), with a cost finding**
+
+A/B on the full fast bucket (`Category!=Slow`, Release, 707 tests, Polyglot 0.10.0):
+
+| | origin info OFF | origin info ON | Δ |
+|---|---|---|---|
+| Line rate | **59.86%** | **68.11%** | **+8.25 pp** |
+| Covered / valid | 6,965 / 11,636 | 10,458 / 15,355 | +3,493 / +3,719 |
+| Tests | 707 pass | 707 pass | no behavioural change |
+| Duration | 3m 08s | **15m 55s** | **5×** |
+
+The OFF run reproduces the published badge to two decimals, which is what makes the A/B
+trustworthy. §2's claim is confirmed and then some — the nine solvers enter at **3,493/3,719 =
+93.9% covered**, i.e. they were depressing the number purely by being invisible.
+
+Per-solver, and this is actionable on its own: `blockdude` 99.4%, `crazyfruits` 99.2%, `lunarlockout`
+98.9%, `chess` 98.0%, `fruitcake` 97.5%, `tetris` 97.3%, `draughts` 93.2%, **`snake` 75.4%**,
+**`mountaincar` 58.0%**. The last two are the only `.pg` files worth writing tests against.
+
+**The cost finding: instrumenting the solvers costs 5× wall-clock.** They are the hot path — the
+parity and perft suites push millions of simulation steps through them — so every inner-loop line
+now takes a `RecordHit` call it previously skipped by being excluded. 3m → 16m on the *fast* bucket
+is a CI-budget problem, not a rounding error. Mitigation measured as **S3c** (coverlet `SingleHit`,
+which stops recording after a line's first hit instead of counting every pass); see §6a.
+
+Remaining gap to the 90% goal: 13,819 covered needed vs 10,458 today = **+3,361 lines**, which is
+what M63.4/M63.5 have to find.
 
 ### S4 — Vitest from zero on one spec
 
@@ -231,12 +262,26 @@ exercising the generated `mountaincar_solver.ts` produces lcov keyed on
 an explicit `inputSourceMap`; if *that* fails, the TS half ships as plain `.ts` coverage and the
 `.pg` union is C#-only — §4 still works, it just has one input. **S5 failing must not block M63.**
 
-### S6 — Server acceptance of a `.pg`-keyed report
+### S6 — Server acceptance of a `.pg`-keyed report 🟡 **half-answered; needs a push**
 
-Before wiring CI, confirm coverage.mintplayer.com resolves a `.pg` path through its `git ls-files`
-suffix matching and merges two reports naming the same `.pg`. **Pass:** the build reaches `Complete`
-and the `.pg` file is browsable server-side with per-line gutters. Cheapest as a throwaway branch
+Local half **confirmed** (S2): the report carries `<source>C:/Repos/MintPlayer.AI/</source>` with
+repo-relative `filename` values ending `.pg`, and those paths are in `git ls-files` — which is
+exactly what the service suffix-matches against. Nothing in the report shape should defeat it.
+
+Still unverified because it cannot be checked locally: that the service *actually* resolves a `.pg`
+extension, renders it, and merges two reports naming the same `.pg`. **Pass:** the build reaches
+`Complete` and the `.pg` file is browsable with per-line gutters. Cheapest as a throwaway branch
 push. **Fail:** fall back to local ReportGenerator merge (§7) and upload one pre-merged cobertura.
+
+### S3c — Does `SingleHit` recover the 5× slowdown? *(added 2026-09-18, forced by S3)*
+
+S3 measured the fast bucket going 3m08s → 15m55s once the solvers are instrumented, because they
+are the hot path. Coverlet's `<SingleHit>true</SingleHit>` stops recording a line after its first
+hit instead of counting every pass, which is precisely the hot-loop cost. **Pass:** wall-clock
+returns to roughly the OFF baseline *and* the line rate is unchanged (hit *counts* drop to 1, but
+covered/not-covered — all this repo and the server's max-merge consume — must not move).
+**Fail:** the 5× is intrinsic, and the choice becomes explicit: pay it, or collect coverage on a
+reduced filter and accept a partial number.
 
 ## 7. Fallback if the server route fails (S6 red)
 
