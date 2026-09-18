@@ -37,18 +37,7 @@ internal static class SnakeLab
         // --cycle : skip training and evaluate the safety-cycle mode (M48) — win rate / deaths gate the milestone.
         bool cycle = a.Has("--cycle");
         string netPath = a.Str("--net", Path.Combine("src", "RLDemo.Web", "wwwroot", "models", "snake-net.ckpt"));
-        var cfg = new SnakeSearchConfig();
-        cfg = cfg with
-        {
-            MaxDepth = a.Int("--depth", cfg.MaxDepth),
-            BeamWidth = a.Int("--beam", cfg.BeamWidth),
-            FoodWeight = a.Dbl("--w-food", cfg.FoodWeight),
-            TrapPenalty = a.Dbl("--w-trap", cfg.TrapPenalty),
-            NetWeight = a.Dbl("--w-net", cfg.NetWeight),
-            SpaceWeight = a.Dbl("--w-space", cfg.SpaceWeight),
-            FoodDistWeight = a.Dbl("--w-dist", cfg.FoodDistWeight),
-            SpaceRatioWeight = a.Dbl("--w-ratio", cfg.SpaceRatioWeight),
-        };
+        var cfg = SearchConfig(a);
 
         // A growing run starts from the tiny first stage and adds capacity mid-training (Net2Wider/DeeperNet).
         if (grow) hidden = DqnGrowth.Start;
@@ -61,25 +50,11 @@ internal static class SnakeLab
 
         if (cycle)
         {
-            var cycleCfg = new SnakeCycleConfig();
-            cycleCfg = cycleCfg with
-            {
-                NetWeight = a.Dbl("--w-net", cycleCfg.NetWeight),
-                ProgressWeight = a.Dbl("--w-progress", cycleCfg.ProgressWeight),
-                Margin = a.Int("--margin", cycleCfg.Margin),
-                Rebuild = !a.Has("--no-rebuild"), // --no-rebuild = the M48.1 fixed-cycle baseline
-                ShortcutMinFree = a.Int("--min-free", -1), // −1 = half the board
-            };
-            RunCycleEval(netPath, evalGrid, evalEpisodes, seed, cycleCfg);
+            RunCycleEval(netPath, evalGrid, evalEpisodes, seed, CycleConfig(a));
             return;
         }
 
-        var options = new DqnScoreOptions
-        {
-            Seed = seed, ChunkSteps = chunkSteps, TargetSteps = targetSteps, EvalEpisodes = evalEpisodes,
-            LearningRate = learningRate, EpsilonStart = explore, Hidden = hidden, Gamma = gamma,
-            Grow = grow, GrowEvery = growEvery,
-        };
+        var options = Options(a, hidden, grow);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             services => services.AddSnakeDqnCampaign(
                 trainEnv: new SnakeEnv(trainGrid, stepPenalty, safeMask),
@@ -190,4 +165,58 @@ internal static class SnakeLab
         Console.WriteLine($"food@{grid}: mean {meanFood:F1}  (min {minFood}, max {maxFood}, {episodes} eps)");
         Console.WriteLine($"planner latency: {msPerMove:F1} ms/move  ({totalMoves} moves, {sw.Elapsed.TotalSeconds:F1}s)");
     }
+
+    /// <summary>
+    /// The look-ahead planner's configuration (M34). Defaults reproduce PR #11's shipped depth-20/beam-32
+    /// sweep, so these weights ARE the measured snake strength — extracted in M63.5 because a silent drift
+    /// here was previously unassertable.
+    /// </summary>
+    internal static SnakeSearchConfig SearchConfig(CliArgs a)
+    {
+        var cfg = new SnakeSearchConfig();
+        return cfg with
+        {
+            MaxDepth = a.Int("--depth", cfg.MaxDepth),
+            BeamWidth = a.Int("--beam", cfg.BeamWidth),
+            FoodWeight = a.Dbl("--w-food", cfg.FoodWeight),
+            TrapPenalty = a.Dbl("--w-trap", cfg.TrapPenalty),
+            NetWeight = a.Dbl("--w-net", cfg.NetWeight),
+            SpaceWeight = a.Dbl("--w-space", cfg.SpaceWeight),
+            FoodDistWeight = a.Dbl("--w-dist", cfg.FoodDistWeight),
+            SpaceRatioWeight = a.Dbl("--w-ratio", cfg.SpaceRatioWeight),
+        };
+    }
+
+    /// <summary>The safety-cycle mode's configuration (M48). <c>--no-rebuild</c> selects the M48.1
+    /// fixed-cycle baseline; <c>--min-free -1</c> means half the board.</summary>
+    internal static SnakeCycleConfig CycleConfig(CliArgs a)
+    {
+        var cfg = new SnakeCycleConfig();
+        return cfg with
+        {
+            NetWeight = a.Dbl("--w-net", cfg.NetWeight),
+            ProgressWeight = a.Dbl("--w-progress", cfg.ProgressWeight),
+            Margin = a.Int("--margin", cfg.Margin),
+            Rebuild = !a.Has("--no-rebuild"),
+            ShortcutMinFree = a.Int("--min-free", -1),
+        };
+    }
+
+    /// <summary>The DQN options this entry point's flags resolve to. <paramref name="hidden"/> and
+    /// <paramref name="grow"/> are passed in because Run applies the growing-run override
+    /// (<c>--grow</c> REPLACES <c>--hidden</c> with the tiny first stage) before the mode dispatch.</summary>
+    internal static DqnScoreOptions Options(CliArgs a, int[] hidden, bool grow)
+        => new()
+        {
+            Seed = a.ULong("--seed", 1),
+            ChunkSteps = a.Int("--chunk-steps", 5_000),
+            TargetSteps = a.Long("--steps", 100_000),   // the proven M22 budget; --steps 0 = time-bounded only
+            EvalEpisodes = a.Int("--episodes", 20),
+            LearningRate = a.Flt("--lr", 5e-4f),
+            EpsilonStart = a.Flt("--explore", 1.0f),
+            Hidden = hidden,
+            Gamma = a.Dbl("--gamma", 0.99),             // higher = longer planning horizon (long-snake routing)
+            Grow = grow,
+            GrowEvery = a.Int("--grow-every", 5000),
+        };
 }

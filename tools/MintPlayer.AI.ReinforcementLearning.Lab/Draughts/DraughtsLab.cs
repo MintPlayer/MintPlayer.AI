@@ -18,12 +18,8 @@ internal static class DraughtsLab
     public static void Run(string[] args)
     {
         var a = new CliArgs(args);
-        string variantStr = a.Str("--variant", "international").ToLowerInvariant();
-        var variant = variantStr is "checkers8" or "english" or "english8"
-            ? DraughtsVariant.English8 : DraughtsVariant.International10;
+        var (variant, envId, board) = ResolveVariant(a.Str("--variant", "international"));
         var game = new DraughtsGame(variant);
-        string envId = variant == DraughtsVariant.English8 ? "checkers8" : "draughts";
-        int board = variant == DraughtsVariant.English8 ? 8 : 10;
 
         double hours = a.Dbl("--hours", 1);
         string dataDir = a.Str("--data", "data");
@@ -117,5 +113,22 @@ internal static class DraughtsLab
             },
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", $"{envId}-selfplay.csv")),
             firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
+    }
+
+    /// <summary>
+    /// Maps <c>--variant</c> onto the board size and the checkpoint id.
+    /// </summary>
+    /// <remarks>
+    /// M63.5: extracted from <see cref="Run"/>. <c>envId</c> decides WHICH CHECKPOINT the run reads and
+    /// writes, so a mis-mapped alias silently trains into the wrong file rather than failing. Three aliases
+    /// select the 8x8 English game; anything else (including an unknown string) falls back to
+    /// international 10x10, which is the documented default.
+    /// </remarks>
+    internal static (DraughtsVariant Variant, string EnvId, int Board) ResolveVariant(string variant)
+    {
+        bool english = variant.ToLowerInvariant() is "checkers8" or "english" or "english8";
+        return english
+            ? (DraughtsVariant.English8, "checkers8", 8)
+            : (DraughtsVariant.International10, "draughts", 10);
     }
 }

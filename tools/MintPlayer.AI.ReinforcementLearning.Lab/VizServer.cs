@@ -144,24 +144,48 @@ internal sealed class VizServer : IDisposable
             // Nothing to do (and nothing to pay) while no one is watching.
             lock (_gate) { if (_clients.Count == 0) continue; }
 
-            try
+            var (topology, frame) = SampleOnce(ref lastTopologyJson);
+            if (topology is not null) Broadcast(topology);
+            if (frame is not null) Broadcast(frame);
+        }
+    }
+
+    /// <summary>
+    /// One sampling step: the envelopes to broadcast, or nulls when there is nothing to send.
+    /// </summary>
+    /// <remarks>
+    /// Extracted from <see cref="SampleLoop"/> in M63.5. This is the only real logic in the file — the
+    /// null/empty-parameter guard (the net does not exist until training starts), the topology dedupe
+    /// (<paramref name="lastTopologyJson"/>, so the graph is re-sent only when it actually changes), and the
+    /// catch-all that keeps a transient failure from killing the viewer of a multi-day run. It was previously
+    /// reachable only by binding a port and connecting a real WebSocket client.
+    /// <para>Broadcasting stays in the loop deliberately, so this is a pure function of the telemetry source
+    /// and needs no socket.</para>
+    /// </remarks>
+    internal (byte[]? Topology, byte[]? Frame) SampleOnce(ref string? lastTopologyJson)
+    {
+        try
+        {
+            var parameters = _source.SnapshotParameters();
+            if (parameters is null || parameters.Count == 0) return (null, null);
+
+            byte[]? topologyEnvelope = null;
+            var topology = NetworkInspector.Describe(parameters, _source.NetKind, _source.InputLabels, _source.OutputLabels);
+            string topologyJson = JsonSerializer.Serialize(topology, Json);
+            if (topologyJson != lastTopologyJson)
             {
-                var parameters = _source.SnapshotParameters();
-                if (parameters is null || parameters.Count == 0) continue;
-
-                var topology = NetworkInspector.Describe(parameters, _source.NetKind, _source.InputLabels, _source.OutputLabels);
-                string topologyJson = JsonSerializer.Serialize(topology, Json);
-                if (topologyJson != lastTopologyJson)
-                {
-                    lastTopologyJson = topologyJson;
-                    Broadcast(Envelope("topology", topologyJson));
-                }
-
-                var io = _source.SampleIo();
-                var frame = NetworkInspector.CaptureFrame(parameters, _source.Sample(), io?.Input, io?.Output, _source.SampleActivations());
-                Broadcast(Envelope("frame", JsonSerializer.Serialize(frame, Json)));
+                lastTopologyJson = topologyJson;
+                topologyEnvelope = Envelope("topology", topologyJson);
             }
-            catch { /* transient (e.g. net swapped mid-sample) — skip this frame */ }
+
+            var io = _source.SampleIo();
+            var frame = NetworkInspector.CaptureFrame(parameters, _source.Sample(), io?.Input, io?.Output, _source.SampleActivations());
+            return (topologyEnvelope, Envelope("frame", JsonSerializer.Serialize(frame, Json)));
+        }
+        catch
+        {
+            // Transient (e.g. net swapped mid-sample) — skip this frame rather than take down the viewer.
+            return (null, null);
         }
     }
 
