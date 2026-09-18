@@ -297,7 +297,31 @@ misattribution.
 **Consequence:** §4's two-input union is real — the C# report and this one both key on the same
 `.pg` paths, and the service merges them with max semantics.
 
-### S6 — Server acceptance of a `.pg`-keyed report 🟡 **half-answered; needs a push**
+### S6 — Server acceptance of a `.pg`-keyed report ✅ **PASSED 2026-09-18 (PR #54)**
+
+**Result.** PR #54's CI uploaded the report (`Upload accepted`, `Finish requested (202)`) and the service
+published both checks. `coverage/project` reported **70.7% (+10.9% vs base 59.8%)** and
+`coverage/patch` **68.8% of added lines (141 of 205)**. Both carry `conclusion: neutral` — the GitHub UI
+renders that as *skipping*, which reads like a failure but means **informational only**, because
+Blocking is off in the repository gate and no patch target is configured.
+
+**The number is the proof.** The server total matches the local figure to the decimal, and that is only
+possible if it resolved the `.pg` paths:
+
+| | covered / valid | rate |
+|---|---|---|
+| with `.pg` | 10,875 / 15,377 | **70.72%** ← server said 70.7% |
+| without `.pg` | 7,382 / 11,658 | 63.32% |
+| the `.pg` block alone | 3,493 / 3,719 | 93.9% |
+
+Had the nine `.pg` files been dropped as unresolvable, the service would have reported **63.3%**. So
+`git ls-files` suffix matching resolves a `.pg` extension, and §4's union architecture is confirmed
+end to end on the C# side.
+
+**Not verified:** the web UI itself. `coverage.mintplayer.com` requires authentication
+(`401` on `/api/browse/repos/...`), so whether a `.pg` file *renders* with per-line gutters is still
+unseen — it needs an owner-authenticated session. The measurement is proven; the presentation is not.
+
 
 Local half **confirmed** (S2): the report carries `<source>C:/Repos/MintPlayer.AI/</source>` with
 repo-relative `filename` values ending `.pg`, and those paths are in `git ls-files` — which is
