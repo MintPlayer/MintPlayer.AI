@@ -474,7 +474,7 @@ with `--collect`** — see §12.7 for what happened when it was not.
    §10.1: Console is out, Lab is in and gets tested. The distinguishing line is that Lab is already
    referenced by the test project and Console is not.)* To be recorded in `coverlet.runsettings` so
    the exclusion is a written decision rather than an accident of project references.
-4. **Re-baseline 90% after M63.4.** Still open, deliberately. With §10.1 resolving to "test it"
+4. **Re-baseline 90% after M63.4.** **ANSWERED in §14** (2026-09-18): 90% is not reachable in this arc — covering all of Campaigns reaches 81.5%. Originally left open as: With §10.1 resolving to "test it"
    rather than "exclude", the denominator stays large (15,355 lines today), so 90% means +3,361
    covered lines — a materially bigger job than if `tools/**` had been excluded. Worth revisiting
    the target once M63.4 lands and the true denominator is known.
@@ -640,3 +640,60 @@ at the current budget. If it is revisited, the route is (a) measure instrumented
 (b) exclude any test whose assertion is a timing comparison. The +1.18 pp it would have bought
 came mostly from Campaigns (34.3% → 40.0%), which remains the largest uncovered pool and is better
 attacked with fast tests written for the purpose than by reclassifying slow ones.
+
+---
+
+## 13. The TypeScript upload was removed *(2026-09-18, owner's call)*
+
+M63.7 uploaded a second report projecting the TypeScript twins' coverage back onto the `.pg` sources,
+so each `.pg` line carried the union of its C# and TS hits. It worked — spike S6 proved the service
+resolves `.pg` paths *and* unions two reports naming the same one — but the measurement did not
+justify keeping it:
+
+| | |
+|---|---|
+| CI cost | **+57s** (3m53s → 4m50s) |
+| Coverage gained | **+0.1pp** (70.7% → 70.8%) |
+
+The reason it is so small is structural, not a defect: **the C# side already covers those same `.pg`
+lines at 93.9%** through the `#line` pragmas. The two reports were double-counting one source file.
+Not quite zero — istanbul's statement view reached about 12 `.pg` lines the C# sequence points did
+not, because the two tools see different granularity — but not 57 seconds' worth.
+
+**What was kept, and why.** The frontend suite still runs in CI without feeding coverage. Those specs
+are the only thing that would catch a **Polyglot TypeScript codegen regression**, which the C# side
+structurally cannot see: both targets come from the same `.pg`, but only the TS one is exercised by
+the browser. `tools/pg_coverage_remap.mjs` is retained as the working implementation.
+
+**When to bring frontend coverage back, and in what shape.** Not by re-uploading the generated twins —
+that is the double-count above. The gap worth closing is the **hand-written ClientApp** (~64 `.ts`
+files: components, services, the game hosts), which is currently *not in the denominator at all*
+because `coverageInclude` is scoped to `*_solver.ts`. Adding it is the honest move **once specs
+exist**: with one spec in the repo today it would add a large uncovered denominator and drop the
+number sharply, which measures nothing new.
+
+## 14. §10.4 answered: 90% is not the right target for this arc
+
+The question was left open deliberately until the denominator was known. It now is:
+
+| | |
+|---|---|
+| Today | **74.18%** (11,418 / 15,392) |
+| If **all** remaining Campaigns lines were covered | **81.5%** |
+| 90% requires | **+2,434** lines, from 3,974 uncovered in total |
+
+So 90% needs, on top of finishing Campaigns, most of `tools/Lab` (1,344 uncovered) **and**
+`Environments` (1,048). That is not a milestone; it is a programme.
+
+The three honest options, unchanged from §10.4 but now priced:
+
+1. **Exclude `tools/**`** — reverses §10.1. Denominator drops to ~13,640 and today's figure becomes
+   ~81%, with 90% needing ~+1,200 from Campaigns and Environments. Reachable.
+2. **Move the target to ~80%** — roughly where the current trajectory lands once Campaigns is
+   finished, with `tools/**` still in.
+3. **Keep 90% as a multi-milestone arc** — M63 and M64 landed the infrastructure and the first half;
+   two or three more milestones of test-writing would be needed.
+
+**Recommendation: (2) or (3), not (1).** Excluding `tools/**` now would reverse a decision made
+deliberately and would move the number without covering a line — the exact kind of metric change this
+PRD has argued against throughout. The number is only worth having if it means something.
