@@ -2,6 +2,12 @@
 
 [![Coverage](https://coverage.mintplayer.com/badge/MintPlayer/MintPlayer.AI.svg)](https://coverage.mintplayer.com/r/MintPlayer/MintPlayer.AI)
 
+<sub>The coverage figure is the **fast test bucket** (`Category!=Slow`) — the multi-minute training and
+perft gates are excluded, so it measures the code a PR run actually exercises. It **includes the nine
+`.pg` solver sources**: since M63 the Polyglot transpiler emits `#line` pragmas into the generated C#,
+so hits are attributed to the `.pg` rather than to the generated file, and the TypeScript twins are
+projected back onto the same lines. `src/**Ilgpu` is excluded (its kernels are JIT-compiled from IL at
+runtime and coverage instrumentation makes that throw).</sub>
 
 A reinforcement-learning library written from scratch in C#/.NET — no Python, no libtorch,
 no native dependencies.

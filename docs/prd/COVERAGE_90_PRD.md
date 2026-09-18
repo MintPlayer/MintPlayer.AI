@@ -414,24 +414,31 @@ Only adopt this if S6 is red — it adds a tool and a CI step that the server ro
 
 ## 8. Milestones
 
-- **M63.1 — Spikes S1 ✅ + S4.** The two independent risk probes (collapse semantics; vitest wiring).
-  Both are scratchpad/local; neither touches the Polyglot compiler. Gate: both pass criteria
-  recorded in this file, including negative results.
-- **M63.2 — Polyglot `#line` (flag-gated).** §5 items 1–4 + the CLI flag, conformance fixtures kept
-  byte-identical with the flag off. Spike S2. Gate: S2 pass + Polyglot's own suite green.
-- **M63.3 — Adopt in MintPlayer.AI.** Tag `v0.10.0`, bump the `PackageReference`, enable the flag
-  via `pgconfig.json`/`.targets`. Spikes S3 + S6. Gate: fast-bucket total does not drop; a `.pg`
-  file is browsable on the service.
-- **M63.4 — The denominator decisions.** Implement whatever §10 resolves (Lab, Console, Slow
-  bucket). Gate: every exclusion has a one-line written rationale in `coverlet.runsettings`.
-- **M63.5 — C# coverage push to 90%.** Tests against the ranked gaps from §2: Campaigns, Kociemba,
-  RLDemo.Web Services. Gate: fast-bucket line rate ≥ 90%.
-- **M63.6 — Frontend tests + TS `.pg` mapping.** Vitest suite, CI step, source-map emission, spike
-  S5. Gate: `lcov.info` uploads and merges; S5 result recorded either way.
-- **M63.7 — README/badge note + PLAN.md entry.**
+> **Status 2026-09-18 — outcomes are recorded per sub-milestone below and in detail in §6 (spikes),
+> §12 (the Lab plan) and `PLAN.md` M63. Where a gate below was not met, it says so.**
 
-Per the repo's batching rule, the **full test suite runs once** at the end of M63.5, not per
-milestone; intermediate milestones verify by targeted slice + type-check.
+- **M63.1 — Spikes S1 + S4** ✅. S1 passed *and falsified the design*: emitting `#line` only on
+  source-line change lets braces drift onto unrelated `.pg` lines and report them covered, so the
+  rule became a directive on **every** line.
+- **M63.2 — Polyglot `#line` (flag-gated)** ✅, shipped as Polyglot#70 / `v0.10.0`; the option was
+  renamed `--origin-info` during review.
+- **M63.3 — Adopt in MintPlayer.AI** ✅ **59.86% → 68.11%**. Gate met (the total rose rather than
+  dropped). S6's *browsable on the service* half is unverified — the web UI requires authentication;
+  the measurement is proven, the presentation is not.
+- **M63.4 — The denominator decisions** 🟡. Scope recorded in `coverlet.runsettings` — gate met.
+  The `Category=Medium` half was implemented, measured and **rejected** (§12.7).
+- **M63.5 — C# coverage push** 🟡 **gate NOT met, and not meetable.** The stated gate was
+  "fast-bucket line rate ≥ 90%"; §12.6 shows that is unreachable with `tools/**` in the denominator.
+  Delivered: `tools/Lab` 0.6% → 23.3% and four real bugs. Outstanding: ChessLab seams, and Campaigns
+  — now planned as its own milestone (`CAMPAIGN_TESTABILITY_PRD.md`, M64).
+- **M63.6 — Frontend tests + TS `.pg` mapping** ✅. Gate met. S5's clean route **structurally cannot
+  work** (the Angular builder pre-builds with esbuild before Vitest starts), so the composition is a
+  post-process; recorded either way as the gate required.
+- **M63.7 — CI wiring + README/badge note** ✅.
+
+Per the repo's batching rule the **full test suite runs once** per milestone, not per increment;
+intermediate work verifies by targeted slice + type-check. **Every timing claim must be measured
+with `--collect`** — see §12.7 for what happened when it was not.
 
 ## 9. Out of scope / genuinely not being done
 
