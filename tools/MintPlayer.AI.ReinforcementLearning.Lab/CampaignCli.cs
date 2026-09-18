@@ -28,7 +28,10 @@ internal static class CampaignCli
     public static Action<CampaignProgress> ConsoleAndCsv(string csvPath)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(csvPath)!);
-        bool headerWritten = File.Exists(csvPath);
+        // M63.5: an EMPTY file is not a headered file. `File.Exists` alone treated a zero-byte CSV
+        // (a crashed run, or a touched path) as already-headered, so the header row was lost for good
+        // and every consumer had to guess the columns.
+        bool headerWritten = File.Exists(csvPath) && new FileInfo(csvPath).Length > 0;
         return progress =>
         {
             var metrics = progress.Eval.Metrics;

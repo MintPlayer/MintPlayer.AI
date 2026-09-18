@@ -133,25 +133,46 @@ internal static class CrazyFruitsLab
         foreach (var (name, mean, ci) in results)
             Console.WriteLine($"  {name,-28} mean {mean,8:F1} ± {ci:F1} (95% CI)");
 
+        foreach (var line in GateLines(results)) Console.WriteLine(line);
+    }
+
+    /// <summary>
+    /// The baseline gate verdicts (M49/M50 PRD thresholds), as strings.
+    /// </summary>
+    /// <remarks>
+    /// Extracted from <c>RunBaselines</c> in M63.5. These lines ARE the gates — tier ordering, the
+    /// pre-training env validation (specials must not be so self-firing that random flattens the skill
+    /// landscape), the M50.3 escalation trigger, and the net's gap share — so they are the part most worth
+    /// pinning, and they were previously unassertable console side effects. Returned rather than printed
+    /// because <c>Console.Out</c> is process-global: capturing it in a test would force the whole suite to
+    /// run serially (PRD §12.3).
+    /// <para>The rows are positional: 0 random, 1 greedy, 3 expectimax-1, 4 expectimax-2, 5 net (when
+    /// present). M63.5 also moved the Count check AHEAD of the indexing — previously <c>results[3]</c> and
+    /// <c>results[4]</c> were read before anything verified the list was long enough.</para>
+    /// </remarks>
+    internal static IEnumerable<string> GateLines(IReadOnlyList<(string Name, double Mean, double Ci)> results)
+    {
+        if (results.Count < 5) yield break;
+
         var random = results[0];
         var greedy = results[1];
         var e1 = results[3];
         var e2 = results[4];
-        Console.WriteLine($"greedy vs random: {(greedy.Mean - greedy.Ci > random.Mean + random.Ci ? "CI-SEPARATED" : "OVERLAPPING")} " +
-                          $"(+{100 * (greedy.Mean - random.Mean) / random.Mean:F0}%)");
-        // SPECIALS PRD M50.2 gates: tier ordering + the pre-training env validation (specials must not be
-        // so self-firing that random flattens the skill landscape) + the M50.3 escalation trigger input.
-        Console.WriteLine($"expectimax-2 vs expectimax-1: {100 * (e2.Mean - e1.Mean) / e1.Mean:+0.0;-0.0}% (escalation trigger fires above +10%)");
-        Console.WriteLine($"env validation: random = {random.Mean / e2.Mean:P0} of expectimax-2 " +
-                          $"({(random.Mean < 0.70 * e2.Mean ? "OK (< 70%)" : "TOO SELF-FIRING (≥ 70%) — fix scoring before training")})");
+
+        yield return $"greedy vs random: {(greedy.Mean - greedy.Ci > random.Mean + random.Ci ? "CI-SEPARATED" : "OVERLAPPING")} " +
+                     $"(+{100 * (greedy.Mean - random.Mean) / random.Mean:F0}%)";
+        yield return $"expectimax-2 vs expectimax-1: {100 * (e2.Mean - e1.Mean) / e1.Mean:+0.0;-0.0}% (escalation trigger fires above +10%)";
+        yield return $"env validation: random = {random.Mean / e2.Mean:P0} of expectimax-2 " +
+                     $"({(random.Mean < 0.70 * e2.Mean ? "OK (< 70%)" : "TOO SELF-FIRING (≥ 70%) — fix scoring before training")})";
+
         if (results.Count == 6)
         {
             var netRow = results[5];
             double gapShare = (netRow.Mean - random.Mean) / (e1.Mean - random.Mean);
-            Console.WriteLine($"net vs random: +{100 * (netRow.Mean - random.Mean) / random.Mean:F1}% " +
-                              $"({(netRow.Mean - netRow.Ci > random.Mean + random.Ci ? "CI-SEPARATED" : "OVERLAPPING")}; gate ≥ +30%, separated)");
-            Console.WriteLine($"net gap share (random→expectimax-1): {gapShare:P0} (gate ≥ 64% — the M49 ratio)");
-            Console.WriteLine($"net vs greedy: {100 * (netRow.Mean - greedy.Mean) / greedy.Mean:+0.0;-0.0}% (reported, not gated)");
+            yield return $"net vs random: +{100 * (netRow.Mean - random.Mean) / random.Mean:F1}% " +
+                         $"({(netRow.Mean - netRow.Ci > random.Mean + random.Ci ? "CI-SEPARATED" : "OVERLAPPING")}; gate ≥ +30%, separated)";
+            yield return $"net gap share (random→expectimax-1): {gapShare:P0} (gate ≥ 64% — the M49 ratio)";
+            yield return $"net vs greedy: {100 * (netRow.Mean - greedy.Mean) / greedy.Mean:+0.0;-0.0}% (reported, not gated)";
         }
     }
 

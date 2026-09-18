@@ -50,7 +50,7 @@ internal static class FruitCakeSearchEval
             if (searchScore[i] > greedyScore[i]) searchWins++;
         }
         double meanDiff = diff.Average();
-        double se = Std(diff, meanDiff) / Math.Sqrt(episodes);
+        double se = EvalStats.Std(diff, meanDiff) / Math.Sqrt(episodes);
         int greedyMelon = greedyTier.Count(t => t >= FruitCatalog.TopTier);
         int searchMelon = searchTier.Count(t => t >= FruitCatalog.TopTier);
         Console.WriteLine($"  paired Δ (search − greedy): {meanDiff:+0.0;-0.0} ± {se:0.0} (SE) | search wins {searchWins}/{episodes} ({searchWins * 100.0 / episodes:0}%)");
@@ -139,21 +139,9 @@ internal static class FruitCakeSearchEval
         return m;
     }
 
+    // M63.5: Std/Report/Median now live in the shared EvalStats (they were byte-identical copies here and
+    // in the sibling file, and carried a population-divisor bug behind the ship/no-ship verdict).
     private static void Report(string label, double[] score, int[] tier)
-    {
-        double mean = score.Average();
-        double sd = Std(score, mean);
-        var sorted = (double[])score.Clone();
-        Array.Sort(sorted);
-        double median = sorted[sorted.Length / 2];
-        var hist = tier.GroupBy(t => t).OrderByDescending(g => g.Key).Select(g => $"t{g.Key}:{g.Count()}");
-        Console.WriteLine($"  {label}: mean {mean,7:F1} ± {sd,5:F0} (SD)  median {median,6:F0}  meanTier {tier.Average():F2}  [{string.Join(" ", hist)}]");
-    }
+        => Console.WriteLine(EvalStats.ReportLine(label, score, tier));
 
-    private static double Std(double[] xs, double mean)
-    {
-        double s = 0;
-        foreach (var x in xs) s += (x - mean) * (x - mean);
-        return Math.Sqrt(s / xs.Length);
-    }
 }

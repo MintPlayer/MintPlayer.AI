@@ -13,11 +13,22 @@ internal readonly struct CliArgs(string[] args)
     /// <summary>True when the switch is present anywhere (e.g. <c>--grow</c>, <c>--eval-only</c>).</summary>
     public bool Has(string flag) => Array.IndexOf(args, flag) >= 0;
 
-    /// <summary>The token following the flag's LAST occurrence, or null if the flag is absent / has no value.</summary>
+    /// <summary>
+    /// The token following the flag's LAST occurrence, or null if the flag is absent, has no value, or is
+    /// followed by another flag.
+    /// </summary>
+    /// <remarks>
+    /// M63.5: the next token is rejected when it starts with <c>--</c>. Without that guard
+    /// <c>--data --seed 7</c> made <c>Str("--data")</c> return <c>"--seed"</c>, so a run would write its
+    /// checkpoints into a directory literally named <c>--seed</c> rather than falling back to the default.
+    /// A negative number is still a valid value, so only <c>--</c> is treated as a flag prefix.
+    /// </remarks>
     private string? Value(string flag)
     {
         int i = Array.LastIndexOf(args, flag);
-        return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+        if (i < 0 || i + 1 >= args.Length) return null;
+        string next = args[i + 1];
+        return next.StartsWith("--", StringComparison.Ordinal) ? null : next;
     }
 
     public string Str(string flag, string @default) => Value(flag) ?? @default;
