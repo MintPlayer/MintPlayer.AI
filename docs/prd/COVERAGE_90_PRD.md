@@ -297,7 +297,7 @@ misattribution.
 **Consequence:** §4's two-input union is real — the C# report and this one both key on the same
 `.pg` paths, and the service merges them with max semantics.
 
-### S6 — Server acceptance of a `.pg`-keyed report ✅ **PASSED 2026-09-18 (PR #54)**
+### S6 — Server acceptance of a `.pg`-keyed report ✅ **PASSED 2026-09-18 — measurement AND presentation**
 
 **Result.** PR #54's CI uploaded the report (`Upload accepted`, `Finish requested (202)`) and the service
 published both checks. `coverage/project` reported **70.7% (+10.9% vs base 59.8%)** and
@@ -318,9 +318,35 @@ Had the nine `.pg` files been dropped as unresolvable, the service would have re
 `git ls-files` suffix matching resolves a `.pg` extension, and §4's union architecture is confirmed
 end to end on the C# side.
 
-**Not verified:** the web UI itself. `coverage.mintplayer.com` requires authentication
-(`401` on `/api/browse/repos/...`), so whether a `.pg` file *renders* with per-line gutters is still
-unseen — it needs an owner-authenticated session. The measurement is proven; the presentation is not.
+**The UI half, surveyed 2026-09-18 in an authenticated session — CONFIRMED.** Opened
+`crazyfruits_solver.pg` on commit `b50fe5e`:
+
+- **1,103 line anchors for a 1,103-line file**, rendered inside an `mp-code-snippet`. (The viewer is
+  shadow-DOM, so `document.querySelector` returns nothing — a recursive walk over `shadowRoot`s is
+  required to inspect it.)
+- **The gutter lines up with the real source.** Line 1 (a comment) and line 1103 (a closing brace)
+  are unannotated; 19 `fn cfFruitOf`, 285 `for c in 1..(Size + 1)`, 591 `clearStep`'s cell sweep and
+  666 `resolveCascades` all carry hit marks. Those four line numbers were identified *independently
+  from the coverage XML* during the M63 hot-line analysis, and the rendered Polyglot source shows
+  exactly those constructs at exactly those lines.
+- **The file total matches the local cobertura exactly**: 617/622, with the annotation histogram
+  summing to 622 coverable (5 at zero) and 481 unannotated.
+- **Branch coverage survived the remap and is rendered** — "Branches: 2 of 2 taken". Commit-level:
+  **6,169/8,932 branches (69.1%)**, which was never visible locally.
+- Commit total **74.2% (11,421/15,398 lines, 219 files)**, build Finalized, against a local
+  11,418/15,392. The 3-line/6-line difference is the platform variance recorded in §8.1 of
+  `CAMPAIGN_TESTABILITY_PRD.md` plus the known `Inject.g.cs` leak.
+
+**A UI caveat caused by our own `SingleHit` decision.** The per-line `N×` badges are **not execution
+counts**. With `SingleHit=true` every contributing sequence point reports `hits=1`, so `4×` means
+*four generated C# statements collapsed onto that one `.pg` line*. `cfFruitOf` (line 19) displays
+`1×` and actually executes ~368 million times. Harmless for coverage — covered-vs-not is exact, and
+that is all anything here consumes — but actively misleading read as a profiler. Worth a label change
+in `MintPlayer.Spark` (*contributing statements*, not a multiplier) for reports whose hits are 0/1.
+
+**Also worth knowing:** a `401` renders as *"No coverage data for this file"*, which reads like
+missing data rather than an auth wall, and the SPA logs `NG04002: 'login'` because it routes to a
+`login` path that does not exist.
 
 
 Local half **confirmed** (S2): the report carries `<source>C:/Repos/MintPlayer.AI/</source>` with
