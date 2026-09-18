@@ -3319,6 +3319,89 @@ both superseded; the `ExcludeByFile` comment in `coverlet.runsettings` becomes a
 `#line` ships, because the rule silently stops applying to Polyglot output while still applying to
 source-generator output.
 
+## M64 — Making the training campaigns unit-testable  *(2026-09-18; see `CAMPAIGN_TESTABILITY_PRD.md`)* 📋
+
+Planned from a 4-agent sweep (M46 DI audit · campaign hard-coded deps · determinism contract · fast-test
+strategy). `Campaigns` is **2,454 coverable lines at ~34%**, the largest uncovered pool and the reason M63
+could not reach 90%. The prompt was: *the campaigns train models, so use DI to make them testable.*
+
+**The premise is redirected: DI is NOT the blocker, and two agents concluded that independently.**
+`ITrainingCampaign.TrainChunk()` already IS the one-step seam and three campaigns are already driven through
+it by existing tests; `CampaignRunner(TimeProvider?)` already has the clock seam and does zero IO; M46 already
+injected envs, games, options, `ILogger`, `IModelStore`, `ILadderStore` and the net builders. What actually
+blocks a fast campaign test is **hard-coded constants** — `TrainChunkIterations = 1000` (CubeDavi), three
+`const BatchSize` values whose `TrainChunk` **returns early doing nothing** below the threshold, a concrete
+`AdaptiveBackend` ctor param, and 30 puzzle generations in a RushHour *field initializer*. A second DI pass
+over an already-DI'd surface would be **riskier** than the first, because what is still un-injected was left
+alone precisely for being load-bearing.
+
+**Zero tests instantiate `CubeDaviCampaign` (577 lines) or `BlockDudeExpertIterationCampaign` (518)** — 1,095
+lines nothing has ever constructed.
+
+**The cheapest large win is shrinking four existing tests, not writing new ones.** Across
+`CampaignContractTests`, `SelfPlayCampaignTests` and `DraughtsSelfPlayTests` there is **not one learning
+assertion** — every one is mechanical (resume, chunk arithmetic, metric names, no-NaN, store ids). They are
+Slow because of their *budgets*. Proof already in-tree: `TetrisEnvTests` and `CrazyFruitsEnvTests` make the
+identical assertions at `ChunkSteps=60, Hidden=[32,32]` and are **not** Slow, while `CampaignContractTests`
+does the same at `ChunkSteps=1500, Hidden=[128,128]` and is. **25× the budget for the same checks.**
+
+**⚠ PRECONDITION — M64.0, the determinism gate, before anything else.** M46 made *"training stays bitwise
+identical"* a hard gate for every milestone. Two verified findings: **(1) it does not run in CI** — both
+workflows use `--filter "Category!=Slow"` and every checkpoint-SHA test is tagged `Slow`, so a change that
+breaks bitwise-identity **produces a fully green PR today**; and **(2) it is blind to uniform drift** —
+`RunAndHashCheckpoint` compares the three arms only to *each other*, all computed by the post-change code, so
+a refactor that shifts the seed fan-out uniformly passes. Fix is entirely test-side: checked-in hash literals
+generated on the base commit, a DQN-family hash test (that family has none), and a **separate uninstrumented**
+CI job — which sidesteps M63.4's revert, since that was caused by a *performance-comparison* assertion and
+determinism tests are not one.
+
+**The three real hazards are identity-and-wiring, not ordering.** `SeedSequence.Derive(i)` is a pure function
+of `(masterSeed, i)`, so reordering `CreateRng` calls is harmless — the architecture's best defence. The
+genuine risks all compile cleanly and pass CI: **env instance lifetime** (envs hold a persistent xoshiro
+re-seeded only when `Reset(seed)` is passed one, and campaigns are `AddSingleton` with envs **captured in the
+closure** — that capture is load-bearing); **`[Inject]` generated parameter order** (subclass fields emit
+first, so `SnakeDqnCampaign` has two same-typed env params in surprising order — reorder a field and a
+positional call site still compiles while train/eval envs swap); and **stream-index collision**, which nothing
+detects. Plus one undocumented subtlety: the DQN trainer's periodic eval runs on the **same env instance** as
+training and mutates its RNG, so `EvalEvery`/`EvalEpisodes`/chunk size are *inside* the training byte stream.
+
+- **M64.0 — the gate** (hash literals · DQN-family hash · uninstrumented CI job). Precondition, not a step.
+- **M64.1 — shrink, no new code**: `CampaignContractTests` ×4 to the proven-affordable budget; self-play
+  lifecycle *and* its `BatchSize`. **The `BatchSize` trap:** `SelfPlayCampaign.cs:226` gates all training
+  behind `_window.Count >= _batchSize`, so shrinking games without shrinking the batch yields a green test
+  that trains nothing — and the existing Slow test (`GamesPerChunk=4` at `BatchSize=128`) may already be
+  hollow. Every shrunk self-play test asserts `policyLoss` is non-NaN.
+- **M64.2 — serialization round-trips**: `CampaignProgressState`, `BlockDudeTrainingState` (196 lines, zero
+  coverage). Positional binary IO — a field added to `Save` but not `TryLoad` reads everything after it as
+  garbage, invisibly, until a long run resumes wrong.
+- **M64.3 — the DQN spine**: save-best (**a worse eval must not overwrite the deployable net — untested
+  today**), warm start without `dqn-state`, exact-cap chunk arithmetic, metric order.
+- **M64.4 — the cheapest real campaign**: `SelfPlayCampaign<Connect4State>` at `Hidden=8, Simulations=1,
+  GamesPerChunk=1, BatchSize=16`; asserts the `az-progress` sidecar round-trip the Slow test never checks.
+- **M64.5 — Campaigns helpers**: `PolicyGrowth.Maybe`, `SupervisedTraining`, net-builder kind tags,
+  `FileLadderStore` naming, `CubePolicyTraining.Shuffle`.
+- **M64.6 — BlockDude lifecycle without `TrainChunk`**: resume/checkpoint/fingerprint on 526 lines with zero
+  lifecycle coverage, deliberately never running the oracle.
+- **M64.7 — the two constants**, only if the target is still short: `ChunkIterations` and `BatchSize` onto
+  options, `IComputeBackend` on CubeDavi, a level filter, lazy `_randomEval`. **Production changes — each
+  re-runs M64.0's gate.**
+
+**Ordering is deliberate: everything through M64.6 is test-only**, so no construction-order or registration
+changes and no exposure to the hazards above. Expected: Campaigns **34% → high 50s ≈ +4 points repo-wide**
+(70.8% → ~75%).
+
+**Ceremony warnings, written down so the number keeps meaning something:** `CampaignRunner` tests buy **zero**
+Campaigns coverage (it is in **Core** — a fake campaign never loads the Campaigns assembly); more
+DI-resolution tests touch constructors and nothing else; a one-chunk `CubeDaviCampaign` test would be slow
+*and* shallow — extract its decision logic into a static the way `BlockDudeCurriculum.Advance` was.
+
+**Staying Slow, deliberately:** `Davi_LearnsToSolveShallowCubes_TeacherFree` (the **only** genuine learning
+assertion in the whole campaign set — a shrunk version asserts nothing);
+`BatchedGreedySolve_IsFasterThanPerSuccessor` (a timing comparison whose correctness content is already owned
+by `..._MatchesPerSuccessorSolve` — best moved out to a benchmark); one wide DOP-invariance canary; and the
+Lab `--eval-only` cube smokes. **Any future "win rate > X" threshold belongs in a Lab gate, never the fast
+bucket — a shrunk version of such a test is a coin flip with a green tick.**
+
 ---
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
