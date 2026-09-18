@@ -245,22 +245,57 @@ which stops recording after a line's first hit instead of counting every pass); 
 Remaining gap to the 90% goal: 13,819 covered needed vs 10,458 today = **+3,361 lines**, which is
 what M63.4/M63.5 have to find.
 
-### S4 — Vitest from zero on one spec
+### S4 — Vitest from zero on one spec ✅ **RUN 2026-09-18 — PASSED**
 
 Add `vitest` + `@vitest/coverage-v8`, a `test` target in `angular.json` via
-`@angular/build:unit-test`, and **one** trivial spec against a hand-written TS file. **Pass:**
-`lcov.info` with `DA:<line>,<hits>` records appears. This de-risks the Angular 22 builder wiring
-before any `.pg` mapping is involved. (`tsconfig.spec.json` already declares
-`"types": ["vitest/globals"]` — dead scaffolding today, vitest is not installed.)
+`@angular/build:unit-test`, and one spec. **Pass:** `lcov.info` with `DA:<line>,<hits>` records.
+
+**Result:** 7/7 tests pass, `coverage/ClientApp/lcov.info` with **54 `DA:` records**, plus
+`coverage-final.json` (istanbul, with statement column ranges — kept deliberately, it is what S5
+needs; lcov is line-only and cannot be remapped faithfully).
+
+Notes for anyone redoing this:
+
+- **`@angular/build` 22.0.6 declares `peer vitest@^4.0.8`.** Pinning `^3.2.4` fails `npm install`
+  with ERESOLVE. Read the peer range rather than assuming the current vitest major.
+- The first spec was written against a *generated* file (`mountaincar_solver.ts`) rather than an
+  Angular component, on purpose: the solver twins are pure functions, so they need no TestBed, no
+  DOM and no fixtures — the right place to start a suite that must exist from zero, and the exact
+  surface the `.pg` union needs covered.
+- `coverageInclude` is scoped to `src/app/**/*_solver.ts`. The rest of the SPA has no tests; including
+  it would add denominator and nothing else.
 
 ### S5 — Chained remap `.pg → .ts → .js`
 
 The weak link. `@vitest/coverage-v8` collects on the built bundle and remaps to `.ts` via the
-bundle's map; getting to `.pg` needs that composed with the Polyglot map. **Pass:** a spec
-exercising the generated `mountaincar_solver.ts` produces lcov keyed on
-`…/polyglot/mountaincar_solver.pg`. **If this fails**, fall back to `@vitest/coverage-istanbul` with
-an explicit `inputSourceMap`; if *that* fails, the TS half ships as plain `.ts` coverage and the
-`.pg` union is C#-only — §4 still works, it just has one input. **S5 failing must not block M63.**
+bundle's map; getting to `.pg` needs that composed with the Polyglot map.
+
+**Result 2026-09-18: ACHIEVED, but not the way the plan assumed.**
+
+The clean route was tried first and **structurally cannot work**: a Vite plugin returning the
+Polyglot `.ts.map` from a `load` hook, so v8 would compose `.pg → .ts → bundle` by itself. The
+config file loads (`Using Vitest configuration file: …vitest.config.mts`) but the plugin never
+fires, because **`@angular/build:unit-test` pre-builds the app with esbuild before Vitest starts** —
+the log shows `Building… → Application bundle generation complete` ahead of the run, so the `.ts`
+never passes through Vite's transform hooks at all. Confirmed by istanbul's output carrying no
+`inputSourceMap`. The plugin was removed rather than left in place looking functional.
+
+So the composition is done after the fact by **`tools/pg_coverage_remap.mjs`** (~150 lines, no
+dependencies — base64-VLQ decoded inline): it reads istanbul's `coverage-final.json`, maps each
+statement's start line through the sibling `*_solver.ts.map`, and writes a cobertura keyed on the
+`.pg`. Several `.ts` statements collapse onto one `.pg` line (one-line loops, one-line bodies), and
+it takes the **max** — covered if any contributing statement ran, matching both the C# side and the
+server's merge.
+
+**Measured:** `mountaincar_solver.ts` → `mountaincar_solver.pg`, 39/58 statements hit, **37/42 `.pg`
+lines (88.10%)**. Cross-checked line by line against the source: every mapped line is a real
+executable statement (15 `clampF`, 87–95 ctor, 100–103 `reset`, 108–111 `setState`, 115–132 `step`,
+137–140 `buildObservation`) with **no blank lines, comments or out-of-range numbers**, and the five
+misses are exactly `chooseAction` (145–150), which the spec deliberately never calls. Zero
+misattribution.
+
+**Consequence:** §4's two-input union is real — the C# report and this one both key on the same
+`.pg` paths, and the service merges them with max semantics.
 
 ### S6 — Server acceptance of a `.pg`-keyed report 🟡 **half-answered; needs a push**
 

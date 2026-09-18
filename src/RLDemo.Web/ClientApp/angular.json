@@ -57,7 +57,11 @@
             ],
             "stylePreprocessorOptions": {
               "sass": {
-                "silenceDeprecations": ["import", "global-builtin", "color-functions"]
+                "silenceDeprecations": [
+                  "import",
+                  "global-builtin",
+                  "color-functions"
+                ]
               }
             }
           },
@@ -96,6 +100,22 @@
             }
           },
           "defaultConfiguration": "development"
+        },
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "tsConfig": "tsconfig.spec.json",
+            "runner": "vitest",
+            "buildTarget": "::development",
+            "coverageReporters": [
+              "lcovonly",
+              "json",
+              "text-summary"
+            ],
+            "coverageInclude": [
+              "src/app/**/*_solver.ts"
+            ]
+          }
         }
       }
     }
