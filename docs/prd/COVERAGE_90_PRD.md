@@ -1191,9 +1191,15 @@ out carries **zero**.
 > legs had to match. **That is no longer true, and was already fixed when this was written.**
 > [MintPlayer.Spark#420](https://github.com/MintPlayer/MintPlayer.Spark/issues/420) ("format-agnostic,
 > order-independent branch merge + istanbul/clover parsers") closed on 2026-09-18, *before* Polyglot PR
-> #72 merged. Mixing formats across legs, and uploading them in any order, is safe. The claim came from
-> SP7's reading of the ingest as it stood during that spike and I carried it forward without re-checking
-> the issue — the decision happened to be right, the reasoning was stale.
+> #72 merged. The claim came from SP7's reading of the ingest as it stood during that spike, and I
+> carried it forward without re-checking the issue — the decision happened to be right, the reasoning
+> was stale.
+>
+> **What replaced it is stronger than a fix.** The service now stores coverage in a **generic internal
+> model** — not lcov, not cobertura — and the database has been migrated. Upload order was the explicit
+> design goal: it must not matter which report arrives first, whatever format each one is in. So the
+> wire format now decides only what a report can **express**, never how it merges, and this repo is free
+> to change either leg's format without coordinating the other.
 
 **The CLI is located by globbing the restored package** (`tools/<rid>/polyglot`) rather than by a
 hardcoded version, so it cannot drift out of step with the `PackageReference`. It fails loudly when the

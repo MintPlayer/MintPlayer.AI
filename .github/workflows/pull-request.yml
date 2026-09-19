@@ -174,9 +174,11 @@ jobs:
     # cobertura, clover and JaCoCo can express a count -- lcov and istanbul output are line-only.
     # Measured on this repo: cobertura out carries 272/886 conditions, lcov out carries ZERO.
     #
-    # It is NOT about upload order. MintPlayer.Spark#420 made the ingest's branch merge format-agnostic
-    # and order-independent, so mixing formats across legs is safe; an earlier version of this comment
-    # claimed otherwise and was out of date.
+    # It is NOT about upload order or format matching. coverage.mintplayer.com now stores coverage in a
+    # GENERIC internal model -- not lcov, not cobertura -- and the database has been migrated; the ingest's
+    # branch merge is format-agnostic and order-independent (MintPlayer.Spark#420). So the wire format
+    # only decides what a report can EXPRESS, never how it merges. An earlier version of this comment
+    # claimed both legs had to match, and was out of date.
     - name: Project the Polyglot twins onto their .pg sources
       if: always()
       run: >
