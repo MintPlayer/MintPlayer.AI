@@ -1329,3 +1329,196 @@ deletions or internal.
 **§15.4 is now fully discharged**: of the ten defects that writing tests surfaced, one was fixed on the
 spot (`StartupCheckpoint`), one turned out to be misattributed (2048), one turned out not to be a defect
 at all (`reachableMask` was live), and the remaining seven are fixed.
+
+---
+
+## 19. M69 — the Campaigns coverage plan *(investigated 2026-09-19, three-agent sweep)*
+
+**Campaigns is at 61.31% (1,518 / 2,476 lines, 958 uncovered.)** Measured per file, then split by what
+actually blocks each group — which turned out to be three different problems, not one.
+
+### 19.1 Two facts that reframe the whole thing
+
+**`CubeDaviCampaign` is 0 / 286, not 30 / 316.** The 30 "covered" lines belong to the `CubeDaviSettings`
+record's auto-properties (`CubeDaviCampaign.cs:20-51`). **Not one statement of the campaign has ever
+executed** — verified directly against the cobertura, not inferred.
+
+**Only ~11 of those 286 lines touch the backend at all**: `:130` (`Backend.Current = _backend`), `:131`
+(`Describe()`), and `:287-297` (two `Gpus.FirstOrDefault()` calls). Everything else already runs the CPU
+autograd path — `_targetForward` and `_residentTrain` are both null on a GPU-less host, and
+`ValueIterationTrainer` takes them as nullable Core abstractions. **The campaign is GPU-mandatory in its
+constructor signature, not in its logic**, and that single parameter gates all 286 lines including the
+~50 that are pure arithmetic.
+
+### 19.2 A stale constraint I briefed as fact — corrected
+
+I told all three agents that "constructing a real `AdaptiveBackend` in the fast bucket is dead on
+arrival", citing the ILGPU × coverlet hazard. **One of them checked and it is false as stated.**
+`AdaptiveBackendTests.cs:43,:56,:66` and `IlgpuBackendTests.cs:349` construct real `AdaptiveBackend`
+instances in the fast, instrumented bucket today, with **no `Category` trait**. The
+`<Exclude>[…Ilgpu]*</Exclude>` in `coverlet.runsettings` **is** the fix for the `RecordHit` × kernel-JIT
+hazard, and it is load-bearing and already guarded.
+
+The constraint survives, for a better reason: **`Backend.Current` is a plain mutable static**
+(`Core/Numerics/IComputeBackend.cs:112` — `public static IComputeBackend Current { get; set; }`), not
+`AsyncLocal` or `ThreadStatic`. `CubeDaviCampaign.Resume:130` sets it. A test that does so and then
+disposes its backend leaves **every other test in the assembly pointing at a disposed backend**, across
+xUnit's parallel collections. That hazard already exists latent in `CubeEfficientCampaign.Resume:55` for
+whoever writes its first lifecycle test.
+
+> `ModelServiceInfrastructureTests.cs:387` states the old reason as fact and should be corrected.
+
+### 19.3 A live defect found on the way
+
+**`CubeDaviCampaign.cs:259` throws `InvalidCastException` on a reachable config.** The `--time-budget`
+branch's no-GPU arm is `c => CubeValueSearch.Solve((ResidualMlp)_net, …)`, an unconditional cast — but
+`:155` assigns `new Mlp(...)` whenever `Residual` is false, and `Residual` comes straight from the Lab's
+`--net` flag (`CubeDaviLab.cs:149`). So **`--net mlp --time-budget` on a CPU host crashes**. The fix is
+one line: the `Solve(BatchForward, …)` overload (`CubeValueSearch.cs:49`) works for both net types.
+Verified by reading both signatures and the assignment; not executed.
+
+### 19.4 Block A — the Cube campaigns (388 uncovered)
+
+| item | lines | kind | verdict |
+|---|---|---|---|
+| **A1** Extract `CubeDaviCurriculum` (the advance / auto-widen / depth-cap rules) as a pure static | **+~40** | mechanical prod move + tests | **do it** |
+| **A2** Fix the `:259` cast | +0 | prod, 1 line | **do it** (defect, in scope under the one-PR rule) |
+| **A3** Nullable factory seam on `CubeDaviCampaign` + lifecycle suite | +~200 | prod ~30 lines | **worth it — but not for the number** |
+| **A4** Same seam on `CubeEfficientCampaign` | +~81 | prod ~10 lines | as A3 |
+| **A5** One-chunk `TrainChunk` test | +9 | test-only | **do not** — §12.7 already priced slow-and-shallow |
+
+**A1 was asked for in `CAMPAIGN_TESTABILITY_PRD.md` §6 and never done** — there is no `CubeCurriculum.cs`.
+Three traps make it provable-by-inspection rather than obvious: `:338` mixes `float` and `double` and the
+`0.98f` literal must keep its suffix or the threshold moves; `:341`'s `MeanValueAtDepth` runs net forwards
+and must stay outside the static; and the chain is `if / else if / else if` followed by a **separate**
+`if`, so folding the grow check into it changes behaviour when a net is both plateaued and at max width.
+
+**A3/A4 have precedent in the tree**: `SelfPlayCampaign` already takes nullable factory delegates
+(`:116-117`), defaults to CPU when they are null (`:203-204`), and keeps all Ilgpu knowledge in the
+registration extension. `CubeDaviCampaign` is the last campaign still coupled to a concrete Ilgpu type.
+**The justification is the coupling and the `Backend.Current` hazard, not the 280 lines** — which is
+exactly the posture §15.5 recommends: make further rises a by-product of seams worth having anyway. *If
+the seam is not wanted on its own merits, do not do it for the percentage.*
+
+**Unmeasured, and the repo has burned a milestone on exactly this before (§12.7, §8.4):** the fast-bucket
+claims for A3/A4 are budget arithmetic (settable episode/depth counts, a 324→8→1 net), not a stopwatch.
+**One throwaway timing run under `--collect` is mandatory before A3 lands.**
+
+### 19.5 Block C — the long tail (144 uncovered, ~106 worth taking)
+
+Nothing here is GPU-blocked or oracle-blocked; it is simply unswept. **Total added wall-clock for the
+whole block is estimated under 10 seconds** against a ~2m suite.
+
+| # | item | lines | note |
+|---|---|---|---|
+| 1 | `CubePolicyTraining.TrainStep` | **26** | hand-built `LabeledState`s — no Kociemba, no oracle |
+| 2 | `CubeViz` (0/27 today) | **21-25** | **not a server** — four pure static samplers; `VizServer`'s socket lifecycle is a different type and stays excluded |
+| 3 | `DqnScoreCampaign` telemetry + the no-model `Evaluate` | **15-17** | on the spine, once — §6 says per-campaign repetition is ceremony |
+| 4 | `DqnGrowth.Maybe` | **15** | pins function-preserving growth and the target re-sync |
+| 5 | `PolicyGrowth.Maybe` | **13** | **see §19.6** |
+| 6 | `TetrisDqnCampaign.AdaptWarmNet` | **8** | warm-start width rule + the `InvalidOperationException` |
+| 7 | `CrazyFruits.DenseTargetsFromObservation` | **7** | needs `private`→`internal`; the Tetris twin is already `internal` and tested |
+| 8 | `FruitCakeDqnCampaign.AdaptWarmNet` | **5** | noisy promotion + grow-input |
+| 9 | `SelectGpus` ordinal parsing | **5** | needs a small pure extraction |
+| 11 | `ConvNetBuilder` save/load | **2** | |
+| 12 | Block Dude ×2 in `CpuCampaigns_Resolve` | **2** | ceremony-adjacent |
+
+**≈104 lines → Campaigns 61.3% → ~65.5%.** Two items (7, 9) need a one-word visibility change or a tiny
+extraction; the rest are test-only.
+
+**Deliberately not chased — ~38 lines.** 12 trivial forwarders reachable only through a live
+`SampleIo` (§6 names this exact ceremony), 2 pure logging lines, ~8 genuinely GPU-blocked, and ~5
+`catch { return null; }` arms no legal input can trigger because the net types fix their own widths.
+**An honest 106-of-144 beats a plan to chase all 144.**
+
+### 19.6 `PolicyGrowth.Maybe` — recorded done, and it was not
+
+`CAMPAIGN_TESTABILITY_PRD.md:152` lists `PolicyGrowth.Maybe` in M64.5's scope and `:226` marks M64.5 ✅.
+**No test references it.** Coverage is 2/15: the `ArgumentNullException` guard and the `if (!grow) return
+null` path. What shipped was the disabled path; the growth body — rung climb, function preservation, the
+fresh `Adam` over the *grown* net's parameters — is untested.
+
+That matters beyond bookkeeping: the "off-ladder trunk reads as rung 0 and is walked to the top in one
+call" behaviour is the shape of the bug that once made Rush Hour and Cube nets *smaller* when growth was
+enabled. **Re-check the other M64.5 items against coverage before trusting the ✅.** (Spot-checked:
+`CubePolicyTraining.Shuffle` and the net-builder kind tags *were* done; `TrainStep` and the two builder
+factory bodies were not, but those were never in M64.5's list.)
+
+### 19.7 Block B — the training-loop campaigns (426 uncovered, ~301 reachable)
+
+The lifecycle half is already covered (M64/M68). What remains is inside `TrainChunk` and the eval/ladder
+limbs — and far more of it is reachable than expected, mostly **without any production change**, because
+the options records already expose the knobs.
+
+**The measurement note that reframes this block:** ~39 `SelfPlayCampaign` lines read as uncovered only
+because the test that drives them carries `[Trait("Category","Slow")]`
+(`SelfPlayLadderTests.cs:126-127`). They are tested; they are simply in the excluded bucket.
+
+| # | item | lines | change | risk |
+|---|---|---|---|---|
+| **B1** | **SelfPlay ladder arena, without training.** `Resume` → `Checkpoint` → `Checkpoint`. The second checkpoint has a champion, so `MaybePromoteDifficulty` → `ArenaVsNet` → `PlayArenaGame` → `ModelMoveWith` all run. No `TrainChunk`, no `Evaluate`. | **~41** | test-only | negligible |
+| **B2** | **XIT `TrainChunk` at frontier 1.** At `InitialFrontier = 1` the start state is one move from the door, so the search terminates in a handful of expansions. Two tests: the solve path, and `Expansions = 1, BeamWidth = 4` to force the beam + landmark-salvage fallbacks. | **~109** | test-only | **must be measured** |
+| **B3** | **Telemetry sweep** across the four `INetworkTelemetrySource` implementations after `Resume`. | **~67** | test-only | milliseconds |
+| **B4** | **BlockDude imitation gate limb** — needs `GateBoards` on the options record (see below). | **~53** | **production** (1 option + 1 argument) | 1–3 s, estimated |
+| **B5** | **SelfPlay config variants** on the existing fast `TrainChunk` test: `LeafBatch = 4`, `TempMoves = 4`, `WindowCapacity = 8`, `MaxPlies = 4`. | **~23** | test-only | negligible (`MaxPlies = 4` makes games *shorter*) |
+| **B6** | **Resume error paths** — garbage bytes under the net ids, and a net-without-sidecar store. | **7** | test-only | negligible |
+| **B7** | `ColumnPrefix` → `internal static` + a 2-case test. | **1** | production (visibility) | none |
+
+**B1 is the best item on any of the three lists**: ~41 lines for a three-call test, because
+`MaybePromoteDifficulty` runs on *every* `Checkpoint` and the champion-present branch needs only a
+second one.
+
+**B4's seam, exactly.** Add `public int GateBoards { get; init; } = BlockDudeCurriculum.GateBoards;` to
+`BlockDudeImitationOptions` (the existing `const` is 64, so the shipped value is unchanged), and pass it
+at `BlockDudeImitationCampaign.cs:343` — `GateBoardsFor` **already takes `int count = GateBoards`**, so
+no other signature moves. The gate RNG is unchanged, so a shrunk hold-out is a **prefix** of the 64-board
+set, not a different distribution. Same shape as M64.7's `BatchSize`-onto-options precedent; re-runs the
+M64.0 determinism gate, which should be green since no RNG consumer is added.
+
+**Deliberately NOT recommended, with reasons, so they are not re-proposed:**
+
+- **Cube `TrainChunk`** — two independent blockers. `BatchSize`/`SamplesPerRound` are `private const`, so
+  it cannot even be shrunk without a production change; and the first call pays `CubeSolver.WarmUp()`,
+  which builds the full Kociemba pruning tables. **No other fast-bucket test touches `CubeSolver`**, so
+  that cost is new and un-amortised, landing in the instrumented `Environments` assembly — the exact
+  shape of §12.7's measured 10.3 s → 45 s blow-up. After all that it would assert only "samples advanced
+  by a multiple of BatchSize", which `CampaignContractTests` already asserts for four other campaigns.
+  **Slow *and* shallow.**
+- **RushHour `Evaluate`** (31 lines) — behind four new options, and the only available assertion is "no
+  NaN", which §6 names as ceremony. Its parity is already the Lab `--eval-only` smoke.
+- **Cube `Evaluate`/`EvaluateGate`/`SolveCounts`** (45 lines) — same objection.
+- **The chunk-timing log** (`SelfPlayCampaign.cs:262-263`) — gated on a `static readonly` env-var read at
+  type init, fragile under parallel xUnit, for two lines of logging.
+
+**B3 is the one to cut if the rule is "assertion value over percentage".** §6 names per-campaign
+telemetry calls as ceremony. It is the best lines-per-second on the list and not *nothing* — a throwing
+`SampleIo` silently blanks the M36 visualizer and the `catch` swallows it — but B1, B2 and B4 carry real
+regression assertions and B3 does not.
+
+### 19.8 What this adds up to
+
+| block | reachable | leaves Campaigns at |
+|---|---|---|
+| C — the long tail | ~104 | 65.5% |
+| B — training loops (B1–B7) | ~301 | — |
+| A1 — the `CubeDaviCurriculum` extraction | ~40 | — |
+| **B + C + A1, no GPU seam** | **~445** | **~79%** |
+| plus A3 + A4 (the Ilgpu seam) | +281 | ~90% |
+
+**Recommended order:** B1 → C1–C5 → B3/B5/B6 → A1 → B2 → B4. The first six items are test-only, fast, and
+carry real assertions. A3/A4 are a separate decision about the Ilgpu coupling, **not a coverage
+decision**.
+
+### 19.9 Two measurement obligations, and why they are not optional
+
+§12.7 and §8.4 both record this repo burning a milestone on timing tests uninstrumented and being wrong
+by ~3×. **B2 and B4 are the only items that can push the suite toward 3 minutes, and both are estimates
+nobody has measured.** Time them **instrumented, inside the full run** — isolated timings understate by
+roughly 2× here. Same obligation on A3 before it lands.
+
+### 19.10 Two stale comments found on the way
+
+- `CampaignContractTests.cs:14` still says "Marked Slow" but the file has **no `[Trait]` at all** (M64.1
+  stripped them). That comment is why the RushHour and FruitCake `TrainChunk`s *look* untested when they
+  are in the measured bucket.
+- `ModelServiceInfrastructureTests.cs:387` states the superseded ILGPU reason as fact (§19.2).

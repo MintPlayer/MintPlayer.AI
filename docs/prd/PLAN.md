@@ -3628,6 +3628,63 @@ change.
 engine was not), one was **not a defect at all** (`reachableMask` is live, reached through a renaming
 facade), and the remaining seven are fixed.
 
+## M69 — Campaigns coverage: the plan  *(investigated 2026-09-19; see `COVERAGE_90_PRD.md` §19)* 📋 PLANNED
+
+`Campaigns` is at **61.31% (1,518 / 2,476 lines, 958 uncovered)**. A three-agent sweep split it by what
+actually blocks each group — three different problems, not one — and found **~445 lines reachable without
+touching the GPU coupling**, which would take Campaigns to **~79%**.
+
+**Two facts that reframe it.** `CubeDaviCampaign` is **0 / 286**, not 30/316: the "covered" lines are the
+`CubeDaviSettings` record's auto-properties, so not one statement of the campaign has ever run. And only
+**~11 of those 286 lines touch the backend** — it is GPU-mandatory in its *constructor signature*, not its
+logic, and that one parameter gates all 286 lines including ~50 of pure arithmetic.
+
+**Recommended order** (first six are test-only, fast, and carry real assertions):
+
+1. **B1 — SelfPlay ladder arena without training** (~41 lines). `Resume` → `Checkpoint` → `Checkpoint`;
+   the second has a champion so the whole arena limb runs. **Best item on the list**: ~41 lines for a
+   three-call test.
+2. **C1–C5 — the long tail** (~90). `CubePolicyTraining.TrainStep` (26), `CubeViz` (21–25 — it is **not**
+   a server, just four pure static samplers), `DqnScoreCampaign` telemetry (15–17), `DqnGrowth.Maybe`
+   (15), `PolicyGrowth.Maybe` (13).
+3. **B3 / B5 / B6** (~97) — telemetry sweep, SelfPlay config variants, Resume error paths.
+4. **A1 — extract `CubeDaviCurriculum`** (~40). Asked for in `CAMPAIGN_TESTABILITY_PRD.md` §6 and **never
+   done**; three named traps make it provable by inspection.
+5. **B2 — XIT `TrainChunk` at frontier 1** (~109). **Measure first.**
+6. **B4 — BlockDude gate limb** (~53). Needs `GateBoards` on the options record; `GateBoardsFor` already
+   takes the count, so no other signature moves. **Measure first.**
+
+**A live defect found on the way:** `CubeDaviCampaign.cs:259` casts `(ResidualMlp)_net` unconditionally,
+but `:155` assigns `new Mlp(...)` when `Residual` is false — which comes straight from the Lab's
+`--net mlp`. **`--net mlp --time-budget` on a CPU host throws `InvalidCastException`.** One-line fix.
+
+**A constraint I briefed as fact, and it was stale.** "Constructing a real `AdaptiveBackend` in the fast
+bucket is dead on arrival" is false: four existing tests do exactly that, untagged, today. The
+`<Exclude>[…Ilgpu]*</Exclude>` **is** the fix and is load-bearing. The constraint survives for a better
+reason — `Backend.Current` is a plain mutable static, so a test that sets it and disposes its backend
+corrupts every other test in the parallel assembly.
+
+**A milestone recorded complete that was not.** `CAMPAIGN_TESTABILITY_PRD.md:226` marks M64.5 ✅ and
+`:152` names `PolicyGrowth.Maybe` in its scope. No test references it; coverage is 2/15 — only the null
+guard and the disabled path. **Re-check the other M64.5 items against coverage before trusting the tick.**
+
+**Not worth doing, recorded so they are not re-proposed:** Cube `TrainChunk` (needs a production change
+*and* imports the un-amortised Kociemba table build into the instrumented bucket — §12.7's exact shape);
+RushHour `Evaluate` and Cube `Evaluate`/`EvaluateGate` (reporting behind new options, assertion = "no
+NaN"); a one-chunk `CubeDavi.TrainChunk` test; ~38 of the tail (trivial forwarders, pure logging,
+GPU-blocked lines, and `catch` arms no legal input can reach).
+
+**A3/A4 — the Ilgpu seam on the two Cube campaigns** (+281 lines, → ~90%) is a **separate decision about
+coupling, not a coverage decision.** The case for it: `CubeDaviCampaign` is the last campaign still bound
+to a concrete Ilgpu type when every other one has been freed, that binding is what makes the
+`Backend.Current` hazard unavoidable in any future test, and it hides the `:259` crash. `SelfPlayCampaign`
+already solved the same problem with nullable factory delegates. **If the seam is not wanted on its own
+merits, do not do it for the percentage** — §15.5's posture.
+
+**Measurement obligation:** B2, B4 and A3 are the only items that can push the suite past ~3 minutes, and
+all three are unmeasured estimates. §12.7 and §8.4 both record this repo being wrong by ~3× when timing
+uninstrumented. Time them **instrumented, inside the full run**.
+
 ---
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
