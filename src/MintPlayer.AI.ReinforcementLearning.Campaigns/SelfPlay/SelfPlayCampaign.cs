@@ -189,7 +189,14 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
         {
             _totalSamples = progress.Samples;
             _totalGames = progress.Units;
-            _lastWinRate = progress.LastMetric == 0 ? double.NaN : progress.LastMetric;
+            // M65: a NaN win rate now survives the round-trip as itself, so a net that genuinely scores 0% against
+            // random resumes as 0% and keeps driving MaybePromoteDifficulty — previously it came back as "never
+            // evaluated", which DISABLED the winRate signal for the worst possible net. Version 1 files predate
+            // that and stored NaN as 0, so their 0 is ambiguous and is still read as "unknown": that is what the
+            // file was written to mean, and reading it as a measured 0% would be the silent misread.
+            _lastWinRate = progress.Version >= 2
+                ? progress.LastMetric
+                : progress.LastMetric == 0 ? double.NaN : progress.LastMetric;
             CampaignProgressState.RestoreInto(progress.Rngs[0], _arenaRng);
             Log($"resumed progress: {_totalSamples:N0} samples over {_totalGames:N0} games");
         }
@@ -295,9 +302,10 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
         if (_ladder is not null) MaybePromoteDifficulty();
 
         // Saved AFTER promotion so the sidecar captures both the arena RNG draws it made and the win rate it
-        // decided on.
+        // decided on. _lastWinRate goes in AS IS, NaN included: NaN is this campaign's "not measured yet" and the
+        // sidecar (format v2+) stores the raw double, so 0.0 stays a measured 0% instead of collapsing onto it.
         CampaignProgressState.Save(store, _environmentId, ProgressId, ProgressKind,
-            _totalSamples, _totalGames, double.IsNaN(_lastWinRate) ? 0 : _lastWinRate, _arenaRng);
+            _totalSamples, _totalGames, _lastWinRate, _arenaRng);
     }
 
     private const string ProgressId = "az-progress";
@@ -649,7 +657,15 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
         var payload = _tiers.Select(t => new
         {
             label = t.Label, ckpt = t.Ckpt, sims = t.Sims,
-            temperature = t.Temperature, cpuct = t.Cpuct, winRateVsRandom = t.WinRate, games = t.Games,
+            temperature = t.Temperature, cpuct = t.Cpuct,
+            // NaN is this campaign's "not measured yet", and NaN is NOT valid JSON — the default
+            // serializer throws on it. That is a live crash: the ladder promotes a baseline tier
+            // unconditionally on the first Checkpoint, so a run that checkpoints before it ever
+            // evaluates would take NaN into here and lose the checkpoint entirely. `null` is the
+            // honest wire form and the one the browser already expects: chess-net.ts maps a
+            // non-number to `undefined` and the tier label simply omits the "% vs random" suffix.
+            winRateVsRandom = double.IsNaN(t.WinRate) ? (double?)null : t.WinRate,
+            games = t.Games,
         });
         _ladderStore!.WriteManifest(_environmentId, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
     }
@@ -682,7 +698,11 @@ public sealed class SelfPlayCampaign<TState> : ITrainingCampaign, INetworkTeleme
                 e.TryGetProperty("sims", out var si) ? si.GetInt32() : _ladder.Sims,
                 e.TryGetProperty("temperature", out var te) ? te.GetDouble() : 0.0,
                 e.TryGetProperty("cpuct", out var cp) ? cp.GetDouble() : 1.5,
-                e.TryGetProperty("winRateVsRandom", out var wr) ? wr.GetDouble() : double.NaN,
+                // The other half of the null round-trip above: a missing key and an explicit null
+                // both mean "not measured", which is NaN in memory. GetDouble() would throw on null.
+                e.TryGetProperty("winRateVsRandom", out var wr) && wr.ValueKind == JsonValueKind.Number
+                    ? wr.GetDouble()
+                    : double.NaN,
                 e.TryGetProperty("games", out var ga) ? ga.GetInt64() : 0));
         }
     }

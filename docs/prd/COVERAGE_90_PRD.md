@@ -883,13 +883,13 @@ encoded as expected behaviour.
 
 | | |
 |---|---|
-| `SelfPlayCampaign` | A genuine **0.0 win rate is indistinguishable from "never evaluated"**: `Checkpoint` stores `IsNaN ? 0 : rate` and `Resume` maps a stored `0` back to `NaN`. A net that truly scores 0% vs random resumes as "unknown", which *disables the winRate signal in `MaybePromoteDifficulty`* — so the worst possible net is treated as an unmeasured one. |
-| `TrainWindow.MeanAndReset` | Returns **0, not NaN, for an empty window**, so `SelfPlayCampaign.Evaluate` reports `policyLoss = valueLoss = 0.0000` before any batch has run — indistinguishable from a collapsed loss. The BlockDude campaigns get this right with NaN; §15 argues at length that NaN and 0 are different facts. Also affects `CubeImitationCampaign`'s `ce`/`acc`/`huber`. |
+| `SelfPlayCampaign` | **FIXED in M68.** A genuine **0.0 win rate was indistinguishable from "never evaluated"**: `Checkpoint` stores `IsNaN ? 0 : rate` and `Resume` maps a stored `0` back to `NaN`. A net that truly scores 0% vs random resumes as "unknown", which *disables the winRate signal in `MaybePromoteDifficulty`* — so the worst possible net is treated as an unmeasured one. |
+| `TrainWindow.MeanAndReset` | **FIXED in M68.** Returned **0, not NaN, for an empty window**, so `SelfPlayCampaign.Evaluate` reports `policyLoss = valueLoss = 0.0000` before any batch has run — indistinguishable from a collapsed loss. The BlockDude campaigns get this right with NaN; §15 argues at length that NaN and 0 are different facts. Also affects `CubeImitationCampaign`'s `ce`/`acc`/`huber`. |
 | `CubeImitationCampaign.Resume` | Unconditionally calls `CubeSolver.WarmUp()`, building the Kociemba tables (multi-second on the first call in a process) even for a run that will never reach the oracle. Shared static tables mean only the first test in the assembly pays it, but it is what stops this campaign being properly unit-testable in isolation. |
 | `Kociemba K_CubieCube.multiply` | **Only multiplies corners** — `// edgeMultiply(b);` is commented out. Private and unused today, so nothing is broken; the name lies, which is how it will eventually be used wrongly. |
 | `Kociemba setPruning` | An **AND, not an assignment**: an entry can be written exactly once, only from the pre-filled `-1`. The table builder happens to respect this (`== 0x0f` guard), so it is pinned as the designed contract — but it is a fragile interface. Its two nibble halves are also inconsistently guarded (`unchecked` on the even branch only), which would throw under `<CheckForOverflowUnderflow>`. |
 | `Tools.randomCube` | Unseeded `new Random()`. Tests assert only that the result verifies as valid, never a specific cube. |
-| `game-2048-logic.ts` | Exponent saturation at `Math.min(pending + 1, 15)`: merging two 32768 tiles yields **32768 again while still awarding the points**, silently eating a tile. 65536 is reachable in real 4×4 2048. `ClassicEngine` has **no such cap**, so the two implementations provably diverge above exponent 15 — despite `game-2048-classic.ts`'s header claiming identical merge results. The cross-check fixtures stay at exponent ≤ 7 rather than blessing either side. |
+| `game-2048-classic.ts` | **FIXED in M68 — and this entry originally blamed the wrong file.** The cap in `game-2048-logic.ts` (`Math.min(pending + 1, 15)`) is a faithful mirror of the server (`Game2048.cs:76`, commented *cap exponent at 4 bits*) and is **load-bearing**: `NTuple2048Agent` packs four bits per cell into a 16^4 table index **unmasked**, so an exponent of 16 is an index-out-of-range or a silently corrupted trained table; the expectimax transposition key packs the same way. `ClassicEngine` was the one that disagreed, merging without the cap — and it is the **only** engine on the browser path. Reachable in three clicks: draw two 32768s in edit mode, press Solve, and the server returns a capped board the client replays as 65536, failing the playback checksum. Fixed by mirroring the cap; pinned on both sides (nothing had pinned it in C# either). |
 | `snake-logic.ts` | `SnakeGame.reset()` with `size < 3` walks the body off the board (negative cells, body longer than the board). Board size is a visitor setting; if the UI can offer < 3 this is a live crash path. |
 | TS checkpoint readers | The four dueling-Q readers **accept any version byte** — only `>= 2` gates the noisy flag, so version 0 or 99 parses. Looks like an oversight rather than intent; left untested pending a decision. |
 
@@ -1081,12 +1081,21 @@ rotation off; all three browser call sites construct it on).
 - **The draughts MLP tier (~22 lines) is a trap.** It looks like net code the browser obviously runs,
   and it does not: `draughts-net.ts:127` returns `PgDraughtsNet.withConv(...)`, and the covered line
   `draughts_solver.pg:582` short-circuits to the conv path. Testing it would cover a branch that
-  **ships dead**. The right move is to delete the MLP tier or exclude it, not to test it.
-- **~36 lines cannot be reached by anyone** and should leave the denominator or the codebase:
-  `tetris_solver.pg:1029-1032 reachableMask()` and `chess_solver.pg:102-105 clone()` have no caller in
-  any `.pg` and none in ClientApp — dead code, not a coverage gap. The rest are defensive MCTS
-  fallbacks ("all visit counts zero"), unused accessors, and ~5 declaration-line artifacts where the
-  body is covered but the signature line holds a sequence point that never executes.
+  **ships dead**. **DELETED in M68** — and it was deader than this said: the Lab's `--arch mlp` writes
+  kind `selfplay-pv`, which `draughts-net.ts` hard-rejects, so the tier was the second half of a path
+  whose first half was never built.
+- **~36 lines cannot be reached by anyone** and should leave the denominator or the codebase.
+  `chess_solver.pg:102-105 clone()` — orphaned by the functional `makeMove` — **deleted in M68**.
+  The rest are defensive MCTS fallbacks ("all visit counts zero"), unused accessors, and ~5
+  declaration-line artifacts where the body is covered but the signature line holds a sequence point
+  that never executes.
+
+  > **Correction.** This paragraph also named `tetris_solver.pg:1029-1032 reachableMask()` as having
+  > "no caller in any `.pg` and none in ClientApp". **That is wrong and it was nearly deleted on the
+  > strength of it.** It is live: `TetrisBoard.ReachableMask()` (`TetrisBoard.cs:82-84`) wraps it and
+  > `TetrisLab.cs:286` calls that under `--reach`. The grep that "proved" it dead searched the `.pg`
+  > spelling; the C# facade renames it. A `.pg` method can always be reached from generated C# through
+  > a facade under another name — check the facade, not just the `.pg`, before calling anything dead.
 - **~52 lines are reachable only by unit-testing the twin directly**, with no browser path — snake's
   `safeMask` shield (the director hard-codes it off), snake's unused masked-greedy `chooseAction`, and
   three tetris training setters. Covering them would be honest only under "unit-test reachability",
@@ -1228,3 +1237,82 @@ binary is absent, because the alternative — an empty report — reads as "noth
 - **`--branch-arms` stays off.** It is safe only for a single-target consumer; we overlay two.
 - **`reroot_frontend_coverage.mjs` stays.** It serves the hand-written ClientApp report, which is a
   consumer-side path convention and was never Polyglot's concern (§16 / Polyglot PRD §5).
+
+---
+
+## 18. M68 — fixing what the tests found *(2026-09-19)*
+
+§15.4 recorded eight defects that writing tests surfaced but did not fix. This milestone closes the
+ones worth closing, and — more usefully — **corrects two entries that were wrong**.
+
+### 18.1 The 2048 exponent cap: §15.4 blamed the wrong file
+
+The entry said `game-2048-logic.ts` "silently eats a tile" by saturating at `Math.min(pending + 1, 15)`.
+That file is a **faithful mirror of the server** (`Game2048.cs:76`, commented *cap exponent at 4 bits*),
+and the cap is **load-bearing in a way the entry missed**:
+
+- `NTuple2048Agent.cs:92` packs four bits per cell into a **16⁴ table index, unmasked** — exponent 16 is
+  an `IndexOutOfRangeException`, or in an earlier cell a silent alias that corrupts a trained table.
+- `Expectimax2048.cs:180` packs the transposition key the same way, masked — exponent 16 aliases to 0.
+- `Env2048.cs:82` normalises `exponent / 15f` against a declared `BoxSpace(0f, 1f, 16)`.
+
+**`ClassicEngine` was the one that disagreed**, merging without the cap — and it is the *only* engine on
+the browser path, for both human play and AI replay. `applyMove` is not on any production path at all.
+
+**Reachable in three clicks:** edit mode cycles a cell to 32768 (`game-2048.ts:107`), the controller
+accepts it (`Game2048Controller.cs:104`), so drawing two adjacent 32768s and pressing Solve makes the
+server return a capped board that the client replays as 65536 — the playback checksum then fails and
+every subsequent replayed state is wrong.
+
+Fixed by mirroring the cap. Both headers corrected: `game-2048-classic.ts` claimed "identical merge
+results" while diverging, and `game-2048-logic.ts` read as an arithmetic accident rather than a storage
+constraint. **Pinned on both sides — nothing had pinned it in C# either**, which is how the two drifted
+apart unnoticed. The TS cross-check now includes the saturation fixture it had deliberately avoided.
+
+### 18.2 Zero versus unknown, in two places
+
+**`SelfPlayCampaign`**: sidecar format **v1 → v2**; the metric is stored verbatim, NaN included. The
+subtlety is *where* the compatibility branch lives. `CampaignProgressState` is shared, and
+`CubeImitationCampaign` uses the same `LastMetric` slot for an **exact solve counter** — so a blanket
+"v1 zero means NaN" translation at the format layer would turn an old cube checkpoint with 0 solves into
+`(long)double.NaN` = `long.MinValue`. Instead `CampaignProgress` exposes the version it read and only
+self-play branches on it. `CheckpointFormat.ReadHeader` accepts `1..max`, so existing sidecars still load.
+
+**`TrainWindow.MeanAndReset`** returns NaN for an empty window. All four callers were checked and are
+formatting-only; `CampaignEval.Metrics` is consumed in exactly one place (`CampaignCli`), which writes it
+to a CSV cell where `NaN` is the standard missing-value token.
+
+### 18.3 A crash that fell out of the second fix
+
+`WriteManifest` serialises the tier win rate with a default `JsonSerializerOptions`, **and NaN is not
+valid JSON**. The ladder promotes a baseline tier *unconditionally* on the first checkpoint, so a run
+that checkpoints before it ever evaluates threw — losing the net, the optimizer and the progress sidecar,
+not just the manifest. Every existing ladder test called `Evaluate()` before `Checkpoint()`, which is
+exactly why none of them caught it.
+
+Written as `null`, not `0`: zero is a measured result, and writing it would recreate the conflation
+§18.2 just removed. `null` is also already what the browser expects — `chess-net.ts:53` maps a
+non-number to `undefined` and the tier label omits the suffix.
+
+### 18.4 Dead code: two of three deleted, and the third was not dead
+
+`chess_solver.pg`'s `clone()` (orphaned by the functional `makeMove`) and the **draughts MLP tier** are
+deleted. Both are `.pg`-only edits — the C# and TypeScript twins are gitignored build outputs, so one
+tracked file changes per deletion.
+
+The draughts tier was deader than §16.7 said: the Lab's `--arch mlp` writes kind `selfplay-pv`, which
+`draughts-net.ts` hard-rejects, so it was the second half of a path whose first half was never built.
+
+> **`tetris_solver.pg`'s `reachableMask()` is NOT dead, and §16.7 was wrong to say so.** It is reached
+> through a facade that renames it: `TetrisBoard.ReachableMask()` → `TetrisLab.cs:286`, under `--reach`.
+> The grep that "proved" it dead searched the `.pg` spelling. **A `.pg` method can always be reached from
+> generated C# through a facade under another name** — this one was a step away from being deleted on the
+> strength of a bad grep.
+
+### 18.5 Still open, deliberately
+
+`CubeImitationCampaign.Resume` unconditionally warms up the Kociemba tables; the Kociemba `multiply`
+name lies (private, unused); `setPruning`'s two nibble halves are inconsistently `unchecked`;
+`Tools.randomCube` is unseeded; `SnakeGame.reset()` with `size < 3` walks off the board; the TypeScript
+dueling-Q readers accept any version byte. None is a live crash, and each needs a decision rather than a
+patch.

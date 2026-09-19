@@ -45,21 +45,24 @@ public class CampaignHelperTests
 
         var (ce, huber, acc) = w.MeanAndReset();
 
-        Assert.Equal(0, ce);
-        Assert.Equal(0, huber);
-        Assert.Equal(0, acc);
+        // Emptied, so the second read is the undefined mean of no samples -- NOT a carried-over 5.
+        Assert.True(double.IsNaN(ce));
+        Assert.True(double.IsNaN(huber));
+        Assert.True(double.IsNaN(acc));
     }
 
     [Fact]
-    public void An_empty_TrainWindow_reports_zeros_not_NaN()
+    public void An_empty_TrainWindow_reports_NaN_rather_than_zero()
     {
-        // A chunk that trained nothing must not put NaN into a CSV column -- every downstream reader
-        // of those logs would have to special-case it.
+        // M65: the mean of no batches is undefined, and 0 is a legitimate measured value here -- a
+        // collapsed loss is a real failure mode. Reporting an empty window as 0.0000 made "trained
+        // nothing yet" read exactly like "the net's loss collapsed", so an operator could act on a
+        // number no batch ever produced. NaN keeps the two apart and formats as `NaN` in the CSV.
         var (ce, huber, acc) = new TrainWindow().MeanAndReset();
 
-        Assert.Equal(0, ce);
-        Assert.Equal(0, huber);
-        Assert.Equal(0, acc);
+        Assert.True(double.IsNaN(ce));
+        Assert.True(double.IsNaN(huber));
+        Assert.True(double.IsNaN(acc));
     }
 
     // ── AdamState — the optimizer moments across a resume ──

@@ -3567,6 +3567,53 @@ old figure was flattered by Roslyn's narrower view of the same source.
 stamp plus already-generated `obj/` output, so `_PolyglotVerifyTool` never ran. A clean clone would have
 failed. Worth knowing before trusting a local build to prove a Polyglot change.
 
+## M68 — Fixing what the tests found  *(2026-09-19; see `COVERAGE_90_PRD.md` §18)* ✅
+
+§15.4 recorded eight defects that writing tests surfaced but did not fix. This closes the ones worth
+closing — and **corrects two entries that were wrong**, which is the more useful half.
+
+- **M68.1 — the 2048 exponent cap.** §15.4 blamed `game-2048-logic.ts`; that file is a faithful mirror of
+  the server, and the cap is **load-bearing**: `NTuple2048Agent` packs four bits per cell into a 16⁴ table
+  index **unmasked**, so exponent 16 is an out-of-range index or a silently corrupted trained table.
+  **`ClassicEngine` was the one diverging**, and it is the only engine on the browser path. Reachable in
+  three clicks (draw two 32768s in edit mode, press Solve) — the server returns a capped board the client
+  replays as 65536, failing the playback checksum. Fixed by mirroring the cap; **pinned on both sides,
+  because nothing had pinned it in C# either**, which is how they drifted apart.
+- **M68.2 — zero versus unknown.** `SelfPlayCampaign`'s sidecar goes v1 → v2 and stores the metric
+  verbatim. The subtlety is *where* the compatibility branch lives: `CubeImitationCampaign` uses the same
+  slot for an **exact solve counter**, so a blanket "v1 zero means NaN" at the format layer would turn 0
+  solves into `long.MinValue`. `CampaignProgress` exposes the version it read; only self-play branches on
+  it. `TrainWindow.MeanAndReset` now returns NaN for an empty window (all four callers are format-only).
+- **M68.3 — a crash that fell out of M68.2.** `WriteManifest` serialises the tier win rate with default
+  options and **NaN is not valid JSON**. The ladder promotes a baseline tier unconditionally on the first
+  checkpoint, so a run that checkpoints before evaluating threw — losing the net, the optimizer and the
+  sidecar, not just the manifest. Every ladder test called `Evaluate()` first, which is why none caught
+  it. Written as `null`, not `0`: zero is a measured result, and `null` is already what the browser
+  expects.
+- **M68.4 — dead code, two of three.** chess `clone()` and the **draughts MLP tier** deleted (`.pg`-only
+  edits; the twins are gitignored build outputs). The draughts tier was deader than recorded: the Lab's
+  `--arch mlp` writes a kind `draughts-net.ts` hard-rejects, so it was the second half of a path whose
+  first half was never built.
+
+**Two corrections worth carrying forward.**
+
+`tetris_solver.pg`'s `reachableMask()` is **NOT dead** — `TetrisBoard.ReachableMask()` renames it and
+`TetrisLab` calls it under `--reach`. The grep that "proved" it dead searched the `.pg` spelling. **A
+`.pg` method can always be reached from generated C# through a facade under another name.** It was one
+step from deletion.
+
+And the null-assertion `!` **does not survive TypeScript emission**: `this.conv!.forward(obs)` emits as
+`this.conv.forward(obs)`, which `strictNullChecks` rejects (TS2531) while the C# compiles happily. The
+old code only worked because an `if != null` guard gave TypeScript the narrowing. `PgDraughtsNet.conv`
+is now non-nullable via the constructor, which removes the need for either. **The frontend suite caught
+this — the C# build was green.** It is the clearest argument yet for running both halves of a `.pg`
+change.
+
+**Still open, deliberately:** the Kociemba warm-up on `CubeImitationCampaign.Resume`, the `multiply` name
+that lies, `setPruning`'s asymmetric `unchecked`, the unseeded `randomCube`, `SnakeGame.reset()` with
+`size < 3`, and the TypeScript dueling-Q readers accepting any version byte. None is a live crash; each
+needs a decision rather than a patch.
+
 ---
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies

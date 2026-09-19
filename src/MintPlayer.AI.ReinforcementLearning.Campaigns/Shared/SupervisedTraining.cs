@@ -23,10 +23,15 @@ public struct TrainWindow
         _count++;
     }
 
-    /// <summary>The mean of each metric since the last reset (0 when no batch ran), then clears the window.</summary>
+    /// <summary>
+    /// The mean of each metric since the last reset, then clears the window. An EMPTY window means <b>NaN</b>, not
+    /// 0: the mean of no samples is undefined, and reporting it as 0 made "nothing trained yet" indistinguishable
+    /// from "the loss collapsed to zero" — a real failure mode an operator would act on. NaN propagates through
+    /// arithmetic and formats as <c>NaN</c> in a CSV cell, which every consumer already reads as missing.
+    /// </summary>
     public (double Ce, double Huber, double Acc) MeanAndReset()
     {
-        var mean = _count > 0 ? (_ce / _count, _huber / _count, _acc / _count) : (0d, 0d, 0d);
+        var mean = _count > 0 ? (_ce / _count, _huber / _count, _acc / _count) : (double.NaN, double.NaN, double.NaN);
         _ce = _huber = _acc = 0;
         _count = 0;
         return mean;

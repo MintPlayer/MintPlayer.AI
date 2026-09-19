@@ -193,6 +193,50 @@ describe('ClassicEngine.renderTiles', () => {
   });
 });
 
+describe('exponent saturation', () => {
+  // A STORAGE constraint, not a game rule, and the reason is off-screen: the server packs four bits
+  // per cell — unmasked — into the n-tuple table index (a 16^4 table) and the expectimax
+  // transposition key. An exponent of 16 would index past that table or silently alias into a
+  // neighbouring nibble, corrupting a trained checkpoint.
+  //
+  // This is regression cover. Before M68 `ClassicEngine` merged without the cap while the server
+  // and `applyMove` capped, so drawing two 32768s in edit mode and pressing Solve returned a capped
+  // board that the client replayed as 65536 — the playback checksum then failed and every
+  // subsequent replayed state was wrong.
+
+  it('merges two 32768s into one 32768, and still scores 32768', () => {
+    const engine = ClassicEngine.fromExponents(cells([15, 15, 0, 0], EMPTY, EMPTY, EMPTY));
+
+    const { gained } = engine.move(ACTION_LEFT);
+
+    expect(engine.toExponents().slice(0, 4)).toEqual([15, 0, 0, 0]);
+    expect(gained).toBe(32768);
+  });
+
+  it('still merges normally up to the cap', () => {
+    // Guards the fix from being written as "never merge at 15" rather than "saturate at 15".
+    const engine = ClassicEngine.fromExponents(cells([14, 14, 0, 0], EMPTY, EMPTY, EMPTY));
+
+    const { gained } = engine.move(ACTION_LEFT);
+
+    expect(engine.toExponents().slice(0, 4)).toEqual([15, 0, 0, 0]);
+    expect(gained).toBe(32768);
+  });
+
+  it('agrees with the server rules at the boundary', () => {
+    // The same board through `applyMove`, which mirrors Board2048 directly.
+    const board = cells([15, 15, 0, 0], EMPTY, EMPTY, EMPTY);
+    const flat = [...board];
+    const flatResult = applyMove(flat, ACTION_LEFT);
+
+    const engine = ClassicEngine.fromExponents(board);
+    const classicResult = engine.move(ACTION_LEFT);
+
+    expect(engine.toExponents()).toEqual(flat);
+    expect(classicResult.gained).toBe(flatResult.gained);
+  });
+});
+
 describe('the two 2048 implementations agree', () => {
   // The classic engine's header promises its merge RESULTS match `applyMove` exactly. That is the
   // contract that lets the animated client and the server's recorded episodes stay in lockstep, so
@@ -202,6 +246,11 @@ describe('the two 2048 implementations agree', () => {
     cells([1, 1, 1, 1], [1, 1, 1, 1], EMPTY, [2, 2, 0, 0]),
     cells([1, 2, 3, 4], [4, 3, 2, 1], [1, 1, 2, 2], [0, 2, 0, 2]),
     cells([5, 0, 0, 5], [0, 5, 5, 0], [0, 0, 0, 0], [6, 6, 6, 6]),
+    // The saturation boundary. These fixtures used to stop at exponent 7 deliberately, because the
+    // two engines genuinely disagreed above 15 and neither side's behaviour was safe to encode. The
+    // classic engine now mirrors the server's cap, so the boundary is exactly where the cross-check
+    // is most worth running: row 0 merges two 32768s, row 1 merges up INTO 32768.
+    cells([15, 15, 0, 0], [14, 14, 15, 15], EMPTY, EMPTY),
   ];
 
   for (const action of [ACTION_LEFT, ACTION_DOWN, ACTION_RIGHT, ACTION_UP]) {

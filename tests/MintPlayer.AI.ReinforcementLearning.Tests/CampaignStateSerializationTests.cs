@@ -164,6 +164,58 @@ public class CampaignStateSerializationTests
         Assert.Null(loaded);
     }
 
+    [Fact]
+    public void Progress_round_trips_a_NaN_metric_instead_of_flattening_it_to_zero()
+    {
+        // M65. The metric slot is campaign-defined: self-play puts a win rate in it and uses NaN for "not measured
+        // yet", while the cube campaign puts an exact solve COUNTER in it, for which 0 has always meant zero. So
+        // this layer must not interpret the value at all — it stores the raw double, and NaN comes back as NaN.
+        // Flattening NaN to 0 on the way in (the old self-play workaround) is what made a genuine 0% win rate
+        // indistinguishable from a run that had never evaluated.
+        var store = new MemoryModelStore();
+        CampaignProgressState.Save(store, "env", "progress", "test-progress",
+            samples: 1, units: 1, lastMetric: double.NaN, new Xoshiro256StarStar(1));
+
+        var loaded = CampaignProgressState.TryLoad(store, "env", "progress", "test-progress", rngCount: 1);
+
+        Assert.NotNull(loaded);
+        Assert.True(double.IsNaN(loaded!.LastMetric));
+    }
+
+    [Fact]
+    public void Progress_reports_the_on_disk_format_version_it_read()
+    {
+        // The version is the ONLY thing that tells a campaign whether a stored 0 in the metric slot is a measured
+        // zero (v2) or the old NaN-flattened placeholder (v1). Checkpoints written by earlier builds are still in
+        // models/, so a reader that could not tell them apart would silently misread every one of them.
+        var store = new MemoryModelStore();
+        CampaignProgressState.Save(store, "env", "progress", "test-progress", 10, 1, 0.5, new Xoshiro256StarStar(1));
+
+        var current = CampaignProgressState.TryLoad(store, "env", "progress", "test-progress", rngCount: 1);
+
+        Assert.NotNull(current);
+        Assert.Equal(2, current!.Version);
+
+        // The same bytes in the version-1 layout — identical fields, older stamp — still read, and say so.
+        store.Save("env", "legacy", stream =>
+        {
+            using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+            CheckpointFormat.WriteHeader(writer, "test-progress", version: 1);
+            writer.Write(10L);
+            writer.Write(1L);
+            writer.Write(0.5);
+            writer.Write(1);
+            CheckpointFormat.WriteRngState(writer, new Xoshiro256StarStar(1));
+        });
+
+        var legacy = CampaignProgressState.TryLoad(store, "env", "legacy", "test-progress", rngCount: 1);
+
+        Assert.NotNull(legacy);
+        Assert.Equal(1, legacy!.Version);
+        Assert.Equal(10, legacy.Samples);
+        Assert.Equal(0.5, legacy.LastMetric);
+    }
+
     // ── BlockDudeTrainingState (196 lines, previously zero coverage) ──────────────────────────
 
     private static BlockDudeTrainingState PopulatedState(ulong fingerprint) => new()

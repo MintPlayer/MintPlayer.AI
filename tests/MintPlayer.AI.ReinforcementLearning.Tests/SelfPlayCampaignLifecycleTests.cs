@@ -61,6 +61,23 @@ public class SelfPlayCampaignLifecycleTests
         string kind = ProgressKind, string id = ProgressId)
         => CampaignProgressState.Save(store, Env, id, kind, samples, games, lastWinRate, new Xoshiro256StarStar(99));
 
+    /// <summary>
+    /// Writes the PRE-M65 (format version 1) sidecar layout by hand — the shape of the checkpoints already sitting
+    /// in <c>models/</c>. Deliberately duplicates the field order instead of calling <c>Save</c>, because <c>Save</c>
+    /// now stamps version 2; if the layout ever diverges this is the file that catches it.
+    /// </summary>
+    private static void SaveLegacyV1Progress(IModelStore store, long samples, long games, double lastMetric)
+        => store.Save(Env, ProgressId, stream =>
+        {
+            using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+            CheckpointFormat.WriteHeader(writer, ProgressKind, version: 1);
+            writer.Write(samples);
+            writer.Write(games);
+            writer.Write(lastMetric);
+            writer.Write(1);
+            CheckpointFormat.WriteRngState(writer, new Xoshiro256StarStar(99));
+        });
+
     // ── before the first chunk ───────────────────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -174,17 +191,59 @@ public class SelfPlayCampaignLifecycleTests
     }
 
     [Fact]
-    public void A_stored_win_rate_of_zero_comes_back_as_unknown_rather_than_as_zero()
+    public void A_stored_win_rate_of_zero_comes_back_as_zero_not_as_unknown()
     {
-        // The sidecar carries "no metric yet" as 0, so Resume maps a stored 0 to NaN. That is the documented
-        // behaviour and it is what the ladder wants (NaN disables the winRate promotion signal, leaving material
-        // and head-to-head to decide) — but it does mean a genuine 0% win rate is indistinguishable from a run
-        // that never evaluated. Pinned here so the conflation is a decision, not an accident.
+        // M65 fix. The sidecar used to flatten "no metric yet" (NaN) onto 0 on save and map 0 back to NaN on
+        // load, so a net that genuinely scored 0% against random resumed as "never evaluated" — which DISABLES
+        // the winRate signal in MaybePromoteDifficulty. The worst possible net was treated as an unmeasured one.
+        // Format v2 stores the raw double, so a measured 0.0 now survives the round-trip as 0.0.
         var dir = Directory.CreateTempSubdirectory("m65-sp-zero");
         try
         {
             var store = new FileModelStore(dir.FullName);
             SaveProgress(store, samples: 500, games: 4, lastWinRate: 0);
+
+            using var c = Campaign();
+            c.Resume(store);
+
+            Assert.Equal(4, Telemetry(c).Step);
+            Assert.Equal(0.0, Telemetry(c).Eval);
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void An_unmeasured_win_rate_still_round_trips_as_unknown()
+    {
+        // The other half of the fix: NaN must stay NaN across a save/load, or "never evaluated" would come back
+        // as a measured 0% and let the ladder promote on a number nothing produced.
+        var dir = Directory.CreateTempSubdirectory("m65-sp-nan");
+        try
+        {
+            var store = new FileModelStore(dir.FullName);
+            SaveProgress(store, samples: 500, games: 4, lastWinRate: double.NaN);
+
+            using var c = Campaign();
+            c.Resume(store);
+
+            Assert.Equal(4, Telemetry(c).Step);
+            Assert.True(double.IsNaN(Telemetry(c).Eval));
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void A_version_1_sidecar_still_reads_its_zero_as_unknown()
+    {
+        // The compatibility half of the M65 fix, and the reason for the version bump rather than a silent change
+        // of meaning: checkpoints already in models/ were written by the code that stored NaN AS 0, so a v1 0 is
+        // ambiguous. Reading it as a measured 0% would be a silent misread of an existing file, so the v1 read
+        // path keeps the old mapping. Only files this build writes (v2) carry a trustworthy 0.
+        var dir = Directory.CreateTempSubdirectory("m65-sp-v1");
+        try
+        {
+            var store = new FileModelStore(dir.FullName);
+            SaveLegacyV1Progress(store, samples: 500, games: 4, lastMetric: 0);
 
             using var c = Campaign();
             c.Resume(store);
@@ -290,19 +349,19 @@ public class SelfPlayCampaignLifecycleTests
             using var resumed = Campaign();
             resumed.Resume(store);
 
-            // A 0.0 win rate is stored as "none yet" (see the zero test above), so only a non-zero one round-trips.
-            if (winRate != 0) Assert.Equal(winRate, Telemetry(resumed).Eval);
+            // M65: every measured win rate round-trips now, 0.0 included — no value is special-cased away.
+            Assert.Equal(winRate, Telemetry(resumed).Eval);
         }
         finally { dir.Delete(recursive: true); }
     }
 
     [Fact]
-    public void Evaluate_reports_a_zero_loss_when_no_batch_has_run()
+    public void Evaluate_reports_an_unmeasured_loss_as_NaN_when_no_batch_has_run()
     {
-        // TrainWindow's documented empty-window value is 0, not NaN — unlike the BlockDude campaigns, which report
-        // an un-measured rate as NaN so that "no data" and "measured zero" stay distinguishable. Pinned as-is
-        // because it is the shipped contract; worth noting that a report full of 0.0000 losses before the window
-        // fills is indistinguishable here from a net whose loss genuinely collapsed.
+        // M65 fix. TrainWindow used to report an empty window as 0, so an eval before the first batch printed
+        // `policy 0.0000 | value 0.0000` — byte-identical to a net whose loss had genuinely collapsed, which is a
+        // real failure mode someone would act on. It now reports NaN, matching the BlockDude campaigns, so "no
+        // data" and "measured zero" stay apart. Note Evaluate still runs its arena, so winRate remains a real 0..1.
         var dir = Directory.CreateTempSubdirectory("m65-sp-loss");
         try
         {
@@ -310,8 +369,9 @@ public class SelfPlayCampaignLifecycleTests
             c.Resume(new FileModelStore(dir.FullName));
 
             var eval = c.Evaluate();
-            Assert.Equal(0.0, eval.Metrics.Single(m => m.Name == "policyLoss").Value);
-            Assert.Equal(0.0, eval.Metrics.Single(m => m.Name == "valueLoss").Value);
+            Assert.True(double.IsNaN(eval.Metrics.Single(m => m.Name == "policyLoss").Value));
+            Assert.True(double.IsNaN(eval.Metrics.Single(m => m.Name == "valueLoss").Value));
+            Assert.False(double.IsNaN(eval.Metrics.Single(m => m.Name == "winRate").Value));
         }
         finally { dir.Delete(recursive: true); }
     }

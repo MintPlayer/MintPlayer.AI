@@ -1,19 +1,27 @@
 #!/usr/bin/env node
-// Re-roots the Angular/vitest cobertura report so coverage.mintplayer.com can resolve its files.
+// Prepares the Angular/vitest cobertura report for upload: drops the Polyglot twins, and re-roots the
+// remaining paths from project-relative to repo-relative.
 //
-// WHY THIS EXISTS. The service resolves a report path by suffix-matching it against `git ls-files`,
-// which lists forward-slashed paths relative to the REPO root. The `cobertura` reporter writes
-// filenames relative to the ANGULAR PROJECT root (`src/RLDemo.Web/ClientApp`) using the platform
-// separator — so on a Windows agent a class lands as `src\app\snake\snake-logic.ts`, which is a
-// suffix of nothing in git and is silently counted as unmatched. Nothing errors; the file just
-// vanishes from the report, which is the worst possible failure mode for a coverage number.
+// WHY THIS STILL EXISTS, given the upload action rebases paths itself (MintPlayer.Spark#416).
+// That rebasing STRIPS a `GITHUB_WORKSPACE` prefix and unifies separators. It cannot ADD one, and has
+// no input for a base path — so it fixes a collector that wrote absolute native paths, which is not
+// our case. The `cobertura` reporter writes filenames relative to the ANGULAR PROJECT root
+// (`src/RLDemo.Web/ClientApp`), e.g. `src\app\snake\snake-logic.ts`. Only this repo knows the prefix
+// that turns that into a git path.
 //
-// So: normalise separators to `/`, and prefix the project root — turning `src/app/snake/snake-logic.ts`
-// into `src/RLDemo.Web/ClientApp/src/app/snake/snake-logic.ts`, which IS a git path.
+// Strictly, the server's suffix match would resolve the short form anyway: all 13 covered modules
+// have exactly one candidate in `git ls-files` today (checked). Re-rooting is kept because the match
+// then needs no uniqueness to hold — a second `src/app/**` tree would make several of them ambiguous,
+// and an ambiguous path resolves to nothing rather than to the wrong file.
 //
-// Deliberately dependency-free (it runs before `npm ci` would matter) and deliberately NOT a general
-// XML rewriter: it touches only `filename=` attributes and the `<source>` element, so a malformed or
-// unexpected report is passed through rather than mangled.
+// Dropping the twins is the half that has no alternative. They are in `coverageInclude` so that the
+// `.pg` remap can read them, but they are gitignored build outputs: uploaded under their own `.ts`
+// paths they resolve to nothing, and since #416 an unmatched path is reported as an incomplete
+// reason — so leaving them in would mark every build incomplete. The `.pg` report carries their hits.
+//
+// Deliberately dependency-free and deliberately not a general XML rewriter: it touches only `filename=`
+// attributes, whole `<class>` elements and `<source>`, so an unexpected report passes through rather
+// than being mangled.
 //
 // Usage: node tools/reroot_frontend_coverage.mjs <cobertura.xml> <repo-relative project root>
 
@@ -35,16 +43,8 @@ if (!existsSync(reportPath)) {
 const prefix = projectRoot.replace(/\\/g, '/').replace(/\/+$/, '');
 const xml = readFileSync(reportPath, 'utf8');
 
-let rerooted = 0;
-let alreadyRooted = 0;
-
-// Drop the Polyglot-generated twins from THIS report. They are in `coverageInclude` so that
-// `pg_coverage_remap.mjs` can project them onto their `.pg` sources, but they must not be uploaded
-// under their own `.ts` paths: those are gitignored build outputs, so the service — which resolves a
-// path by suffix-matching `git ls-files` — would drop them as unmatched anyway. Keeping them here
-// would also double-count, since the remapped `.pg` report already carries their hits.
-// A twin is identified by the `_solver.ts` suffix; `*_solver.spec.ts` is hand-written and is
-// excluded from coverage upstream, so it cannot reach this file.
+// A twin is identified by the `_solver.ts` suffix. `*_solver.spec.ts` is hand-written, and is excluded
+// from coverage upstream, so it cannot reach this file.
 const TWIN = /_solver\.ts$/;
 let twinsDropped = 0;
 
@@ -55,6 +55,9 @@ const withoutTwins = xml.replace(/[ \t]*<class\b[^>]*\bfilename="([^"]*)"[\s\S]*
   }
   return whole;
 });
+
+let rerooted = 0;
+let alreadyRooted = 0;
 
 const out = withoutTwins
   // <class ... filename="src\app\x.ts"> → filename="src/RLDemo.Web/ClientApp/src/app/x.ts"
@@ -67,8 +70,8 @@ const out = withoutTwins
     rerooted++;
     return `filename="${prefix}/${path.replace(/^\.?\//, '')}"`;
   })
-  // <sources><source>…</source></sources> points at the absolute agent path, which means nothing to
-  // the service and can only mislead a reader of the raw report. Point it at the repo root instead.
+  // <source> points at the absolute agent path, which means nothing to the service and can only
+  // mislead a reader of the raw report. The action does not touch it.
   .replace(/<source>[\s\S]*?<\/source>/g, '<source>.</source>');
 
 writeFileSync(reportPath, out, 'utf8');
@@ -79,8 +82,6 @@ console.log(
     (twinsDropped ? `; dropped ${twinsDropped} Polyglot twin(s) (the .pg report owns those)` : ''),
 );
 
-if (rerooted === 0 && alreadyRooted === 0) {
-  // Loud, because an empty report that uploads cleanly is indistinguishable from a healthy one on
-  // the service side, and would quietly drop the frontend out of the merged number.
-  console.warn('WARNING: no filename attributes found — the frontend report covers nothing');
-}
+// No "covered nothing" warning here any more. It was a proxy for "this upload will produce an empty
+// report", and since #416 the server answers that question directly with its unmatched-file verdict —
+// which is accurate where a rewrite count only guesses.
