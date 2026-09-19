@@ -1509,12 +1509,44 @@ regression assertions and B3 does not.
 carry real assertions. A3/A4 are a separate decision about the Ilgpu coupling, **not a coverage
 decision**.
 
-### 19.9 Two measurement obligations, and why they are not optional
+### 19.9 The measurement obligation — discharged for M69, and reframed
 
 §12.7 and §8.4 both record this repo burning a milestone on timing tests uninstrumented and being wrong
-by ~3×. **B2 and B4 are the only items that can push the suite toward 3 minutes, and both are estimates
-nobody has measured.** Time them **instrumented, inside the full run** — isolated timings understate by
-roughly 2× here. Same obligation on A3 before it lands.
+by ~3×. That obligation is now **met for everything M69 landed**, and the measurement changed what the
+budget actually means.
+
+**Measured 2026-09-19, Debug, `--no-build`, the two buckets exactly as `pull-request.yml` runs them:**
+
+| bucket | filter | tests | result | wall |
+|---|---|---|---|---|
+| fast | `Category!=Slow&Category!=Determinism` | 1130 | all passed | **134 s** |
+| determinism | `Category=Determinism` | 4 | all passed | 4 s |
+
+**The reframe: the fast bucket's wall clock is critical-path bound, not sum bound.** Its three longest
+tests are
+
+| test | wall | tagged Slow? |
+|---|---|---|
+| `BlockDudeGateBoardLabellingTests.EveryGateBoardIsOneTheExactOracleCanFullyLabel` | **2 m 9 s** | no |
+| `BlockDudeDeadEndTests.ASubstantialShareOfReachableStatesIsUnwinnable...` | 1 m 32 s | no |
+| `PolyglotNetParityTests.CoreSearch_MatchesCsFruitCakeSearch_SameColumn` | 1 m 3 s | no |
+
+The whole bucket finishes in 134 s while its slowest member takes 129 s. **96% of the wall clock is one
+test**, and xUnit runs the other ~1129 alongside it. So the operative question for B2/B4 is *not* "how
+many seconds does this add" — it is **"does this test exceed 2 m 9 s?"** Anything shorter is free in wall
+time, hidden behind `BlockDudeGateBoardLabelling`. Anything longer becomes the new floor for every future
+run. The §12.7 warning still stands for the *test itself*; what is wrong is the additive mental model.
+
+A corollary worth acting on before B2/B4: the cheapest wall-clock win available in this repo is not
+adding fewer tests, it is making that one 2 m 9 s test cheaper or tagging it `Slow`. Nothing else in the
+bucket is within 40 s of it.
+
+> **B4's premise is wrong.** §19.7 says B4 "needs a `GateBoards` option". It does not:
+> `BlockDudeCurriculum.GateBoardsFor(int stage, int count = GateBoards)` **already takes a count** — the
+> seam exists. What is missing is one call site: `BlockDudeImitationCampaign.cs:343` calls
+> `GateBoardsFor(stage)` and takes the default 64. B4 is a parameter-threading job, not a new option.
+> Note also that B4 lands in the same area as the 2 m 9 s test above, which is the one place where the
+> critical-path argument does *not* give a free pass.
 
 ### 19.10 Two stale comments found on the way
 
@@ -1522,30 +1554,100 @@ roughly 2× here. Same obligation on A3 before it lands.
   stripped them). That comment is why the RushHour and FruitCake `TrainChunk`s *look* untested when they
   are in the measured bucket.
 - `ModelServiceInfrastructureTests.cs:387` states the superseded ILGPU reason as fact (§19.2).
+- `CAMPAIGN_TESTABILITY_PRD.md` §M64.5 is still marked ✅ at `:226` for `PolicyGrowth.Maybe` (item at
+  `:152`). Confirmed 2026-09-19: **no test referenced it before M69**. §19.6 records the doc as wrong; the
+  ✅ itself is still there and should be corrected when that file is next touched.
 
-### 19.11 Status — what is done, and what is in flight
+### 19.11 Status — verified
 
-**Done and verified** (build green, 25 new tests in 34 ms):
+Everything M69 wrote is now **compiled and run**. Both CI buckets green: **1130/1130** fast in 134 s,
+**4/4** determinism in 4 s (§19.9 for the numbers).
 
-- **A2**, the live `InvalidCastException`. Fixed at the source rather than the call site:
-  `CubeValueSearch.Solve`'s CPU convenience overload now takes `IValueNet` instead of `ResidualMlp`. It
-  only ever calls `Forward(Tensor)`, which every value net has — narrowing it bought nothing and cost a
-  crash, because the campaign had to cast its `IValueNet` field to satisfy the signature.
-- **A1**, `CubeDaviCurriculum`. All three traps held: the `float`/`double` mix with the `0.98f` literal
-  is preserved, `MeanValueAtDepth` stayed in the campaign so the extracted function is genuinely pure,
-  and growth remains a **separate** decision with a test pinning that a step can advance *and* grow.
+**Production changes — three defects, all fixed at the source:**
 
-> One test caught an error of mine worth recording: I asserted that a loss sitting exactly **at** the
-> plateau threshold counts as an improvement. The comparison is strictly `<`, so it does not. The
-> corrected test now pins both the strictness and the fact that `0.98f` widens to `0.9800000190734863`
-> rather than `0.98` — so rewriting the literal moves the boundary between those two cases.
+- **A2**, a live `InvalidCastException`. `CubeValueSearch.Solve`'s CPU convenience overload now takes
+  `IValueNet` instead of `ResidualMlp`. It only ever calls `Forward(Tensor)`, which every value net has
+  — narrowing it bought nothing and cost a crash, because the campaign had to cast its `IValueNet` field
+  to satisfy the signature. Reachable via `--net mlp --time-budget` on a CPU host.
+- **A1**, `CubeDaviCurriculum` extracted (§6 of `CAMPAIGN_TESTABILITY_PRD` asked for this and it had
+  never been done). All three traps held: the `float`/`double` mix with the `0.98f` literal is preserved,
+  `MeanValueAtDepth` stayed in the campaign so the extracted function is genuinely pure, and growth
+  remains a **separate** decision with a test pinning that a step can advance *and* grow.
+- **Three unguarded `PolicyNet.Load` call sites.** Both BlockDude campaigns wrap the load in
+  `catch (InvalidDataException)` so a stale-shaped checkpoint degrades to a fresh start. `CubeImitation`
+  (`:54`), `RushHourImitation` (`:77`) and `CubeEfficient` (`:63`) did not — there the same file killed
+  the run at startup. That is precisely the case `PolicyValueNet.ReadExact`'s exact-length guard exists
+  to *detect*: it was firing correctly and then taking the process down instead of recovering. All three
+  now mirror BlockDude and fall through to the fresh-net arm.
 
-**In flight when this was written** — two agents writing tests against §19.5 (the long tail) and §19.7
-items B1/B3/B5/B6. Files already on disk from them: `CubePolicyTrainStepTests.cs`,
-`SelfPlayChunkVariantTests.cs`, and edits to `SelfPlayLadderTests.cs`. **These are unverified** — they
-have not been compiled or run. Anyone picking this up should build, run the full suite, and check the
-agents' own reports for the APIs they flagged as uncertain before trusting them.
+> The subagent that found this reported two sites. There were three — it missed `CubeEfficientCampaign`.
+> A grep for the call, rather than trust in the report, is what turned up the third.
 
-**Not started:** B2 (XIT `TrainChunk` at frontier 1, ~109 lines) and B4 (the BlockDude gate limb, ~53,
-needs the `GateBoards` option). Both carry the §19.9 measurement obligation — they are the only items
-that can push the suite past ~3 minutes, and both estimates are unmeasured.
+**Tests added (measured per class, in the fast bucket):**
+
+| class | tests | new? |
+|---|---|---|
+| `CubeDaviCurriculumTests` | 25 | new (A1) |
+| `CubeVizTests` | 10 | new |
+| `DqnGrowthTests` | 9 | new |
+| `PolicyGrowthTests` | 9 | new |
+| `CubePolicyTrainStepTests` | 4 | new |
+| `PolicyValueNetBuilderTests` | 3 | new |
+| `CampaignTelemetryTests` | 4 | new |
+| `SelfPlayChunkVariantTests` | 4 | new |
+| `CampaignResumeErrorTests` | 4 | new |
+| `DqnSpineBehaviourTests` | 12 | +4 appended |
+| `SelfPlayLadderTests` | 4 | +2 appended |
+
+`CampaignResumeErrorTests` is what covers the three guards above — including
+`RushHour_resumes_a_net_that_has_no_progress_sidecar_beside_it`, which would have failed against the
+code as it stood that morning.
+
+### 19.12 Two hazards now pinned by GREEN tests — needing a production decision
+
+Both were reported by the long-tail agent and are **recorded, not endorsed**. They matter because the
+tests that pin them *pass*, which makes them look settled when they are not.
+
+- **`PolicyGrowth.CurrentRung` recovers the rung from the trunk SHAPE.** A net built outside the ladder
+  is indistinguishable from rung 0 and, at a high sample count, is walked from rung 0 to the top in a
+  single call. This is the shape of the recorded Rush Hour / Cube downgrade bug. The source documents it
+  in `<remarks>`; `An_off_ladder_trunk_reads_as_rung_zero_and_is_walked_to_the_top_in_one_call` now pins
+  the behaviour with a comment saying so explicitly.
+- **`DqnGrowth.CurrentStage` has the identical weakness** — an off-schedule trunk reads as stage 0.
+
+The fix in both cases is to **persist the rung**, as `SaturationGrowth` already does. That is a
+production change with resume-compatibility consequences (existing checkpoints carry no rung), which is
+why it was not made inside a coverage milestone. Until it is, there are green tests asserting that a
+documented hazard behaves the way it currently behaves.
+
+### 19.13 A methodology error worth recording: I measured against the wrong baseline
+
+I ran `dotnet test` unfiltered, saw it pass 15 minutes against a remembered "~3 minute" figure, observed
+testhost burning 2 897 s of CPU across 900 s of wall time, and concluded a new test was in a compute
+loop. **There was no loop.** This repo's suite is *never* run whole: `pull-request.yml` and
+`build-master.yml` both run `--filter "Category!=Slow&Category!=Determinism"`, then `Category=Determinism`
+separately. The ~3-minute figure is the **filtered** bucket. Running bare pulls in the entire `Slow`
+training bucket, and the pinned cores were tests doing exactly what they are meant to do.
+
+Isolating each new class under a 100 s cap is what disproved the theory — all 11 classes passed in 2–4 s
+each. That cap was only safe *because* the new tests are fast; had any been `Slow`-tagged it would have
+produced a false timeout and sent the next reader hunting a second phantom.
+
+**The rule:** measure against the command CI actually runs, and confirm what a remembered baseline was a
+baseline *of* before treating a deviation from it as a defect. A coverage run has the same trap —
+`coverlet.runsettings` excludes the Ilgpu assembly (§2), so a total taken without it is not comparable
+to one taken with it.
+
+### 19.14 Still not done
+
+- **B2** (XIT `TrainChunk` at frontier 1, ~109 lines) and **B4** (the BlockDude gate limb, ~53 lines).
+  Neither started. Read §19.9's reframe first — the wall-clock question is "does it exceed 2 m 9 s?",
+  and B4's stated blocker does not exist.
+- **A3/A4** (the Ilgpu factory seam on the two Cube campaigns, +281 lines → ~90%). Unchanged: this is a
+  coupling decision, not a coverage one (§19.4).
+- **`CubeViz`'s two policy-side `catch { return null; }` arms are unreachable** and are deliberately not
+  tested: `CubePolicyNet` fixes its own input width at `RubiksCubeEnv.ObservationSize`, so no legal
+  argument can make `Forward`/`LayerActivations` throw. Only the `IValueNet` side takes an arbitrary
+  width, and only that arm is asserted. `CubeViz` therefore lands near 21–25 of 27, not 27/27 — that is
+  honest, not a shortfall, and matches §19.5's "~5 catch arms no legal input can trigger".
+- The §14 / §15.5 target question is still open (declare ~80% met vs chase further).

@@ -2,6 +2,7 @@ using MintPlayer.AI.ReinforcementLearning.Campaigns;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Environments;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
+using MintPlayer.AI.ReinforcementLearning.Core.Telemetry;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 
 namespace MintPlayer.AI.ReinforcementLearning.Tests;
@@ -26,7 +27,8 @@ public class DqnSpineBehaviourTests
     }
 
     /// <summary>A campaign whose eval score is scripted, so save-best can be driven deliberately.</summary>
-    private sealed class ScriptedCampaign(IEnvironment<float[], int> env, DqnScoreOptions options, Queue<double> gates)
+    private sealed class ScriptedCampaign(IEnvironment<float[], int> env, DqnScoreOptions options,
+        Queue<double> gates, int obsSize = 4)
         : DqnScoreCampaign(env, options)
     {
         public double LastServedGate { get; private set; }
@@ -35,7 +37,8 @@ public class DqnSpineBehaviourTests
         protected override string StepNoun => "steps";
         protected override string GateLabel => "gate";
         protected override string DisplayName => "Toy DQN";
-        protected override int ObservationSize => 4;
+        /// <summary>The width the telemetry seam guards against; ToyEnv really emits 4, so anything else is a mismatch.</summary>
+        protected override int ObservationSize => obsSize;
         protected override IReadOnlyList<string>? InputLabels => null;
         protected override IReadOnlyList<string>? OutputLabels => null;
 
@@ -266,6 +269,93 @@ public class DqnSpineBehaviourTests
             Assert.Equal("steps", names[0]);
             Assert.Equal("loss", names[^1]);
             Assert.Contains("toy", names);       // the campaign's own metric sits between them
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
+    // ── M69: the no-model placeholder and the live-telemetry seam ─────────────────────────────
+    //
+    // Both live on the SPINE, so they are asserted here exactly once -- CAMPAIGN_TESTABILITY_PRD §6
+    // names repeating them per campaign as ceremony. The rule they encode is that a VIEWER attached to
+    // a run must degrade to "no sample" on its own, and never take the training run down with it: the
+    // telemetry forward runs beside a live trainer, and the M36 network viewer polls it every frame.
+
+    [Fact]
+    public void Evaluate_before_any_training_reports_the_no_model_placeholder()
+    {
+        // --eval-only against an empty store, and the first Evaluate of a fresh run. Returning a real
+        // metric row here would report a score for a net that does not exist.
+        using var c = new ScriptedCampaign(new ToyEnv(), Options(), new Queue<double>([7.0]));
+
+        var eval = c.Evaluate();
+
+        Assert.Equal("no model yet (train first)", eval.Summary);
+        var metric = Assert.Single(eval.Metrics);
+        Assert.Equal("steps", metric.Name);
+        Assert.Equal(0.0, metric.Value);
+        Assert.Equal(0.0, c.LastServedGate);   // the scripted eval was never consulted: there was nothing to score
+    }
+
+    [Fact]
+    public void A_viewer_attached_before_there_is_a_net_gets_nothing_rather_than_an_exception()
+    {
+        using var c = new ScriptedCampaign(new ToyEnv(), Options(), new Queue<double>([0.0]));
+        var telemetry = (INetworkTelemetrySource)c;
+
+        Assert.Equal("dueling-q", telemetry.NetKind);
+        Assert.Null(telemetry.SnapshotParameters());
+        Assert.Null(telemetry.SampleIo());
+        Assert.Null(telemetry.SampleActivations());
+        Assert.Equal(0L, telemetry.Sample().Step);
+    }
+
+    [Fact]
+    public void A_viewer_on_a_training_run_sees_the_live_observation_and_its_q_values()
+    {
+        var dir = Directory.CreateTempSubdirectory("m69-telemetry");
+        try
+        {
+            using var c = new ScriptedCampaign(new ToyEnv(), Options(chunk: 60, target: 600),
+                new Queue<double>([4.0]));
+            c.Resume(new FileModelStore(dir.FullName));
+            c.TrainChunk();
+            c.Evaluate();
+            var telemetry = (INetworkTelemetrySource)c;
+
+            var io = telemetry.SampleIo();
+            Assert.NotNull(io);
+            Assert.Equal(4, io!.Value.Input.Length);    // ToyEnv's observation
+            Assert.Equal(2, io.Value.Output.Length);    // one Q-value per action
+            Assert.NotEmpty(telemetry.SnapshotParameters()!);
+            Assert.NotEmpty(telemetry.SampleActivations()!);
+
+            var sample = telemetry.Sample();
+            Assert.Equal(60L, sample.Step);
+            Assert.Equal(600L, sample.MaxSteps);
+            Assert.Equal(4.0, sample.Eval);             // the gate the last Evaluate served
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void An_observation_width_mismatch_blanks_the_viewer_instead_of_taking_training_down()
+    {
+        // The guard exists because a campaign can change its observation encoding while a checkpoint (or a
+        // half-migrated net) still carries the old width. The forward would throw on the shape mismatch; on
+        // the telemetry path that exception would surface inside the training loop for the sake of a
+        // drawing. The rule is that the viewer goes blank and the run carries on.
+        var dir = Directory.CreateTempSubdirectory("m69-telemetry-mismatch");
+        try
+        {
+            using var c = new ScriptedCampaign(new ToyEnv(), Options(), new Queue<double>([0.0]), obsSize: 5);
+            c.Resume(new FileModelStore(dir.FullName));
+            c.TrainChunk();
+            var telemetry = (INetworkTelemetrySource)c;
+
+            Assert.Null(telemetry.SampleIo());
+            Assert.Null(telemetry.SampleActivations());
+            Assert.NotEmpty(telemetry.SnapshotParameters()!);   // training itself is untouched
+            Assert.Equal(60L, telemetry.Sample().Step);
         }
         finally { dir.Delete(recursive: true); }
     }

@@ -3628,7 +3628,7 @@ change.
 engine was not), one was **not a defect at all** (`reachableMask` is live, reached through a renaming
 facade), and the remaining seven are fixed.
 
-## M69 — Campaigns coverage  *(2026-09-19; see `COVERAGE_90_PRD.md` §19)* 🟡 IN PROGRESS — **A1 + A2 done; the long tail and B1/B3/B5/B6 are written but UNVERIFIED**
+## M69 — Campaigns coverage  *(2026-09-19; see `COVERAGE_90_PRD.md` §19)* ✅ VERIFIED — **1130/1130 fast + 4/4 determinism green in 134 s; three production defects fixed**
 
 `Campaigns` is at **61.31% (1,518 / 2,476 lines, 958 uncovered)**. A three-agent sweep split it by what
 actually blocks each group — three different problems, not one — and found **~445 lines reachable without
@@ -3654,15 +3654,25 @@ logic, and that one parameter gates all 286 lines including ~50 of pure arithmet
 6. **B4 — BlockDude gate limb** (~53). Needs `GateBoards` on the options record; `GateBoardsFor` already
    takes the count, so no other signature moves. **Measure first.**
 
-**Done so far.** **A2** — the `InvalidCastException` below, fixed at the source:
-`CubeValueSearch.Solve`'s CPU overload now takes `IValueNet`, so the cast is gone rather than guarded.
-**A1** — `CubeDaviCurriculum` extracted with 25 tests (34 ms), on rules governing a campaign that is
-**0/286 covered**. All three traps held, and one test caught me asserting the plateau threshold was
-inclusive when it is strictly `<`.
+**Verified.** Both CI buckets green as `pull-request.yml` runs them: **1130/1130** fast in 134 s,
+**4/4** determinism in 4 s. 78 test methods added across 9 new classes and 2 appended-to.
 
-**Unverified on disk:** `CubePolicyTrainStepTests.cs`, `SelfPlayChunkVariantTests.cs` and edits to
-`SelfPlayLadderTests.cs`, written by agents that were still running. **Build and run before trusting
-them.** Not started: B2 and B4, both carrying the §19.9 measurement obligation.
+**Three production defects fixed**, all at the source rather than the call site:
+**A2** — a live `InvalidCastException` (`--net mlp --time-budget` on a CPU host); `CubeValueSearch.Solve`'s
+CPU overload now takes `IValueNet`. **A1** — `CubeDaviCurriculum` extracted with 25 tests, on rules
+governing a campaign that is **0/286 covered**; one test caught me asserting the plateau threshold was
+inclusive when it is strictly `<`. **Three unguarded `PolicyNet.Load` sites** (`CubeImitation`,
+`RushHourImitation`, `CubeEfficient`) where a stale-shaped checkpoint killed the run at startup instead
+of degrading to a fresh start, as both BlockDude campaigns already do.
+
+**Read §19.9 before adding more tests.** The fast bucket is *critical-path* bound, not sum bound: it
+finishes in 134 s while its slowest single test takes 129 s. "How many seconds does this add" is the
+wrong question; "does it exceed 2 m 9 s" is the right one. §19.13 records the baseline error that
+surfaced this — the suite is never run unfiltered, so a bare `dotnet test` is not comparable to the
+remembered ~3-minute figure.
+
+**Open:** B2 and B4 (§19.14; B4's stated blocker does not exist — `GateBoardsFor` already takes a count).
+Two growth-rung hazards are now pinned by *green* tests and need a production decision (§19.12).
 
 **A live defect found on the way:** `CubeDaviCampaign.cs:259` casts `(ResidualMlp)_net` unconditionally,
 but `:155` assigns `new Mlp(...)` when `Residual` is false — which comes straight from the Lab's

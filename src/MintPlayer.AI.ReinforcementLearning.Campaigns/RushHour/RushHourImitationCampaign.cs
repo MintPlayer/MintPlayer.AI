@@ -69,22 +69,32 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options, 
 
     public bool Resume(IModelStore store)
     {
-        bool resumed;
+        bool resumed = false;
         using (var existing = store.TryOpenRead("rushhour", "policy"))
         {
             if (existing is not null)
             {
-                _net = RushHourPolicyNet.Load(existing);
-                Log("resumed policy net from the model store");
-                resumed = true;
+                // Mirror the BlockDude campaigns: a checkpoint whose shape no longer matches (the
+                // exact-length guard in PolicyValueNet.ReadExact) degrades to a fresh start instead of
+                // killing the run at startup — which is exactly the case that guard was added to detect.
+                try
+                {
+                    _net = RushHourPolicyNet.Load(existing);
+                    Log("resumed policy net from the model store");
+                    resumed = true;
+                }
+                catch (InvalidDataException ex)
+                {
+                    Log($"STALE net checkpoint ignored: {ex.Message}");
+                }
             }
-            else
+
+            if (!resumed)
             {
                 var initRng = new Xoshiro256StarStar(options.Seed ^ 0xDEADBEEF);
                 _net = new RushHourPolicyNet(initRng, RushHourGrowth.Ladder.TrunkFor(0));
                 Log(options.Grow ? $"initialized a fresh GROWING policy net (rung 0, trunk [{string.Join(",", RushHourGrowth.Ladder.TrunkFor(0))}])"
                          : "initialized a fresh policy net");
-                resumed = false;
             }
         }
         // Restore Adam's moment estimates when continuing a campaign — without them, resumed

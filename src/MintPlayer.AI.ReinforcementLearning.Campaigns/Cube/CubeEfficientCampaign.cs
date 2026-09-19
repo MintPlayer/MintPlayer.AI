@@ -55,23 +55,33 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficien
         Backend.Current = _adaptive;
         Log($"compute backend: {_adaptive.Describe()}");
 
-        bool resumed;
+        bool resumed = false;
         using (var existing = store.TryOpenRead(CubeIds.Environment, PolicyId))
         {
             if (existing is not null)
             {
-                _net = CubePolicyNet.Load(existing);
-                Log($"resumed EfficientCube net '{PolicyId}' from the model store");
-                resumed = true;
+                // Mirror the BlockDude campaigns: a checkpoint whose shape no longer matches (the
+                // exact-length guard in PolicyValueNet.ReadExact) degrades to a fresh start instead of
+                // killing the run at startup — which is exactly the case that guard was added to detect.
+                try
+                {
+                    _net = CubePolicyNet.Load(existing);
+                    Log($"resumed EfficientCube net '{PolicyId}' from the model store");
+                    resumed = true;
+                }
+                catch (InvalidDataException ex)
+                {
+                    Log($"STALE net checkpoint ignored: {ex.Message}");
+                }
             }
-            else
+
+            if (!resumed)
             {
                 var initRng = new Xoshiro256StarStar(options.Seed ^ 0xC0FFEE);
                 _net = new CubePolicyNet(initRng, Ladder.TrunkFor(0));
                 Log(options.Grow
                     ? $"initialized a fresh GROWING EfficientCube net '{PolicyId}' (rung 0, trunk [{string.Join(",", Ladder.TrunkFor(0))}])"
                     : $"initialized a fresh EfficientCube net '{PolicyId}' (trunk width {options.Width})");
-                resumed = false;
             }
         }
         _adam = AdamState.LoadOrInit(store, CubeIds.Environment, PolicyAdamId, _net.Parameters(), options.LearningRate, Log);
