@@ -1695,3 +1695,67 @@ comment **is** the reason, and `GateBoards` is what retires it — the same move
   width, and only that arm is asserted. `CubeViz` therefore lands near 21–25 of 27, not 27/27 — that is
   honest, not a shortfall, and matches §19.5's "~5 catch arms no legal input can trigger".
 - The §14 / §15.5 target question is still open (declare ~80% met vs chase further).
+
+## 20. M70 — the ILGPU assembly joins the report *(2026-09-19)*
+
+**One line of XML, no production change, and the headline goes UP.**
+
+### 20.1 The question, and why the old answer was too broad
+
+§2 excluded the whole ILGPU assembly because coverlet's injected `RecordHit` calls make ILGPU's
+runtime IL→GPU compile throw `InternalCompilerException`. That is **still true** — re-measured rather
+than assumed:
+
+| variant | backend tests | `InternalCompilerException` |
+|---|---|---|
+| `[…Ilgpu]*` (the old rule) | 30/30 pass | 0 |
+| **`[…Ilgpu]*IlgpuBackend*`** | **30/30 pass** | **0** |
+| no exclusion at all | 26/30 **FAIL** | 26 |
+
+The constraint is live. What was too broad is the *scope* of the fix.
+
+### 20.2 Why a type-level exclusion is safe here
+
+| file | lines | kernels |
+|---|---|---|
+| `IlgpuBackend.cs` | 892 | **all 20** |
+| `DeviceConvResidualTrainer.cs` | 397 | 0 |
+| `DeviceResidualTrainer.cs` | 255 | 0 |
+| `DeviceConvPolicyValueNet.cs` | 177 | 0 |
+| `DeviceResidualMlp.cs` | 165 | 0 |
+| `DeviceMlp.cs` | 127 | 0 |
+| `AdaptiveBackend.cs` | 115 | 0 |
+
+Every kernel is in one type; they are pure `ArrayView` arithmetic that never calls out of the class;
+and the six host-side files only call **into** `IlgpuBackend` (`ResolveActivation`, `SelectDevices`) —
+the safe direction.
+
+§2's warning that partial exclusion is "fragile because any helper a kernel calls breaks it too" is
+about **method**-level filtering and does not apply to a **type**-level one: a whole-type exclusion
+cannot strand a kernel's helper, because every kernel and every helper it calls is inside that type.
+
+### 20.3 The payoff — and a prediction of mine that was wrong
+
+| | line rate | ILGPU in the report |
+|---|---|---|
+| baseline | 81.68% | 8/8 (the DI glue only — i.e. nothing) |
+| type-only | **82.19%** | **1452/1536 — 94.5%** |
+
+1138/1138 tests pass either way.
+
+**I predicted this would lower the headline** — the reasoning being that a ~1.5k-line pool at a
+below-average rate dilutes a repo at ~80%. It does the opposite, because the premise was wrong: this
+host code is **94.5% covered**, well above the repo average. The backend suites (`IlgpuBackendTests`
+23, `AdaptiveBackendTests` 3, `BackendTests`) have been exercising it all along — it was simply never
+counted.
+
+The error worth recording is *how* I got it wrong: I estimated from a backend-tests-only probe, where
+`DeviceResidualTrainer` reads **0/324**, and generalised. Under the full suite the same file is
+**322/324**. A partial run is not a small version of a full run, and coverage read off one is a claim
+about the tests you ran, not about the code.
+
+### 20.4 What this is NOT
+
+Not A3/A4 (§19.4). Those inject a **factory seam** so the Cube *campaigns* become testable without a
+GPU backend — +281 lines in `Campaigns`, and a coupling decision. This touches no C# at all and is
+purely about what the collector is allowed to instrument. They are independent.

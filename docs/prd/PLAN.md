@@ -3724,3 +3724,19 @@ Training campaigns (resume net + Adam + full training state from the model store
 the gate report; `cube-davi` also takes `--width`, `--layers` and `--max-depth`, runs on the
 `AdaptiveBackend` (GPU device-resident forward), and logs `models/logs/cube-davi.csv`. Use
 `--data models` to refresh the shipped seeds.
+
+## M70 — the ILGPU assembly joins the coverage report  *(2026-09-19; see `COVERAGE_90_PRD.md` §20)* ✅ DONE
+
+**One line of XML, no production change, and the headline went UP: 81.68% → 82.19%.**
+
+`coverlet.runsettings` excluded the whole ILGPU assembly because coverlet's `RecordHit` injection
+breaks ILGPU's runtime kernel JIT. That constraint is **still live** — removing the exclusion entirely
+still fails 26 of 30 backend tests with 26 `InternalCompilerException`. What was too broad was the
+scope: **all 20 kernels live in one type**, they never call out of it, and the six host-side files only
+call into it. Excluding `*IlgpuBackend*` instead of the assembly keeps the JIT working and brings
+**1,528 lines** of host orchestration into the report at **94.5%** (1452/1536). 1138/1138 pass either
+way.
+
+I predicted this would dilute the headline and was wrong — I had estimated from a backend-tests-only
+probe where `DeviceResidualTrainer` reads 0/324; under the full suite it is 322/324. A partial run is
+not a small version of a full run.

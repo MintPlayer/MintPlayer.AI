@@ -23,10 +23,30 @@
                generators. Do not "fix" it to catch polyglot again. -->
           <ExcludeByFile>**/obj/**/*.cs,**/*.g.cs,**/*.Designer.cs</ExcludeByFile>
           <!-- ILGPU compiles this assembly's kernel methods from their IL at runtime; coverlet's
-               injected RecordHit tracker calls make that compile throw InternalCompilerException
-               (37 CI test failures). The whole assembly must stay uninstrumented — excluding only
-               kernel methods is fragile because any helper a kernel calls breaks it too. -->
-          <Exclude>[MintPlayer.AI.ReinforcementLearning.Ilgpu]*</Exclude>
+               injected RecordHit tracker calls make that compile throw InternalCompilerException.
+               Removing this exclusion entirely still reproduces exactly that (measured 2026-09-19:
+               26 of 30 backend tests fail, 26 InternalCompilerException) — the constraint is live,
+               not a historical artefact.
+
+               M69 NARROWED IT FROM THE ASSEMBLY TO THE TYPE. All 20 kernels live in IlgpuBackend,
+               they are pure ArrayView arithmetic that never calls out of the class, and the six
+               host-side files (Adaptive/DeviceMlp/DeviceResidualMlp/DeviceResidualTrainer/
+               DeviceConvPolicyValueNet/DeviceConvResidualTrainer) only call INTO IlgpuBackend —
+               the safe direction. So excluding the kernel-bearing TYPE keeps the JIT working while
+               letting ~1.5k lines of host orchestration be measured.
+
+               The old comment's warning that partial exclusion is "fragile because any helper a
+               kernel calls breaks it too" is about METHOD-level filtering and does not apply here;
+               a whole-type exclusion cannot strand a kernel's helper, because every kernel and
+               every helper it calls is inside that type.
+
+               Measured on the fast bucket (1138 tests, Debug): 1138/1138 pass either way, and the
+               line rate goes 81.68% -> 82.19%. It RAISES the total rather than diluting it: this
+               host code is 94.5% covered (1452/1536), well above the repo average, because the
+               backend suites already exercised it — it was simply never counted. If this ever has
+               to be widened back to the assembly, that is a ~1.5k-line drop in the denominator and
+               the headline moves with it. -->
+          <Exclude>[MintPlayer.AI.ReinforcementLearning.Ilgpu]*IlgpuBackend*</Exclude>
           <!-- SCOPE, decided by the owner 2026-09-18 (M63 §10), written here so it is a decision
                rather than an accident of which projects the test assembly happens to reference:
 
