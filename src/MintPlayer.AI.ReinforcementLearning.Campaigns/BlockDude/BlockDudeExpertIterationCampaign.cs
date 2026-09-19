@@ -38,7 +38,10 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// </remarks>
 public sealed class BlockDudeExpertIterationCampaign : ITrainingCampaign, INetworkTelemetrySource
 {
-    private const int BatchSize = 128;
+    // M64.7: was a const. `TrainChunk` RETURNS EARLY DOING NOTHING while fewer than this many samples
+    // have been collected, so a hard-coded value made a small-batch test silently train nothing while
+    // still looking like it passed. Shipped value 128 stays the default, so training is unchanged.
+    private int BatchSize => _options.BatchSize;
 
     private readonly BlockDudeExpertIterationOptions _options;
     private readonly ILogger? _logger;

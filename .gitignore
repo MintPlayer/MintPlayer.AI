@@ -15,6 +15,9 @@ coverage*.xml
 *.coverage
 # `dotnet test --results-directory coverage` output (CI coverage collection)
 coverage/
+# The .pg union report: the Polyglot twins' TypeScript coverage projected onto their .pg sources
+# (tools/pg_coverage_remap.mjs). A CI artefact, like everything else under coverage/.
+coverage-pg/
 
 ## Node / Angular
 node_modules/
@@ -50,6 +53,9 @@ cube-policy/
 # Polyglot-generated TypeScript twins — emitted by `dotnet build` (pgconfig.json include rules).
 # They must exist on disk for the Angular compile, but are build outputs, not source.
 src/RLDemo.Web/ClientApp/src/app/**/*_solver.ts
+# Polyglot 0.10.0 emits a v3 source map beside each TS twin when PolyglotOriginInfo=true (M63).
+# Same status as the twin itself: a build output, never committed.
+src/RLDemo.Web/ClientApp/src/app/**/*_solver.ts.map
 
 # Level packs copied from the Environments project by the CopyLevelPacks build target. The canonical files live
 # in src/MintPlayer.AI.ReinforcementLearning.Environments/<Game>/levels/ and are embedded there for training;
@@ -58,3 +64,6 @@ src/RLDemo.Web/wwwroot/levels/
 
 # Python bytecode from the level-pack importer tools.
 __pycache__/
+
+# M63.7: the TS-side .pg cobertura produced by tools/pg_coverage_remap.mjs in CI.
+coverage-ts/

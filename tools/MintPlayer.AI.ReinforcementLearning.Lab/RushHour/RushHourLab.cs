@@ -9,20 +9,27 @@ internal static class RushHourLab
 {
     public static void Run(string[] args)
     {
-        var a = new CliArgs(args);
-        double hours = a.Dbl("--hours", 9);
-        string dataDir = a.Str("--data", "data");
-        ulong seed = a.ULong("--seed", 1);
-        float learningRate = a.Flt("--lr", 3e-4f);
-        bool evalOnly = a.Has("--eval-only");
-        bool grow = a.Has("--grow");           // progressively grow the net wider+deeper mid-training (Net2Net)
-        int growEvery = a.Int("--grow-every", 2048); // samples between growth steps (with --grow)
+        var options = Parse(new CliArgs(args), out double hours, out string dataDir, out bool evalOnly);
 
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            services => services.AddRushHourImitationCampaign(new RushHourImitationOptions
-            {
-                Seed = seed, LearningRate = learningRate, Grow = grow, GrowEvery = growEvery,
-            }),
+            services => services.AddRushHourImitationCampaign(options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "imitation.csv")));
+    }
+
+    /// <summary>The campaign options this entry point's flags resolve to (M63.5: extracted from
+    /// <see cref="Run"/>, where they were only reachable by starting a real training run).</summary>
+    internal static RushHourImitationOptions Parse(CliArgs a, out double hours, out string dataDir, out bool evalOnly)
+    {
+        hours = a.Dbl("--hours", 9);
+        dataDir = a.Str("--data", "data");
+        evalOnly = a.Has("--eval-only");
+
+        return new RushHourImitationOptions
+        {
+            Seed = a.ULong("--seed", 1),
+            LearningRate = a.Flt("--lr", 3e-4f),
+            Grow = a.Has("--grow"),                  // progressively grow the net wider+deeper mid-training (Net2Net)
+            GrowEvery = a.Int("--grow-every", 2048), // samples between growth steps (with --grow)
+        };
     }
 }

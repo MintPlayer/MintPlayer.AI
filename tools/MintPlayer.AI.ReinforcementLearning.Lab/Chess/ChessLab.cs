@@ -14,20 +14,9 @@ internal static class ChessLab
     public static void Run(string[] args)
     {
         var a = new CliArgs(args);
-        double hours = a.Dbl("--hours", 1);
-        string dataDir = a.Str("--data", "data");
-        ulong seed = a.ULong("--seed", 1);
-        float learningRate = a.Flt("--lr", 1e-3f);
-        int hidden = a.Int("--hidden", 256);      // the net trunk is [hidden, hidden]
-        int sims = a.Int("--sims", 64);           // modest — chess movegen per node is heavy on CPU
-        int gamesPerChunk = a.Int("--games", 8);
-        int evalGames = a.Int("--eval-games", 10);
-        // Hard ply cap per self-play game. A weak net rarely mates, so games otherwise run to this cap; since a chunk's
-        // wall time is bounded by its SLOWEST game (the straggler that finishes last, single-threaded), the cap — not
-        // the average game — sets self-play throughput. Lower it for a heavy net (conv) to keep evals frequent.
-        int maxPlies = a.Int("--max-plies", 200);
-        double opponentRandom = a.Dbl("--opponent-random", 0); // fraction of games vs a random opponent (robustness)
-        bool evalOnly = a.Has("--eval-only");
+        var f = Parse(a);
+        (double hours, string dataDir, ulong seed) = (f.Hours, f.DataDir, f.Seed);
+        (int hidden, int sims, int maxPlies, bool evalOnly) = (f.Hidden, f.Sims, f.MaxPlies, f.EvalOnly);
 
         // --demo: play one self-play game with the (trained) net and print FENs to watch — no training.
         if (a.Has("--demo")) { ChessDemo.Run(dataDir, sims, seed, a.Int("--demo-plies", 100)); return; }
@@ -57,6 +46,57 @@ internal static class ChessLab
             return;
         }
 
+        var options = TrainingOptions(a, f, out bool useGpu, out string gpusSpec,
+                                      out double? firstEval, out double? evalEvery);
+
+        // Net architecture (M42): --arch conv builds an AlphaZero-style convolutional residual tower over the 18×8×8
+        // board (the plateau fix); default "mlp" keeps the flat PolicyValueNet. --filters/--blocks size the tower.
+        // The chess observation is 18 planes × 64 squares (ChessGame), laid out plane-major so it reshapes to 18×8×8.
+        IPolicyValueNetBuilder? netBuilder = a.Str("--arch", "mlp").ToLowerInvariant() == "conv"
+            ? new ConvNetBuilder(planes: 18, boardH: 8, boardW: 8, filters: a.Int("--filters", 64), blocks: a.Int("--blocks", 6))
+            : null; // null → SelfPlayCampaign's default flat MLP with trunk [hidden, hidden]
+
+        // The GPU-resident forward/train-step wiring (M43–M45) lives inside AddSelfPlayCampaign — this entry is
+        // purely flag parsing + registration.
+        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: useGpu,
+            services => services.AddSelfPlayCampaign<ChessState>("chess", options, netBuilder: netBuilder, gpus: gpusSpec),
+            CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
+            firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
+    }
+
+    /// <summary>The flags read before any mode dispatch: the run's budget, where it writes, and the sizes the
+    /// demo/bench/strength modes below share with training.</summary>
+    /// <remarks>M63.6: extracted from <see cref="Run"/>, where every default was reachable only by starting a
+    /// real self-play run.</remarks>
+    internal sealed record Flags(
+        double Hours, string DataDir, ulong Seed, float LearningRate, int Hidden, int Sims,
+        int GamesPerChunk, int EvalGames, int MaxPlies, double OpponentRandom, bool EvalOnly);
+
+    /// <summary>Reads the pure head of <see cref="Run"/> — no file, net or episode is touched.</summary>
+    internal static Flags Parse(CliArgs a)
+        => new(
+            Hours: a.Dbl("--hours", 1),
+            DataDir: a.Str("--data", "data"),
+            Seed: a.ULong("--seed", 1),
+            LearningRate: a.Flt("--lr", 1e-3f),
+            Hidden: a.Int("--hidden", 256),      // the net trunk is [hidden, hidden]
+            Sims: a.Int("--sims", 64),           // modest — chess movegen per node is heavy on CPU
+            GamesPerChunk: a.Int("--games", 8),
+            EvalGames: a.Int("--eval-games", 10),
+            // Hard ply cap per self-play game. A weak net rarely mates, so games otherwise run to this cap; since a
+            // chunk's wall time is bounded by its SLOWEST game (the straggler that finishes last, single-threaded),
+            // the cap — not the average game — sets self-play throughput. Lower it for a heavy net (conv).
+            MaxPlies: a.Int("--max-plies", 200),
+            OpponentRandom: a.Dbl("--opponent-random", 0), // fraction of games vs a random opponent (robustness)
+            EvalOnly: a.Has("--eval-only"));
+
+    /// <summary>The self-play options the training path's flags resolve to, plus the three knobs that are
+    /// passed to <c>LabHost.Run</c> rather than into the options record.</summary>
+    /// <remarks>M63.6: extracted from <see cref="Run"/>. Read AFTER the demo/bench/strength dispatch, exactly
+    /// as before, so a malformed training flag still cannot fail one of those read-only modes.</remarks>
+    internal static SelfPlayOptions TrainingOptions(CliArgs a, Flags f, out bool useGpu, out string gpusSpec,
+                                                    out double? firstEval, out double? evalEvery)
+    {
         // --ladder: hands-off difficulty ladder (M40.4). Whenever the live net beats the last-promoted checkpoint by a
         // margin in a net-vs-net arena, a new tier .ckpt + updated manifest are written straight into the web app's
         // models dir — so `--game chess --ladder --hours N` grows the site's difficulty roster with no manual steps.
@@ -82,19 +122,12 @@ internal static class ChessLab
         bool parallel = a.Has("--parallel");
         // --gpu: route Tensor ops through the ILGPU AdaptiveBackend (large GEMMs → GPU). Pays off with --leaf-batch
         // (batched inference); batch-1 self-play barely uses a GPU. The training step (batched) benefits regardless.
-        bool useGpu = a.Has("--gpu");
+        useGpu = a.Has("--gpu");
         // --gpus (M45): which CUDA GPUs to shard self-play generation across. Default "all" — with --gpu the process
         // auto-detects every GPU and uses them all; no need to state a count. Override with a count ("2") or explicit
         // ordinals ("0,2"). Ignored without --gpu. One GPU (or CPU) behaves exactly as M43/M44.
-        string gpusSpec = a.Str("--gpus", "all");
+        gpusSpec = a.Str("--gpus", "all");
         int? dop = a.Has("--dop") ? a.Int("--dop", System.Math.Max(1, System.Environment.ProcessorCount - 2)) : null;
-
-        // Net architecture (M42): --arch conv builds an AlphaZero-style convolutional residual tower over the 18×8×8
-        // board (the plateau fix); default "mlp" keeps the flat PolicyValueNet. --filters/--blocks size the tower.
-        // The chess observation is 18 planes × 64 squares (ChessGame), laid out plane-major so it reshapes to 18×8×8.
-        IPolicyValueNetBuilder? netBuilder = a.Str("--arch", "mlp").ToLowerInvariant() == "conv"
-            ? new ConvNetBuilder(planes: 18, boardH: 8, boardW: 8, filters: a.Int("--filters", 64), blocks: a.Int("--blocks", 6))
-            : null; // null → SelfPlayCampaign's default flat MLP with trunk [hidden, hidden]
 
         LadderOptions? ladder = a.Has("--ladder")
             ? new LadderOptions(
@@ -109,23 +142,18 @@ internal static class ChessLab
 
         // Eval/checkpoint cadence in minutes (defaults preserve CampaignOptions' 2 / 10). The ladder promotes on this
         // cadence, so a short cadence captures tiers sooner (and lets a quick run exercise the arena).
-        double? firstEval = a.Has("--first-eval") ? a.Dbl("--first-eval", 2) : null;
-        double? evalEvery = a.Has("--eval-every") ? a.Dbl("--eval-every", 10) : null;
+        firstEval = a.Has("--first-eval") ? a.Dbl("--first-eval", 2) : null;
+        evalEvery = a.Has("--eval-every") ? a.Dbl("--eval-every", 10) : null;
 
-        var cfg = new Mcts.Config(Simulations: sims, Cpuct: a.Flt("--cpuct", 1.25f),
+        var cfg = new Mcts.Config(Simulations: f.Sims, Cpuct: a.Flt("--cpuct", 1.25f),
             DirichletAlpha: a.Flt("--dirichlet-alpha", 0.3f), RootNoiseFrac: a.Flt("--root-noise", 0.25f));
-        // The GPU-resident forward/train-step wiring (M43–M45) lives inside AddSelfPlayCampaign — this entry is
-        // purely flag parsing + registration.
-        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: useGpu,
-            services => services.AddSelfPlayCampaign<ChessState>("chess", new SelfPlayOptions
-            {
-                Seed = seed, LearningRate = learningRate, Hidden = hidden, Search = cfg,
-                GamesPerChunk = gamesPerChunk, TempMoves = tempMoves, EvalGames = evalGames,
-                WindowCapacity = window, BatchSize = batch, EpochsPerChunk = epochs, MaxPlies = maxPlies,
-                OpponentRandomFrac = opponentRandom, Ladder = ladder, MaterialWeight = materialWeight,
-                ValueWeight = valueWeight, GradClipNorm = clip, Parallel = parallel, MaxDop = dop, LeafBatch = leafBatch,
-            }, netBuilder: netBuilder, gpus: gpusSpec),
-            CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "chess-selfplay.csv")),
-            firstEvalMinutes: firstEval, evalEveryMinutes: evalEvery);
+        return new SelfPlayOptions
+        {
+            Seed = f.Seed, LearningRate = f.LearningRate, Hidden = f.Hidden, Search = cfg,
+            GamesPerChunk = f.GamesPerChunk, TempMoves = tempMoves, EvalGames = f.EvalGames,
+            WindowCapacity = window, BatchSize = batch, EpochsPerChunk = epochs, MaxPlies = f.MaxPlies,
+            OpponentRandomFrac = f.OpponentRandom, Ladder = ladder, MaterialWeight = materialWeight,
+            ValueWeight = valueWeight, GradClipNorm = clip, Parallel = parallel, MaxDop = dop, LeafBatch = leafBatch,
+        };
     }
 }

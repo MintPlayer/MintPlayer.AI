@@ -47,9 +47,22 @@ jobs:
       # --collect writes coverage.cobertura.xml into a GUID-named subdirectory of
       # --results-directory, hence the ** in the upload glob below.
       run: >
-        dotnet test --configuration Release --no-build --filter "Category!=Slow" --verbosity normal
+        dotnet test --configuration Release --no-build --filter "Category!=Slow&Category!=Determinism" --verbosity normal
         --settings coverlet.runsettings
         --collect:"XPlat Code Coverage" --results-directory coverage
+
+    # M64.0c -- the bitwise-identity gate. Runs UNINSTRUMENTED and separately from the coverage
+    # bucket: these compare checkpoint bytes against checked-in hash literals, so instrumentation
+    # would cost time and change nothing. Until now this gate existed only as Slow-tagged tests that
+    # CI never ran, which meant a change breaking training reproducibility shipped green.
+    #
+    # A failure here is NOT a flake. It means the trained bytes moved. Either that was intended (a
+    # deliberate change to the training recipe -- update the literal and say so in the commit) or it
+    # is exactly the regression this step exists to catch.
+    - name: Determinism gate
+      run: >
+        dotnet test --configuration Release --no-build --filter "Category=Determinism"
+        --verbosity normal
 
     - name: Upload coverage
       # always(): a Test failure must still not lose the datapoint (if a report was written).
@@ -64,9 +77,82 @@ jobs:
         # With search on, a glob that matches nothing silently falls back to auto-detection
         # and would upload stray unparsable reports.
         disable-search: true
-        # Closes the build now instead of waiting out the ~2-minute server debounce.
-        finish: true
+        # M65: the frontend uploads a second report under the same (repo, sha, runId, runAttempt) and
+        # the service merges them, so this one no longer closes the build -- the last upload does.
+        finish: false
         # A coverage-service outage must never block a NuGet release.
+        fail-ci-if-error: false
+
+    # M65: master must measure the SAME thing a PR does, or the badge and the PR number disagree for
+    # reasons that have nothing to do with the code. That is worth ~a minute on the release path.
+    # Scope and rationale: see the matching block in pull-request.yml.
+    - name: Setup Node
+      if: always()
+      uses: actions/setup-node@v5
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: src/RLDemo.Web/ClientApp/package-lock.json
+
+    - name: Test Angular app
+      if: always()
+      working-directory: src/RLDemo.Web/ClientApp
+      run: npm ci && npm run test:coverage
+
+    - name: Re-root the frontend coverage paths
+      if: always()
+      working-directory: src/RLDemo.Web/ClientApp
+      run: node ../../../tools/reroot_frontend_coverage.mjs coverage/ClientApp/cobertura-coverage.xml src/RLDemo.Web/ClientApp
+
+    # The .pg union: the twins' coverage projected back onto their .pg sources through Polyglot's v3
+    # source maps, by `polyglot coverage remap` from the restored MSBuild package (M67).
+    # Rationale, and why --out-format is pinned to cobertura: see pull-request.yml.
+    - name: Locate the Polyglot CLI
+      if: always()
+      id: polyglot
+      run: |
+        TOOL=$(find "$HOME/.nuget/packages/mintplayer.polyglot.msbuild" -path '*/tools/linux-x64/polyglot' -type f | sort -V | tail -1)
+        if [ -z "$TOOL" ]; then echo "::error::polyglot CLI not found in the restored package"; exit 1; fi
+        chmod +x "$TOOL"
+        echo "tool=$TOOL" >> "$GITHUB_OUTPUT"
+
+    - name: Project the Polyglot twins onto their .pg sources
+      if: always()
+      run: >
+        "${{ steps.polyglot.outputs.tool }}" coverage remap
+        src/RLDemo.Web/ClientApp/coverage/ClientApp/lcov.info
+        --target typescript
+        --generated-dir src/RLDemo.Web/ClientApp/src
+        --root .
+        --out-format cobertura
+        --out coverage-pg/pg.cobertura.xml
+
+    - name: Upload frontend coverage
+      if: always() && hashFiles('src/RLDemo.Web/ClientApp/coverage/ClientApp/cobertura-coverage.xml') != ''
+      continue-on-error: true
+      uses: MintPlayer/MintPlayer.Spark/apps/CodeCoverage/action@coverage-upload-v1
+      with:
+        url: https://coverage.mintplayer.com
+        use-oidc: true
+        files: |
+          src/RLDemo.Web/ClientApp/coverage/ClientApp/cobertura-coverage.xml
+        disable-search: true
+        # The .pg report below is the last one, so it closes the build.
+        finish: false
+        fail-ci-if-error: false
+
+    - name: Upload the .pg union coverage
+      if: always() && hashFiles('coverage-pg/pg.cobertura.xml') != ''
+      continue-on-error: true
+      uses: MintPlayer/MintPlayer.Spark/apps/CodeCoverage/action@coverage-upload-v1
+      with:
+        url: https://coverage.mintplayer.com
+        use-oidc: true
+        files: |
+          coverage-pg/pg.cobertura.xml
+        disable-search: true
+        # The last upload of the build closes it.
+        finish: true
         fail-ci-if-error: false
 
     # Only the two library projects are packable (IsPackable=false everywhere else).

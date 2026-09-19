@@ -440,7 +440,11 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube.Kociemba
             }
             else
             {
-                table[index / 2] &= (sbyte)(0x0f | (value << 4));
+                // `unchecked` for symmetry with the even branch above. Both expressions can exceed
+                // sbyte: this one for value >= 8 (0x0f | 0x80 = 0x8f). It compiles today only because
+                // the project does not enable <CheckForOverflowUnderflow>, so turning that on — or
+                // lifting this file into one that does — would throw here and not there.
+                table[index / 2] &= unchecked((sbyte)(0x0f | (value << 4)));
             }
         }
 

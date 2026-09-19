@@ -19,7 +19,7 @@ internal static class BlockDudeLevelBench
 {
     /// <summary>Records one solved level in the web recorder's line format, keeping the SHORTEST line per level
     /// when several tiers solve it — the tiers differ, and reporting the worse one would understate the net.</summary>
-    private static void Emit(List<string> lines, string levelName, IReadOnlyList<int> moves)
+    internal static void Emit(List<string> lines, string levelName, IReadOnlyList<int> moves)
     {
         string line = $"{levelName} · {moves.Count} moves · {string.Concat(moves)}";
 
@@ -28,7 +28,7 @@ internal static class BlockDudeLevelBench
         else if (moves.Count < ExistingLength(lines[existing])) lines[existing] = line;
     }
 
-    private static int ExistingLength(string line)
+    internal static int ExistingLength(string line)
     {
         var parts = line.Split(" · ");
         return parts.Length >= 2 && int.TryParse(parts[1].AsSpan(0, parts[1].IndexOf(' ')), out int n) ? n : int.MaxValue;

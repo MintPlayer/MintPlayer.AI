@@ -9,21 +9,73 @@
         <Configuration>
           <!-- The only format both coverlet and coverage.mintplayer.com speak natively. -->
           <Format>cobertura</Format>
-          <!-- **/obj/**: this repo compiles generated code out of obj/ — the Polyglot
-               transpiler's C# (obj/**/polyglot/*.cs) and MintPlayer.SourceGenerators output.
-               None of it is in `git ls-files`, so the server could never resolve those paths;
-               excluding keeps the total meaningful instead of diluted by unmatchable lines. -->
+          <!-- **/obj/**: this repo compiles generated code out of obj/ — MintPlayer.SourceGenerators
+               output, and (until M63) the Polyglot transpiler's C#. None of it is in `git ls-files`,
+               so the server could never resolve those paths; excluding keeps the total meaningful
+               instead of diluted by unmatchable lines.
+
+               M63 NOTE — this rule NO LONGER APPLIES to the Polyglot output, and that is deliberate.
+               With `PolyglotOriginInfo=true` the generated C# carries `#line` pragmas naming the
+               `.pg`, so Roslyn records the `.pg` as the PDB document — and coverlet matches
+               ExcludeByFile against the PDB-recorded path, not the file on disk (verified). The
+               solvers therefore enter the report as `src/**/polyglot/*_solver.pg`, which IS in
+               `git ls-files`, so the server resolves them. The rule still covers the source
+               generators. Do not "fix" it to catch polyglot again. -->
           <ExcludeByFile>**/obj/**/*.cs,**/*.g.cs,**/*.Designer.cs</ExcludeByFile>
           <!-- ILGPU compiles this assembly's kernel methods from their IL at runtime; coverlet's
-               injected RecordHit tracker calls make that compile throw InternalCompilerException
-               (37 CI test failures). The whole assembly must stay uninstrumented — excluding only
-               kernel methods is fragile because any helper a kernel calls breaks it too. -->
-          <Exclude>[MintPlayer.AI.ReinforcementLearning.Ilgpu]*</Exclude>
+               injected RecordHit tracker calls make that compile throw InternalCompilerException.
+               Removing this exclusion entirely still reproduces exactly that (measured 2026-09-19:
+               26 of 30 backend tests fail, 26 InternalCompilerException) — the constraint is live,
+               not a historical artefact.
+
+               M69 NARROWED IT FROM THE ASSEMBLY TO THE TYPE. All 20 kernels live in IlgpuBackend,
+               they are pure ArrayView arithmetic that never calls out of the class, and the six
+               host-side files (Adaptive/DeviceMlp/DeviceResidualMlp/DeviceResidualTrainer/
+               DeviceConvPolicyValueNet/DeviceConvResidualTrainer) only call INTO IlgpuBackend —
+               the safe direction. So excluding the kernel-bearing TYPE keeps the JIT working while
+               letting ~1.5k lines of host orchestration be measured.
+
+               The old comment's warning that partial exclusion is "fragile because any helper a
+               kernel calls breaks it too" is about METHOD-level filtering and does not apply here;
+               a whole-type exclusion cannot strand a kernel's helper, because every kernel and
+               every helper it calls is inside that type.
+
+               Measured on the fast bucket (1138 tests, Debug): 1138/1138 pass either way, and the
+               line rate goes 81.68% -> 82.19%. It RAISES the total rather than diluting it: this
+               host code is 94.5% covered (1452/1536), well above the repo average, because the
+               backend suites already exercised it — it was simply never counted. If this ever has
+               to be widened back to the assembly, that is a ~1.5k-line drop in the denominator and
+               the headline moves with it. -->
+          <Exclude>[MintPlayer.AI.ReinforcementLearning.Ilgpu]*IlgpuBackend*</Exclude>
+          <!-- SCOPE, decided by the owner 2026-09-18 (M63 §10), written here so it is a decision
+               rather than an accident of which projects the test assembly happens to reference:
+
+               · src/RLDemo.Console — OUT. A demo CLI, not shipped library surface. It is absent
+                 from the report today only because nothing references it; that is recorded as
+                 intentional. If it ever gains a project reference, exclude it explicitly here
+                 rather than letting ~630 uncovered lines silently enter the denominator.
+               · tools/**Lab — IN, and to be genuinely tested (M63.5). The recommendation to
+                 exclude it as dev tooling was considered and DECLINED, so it stays in the
+                 denominator and its ~3.2k lines count against the 90% target.
+               · tools/**Bench — not referenced, same status as RLDemo.Console. -->
+
           <!-- SourceLink would rewrite report paths to raw.githubusercontent.com URLs, which
                breaks the server's suffix-matching against `git ls-files`. -->
           <UseSourceLink>false</UseSourceLink>
           <DeterministicReport>false</DeterministicReport>
           <SkipAutoProps>false</SkipAutoProps>
+          <!-- M63: stop recording a line once it has been hit, instead of counting every pass.
+               Required, not an optimisation. Since PolyglotOriginInfo=true brought the `.pg` solvers
+               into the report they are instrumented for the first time, and they are the hot path —
+               the parity and perft suites push millions of simulation steps through those inner
+               loops. Measured 2026-09-18 on the fast bucket (707 tests, Release): 3m08s before the
+               solvers were instrumented, 15m55s after, 5m07s with this on — and the line rate is
+               bit-identical with and without it (10,458/15,355 = 68.11%), because coverage consumes
+               covered-vs-not, never the counts. Cost: `hits` in the report becomes 0/1 rather than a
+               tally, so the cobertura is no longer a profiler. Nothing here or on
+               coverage.mintplayer.com (which merges with max semantics) reads it as one.
+               Related: without this, several `.pg` lines saturated at int.MaxValue anyway. -->
+          <SingleHit>true</SingleHit>
         </Configuration>
       </DataCollector>
     </DataCollectors>

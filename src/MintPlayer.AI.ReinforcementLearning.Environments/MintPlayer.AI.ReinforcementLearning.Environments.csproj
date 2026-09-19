@@ -11,8 +11,20 @@
        declares the target set — C# lands in obj/ (compiled, as before) and the TypeScript twins are routed by
        its `include` rules straight into RLDemo.Web/ClientApp (gitignored build outputs; no more hand-running
        `polyglot build` with the typescript target flag). -->
+  <PropertyGroup>
+    <!-- M63 / Polyglot issue #69: emit `#line` pragmas into the generated C# pointing back at the `.pg`.
+         Roslyn writes them into the PDB sequence points, so coverlet attributes hits to the `.pg` file with
+         `.pg` line numbers and no post-processing — and the `**/obj/**/*.cs` rule in coverlet.runsettings
+         stops matching them, because that glob tests the PDB-recorded path, not the file on disk.
+         Measured 2026-09-18 (707 tests, fast bucket, Release): 59.86% -> 68.11%, the nine solvers entering
+         as 3,493/3,719 covered (93.9%). ON here rather than only in CI so a local coverage run measures
+         what CI measures; the cost is that the debugger steps into `.pg` and a compiler error in generated
+         code reports against the `.pg` line. Flip to `false` to get byte-identical pre-0.10.0 output. -->
+    <PolyglotOriginInfo>true</PolyglotOriginInfo>
+  </PropertyGroup>
+
   <ItemGroup>
-    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.9.9" PrivateAssets="all" />
+    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.10.1" PrivateAssets="all" />
     <PackageReference Include="MintPlayer.SourceGenerators" Version="10.20.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

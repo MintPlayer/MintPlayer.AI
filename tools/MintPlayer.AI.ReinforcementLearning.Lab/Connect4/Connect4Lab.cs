@@ -12,25 +12,30 @@ internal static class Connect4Lab
 {
     public static void Run(string[] args)
     {
-        var a = new CliArgs(args);
-        double hours = a.Dbl("--hours", 1);
-        string dataDir = a.Str("--data", "data");
-        ulong seed = a.ULong("--seed", 1);
-        float learningRate = a.Flt("--lr", 1e-3f);
-        int hidden = a.Int("--hidden", 128);      // one width; the net trunk is [hidden, hidden]
-        int sims = a.Int("--sims", 100);          // MCTS simulations per move
-        int gamesPerChunk = a.Int("--games", 32);
-        int evalGames = a.Int("--eval-games", 20);
-        double opponentRandom = a.Dbl("--opponent-random", 0); // fraction of games vs a random opponent (robustness)
-        bool evalOnly = a.Has("--eval-only");
+        var options = Parse(new CliArgs(args), out double hours, out string dataDir, out bool evalOnly);
 
-        var cfg = new Mcts.Config(Simulations: sims);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
-            services => services.AddSelfPlayCampaign<Connect4State>("connect4", new SelfPlayOptions
-            {
-                Seed = seed, LearningRate = learningRate, Hidden = hidden, Search = cfg,
-                GamesPerChunk = gamesPerChunk, EvalGames = evalGames, OpponentRandomFrac = opponentRandom,
-            }),
+            services => services.AddSelfPlayCampaign<Connect4State>("connect4", options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "connect4-selfplay.csv")));
+    }
+
+    /// <summary>The self-play options this entry point's flags resolve to (M63.5: extracted from
+    /// <see cref="Run"/>, where they were only reachable by starting a real training run).</summary>
+    internal static SelfPlayOptions Parse(CliArgs a, out double hours, out string dataDir, out bool evalOnly)
+    {
+        hours = a.Dbl("--hours", 1);
+        dataDir = a.Str("--data", "data");
+        evalOnly = a.Has("--eval-only");
+
+        return new SelfPlayOptions
+        {
+            Seed = a.ULong("--seed", 1),
+            LearningRate = a.Flt("--lr", 1e-3f),
+            Hidden = a.Int("--hidden", 128),                      // one width; the net trunk is [hidden, hidden]
+            Search = new Mcts.Config(Simulations: a.Int("--sims", 100)),
+            GamesPerChunk = a.Int("--games", 32),
+            EvalGames = a.Int("--eval-games", 20),
+            OpponentRandomFrac = a.Dbl("--opponent-random", 0),    // fraction of games vs a random opponent
+        };
     }
 }

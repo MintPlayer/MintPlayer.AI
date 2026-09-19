@@ -13,6 +13,50 @@ public class Board2048Tests
         return board;
     }
 
+    // ── exponent saturation ───────────────────────────────────────────────────────────────────
+    // Nothing pinned this until M68, and it is a STORAGE constraint rather than a game rule:
+    // NTuple2048Agent packs four bits per cell into a 16^4 table index WITHOUT masking, and
+    // Expectimax2048's transposition key does the same with a mask. An exponent of 16 would index
+    // past that table, or silently alias into a neighbouring nibble and corrupt a trained
+    // checkpoint. The browser's ClassicEngine mirrors this cap; it diverged above 15 until M68.
+
+    [Fact]
+    public void Merging_two_maximum_tiles_saturates_rather_than_overflowing_the_nibble()
+    {
+        var board = Row(15, 15);
+
+        Assert.True(Board2048.ApplyMove(board, Board2048.ActionLeft, out _, out int val));
+
+        Assert.Equal(15, board[0]);
+        Assert.Equal(0, board[1]);
+        // The merge still scores, exactly as an uncapped one would: 1 << 15.
+        Assert.Equal(32768, val);
+    }
+
+    [Fact]
+    public void Merging_up_to_the_cap_still_merges()
+    {
+        // Guards the rule from being read as "never merge at 15" rather than "saturate at 15".
+        var board = Row(14, 14);
+
+        Assert.True(Board2048.ApplyMove(board, Board2048.ActionLeft, out _, out int val));
+
+        Assert.Equal(15, board[0]);
+        Assert.Equal(32768, val);
+    }
+
+    [Fact]
+    public void No_reachable_board_exceeds_four_bits_per_cell()
+    {
+        // The property the packing actually depends on, asserted over the whole board rather than
+        // one line: every cell stays addressable as a nibble however the move is applied.
+        var board = Row(15, 15, 15, 15);
+
+        Board2048.ApplyMove(board, Board2048.ActionLeft, out _, out _);
+
+        Assert.All(board, cell => Assert.InRange(cell, (byte)0, (byte)15));
+    }
+
     [Fact]
     public void Slide_MergesEqualPairs_OncePerMove()
     {

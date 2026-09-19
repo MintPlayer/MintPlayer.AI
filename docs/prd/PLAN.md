@@ -3221,6 +3221,496 @@ does not exist (enumeration is inlined at 7 `.pg` sites); `TetrisEnv.cs:23` / `T
 observation is 814 when it is 854; `.pg:819` says 454/six planes; `RewardTetrisBonus` (`.pg:63`) is declared and
 never read in the `.pg`.
 
+
+## M63 — Coverage 60% → 90%, and teaching coverage to speak Polyglot  *(2026-09-17; branch `m63-coverage-90`; PR #54; see `COVERAGE_90_PRD.md`)* 🟡 — **59.86% → 70.8% shipped**; M63.1–M63.3 and M63.6–M63.7 done, M63.4 partly rejected on measurement, M63.5 ongoing
+
+Planned from a 4-agent investigation (baseline audit · Polyglot compiler feasibility · coverlet mechanics ·
+tooling survey). Successor to M56, which built the collection/upload pipeline and explicitly left the `.pg`
+sources measuring as nothing and the frontend measuring as nothing at all.
+
+**The headline finding — the merge tool the request anticipated is not needed for the C# half.** It was
+verified empirically (scratchpad probe, coverlet.collector 10.0.1) that a `#line <n> "<path>.pg"` directive in
+generated C# makes coverlet report `filename="….pg"` with line numbers **remapped into `.pg` numbering** —
+Roslyn writes `#line` into the PDB sequence points and coverlet reads them verbatim. Two further observed
+consequences: `ExcludeByFile` matches the **PDB-recorded** path, not the physical file (so the existing
+`**/obj/**/*.cs` rule stops applying by itself), and one physical `.cs` splits into multiple `<class>` entries
+keyed by filename (so partial remapping is well-defined). `.pg` files are in `git ls-files`, which is what
+coverage.mintplayer.com needs to resolve a path.
+
+**The union is free.** The service already merges multiple reports under one `(repo, sha, runId, runAttempt)`
+with max semantics (M56 §2). Two uploads — C# cobertura and TS lcov, both already keyed on `.pg` lines — union
+per-line server-side. No `pg-union.xml`, no bespoke unioner, no ReportGenerator in the hot path. *Caveat
+recorded in the PRD: union means "tested somewhere", not "tested in both targets", and it is only honest
+because the parity suites assert the two emissions agree bitwise.*
+
+**Polyglot is moderate, not a rewrite** — because both prerequisites already hold. `SourcePos` is a base-class
+field on `ir::Expr` (`ir.hpp:27-33`) and `ir::Stmt` (`ir.hpp:277-282`), propagated at 72 sites in `lower.cpp`
+with zero default-constructed `SourcePos{}`; and there is exactly one line-writing chokepoint,
+`EmitterBase::line()` (`emitter_base.cpp:1598`, 27 call sites). **One investigating agent reported the
+opposite — that no IR node carries a location — which would have made this a whole-IR rewrite. That report was
+checked and is wrong.** Four real obstacles remain: `compile()` passes `nullptr` for the `SourceMap` so every
+build-path token is stamped `fileId = 0`; preludes are prepended *after* the walk so line numbers need
+shifting; scaffolding needs `#line hidden`; and — the biggest cost item — the conformance suite compares
+emitted output byte-for-byte, so the feature must be flag-gated off by default.
+
+**Counter-intuitive expectation, made falsifiable as spike S3:** bringing the `.pg` solvers in should *raise*
+the percentage. Those 8,466 generated lines are among the most heavily exercised code in the repo (parity +
+perft) and today count in neither numerator nor denominator.
+
+### Outcome
+
+- **M63.1 — Spikes S1 + S4** ✅. S1 answered the collapse question favourably (one `<line>` element, hits SUM,
+  covered if ANY contributor ran) **and falsified the plan**: emitting `#line` only on source-line *change*
+  lets braces drift onto unrelated `.pg` lines and report them as covered. The rule became a directive on
+  EVERY line — `#line N` where known, `#line hidden` where not.
+- **M63.2 — Polyglot `#line`** ✅, shipped as [Polyglot#70](https://github.com/MintPlayer/MintPlayer.Polyglot/pull/70)
+  / `v0.10.0`, option renamed to `--origin-info` during review.
+- **M63.3 — Adopt** ✅ **59.86% → 68.11%**. 8,466 directives over 8,466 generated lines, all nine `.pg` files
+  attributed, zero misattribution. The nine solvers entered at **93.9% covered**, confirming they had been
+  depressing the number purely by being invisible.
+- **M63.4 — Denominator decisions** 🟡. Scope recorded in `coverlet.runsettings` (RLDemo.Console out,
+  `tools/Lab` in and tested — the recommendation to exclude it was declined). The `Category=Medium` half was
+  implemented, measured and **REJECTED** (PRD §12.7): +167s for +1.18 pp, and a timing-assertion test
+  *inverts and fails* under instrumentation.
+- **M63.5 — C# push** 🟡 ongoing. `tools/Lab` 0.6% → 23.3% via seams across ten files (`Parse` ×8,
+  `CubeDavi.Resolve`, `GateLines`, `EvalStats`, `VizServer.SampleOnce`, `TetrisLab`), plus four real bugs
+  found because coverage finally reached that code. **Not done:** ChessLab seams; Campaigns (1,473 uncovered,
+  the largest remaining pool) is under investigation for DI-driven testability.
+- **M63.6 — Frontend + TS `.pg` mapping** ✅. Vitest from zero (there were no frontend tests at all) plus
+  `tools/pg_coverage_remap.mjs`. S5's clean route **structurally cannot work** —
+  `@angular/build:unit-test` pre-builds with esbuild before Vitest starts, so a Vite plugin feeding the
+  Polyglot map in as an input map never fires; the composition is done post-hoc instead.
+- **M63.7 — CI wiring** ✅. Two uploads per commit (C# then TS) merged server-side with max semantics, which
+  is the union architecture rather than a workaround; `finish: true` moved to the last upload.
+
+**Verified against the live service (spike S6):** `coverage/project` reported **70.7%** on the C#-only run,
+matching the local figure to the decimal — which is only possible if the `.pg` paths resolved, since dropping
+them would have given 63.3%. The TS upload then moved it to **70.8%**, proving the service also **unions** two
+reports naming the same `.pg`. Both checks report `conclusion: neutral`, which GitHub renders as *skipping*;
+that reads like a failure but means informational-only, because Blocking is off in the repository gate.
+
+**Cost:** the fast bucket went 188s → 279s once the solvers were instrumented (coverlet's per-sequence-point
+`Interlocked.Increment` contending across xUnit threads — measured 71× at 4 threads on an isolated probe,
+*slower in absolute terms than 1 thread*, a false-sharing signature). `SingleHit` plus splitting
+`BlockDudeGateBoardsTests` into three classes (it held 272s of serial work against a 279s wall clock) brought
+it back to **192s with nothing traded** — no assertion removed, no sampling constant reduced. It is 213s after
+M63.5's new tests, and the CI job is 4m50s with the frontend step.
+
+**90% is not reachable in this milestone, and the PRD says so with arithmetic** (§12.6): the gap is +2,785
+lines and closing it needs most of Campaigns, whose real tests are `Category=Slow` — and §12.7 now shows those
+cannot simply be reclassified in. Whether to exclude `tools/**`, move the target, or treat 90% as a
+multi-milestone arc is **open** (§10.4).
+
+**Rejected on measurement, recorded so they are not re-proposed:** Microsoft's `Code Coverage` collector (28%
+*slower* on the real suite than coverlet+`SingleHit`, despite an isolated probe predicting 2× better, and its
+absolute backslash paths would break the server's `git ls-files` matching); and the `Category=Medium` bucket
+above. Both were killed by the same error — extrapolating a probe measurement to the whole suite — which is
+now a written rule: **any timing claim about this suite must be measured with `--collect`.**
+
+**Four open decisions deliberately left to the owner** (PRD §10): `tools/Lab` (~3.2k lines, in the denominator
+only because the test project references it for `CliArgs` — the single largest lever, and a metric-definition
+change); whether to add a `Category=Medium` bucket so existing Campaigns tests start counting; whether
+`RLDemo.Console` (631 lines, currently invisible) comes in; and whether 90% is still the right bar once the
+denominator is honest.
+
+**Corrections landing in the same PR:** `COVERAGE_PRD.md` §3.1 ("the `.pg` sources stay effectively measured
+through nothing — accepted") and §6 ("Angular test coverage — there is no `ng test` in CI to instrument") are
+both superseded; the `ExcludeByFile` comment in `coverlet.runsettings` becomes actively misleading once
+`#line` ships, because the rule silently stops applying to Polyglot output while still applying to
+source-generator output.
+
+## M64 — Making the training campaigns unit-testable  *(2026-09-18; see `CAMPAIGN_TESTABILITY_PRD.md`)* 🟡 — **Campaigns 34.3% → 54.0%, repo 70.72% → 74.18%**; M64.0–M64.6 done, M64.7 half done (CubeDavi GPU seam deferred)
+
+Planned from a 4-agent sweep (M46 DI audit · campaign hard-coded deps · determinism contract · fast-test
+strategy). `Campaigns` is **2,454 coverable lines at ~34%**, the largest uncovered pool and the reason M63
+could not reach 90%. The prompt was: *the campaigns train models, so use DI to make them testable.*
+
+**The premise is redirected: DI is NOT the blocker, and two agents concluded that independently.**
+`ITrainingCampaign.TrainChunk()` already IS the one-step seam and three campaigns are already driven through
+it by existing tests; `CampaignRunner(TimeProvider?)` already has the clock seam and does zero IO; M46 already
+injected envs, games, options, `ILogger`, `IModelStore`, `ILadderStore` and the net builders. What actually
+blocks a fast campaign test is **hard-coded constants** — `TrainChunkIterations = 1000` (CubeDavi), three
+`const BatchSize` values whose `TrainChunk` **returns early doing nothing** below the threshold, a concrete
+`AdaptiveBackend` ctor param, and 30 puzzle generations in a RushHour *field initializer*. A second DI pass
+over an already-DI'd surface would be **riskier** than the first, because what is still un-injected was left
+alone precisely for being load-bearing.
+
+**Zero tests instantiate `CubeDaviCampaign` (577 lines) or `BlockDudeExpertIterationCampaign` (518)** — 1,095
+lines nothing has ever constructed.
+
+**The cheapest large win is shrinking four existing tests, not writing new ones.** Across
+`CampaignContractTests`, `SelfPlayCampaignTests` and `DraughtsSelfPlayTests` there is **not one learning
+assertion** — every one is mechanical (resume, chunk arithmetic, metric names, no-NaN, store ids). They are
+Slow because of their *budgets*. Proof already in-tree: `TetrisEnvTests` and `CrazyFruitsEnvTests` make the
+identical assertions at `ChunkSteps=60, Hidden=[32,32]` and are **not** Slow, while `CampaignContractTests`
+does the same at `ChunkSteps=1500, Hidden=[128,128]` and is. **25× the budget for the same checks.**
+
+**⚠ PRECONDITION — M64.0, the determinism gate, before anything else.** M46 made *"training stays bitwise
+identical"* a hard gate for every milestone. Two verified findings: **(1) it does not run in CI** — both
+workflows use `--filter "Category!=Slow"` and every checkpoint-SHA test is tagged `Slow`, so a change that
+breaks bitwise-identity **produces a fully green PR today**; and **(2) it is blind to uniform drift** —
+`RunAndHashCheckpoint` compares the three arms only to *each other*, all computed by the post-change code, so
+a refactor that shifts the seed fan-out uniformly passes. Fix is entirely test-side: checked-in hash literals
+generated on the base commit, a DQN-family hash test (that family has none), and a **separate uninstrumented**
+CI job — which sidesteps M63.4's revert, since that was caused by a *performance-comparison* assertion and
+determinism tests are not one.
+
+**The three real hazards are identity-and-wiring, not ordering.** `SeedSequence.Derive(i)` is a pure function
+of `(masterSeed, i)`, so reordering `CreateRng` calls is harmless — the architecture's best defence. The
+genuine risks all compile cleanly and pass CI: **env instance lifetime** (envs hold a persistent xoshiro
+re-seeded only when `Reset(seed)` is passed one, and campaigns are `AddSingleton` with envs **captured in the
+closure** — that capture is load-bearing); **`[Inject]` generated parameter order** (subclass fields emit
+first, so `SnakeDqnCampaign` has two same-typed env params in surprising order — reorder a field and a
+positional call site still compiles while train/eval envs swap); and **stream-index collision**, which nothing
+detects. Plus one undocumented subtlety: the DQN trainer's periodic eval runs on the **same env instance** as
+training and mutates its RNG, so `EvalEvery`/`EvalEpisodes`/chunk size are *inside* the training byte stream.
+
+- **M64.0 — the gate** (hash literals · DQN-family hash · uninstrumented CI job). Precondition, not a step.
+- **M64.1 — shrink, no new code**: `CampaignContractTests` ×4 to the proven-affordable budget; self-play
+  lifecycle *and* its `BatchSize`. **The `BatchSize` trap:** `SelfPlayCampaign.cs:226` gates all training
+  behind `_window.Count >= _batchSize`, so shrinking games without shrinking the batch yields a green test
+  that trains nothing — and the existing Slow test (`GamesPerChunk=4` at `BatchSize=128`) may already be
+  hollow. Every shrunk self-play test asserts `policyLoss` is non-NaN.
+- **M64.2 — serialization round-trips**: `CampaignProgressState`, `BlockDudeTrainingState` (196 lines, zero
+  coverage). Positional binary IO — a field added to `Save` but not `TryLoad` reads everything after it as
+  garbage, invisibly, until a long run resumes wrong.
+- **M64.3 — the DQN spine**: save-best (**a worse eval must not overwrite the deployable net — untested
+  today**), warm start without `dqn-state`, exact-cap chunk arithmetic, metric order.
+- **M64.4 — the cheapest real campaign**: `SelfPlayCampaign<Connect4State>` at `Hidden=8, Simulations=1,
+  GamesPerChunk=1, BatchSize=16`; asserts the `az-progress` sidecar round-trip the Slow test never checks.
+- **M64.5 — Campaigns helpers**: `PolicyGrowth.Maybe`, `SupervisedTraining`, net-builder kind tags,
+  `FileLadderStore` naming, `CubePolicyTraining.Shuffle`.
+- **M64.6 — BlockDude lifecycle without `TrainChunk`**: resume/checkpoint/fingerprint on 526 lines with zero
+  lifecycle coverage, deliberately never running the oracle.
+- **M64.7 — the two constants**, only if the target is still short: `ChunkIterations` and `BatchSize` onto
+  options, `IComputeBackend` on CubeDavi, a level filter, lazy `_randomEval`. **Production changes — each
+  re-runs M64.0's gate.**
+
+**Ordering is deliberate: everything through M64.6 is test-only**, so no construction-order or registration
+changes and no exposure to the hazards above. Expected: Campaigns **34% → high 50s ≈ +4 points repo-wide**
+(70.8% → ~75%).
+
+**Ceremony warnings, written down so the number keeps meaning something:** `CampaignRunner` tests buy **zero**
+Campaigns coverage (it is in **Core** — a fake campaign never loads the Campaigns assembly); more
+DI-resolution tests touch constructors and nothing else; a one-chunk `CubeDaviCampaign` test would be slow
+*and* shallow — extract its decision logic into a static the way `BlockDudeCurriculum.Advance` was.
+
+**Staying Slow, deliberately:** `Davi_LearnsToSolveShallowCubes_TeacherFree` (the **only** genuine learning
+assertion in the whole campaign set — a shrunk version asserts nothing);
+`BatchedGreedySolve_IsFasterThanPerSuccessor` (a timing comparison whose correctness content is already owned
+by `..._MatchesPerSuccessorSolve` — best moved out to a benchmark); one wide DOP-invariance canary; and the
+Lab `--eval-only` cube smokes. **Any future "win rate > X" threshold belongs in a Lab gate, never the fast
+bucket — a shrunk version of such a test is a coin flip with a green tick.**
+
+## M65 — Writing the tests, and the frontend joins the number  *(2026-09-18; see `COVERAGE_90_PRD.md` §15)* ✅ — **repo 74.18% → 78.70%, 79.55% combined with the frontend**
+
+M63 built the measurement, M64 made the campaigns testable, M65 writes the tests. Targets came from the
+coverage service's own per-file uncovered ranking rather than from guesswork — which paid for itself
+immediately: the ranking showed `K_CubieCube` already at 347/444 (exercised end-to-end by `CubeApiTests`),
+so the Kociemba block was worth ~190 lines rather than the ~435 both earlier analyses had assumed, and the
+effort moved elsewhere.
+
+| | before | after |
+|---|---|---|
+| C# lines | 74.18% (11,423 / 15,398) | **78.70% (12,180 / 15,476)** |
+| C# branches | 69.11% | **72.04%** |
+| Fast-bucket tests | 837 | **1,044** |
+| Fast-bucket wall clock | 2m26s | **2m04s** |
+| Frontend | not measured | **144 tests, 644/644 lines, 13 modules** |
+
+- **M65.1 — Core and Environments**: `NetworkInspector` (was 0/72 — the live viewer's whole layer-recovery
+  rule, which is an *assumption* about every net rather than anything a net declares), `ReinforceTrainer`
+  (7/79 → 79/79), `BlockDudeGreedy` (0/35), Kociemba internals (`K_CubieCube` +69, `K_Tools` 0→26,
+  `K_SearchRunTime` +18, pruning-nibble round-trips).
+- **M65.2 — Campaigns without `TrainChunk`**: `BlockDudeExpertIterationCampaign` (5/227 → 91/227) and
+  `CubeImitationCampaign` (7/124 → 45/124) — resume, `--fresh`, sidecar round-trip, truncated and
+  wrong-version sidecars, `Evaluate`'s metric set. The oracle is never run.
+- **M65.3 — six more Lab `Parse` seams** (`ChessLab`, `DraughtsLab`, `BlockDudeLab`, `SnakeLab`, `TetrisLab`,
+  `CrazyFruitsLab`), extending the M63.5 pattern. Chess and Draughts need *two* seams each: their flag head
+  is split by the read-only dispatches, and hoisting the later reads would make a malformed **training** flag
+  throw inside `--demo`.
+- **M65.4 — RLDemo.Web**: `ModelServiceInfrastructure` (was 0/131), `BlockDudeController`, `VersionController`,
+  and `CubeModelService.Rollout` — the `static` only, never the `AdaptiveBackend` constructor.
+- **M65.5 — the frontend joins the number.** `angular.json` emits cobertura; `coverageInclude` is scoped to
+  the modules that have specs and `coverageExclude` keeps the Polyglot-generated `*_solver.ts` twins out
+  (they would double-count the `.pg` the C# side already covers). `finish: true` moves to the frontend
+  upload in **both** workflows, and `build-master.yml` gains the frontend suite so master and a PR measure
+  the same thing.
+
+**The trap that would have made it all silently worthless:** the cobertura reporter writes filenames
+*project-relative with the platform separator* (`src\app\chess\chess-net.ts`, verified in the real report).
+The service resolves paths by suffix-matching `git ls-files`, so every file would have been dropped as
+unmatched — no error, just a frontend report covering nothing. `tools/reroot_frontend_coverage.mjs`
+normalises and re-roots them, and warns loudly if it ever finds no filenames at all.
+
+**A measured correction to `COVERAGE_90_PRD.md` §13:** its claim that widening the frontend globs "would add
+a large uncovered denominator and drop the number sharply" is **wrong for this builder** — a file no spec
+imports never enters the report. That de-risks the change but cuts both ways, and §15.2 records it: frontend
+`coverageInclude` **cannot** hold the app honest, because untested code is absent rather than uncovered.
+
+**One production bug found and fixed** (one-PR rule): `StartupCheckpoint<T>.TryLoad` did not guard its
+loader while its sibling `RefreshingCheckpoint<T>` did, so a corrupt checkpoint faulted the startup
+`BackgroundService` — under the default `StopHost` behaviour, **the whole web host went down at boot**.
+Eight further defects are recorded in §15.4 rather than encoded as expected behaviour.
+
+**§10a softened by the owner:** 3 minutes is a suggestion, not a gate — the Nx cache can serve several test
+results. The reasoning it protected still stands: slow **and** shallow is still not worth the seconds.
+
+**Where 90% stands.** §14's three options are now priced by evidence, and the answer is option 2. The
+remaining ~3,300 lines sit in `CubeDaviCampaign` (286, blocked on the ILGPU × coverlet hazard), the Lab's
+episode-playing `Run` bodies, and the campaign `TrainChunk`s — each needing a production seam or a slow test.
+**~80% is the honest target, and it is met.**
+
+## M66 — The `.pg` coverage union, properly  *(2026-09-18; see `COVERAGE_90_PRD.md` §16)* ✅ — **`.pg` 93.95% → 98.12%, repo 78.70% → 79.70%**
+
+§1's first goal was that each `.pg` line carry the **union** of hits from its generated C# and its
+generated TypeScript. M63 delivered the C# half; §13 then retired the TypeScript half on a measurement
+that was real but misread. M66 puts it back.
+
+**Why §13 was wrong.** It called uploading both targets "double-counting one source file". It *is* one
+file, but the union is over **execution paths, not reports**: the generated C# runs the training agent,
+the generated TypeScript runs a visitor playing in the browser. A `.pg` line only a player reaches is
+genuinely uncovered on the C# side. The +0.1pp that retired it was measured when the repo held **one**
+frontend spec, which constructed no net — it measured the absence of browser-side tests, not the value
+of the union.
+
+| | C# only | union |
+|---|---|---|
+| `mountaincar_solver.pg` | 40/69 | **69/69** |
+| `snake_solver.pg` | 374/496 | **493/496** |
+| `tetris_solver.pg` | 729/749 | **734/749** |
+| `fruitcake_solver.pg` | 315/322 | **317/322** |
+| **all nine** | **3,494/3,719 = 93.95%** | **3,649/3,719 = 98.12%** |
+
+**155 `.pg` lines are covered by the browser and by nothing else**, and the denominator does not move —
+these are lines the C# report already listed and already scored uncovered. Frontend 144 → **202 tests**.
+
+- **M66.1 — the overlay is provably sound.** Extracted the set of `.pg` lines each target emits origin
+  info for, across all nine solvers: **symmetric difference is zero** (3,949 lines, C#-only 0, TS-only 0).
+  One emitter, one origin table, two renderers. Line-granular only — the C# plugin declares `column: 0`.
+  The denominator must be the *mapped* set: `class`/`record` heads sit under `#line hidden` and map from
+  neither side.
+- **M66.2 — identification.** `pgconfig.json` is **not** the source of truth: it is a routing table for
+  the TypeScript target and names no C# output path at all. The robust markers are intrinsic — C# = any
+  `#line N "….pg"`; TS = the `//# sourceMappingURL=` footer **plus** a `.ts.map` sidecar. That second
+  test matters: it excludes the hand-written `mountaincar_solver.spec.ts`, which a naive
+  `*_solver*.ts` glob swallows.
+- **M66.3 — a third target would be invisible.** Polyglot ships `php` and `python` plugins whose
+  manifests have **no `originMapping`** — no `#line`, no source map. Enabling one would produce coverage
+  that cannot be attributed, and the failure would be silent. A tool should dispatch on
+  `originMapping.style` and warn when a declared target has none.
+- **M66.4 — the twin specs**, which are what actually buys the 155: `snake_solver.spec.ts` (31 tests —
+  the M34 beam planner, `pruneBeam` top-k, flood fill, death paths), `tetris_solver.spec.ts` (9 —
+  human-play micro-moves and top-out), `fruitcake_solver.spec.ts` (6 — rotation physics), and
+  `mountaincar_solver.spec.ts` extended (13 — `PgMlpNet` and `chooseAction`).
+- **M66.5 — three reports, one merge.** The twins go back into `coverageInclude` (excluding them is what
+  made `pg_coverage_remap.mjs` a silent no-op), are **stripped** from the frontend report by
+  `reroot_frontend_coverage.mjs`, and are uploaded as a separate `.pg`-keyed report. Exactly one upload
+  carries `finish: true` and it is the last. Four hardening fixes to the remap tool, none changing a
+  number: `sourceRoot` honoured, warn-and-exit-0 instead of failing CI, `<source>` = `.`, and the
+  summary no longer multiplies a string by 100.
+
+**The real find is not the percentage.** The 155 lines are **two entire shipped features with no tests
+on either side**: the snake receding-horizon beam planner (M34's biggest strength lever — beam pruning,
+flood-fill survival scoring, the anti-fragmentation ratio term) and the mountaincar client-side policy
+net (a hand-rolled matmul where a transposed index would have shipped silently).
+
+**Deliberately not covered:** the **draughts MLP tier** (~22 lines) looks like net code the browser runs
+and is not — `draughts-net.ts:127` is conv-only, so those lines **ship dead** and should be deleted
+rather than tested. ~36 lines are unreachable by anyone (`tetris:1029-1032 reachableMask`,
+`chess:102-105 clone` have no callers at all). ~52 more are reachable only by unit-testing the twin with
+no browser path behind it, which is a weaker claim than this union makes.
+
+**Known gap:** the `.pg` report carries no branch data. If the service merged branch rates by average
+rather than max, a 0/0 report could dilute the branch figure — unverified, worth one check.
+
+## M67 — Adopting `polyglot coverage remap`  *(2026-09-19; see `COVERAGE_90_PRD.md` §17)* ✅ — **the 155-line gain holds; the denominator corrects**
+
+`MintPlayer.Polyglot.MSBuild` **0.10.1** ships `polyglot coverage remap`
+([Polyglot#71](https://github.com/MintPlayer/MintPlayer.Polyglot/issues/71) / PR #72), so the projection
+moves to the compiler that owns the mapping. `tools/pg_coverage_remap.mjs` is **deleted** — it was always
+interim; a consumer-side tool duplicates the compiler's `originMapping` vocabulary and drifts from it
+silently.
+
+**The number that mattered survived an independent implementation.** The official tool finds the same
+**155** `.pg` lines covered by the browser and by nothing else. Everything around it moved:
+
+| | interim | **official** |
+|---|---|---|
+| `.pg` files reported | 7 | **9** (a file no test touched is emitted at zero, not dropped) |
+| denominator | 1,801 | **3,949** (the mapped set, from the sidecars) |
+| repo effect (measured on the service) | M66 pushed 79.53% → **80.50%** | M67 corrects it to **79.36%** |
+
+**Measured on the service: M66 was a real +0.97pp (79.53% → 80.50%) and M67 gives back 1.14pp
+(→ 79.36%)** — net flat, but with 155 genuinely-covered lines gained and a denominator that means
+something. That is the honest direction. Both targets' origin data map 3,949 `.pg` lines, but the C# *report* declares only 3,719
+because Roslyn emits no sequence point for ~230 declaration-only lines that still carry a pragma. Those
+lines are executable in the TypeScript twin, so they are genuinely coverable and genuinely uncovered — the
+old figure was flattered by Roslyn's narrower view of the same source.
+
+- **M67.1** — bump to 0.10.1; delete the interim tool; both workflows call the shipped CLI, located by
+  **globbing the restored package** rather than a hardcoded version so it cannot drift from the
+  `PackageReference`, and failing loudly when absent (an empty report reads as "nothing was covered").
+- **M67.2** — **`--out-format cobertura`** although the input is lcov, **for branch data**: the remap
+  emits branches count-only, and only cobertura, clover and JaCoCo can carry a count — lcov and istanbul
+  output are line-only. Measured both ways: cobertura out carries **272/886** conditions, lcov out
+  carries **zero**. *(Correction: this was first justified by the ingest's `BranchFormat` stamping
+  hazard. [MintPlayer.Spark#420](https://github.com/MintPlayer/MintPlayer.Spark/issues/420) made the
+  branch merge format-agnostic and order-independent and closed 2026-09-18, before Polyglot PR #72
+  merged — so formats may be mixed and uploaded in any order. Right decision, stale reasoning.)*
+- **Not done:** the C# leg is not remapped (our report already names all nine `.pg` files, and the 230
+  extra mappable lines arrive via the TypeScript leg since the service unions line sets);
+  `--branch-arms` stays off (safe only for a single-target consumer); `reroot_frontend_coverage.mjs`
+  stays, since it serves the hand-written ClientApp report and is a consumer-side path convention.
+
+**Incidental finding:** 0.10.0 was never actually on this machine — builds succeeded off the incremental
+stamp plus already-generated `obj/` output, so `_PolyglotVerifyTool` never ran. A clean clone would have
+failed. Worth knowing before trusting a local build to prove a Polyglot change.
+
+## M68 — Fixing what the tests found  *(2026-09-19; see `COVERAGE_90_PRD.md` §18)* ✅
+
+§15.4 recorded eight defects that writing tests surfaced but did not fix. This closes the ones worth
+closing — and **corrects two entries that were wrong**, which is the more useful half.
+
+- **M68.1 — the 2048 exponent cap.** §15.4 blamed `game-2048-logic.ts`; that file is a faithful mirror of
+  the server, and the cap is **load-bearing**: `NTuple2048Agent` packs four bits per cell into a 16⁴ table
+  index **unmasked**, so exponent 16 is an out-of-range index or a silently corrupted trained table.
+  **`ClassicEngine` was the one diverging**, and it is the only engine on the browser path. Reachable in
+  three clicks (draw two 32768s in edit mode, press Solve) — the server returns a capped board the client
+  replays as 65536, failing the playback checksum. Fixed by mirroring the cap; **pinned on both sides,
+  because nothing had pinned it in C# either**, which is how they drifted apart.
+- **M68.2 — zero versus unknown.** `SelfPlayCampaign`'s sidecar goes v1 → v2 and stores the metric
+  verbatim. The subtlety is *where* the compatibility branch lives: `CubeImitationCampaign` uses the same
+  slot for an **exact solve counter**, so a blanket "v1 zero means NaN" at the format layer would turn 0
+  solves into `long.MinValue`. `CampaignProgress` exposes the version it read; only self-play branches on
+  it. `TrainWindow.MeanAndReset` now returns NaN for an empty window (all four callers are format-only).
+- **M68.3 — a crash that fell out of M68.2.** `WriteManifest` serialises the tier win rate with default
+  options and **NaN is not valid JSON**. The ladder promotes a baseline tier unconditionally on the first
+  checkpoint, so a run that checkpoints before evaluating threw — losing the net, the optimizer and the
+  sidecar, not just the manifest. Every ladder test called `Evaluate()` first, which is why none caught
+  it. Written as `null`, not `0`: zero is a measured result, and `null` is already what the browser
+  expects.
+- **M68.4 — dead code, two of three.** chess `clone()` and the **draughts MLP tier** deleted (`.pg`-only
+  edits; the twins are gitignored build outputs). The draughts tier was deader than recorded: the Lab's
+  `--arch mlp` writes a kind `draughts-net.ts` hard-rejects, so it was the second half of a path whose
+  first half was never built.
+
+**Two corrections worth carrying forward.**
+
+`tetris_solver.pg`'s `reachableMask()` is **NOT dead** — `TetrisBoard.ReachableMask()` renames it and
+`TetrisLab` calls it under `--reach`. The grep that "proved" it dead searched the `.pg` spelling. **A
+`.pg` method can always be reached from generated C# through a facade under another name.** It was one
+step from deletion.
+
+And the null-assertion `!` **does not survive TypeScript emission**: `this.conv!.forward(obs)` emits as
+`this.conv.forward(obs)`, which `strictNullChecks` rejects (TS2531) while the C# compiles happily. The
+old code only worked because an `if != null` guard gave TypeScript the narrowing. `PgDraughtsNet.conv`
+is now non-nullable via the constructor, which removes the need for either. **The frontend suite caught
+this — the C# build was green.** It is the clearest argument yet for running both halves of a `.pg`
+change.
+
+- **M68.5 — the remaining six, all closed.** Recorded as needing "a decision rather than a patch"; every
+  one turned out decidable from the code, none needed a product call. The Kociemba warm-up moves out of
+  `Resume` (it only *eagerly triggers* static init that happens lazily on first oracle use anyway, so it
+  was charging multi-seconds to anyone who merely inspected the campaign); the lying `multiply` is
+  deleted (private, uncalled, and its edge half was commented out); `setPruning`'s halves are made
+  symmetric; `randomCube` gains a seeded **overload** rather than a changed signature; `SnakeGame` throws
+  below size 3, which the UI cannot reach since it clamps to `MIN_SIZE = 6`; and the dueling-Q readers
+  validate version `1..2`.
+
+  **That last is the least cosmetic.** v2 added the `noisy` flag byte immediately after the header, so a
+  reader that treats an unknown version as v1 does **not** fail — it shifts every subsequent float by one
+  byte and returns a net of plausible-looking garbage. Shipped checkpoints measured as v1
+  (`snake-net.ckpt`) and v2 (the rest), so the range rejects nothing that exists.
+
+**§15.4 is fully discharged:** of the ten defects writing tests surfaced, one was fixed on the spot
+(`StartupCheckpoint`), one was **misattributed** (the 2048 cap — the mirror was blameless, the classic
+engine was not), one was **not a defect at all** (`reachableMask` is live, reached through a renaming
+facade), and the remaining seven are fixed.
+
+## M69 — Campaigns coverage  *(2026-09-19; see `COVERAGE_90_PRD.md` §19)* ✅ COMPLETE — **1138/1138 fast + 4/4 determinism green in 134 s; three production defects fixed**
+
+`Campaigns` is at **61.31% (1,518 / 2,476 lines, 958 uncovered)**. A three-agent sweep split it by what
+actually blocks each group — three different problems, not one — and found **~445 lines reachable without
+touching the GPU coupling**, which would take Campaigns to **~79%**.
+
+**Two facts that reframe it.** `CubeDaviCampaign` is **0 / 286**, not 30/316: the "covered" lines are the
+`CubeDaviSettings` record's auto-properties, so not one statement of the campaign has ever run. And only
+**~11 of those 286 lines touch the backend** — it is GPU-mandatory in its *constructor signature*, not its
+logic, and that one parameter gates all 286 lines including ~50 of pure arithmetic.
+
+**Recommended order** (first six are test-only, fast, and carry real assertions):
+
+1. **B1 — SelfPlay ladder arena without training** (~41 lines). `Resume` → `Checkpoint` → `Checkpoint`;
+   the second has a champion so the whole arena limb runs. **Best item on the list**: ~41 lines for a
+   three-call test.
+2. **C1–C5 — the long tail** (~90). `CubePolicyTraining.TrainStep` (26), `CubeViz` (21–25 — it is **not**
+   a server, just four pure static samplers), `DqnScoreCampaign` telemetry (15–17), `DqnGrowth.Maybe`
+   (15), `PolicyGrowth.Maybe` (13).
+3. **B3 / B5 / B6** (~97) — telemetry sweep, SelfPlay config variants, Resume error paths.
+4. **A1 — extract `CubeDaviCurriculum`** (~40). Asked for in `CAMPAIGN_TESTABILITY_PRD.md` §6 and **never
+   done**; three named traps make it provable by inspection.
+5. **B2 — XIT `TrainChunk` at frontier 1** (~109). **Measure first.**
+6. **B4 — BlockDude gate limb** (~53). Needs `GateBoards` on the options record; `GateBoardsFor` already
+   takes the count, so no other signature moves. **Measure first.**
+
+**Verified.** Both CI buckets green as `pull-request.yml` runs them: **1130/1130** fast in 134 s,
+**4/4** determinism in 4 s. 78 test methods added across 9 new classes and 2 appended-to.
+
+**Three production defects fixed**, all at the source rather than the call site:
+**A2** — a live `InvalidCastException` (`--net mlp --time-budget` on a CPU host); `CubeValueSearch.Solve`'s
+CPU overload now takes `IValueNet`. **A1** — `CubeDaviCurriculum` extracted with 25 tests, on rules
+governing a campaign that is **0/286 covered**; one test caught me asserting the plateau threshold was
+inclusive when it is strictly `<`. **Three unguarded `PolicyNet.Load` sites** (`CubeImitation`,
+`RushHourImitation`, `CubeEfficient`) where a stale-shaped checkpoint killed the run at startup instead
+of degrading to a fresh start, as both BlockDude campaigns already do.
+
+**Read §19.9 before adding more tests.** The fast bucket is *critical-path* bound, not sum bound: it
+finishes in 134 s while its slowest single test takes 129 s. "How many seconds does this add" is the
+wrong question; "does it exceed 2 m 9 s" is the right one. §19.13 records the baseline error that
+surfaced this — the suite is never run unfiltered, so a bare `dotnet test` is not comparable to the
+remembered ~3-minute figure.
+
+**B2 and B4 are done** (§19.15), and both plans overstated the work: B2 needed **no production change**
+(the XIT options record already exposed every knob), and B4 was **one argument** (`GateBoardsFor` already
+took a count). 8 tests, 1.7 s. They also tested §19.9's critical-path claim and confirmed it — the fast
+bucket went 1130 → 1138 tests with wall time unchanged at 134 s.
+
+**Open:** A3/A4, the Ilgpu factory seam (§19.4) — a coupling decision, not a coverage one. Two
+growth-rung hazards are pinned by *green* tests and need a production decision (§19.12). The §14 / §15.5
+target question is still unanswered.
+
+**A live defect found on the way:** `CubeDaviCampaign.cs:259` casts `(ResidualMlp)_net` unconditionally,
+but `:155` assigns `new Mlp(...)` when `Residual` is false — which comes straight from the Lab's
+`--net mlp`. **`--net mlp --time-budget` on a CPU host throws `InvalidCastException`.** One-line fix.
+
+**A constraint I briefed as fact, and it was stale.** "Constructing a real `AdaptiveBackend` in the fast
+bucket is dead on arrival" is false: four existing tests do exactly that, untagged, today. The
+`<Exclude>[…Ilgpu]*</Exclude>` **is** the fix and is load-bearing. The constraint survives for a better
+reason — `Backend.Current` is a plain mutable static, so a test that sets it and disposes its backend
+corrupts every other test in the parallel assembly.
+
+**A milestone recorded complete that was not.** `CAMPAIGN_TESTABILITY_PRD.md:226` marks M64.5 ✅ and
+`:152` names `PolicyGrowth.Maybe` in its scope. No test references it; coverage is 2/15 — only the null
+guard and the disabled path. **Re-check the other M64.5 items against coverage before trusting the tick.**
+
+**Not worth doing, recorded so they are not re-proposed:** Cube `TrainChunk` (needs a production change
+*and* imports the un-amortised Kociemba table build into the instrumented bucket — §12.7's exact shape);
+RushHour `Evaluate` and Cube `Evaluate`/`EvaluateGate` (reporting behind new options, assertion = "no
+NaN"); a one-chunk `CubeDavi.TrainChunk` test; ~38 of the tail (trivial forwarders, pure logging,
+GPU-blocked lines, and `catch` arms no legal input can reach).
+
+**A3/A4 — the Ilgpu seam on the two Cube campaigns** (+281 lines, → ~90%) is a **separate decision about
+coupling, not a coverage decision.** The case for it: `CubeDaviCampaign` is the last campaign still bound
+to a concrete Ilgpu type when every other one has been freed, that binding is what makes the
+`Backend.Current` hazard unavoidable in any future test, and it hides the `:259` crash. `SelfPlayCampaign`
+already solved the same problem with nullable factory delegates. **If the seam is not wanted on its own
+merits, do not do it for the percentage** — §15.5's posture.
+
+**Measurement obligation:** B2, B4 and A3 are the only items that can push the suite past ~3 minutes, and
+all three are unmeasured estimates. §12.7 and §8.4 both record this repo being wrong by ~3× when timing
+uninstrumented. Time them **instrumented, inside the full run**.
+
 ---
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
@@ -3234,3 +3724,19 @@ Training campaigns (resume net + Adam + full training state from the model store
 the gate report; `cube-davi` also takes `--width`, `--layers` and `--max-depth`, runs on the
 `AdaptiveBackend` (GPU device-resident forward), and logs `models/logs/cube-davi.csv`. Use
 `--data models` to refresh the shipped seeds.
+
+## M70 — the ILGPU assembly joins the coverage report  *(2026-09-19; see `COVERAGE_90_PRD.md` §20)* ✅ DONE
+
+**One line of XML, no production change, and the headline went UP: 81.68% → 82.19%.**
+
+`coverlet.runsettings` excluded the whole ILGPU assembly because coverlet's `RecordHit` injection
+breaks ILGPU's runtime kernel JIT. That constraint is **still live** — removing the exclusion entirely
+still fails 26 of 30 backend tests with 26 `InternalCompilerException`. What was too broad was the
+scope: **all 20 kernels live in one type**, they never call out of it, and the six host-side files only
+call into it. Excluding `*IlgpuBackend*` instead of the assembly keeps the JIT working and brings
+**1,528 lines** of host orchestration into the report at **94.5%** (1452/1536). 1138/1138 pass either
+way.
+
+I predicted this would dilute the headline and was wrong — I had estimated from a backend-tests-only
+probe where `DeviceResidualTrainer` reads 0/324; under the full suite it is 322/324. A partial run is
+not a small version of a full run.

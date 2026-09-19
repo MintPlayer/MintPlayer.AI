@@ -36,6 +36,9 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
     private CubePolicyNet _net = null!;
     private Adam _adam = null!;
     private long _round, _totalSamples, _totalSolves;
+
+    /// <summary>Whether this instance has triggered the Kociemba table build (see <c>TrainChunk</c>).</summary>
+    private bool _tablesWarmed;
     private TrainWindow _window;
     private double _liveLoss = double.NaN, _liveAcc = double.NaN; // most-recent batch, for the live viewer
 
@@ -43,23 +46,33 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
 
     public bool Resume(IModelStore store)
     {
-        bool resumed;
+        bool resumed = false;
         using (var existing = store.TryOpenRead(CubeIds.Environment, _ids.Policy))
         {
             if (existing is not null)
             {
-                _net = CubePolicyNet.Load(existing);
-                Log($"resumed cube policy net '{_ids.Policy}' from the model store");
-                resumed = true;
+                // Mirror the BlockDude campaigns: a checkpoint whose shape no longer matches (the
+                // exact-length guard in PolicyValueNet.ReadExact) degrades to a fresh start instead of
+                // killing the run at startup — which is exactly the case that guard was added to detect.
+                try
+                {
+                    _net = CubePolicyNet.Load(existing);
+                    Log($"resumed cube policy net '{_ids.Policy}' from the model store");
+                    resumed = true;
+                }
+                catch (InvalidDataException ex)
+                {
+                    Log($"STALE net checkpoint ignored: {ex.Message}");
+                }
             }
-            else
+
+            if (!resumed)
             {
                 var initRng = new Xoshiro256StarStar(options.Seed ^ 0xDEADBEEF);
                 _net = new CubePolicyNet(initRng, Ladder.TrunkFor(0));
                 Log(options.Grow
                     ? $"initialized a fresh GROWING cube policy net '{_ids.Policy}' (rung 0, trunk [{string.Join(",", Ladder.TrunkFor(0))}])"
                     : $"initialized a fresh cube policy net '{_ids.Policy}' (trunk width {options.Width})");
-                resumed = false;
             }
         }
         _adam = AdamState.LoadOrInit(store, CubeIds.Environment, _ids.PolicyAdam, _net.Parameters(), options.LearningRate, Log);
@@ -82,13 +95,23 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
             Log("no progress sidecar found — the net resumed but counters restart at zero (pre-M58 checkpoint)");
         }
 
-        Log("warming the Kociemba tables…");
-        CubeSolver.WarmUp();
         return resumed;
     }
 
     public long TrainChunk()
     {
+        // M68: the Kociemba warm-up moved here from Resume. The tables build on first use anyway (CLR
+        // static init, thread-safe) — WarmUp only triggers them eagerly — so paying multi-seconds in
+        // Resume charged every caller that merely wanted to inspect or checkpoint the campaign, and was
+        // the single thing stopping it being unit-testable in isolation. Here the cost lands exactly
+        // where the oracle is about to need it, and repeat calls are free.
+        if (!_tablesWarmed)
+        {
+            Log("warming the Kociemba tables…");
+            CubeSolver.WarmUp();
+            _tablesWarmed = true;
+        }
+
         // One round: parallel Kociemba data-gen (the oracle, not the NN math, bounds throughput on CPU) → shuffle
         // → supervised batches. Window-mean loss accumulates across rounds until the runner calls Evaluate.
         // DeterministicParallel derives each generator's RNG from (roundBase, worker+1) — byte-identical to the old

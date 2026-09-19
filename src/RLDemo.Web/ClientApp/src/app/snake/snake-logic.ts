@@ -19,6 +19,13 @@ export class SnakeGame {
   private readonly cells: number;
 
   constructor(private readonly size: number = SIZE) {
+    // `reset()` seeds a three-cell snake by walking the head column down by two, so a board narrower
+    // than three produces negative cells and a body longer than the board — a corrupt game rather
+    // than an error. Unreachable from the UI (snake.ts clamps to MIN_SIZE = 6), so this guards
+    // direct construction: a test, or future code that forgets the clamp.
+    if (!Number.isInteger(size) || size < 3) {
+      throw new RangeError(`SnakeGame needs an integer board edge of at least 3, got ${size}`);
+    }
     this.cells = size * size;
     this.reset();
   }

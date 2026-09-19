@@ -17,12 +17,15 @@ public class SelfPlayCampaignTests
     private static SelfPlayCampaign<Connect4State> Fresh() =>
         new(new Connect4Game(), "connect4", new SelfPlayOptions
         {
-            Seed = 1, LearningRate = 1e-3f, Hidden = 32, Search = new Mcts.Config(Simulations: 8),
-            GamesPerChunk = 4, TempMoves = 2, EvalGames = 2, WindowCapacity = 4000, MaxPlies = 64,
+            Seed = 1, LearningRate = 1e-3f, Hidden = 8, Search = new Mcts.Config(Simulations: 1),
+            GamesPerChunk = 4, TempMoves = 0, EvalGames = 1, WindowCapacity = 512, MaxPlies = 42,
+            // M64.1: below the shipped default of 128 so a 4-game chunk actually TRAINS. Above it,
+            // TrainChunk generates samples, skips training entirely, and still returns a plausible
+            // game count -- a green test asserting nothing about the optimizer.
+            BatchSize = 16,
         });
 
     [Fact]
-    [Trait("Category", "Slow")]
     public void SelfPlay_Plays_Checkpoints_AndResumesTheNet()
     {
         var dir = Directory.CreateTempSubdirectory("connect4-selfplay-contract");
@@ -61,7 +64,6 @@ public class SelfPlayCampaignTests
     /// exercises the separate value-credit assignment (constant learner-perspective z, not the alternating self-play
     /// z). Asserts it plays, records samples, trains, and evaluates without error.</summary>
     [Fact]
-    [Trait("Category", "Slow")]
     public void SelfPlay_against_a_random_opponent_trains_and_evaluates()
     {
         var dir = Directory.CreateTempSubdirectory("connect4-selfplay-random");
@@ -70,13 +72,14 @@ public class SelfPlayCampaignTests
             var store = new FileModelStore(dir.FullName);
             var c = new SelfPlayCampaign<Connect4State>(new Connect4Game(), "connect4", new SelfPlayOptions
             {
-                Seed = 2, LearningRate = 1e-3f, Hidden = 32, Search = new Mcts.Config(Simulations: 8),
-                GamesPerChunk = 6, TempMoves = 2, EvalGames = 2, WindowCapacity = 4000, MaxPlies = 64,
+                Seed = 2, LearningRate = 1e-3f, Hidden = 8, Search = new Mcts.Config(Simulations: 1),
+                GamesPerChunk = 4, TempMoves = 0, EvalGames = 1, WindowCapacity = 512, MaxPlies = 42,
+                BatchSize = 16,
                 TargetGames = 0, OpponentRandomFrac = 1.0,
             });
 
             Assert.False(c.Resume(store));
-            Assert.Equal(6, c.TrainChunk());
+            Assert.Equal(4, c.TrainChunk());   // == GamesPerChunk
             Assert.Contains(c.Evaluate().Metrics, m => m.Name == "winRate");
             c.Dispose();
         }

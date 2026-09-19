@@ -7,9 +7,14 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// owner-thread RNG states.</summary>
 /// <param name="Samples">Total training samples consumed across the whole run.</param>
 /// <param name="Units">Campaign-specific work unit — labelled configs, rounds, or self-play games.</param>
-/// <param name="LastMetric">Most recent eval metric that drives progression (0 when none yet).</param>
+/// <param name="LastMetric">Most recent eval metric that drives progression, exactly as the campaign passed it to
+/// <see cref="CampaignProgressState.Save"/>. The slot is campaign-defined — a win rate for self-play, an exact
+/// solve counter for the cube — so this layer never reinterprets it, and NaN round-trips verbatim in format
+/// version 2 and later.</param>
 /// <param name="Rngs">Owner-thread RNG states, in the order the campaign declares them.</param>
-public sealed record CampaignProgress(long Samples, long Units, double LastMetric, Xoshiro256StarStar[] Rngs);
+/// <param name="Version">The on-disk format version this was read from. Campaigns whose metric slot changed
+/// meaning between versions branch on it; the rest ignore it. See <see cref="CampaignProgressState"/>.</param>
+public sealed record CampaignProgress(long Samples, long Units, double LastMetric, Xoshiro256StarStar[] Rngs, int Version);
 
 /// <summary>
 /// A tiny sidecar checkpoint for campaign progress, stored under its own algorithm id alongside the net and
@@ -34,7 +39,14 @@ public sealed record CampaignProgress(long Samples, long Units, double LastMetri
 /// </remarks>
 public static class CampaignProgressState
 {
-    private const int Version = 1;
+    /// <summary>
+    /// The version <see cref="Save"/> writes. <b>v1 → v2 (M65)</b>: the metric slot is now opaque to this layer and
+    /// round-trips verbatim, NaN included. In v1 the self-play campaign mapped its "not measured yet" NaN onto 0
+    /// before saving, so a v1 0 is ambiguous and only the reading campaign knows which reading is safe — hence
+    /// <see cref="CampaignProgress.Version"/>, rather than a translation here (the cube campaign carries an exact
+    /// solve counter in the same slot, for which 0 has always meant zero).
+    /// </summary>
+    private const int Version = 2;
 
     /// <summary>Reads progress, or null when absent or shaped for a different campaign (both meaning "start from zero").</summary>
     /// <param name="rngCount">Number of RNG streams the caller expects, in its declared order.</param>
@@ -47,7 +59,7 @@ public static class CampaignProgressState
         try
         {
             using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
-            CheckpointFormat.ReadHeader(reader, kind, Version);
+            int version = CheckpointFormat.ReadHeader(reader, kind, Version);
 
             long samples = reader.ReadInt64();
             long units = reader.ReadInt64();
@@ -62,7 +74,7 @@ public static class CampaignProgressState
 
             var rngs = new Xoshiro256StarStar[rngCount];
             for (int i = 0; i < rngCount; i++) rngs[i] = CheckpointFormat.ReadRngState(reader);
-            return new CampaignProgress(samples, units, lastMetric, rngs);
+            return new CampaignProgress(samples, units, lastMetric, rngs, version);
         }
         catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException)
         {
@@ -81,7 +93,9 @@ public static class CampaignProgressState
         live.SetState(s0, s1, s2, s3);
     }
 
-    /// <summary>Writes progress. Call from <c>Checkpoint</c>, next to the net and Adam saves.</summary>
+    /// <summary>Writes progress. Call from <c>Checkpoint</c>, next to the net and Adam saves.
+    /// <paramref name="lastMetric"/> is stored verbatim as an IEEE-754 double, so a campaign that uses NaN for
+    /// "not measured yet" should pass the NaN rather than flattening it to 0.</summary>
     public static void Save(
         IModelStore store, string environmentId, string algorithmId, string kind,
         long samples, long units, double lastMetric, params Xoshiro256StarStar[] rngs)

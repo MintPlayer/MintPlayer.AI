@@ -116,11 +116,21 @@ internal sealed class CubeDaviConfig
     /// itself.
     /// </summary>
     public static CubeDaviConfig Load(out string? source)
+        => LoadFrom([Directory.GetCurrentDirectory(), AppContext.BaseDirectory], out source);
+
+    /// <summary>
+    /// The directory-injected core of <see cref="Load"/>. Production passes the working directory then
+    /// the app base directory; tests pass a temp directory, which is the only way to exercise the
+    /// key mapping, the "no <c>cube-davi</c> section -> keep scanning" branch and the malformed-JSON
+    /// fallback without the ambient <c>appsettings.json</c> of whatever directory the runner started in
+    /// deciding the outcome.
+    /// </summary>
+    internal static CubeDaviConfig LoadFrom(IEnumerable<string> dirs, out string? source)
     {
         source = null;
         var docOpts = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
         var serOpts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
-        foreach (var dir in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        foreach (var dir in dirs)
         {
             var path = Path.Combine(dir, "appsettings.json");
             if (!File.Exists(path)) continue;
