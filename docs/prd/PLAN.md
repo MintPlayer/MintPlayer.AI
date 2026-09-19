@@ -3539,10 +3539,11 @@ silently.
 |---|---|---|
 | `.pg` files reported | 7 | **9** (a file no test touched is emitted at zero, not dropped) |
 | denominator | 1,801 | **3,949** (the mapped set, from the sidecars) |
-| repo effect | 78.70% → 79.70% | **78.70% → 78.54%** |
+| repo effect (measured on the service) | M66 pushed 79.53% → **80.50%** | M67 corrects it to **79.36%** |
 
-**Adopting it moves the repo figure DOWN 0.16pp, not up 1.00pp as M66 reported**, and that is the honest
-direction. Both targets' origin data map 3,949 `.pg` lines, but the C# *report* declares only 3,719
+**Measured on the service: M66 was a real +0.97pp (79.53% → 80.50%) and M67 gives back 1.14pp
+(→ 79.36%)** — net flat, but with 155 genuinely-covered lines gained and a denominator that means
+something. That is the honest direction. Both targets' origin data map 3,949 `.pg` lines, but the C# *report* declares only 3,719
 because Roslyn emits no sequence point for ~230 declaration-only lines that still carry a pragma. Those
 lines are executable in the TypeScript twin, so they are genuinely coverable and genuinely uncovered — the
 old figure was flattered by Roslyn's narrower view of the same source.

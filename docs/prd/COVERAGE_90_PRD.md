@@ -1156,10 +1156,24 @@ whole union, and it survives being recomputed by an independent implementation. 
 |---|---|---|
 | `.pg`, C# only | 93.95% | **88.48%** |
 | `.pg`, union | 98.12% | **92.40%** |
-| repo | 78.70% → 79.70% | **78.70% → 78.54%** |
 
-**So adopting the official tool moves the repo figure DOWN by 0.16pp, not up by 1.00pp as §16 reported.**
-That correction is the honest direction, and it is worth understanding rather than working around.
+**Measured on the service** (the figures that actually matter — a local C#-only total omits the
+hand-written frontend leg, which is ~636 of ~638 lines and so flatters nothing but is simply absent):
+
+| commit | covered / coverable | repo |
+|---|---|---|
+| M65 `1f88737` | 12,816 / 16,114 | 79.53% |
+| M66 `17221d1` | 12,971 / 16,114 | **80.50%** |
+| M67 `ee7be01` | 12,971 / 16,344 | **79.36%** |
+
+So **M66's +1.00pp was real** — the service confirms +0.97pp — and **M67 gives back 1.14pp** by
+correcting the denominator. Net across both: 79.53% → 79.36%, essentially flat, while gaining 155
+genuinely-covered lines and a denominator that means something.
+
+> An earlier draft of this section reported M67 as "78.70% → 78.54%, down 0.16pp". That compared two
+> *local, C#-only* totals and never included the frontend leg, so it described no number anyone sees.
+> The real M67 effect is **−1.14pp**, and the real M66 effect was **+0.97pp**, not the artifact I
+> implied.
 
 ### 17.2 Why the denominator grew by 230 lines
 
