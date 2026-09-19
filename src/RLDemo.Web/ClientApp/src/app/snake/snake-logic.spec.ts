@@ -26,6 +26,21 @@ function place(game: SnakeGame, body: number[], food: number): void {
   game.food = food;
 }
 
+describe('SnakeGame board size', () => {
+  it('refuses a board too small to hold its own starting snake', () => {
+    // reset() seeds a three-cell snake by walking the head column down by two, so a narrower board
+    // yields negative cells and a body longer than the board — a corrupt game, not an error. The UI
+    // clamps to MIN_SIZE = 6, so this guards direct construction only.
+    expect(() => new SnakeGame(2)).toThrow(/at least 3/);
+    expect(() => new SnakeGame(0)).toThrow(/at least 3/);
+    expect(() => new SnakeGame(4.5)).toThrow(/integer/);
+  });
+
+  it('accepts the smallest board that works', () => {
+    expect(() => new SnakeGame(3)).not.toThrow();
+  });
+});
+
 describe('reset', () => {
   it('starts as a three-cell snake lying along one row, facing right', () => {
     const game = new SnakeGame();

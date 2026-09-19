@@ -307,12 +307,10 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube.Kociemba
         }
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-        // Multiply this CubieCube with another CubieCube b.
-        void multiply(CubieCube b)
-        {
-            cornerMultiply(b);
-            // edgeMultiply(b);
-        }
+        // M68: `void multiply(CubieCube b)` was deleted here. It was private and uncalled, and its name
+        // LIED — the body was `cornerMultiply(b);` with `// edgeMultiply(b);` commented out, so anything
+        // that did start calling it would have silently multiplied only half the cube. Callers use
+        // cornerMultiply/edgeMultiply directly and explicitly, which is the correct pattern.
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         // Compute the inverse CubieCube

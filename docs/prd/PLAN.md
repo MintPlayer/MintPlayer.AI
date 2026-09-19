@@ -3609,10 +3609,24 @@ is now non-nullable via the constructor, which removes the need for either. **Th
 this — the C# build was green.** It is the clearest argument yet for running both halves of a `.pg`
 change.
 
-**Still open, deliberately:** the Kociemba warm-up on `CubeImitationCampaign.Resume`, the `multiply` name
-that lies, `setPruning`'s asymmetric `unchecked`, the unseeded `randomCube`, `SnakeGame.reset()` with
-`size < 3`, and the TypeScript dueling-Q readers accepting any version byte. None is a live crash; each
-needs a decision rather than a patch.
+- **M68.5 — the remaining six, all closed.** Recorded as needing "a decision rather than a patch"; every
+  one turned out decidable from the code, none needed a product call. The Kociemba warm-up moves out of
+  `Resume` (it only *eagerly triggers* static init that happens lazily on first oracle use anyway, so it
+  was charging multi-seconds to anyone who merely inspected the campaign); the lying `multiply` is
+  deleted (private, uncalled, and its edge half was commented out); `setPruning`'s halves are made
+  symmetric; `randomCube` gains a seeded **overload** rather than a changed signature; `SnakeGame` throws
+  below size 3, which the UI cannot reach since it clamps to `MIN_SIZE = 6`; and the dueling-Q readers
+  validate version `1..2`.
+
+  **That last is the least cosmetic.** v2 added the `noisy` flag byte immediately after the header, so a
+  reader that treats an unknown version as v1 does **not** fail — it shifts every subsequent float by one
+  byte and returns a net of plausible-looking garbage. Shipped checkpoints measured as v1
+  (`snake-net.ckpt`) and v2 (the rest), so the range rejects nothing that exists.
+
+**§15.4 is fully discharged:** of the ten defects writing tests surfaced, one was fixed on the spot
+(`StartupCheckpoint`), one was **misattributed** (the 2048 cap — the mirror was blameless, the classic
+engine was not), one was **not a defect at all** (`reachableMask` is live, reached through a renaming
+facade), and the remaining seven are fixed.
 
 ---
 

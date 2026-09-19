@@ -1309,10 +1309,23 @@ The draughts tier was deader than §16.7 said: the Lab's `--arch mlp` writes kin
 > generated C# through a facade under another name** — this one was a step away from being deleted on the
 > strength of a bad grep.
 
-### 18.5 Still open, deliberately
+### 18.5 The remaining six — all closed
 
-`CubeImitationCampaign.Resume` unconditionally warms up the Kociemba tables; the Kociemba `multiply`
-name lies (private, unused); `setPruning`'s two nibble halves are inconsistently `unchecked`;
-`Tools.randomCube` is unseeded; `SnakeGame.reset()` with `size < 3` walks off the board; the TypeScript
-dueling-Q readers accept any version byte. None is a live crash, and each needs a decision rather than a
-patch.
+They were recorded as "needing a decision rather than a patch". On inspection every one was decidable
+from the code; none needed a product call.
+
+| defect | fix | the reasoning that decided it |
+|---|---|---|
+| Kociemba warm-up in `CubeImitationCampaign.Resume` | moved to the first `TrainChunk`, flag-guarded | `CubeSolver.WarmUp` only **eagerly triggers** CLR static init that happens lazily on first oracle use anyway, so moving it is behaviour-neutral for a real run. It was charging multi-seconds to every caller that merely wanted to inspect or checkpoint the campaign — the one thing stopping it being unit-testable in isolation. |
+| `K_CubieCube.multiply` | deleted | Private, uncalled, and the body was `cornerMultiply(b);` with `// edgeMultiply(b);` commented out. The name lied, so anything that *started* calling it would have silently multiplied half a cube. Callers already use `cornerMultiply`/`edgeMultiply` explicitly. |
+| `setPruning`'s asymmetric `unchecked` | `unchecked` on both halves | The odd branch (`0x0f \| (value << 4)`) exceeds `sbyte` for `value >= 8`. It compiles only because the project does not enable `<CheckForOverflowUnderflow>` — so the two halves behave differently the moment anything does. |
+| `Tools.randomCube` unseeded | added a `Random`-taking **overload** | Changing the existing signature would be breaking. An overload gives reproducibility to a test or benchmark that needs the same scramble twice, without touching callers. |
+| `SnakeGame` with `size < 3` | throws `RangeError` | `reset()` seeds a three-cell snake by walking the head column down by two, so a narrower board yields negative cells and a body longer than the board — a corrupt game, not an error. Measured: `snake.ts` clamps to `MIN_SIZE = 6`, so this is unreachable from the UI and the guard covers direct construction only. |
+| dueling-Q readers accept any version | validate `1..2` | **The least cosmetic of the six.** v2 added the `noisy` flag byte immediately after the header, so a reader that treats an unknown version as v1 does **not** fail — it shifts every subsequent float by one byte and returns a net of plausible-looking garbage. Shipped checkpoints measured as v1 (`snake-net.ckpt`) and v2 (crazyfruits, fruitcake, tetris), so the range rejects nothing that exists. |
+
+Tests added for the two with observable behaviour (the snake guard, the version rejection). The rest are
+deletions or internal.
+
+**§15.4 is now fully discharged**: of the ten defects that writing tests surfaced, one was fixed on the
+spot (`StartupCheckpoint`), one turned out to be misattributed (2048), one turned out not to be a defect
+at all (`reachableMask` was live), and the remaining seven are fixed.

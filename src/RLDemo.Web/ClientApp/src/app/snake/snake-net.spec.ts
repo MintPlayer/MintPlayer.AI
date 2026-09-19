@@ -151,6 +151,14 @@ describe('parseSnakeNet', () => {
     expect(net.advB).toEqual(ADV_B);
   });
 
+  it('rejects a checkpoint version it does not understand', () => {
+    // NOT cosmetic strictness. v2 added the noisy flag byte straight after the header, so a reader
+    // that treats an unknown version as v1 does not fail — it shifts every following float by one
+    // byte and returns a net of plausible garbage. Failing loudly is the only safe reading.
+    expect(() => parseSnakeNet(duelingCkpt({ version: 3 }))).toThrow(/version 3/);
+    expect(() => parseSnakeNet(duelingCkpt({ version: 0 }))).toThrow(/version 0/);
+  });
+
   it('rejects a buffer whose magic is not RLNC', () => {
     expect(() => parseSnakeNet(duelingCkpt({ magic: 'RLNX' }))).toThrow(/RLNC/);
   });
