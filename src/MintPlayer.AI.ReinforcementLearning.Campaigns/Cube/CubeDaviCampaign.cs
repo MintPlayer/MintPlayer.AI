@@ -256,7 +256,12 @@ public sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSettings 
             int[] depths = _s.ProbeOverride ?? [10, 12, 14, 16, 18];
             Func<FaceletCube, CubeValueSearch.SearchResult> solve = _targetForward is not null
                 ? c => CubeValueSearch.Solve(_targetForward.Forward, c, _s.MaxExpansions, _s.SearchWeight, TimeSpan.FromSeconds(_s.TimeBudgetSec))
-                : c => CubeValueSearch.Solve((ResidualMlp)_net, c, _s.MaxExpansions, _s.SearchWeight, TimeSpan.FromSeconds(_s.TimeBudgetSec));
+                // No cast. This used to be `(ResidualMlp)_net`, which threw InvalidCastException on a
+                // reachable config: `_net` is a plain Mlp whenever Residual is false (see the fresh-net
+                // branch above), and Residual comes straight from the Lab's `--net` flag. So `--net mlp`
+                // plus `--time-budget` on a CPU host crashed. CubeValueSearch.Solve now takes IValueNet,
+                // which is all the CPU forward ever needed (M69).
+                : c => CubeValueSearch.Solve(_net, c, _s.MaxExpansions, _s.SearchWeight, TimeSpan.FromSeconds(_s.TimeBudgetSec));
             VerifyTimeBudget(solve, depths, _s.EvalEpisodes, _s.MaxExpansions, _s.SearchWeight, _s.TimeBudgetSec, _targetForward is not null);
             return true;
         }
@@ -335,47 +340,64 @@ public sealed class CubeDaviCampaign(AdaptiveBackend adaptive, CubeDaviSettings 
     private void AdvanceCurriculumOrGrow()
     {
         long currentSamples = Samples;
-        if (_lastLoss < _bestLossSinceReset * 0.98f) { _bestLossSinceReset = _lastLoss; _samplesAtBestLoss = currentSamples; } // ≥2% improvement resets the plateau timer
-        long lossStagnantSamples = currentSamples - _samplesAtBestLoss;
 
+        // The RULES live in CubeDaviCurriculum.Step (M69/A1) so they can be tested without a campaign,
+        // a net or a GPU backend. What stays here is exactly the side effects, plus the one call that
+        // makes this method impure: MeanValueAtDepth runs net forwards, so it is computed here and
+        // handed in.
         double frontierRatio = MeanValueAtDepth(_curriculumDepth, episodes: 64) / _curriculumDepth;
-        if (_curriculumDepth < _s.MaxDepthCap && frontierRatio >= _s.AdvanceRatio)
+        int? netWidth = _net is ResidualMlp rm ? rm.Width : null;
+
+        var d = CubeDaviCurriculum.Step(
+            _curriculumDepth, currentSamples, _samplesSinceAdvance, _samplesAtBestLoss,
+            _bestLossSinceReset, _lastLoss, netWidth, frontierRatio,
+            _s.MaxDepthCap, _s.AdvanceRatio, _s.AutoWiden, _s.MaxWidth, _s.WidenStallSamples,
+            StallWarnSamples, _s.GrowToWidth, _s.GrowAtSamples);
+
+        _bestLossSinceReset = d.BestLossSinceReset;
+        _samplesAtBestLoss = d.SamplesAtBestLoss;
+        _samplesSinceAdvance = d.SamplesSinceAdvance;
+
+        switch (d.Outcome)
         {
-            _curriculumDepth++;
-            _samplesSinceAdvance = 0;
-            _bestLossSinceReset = double.MaxValue; _samplesAtBestLoss = currentSamples; // new shell → track its loss afresh
-            Log($"curriculum advanced → scramble depth {_curriculumDepth} (frontier V/d {frontierRatio:F2} ≥ {_s.AdvanceRatio:F2})");
-        }
-        else if (_s.AutoWiden && _net is ResidualMlp wNet && wNet.Width < _s.MaxWidth && lossStagnantSamples >= _s.WidenStallSamples)
-        {
-            // Loss flatlined at the frontier AND still can't clear the gate → capacity-bound. Widen the trunk
-            // (function-preserving warm start: accuracy preserved, frontier doesn't move) to gain capacity for V
-            // to climb past the gate. On NEED (plateau), not a timer; distinct from --grow-at.
-            int oldW = wNet.Width, newW = Math.Min(_s.MaxWidth, wNet.Width * 2);
-            double plateauLoss = _bestLossSinceReset;
-            _net = wNet.WidenTo(newW, new Xoshiro256StarStar(_s.Seed ^ ((ulong)newW * 0x9E3779B1u)), symmetryNoise: 1e-3f);
-            _adam = new Adam(_net.Parameters(), _options.LearningRate, beta2: _options.AdamBeta2);
-            BuildStack();
-            _bestLossSinceReset = double.MaxValue; _samplesAtBestLoss = currentSamples; _samplesSinceAdvance = 0;
-            SaveCheckpoint(_store);
-            Log($"auto-widen {oldW}→{newW}: frontier d{_curriculumDepth} loss plateaued (~{plateauLoss:F4} for {lossStagnantSamples:N0} samples) → added capacity (Net2WiderNet warm start) → {DescribeNet(_net)}");
-        }
-        else if (_curriculumDepth < _s.MaxDepthCap && _samplesSinceAdvance >= StallWarnSamples)
-        {
-            Log($"frontier d{_curriculumDepth} not yet mastered (V/d {frontierRatio:F2} < {_s.AdvanceRatio:F2}) after {_samplesSinceAdvance:N0} samples — needs longer training{(_net is ResidualMlp nw && nw.Width < _s.MaxWidth ? " or more capacity (enable --auto-widen)" : "")} (no forced advance)");
-            _samplesSinceAdvance = 0; // throttle the note
+            case CubeDaviCurriculum.Outcome.Advance:
+                _curriculumDepth++;
+                Log($"curriculum advanced → scramble depth {_curriculumDepth} (frontier V/d {frontierRatio:F2} ≥ {_s.AdvanceRatio:F2})");
+                break;
+
+            case CubeDaviCurriculum.Outcome.Widen:
+            {
+                // Loss flatlined at the frontier AND still can't clear the gate → capacity-bound. Widen the
+                // trunk (function-preserving warm start: accuracy preserved, frontier doesn't move) to gain
+                // capacity for V to climb past the gate. On NEED (plateau), not a timer; distinct from --grow-at.
+                var wNet = (ResidualMlp)_net;
+                int oldW = wNet.Width;
+                double plateauLoss = d.BestLossSinceReset;
+                _net = wNet.WidenTo(d.NewWidth, new Xoshiro256StarStar(_s.Seed ^ ((ulong)d.NewWidth * 0x9E3779B1u)), symmetryNoise: 1e-3f);
+                _adam = new Adam(_net.Parameters(), _options.LearningRate, beta2: _options.AdamBeta2);
+                BuildStack();
+                SaveCheckpoint(_store);
+                Log($"auto-widen {oldW}→{d.NewWidth}: frontier d{_curriculumDepth} loss plateaued (~{plateauLoss:F4} for {d.LossStagnantSamples:N0} samples) → added capacity (Net2WiderNet warm start) → {DescribeNet(_net)}");
+                break;
+            }
+
+            case CubeDaviCurriculum.Outcome.StallNote:
+                Log($"frontier d{_curriculumDepth} not yet mastered (V/d {frontierRatio:F2} < {_s.AdvanceRatio:F2}) after {_samplesSinceAdvance:N0} samples — needs longer training{(netWidth is int nw && nw < _s.MaxWidth ? " or more capacity (enable --auto-widen)" : "")} (no forced advance)");
+                break;
         }
 
         // Progressive growing: train cheap at the narrow width, then widen once enough samples are in
         // (Net2WiderNet warm start; Adam restarts and the device stack rebuilds at the new width).
-        if (_s.GrowToWidth > 0 && _net is ResidualMlp toGrow && toGrow.Width < _s.GrowToWidth && Samples >= _s.GrowAtSamples)
+        // Independent of the switch above — a step can both advance and grow.
+        if (d.Grow)
         {
+            var toGrow = (ResidualMlp)_net;
             int oldWidth = toGrow.Width;
-            _net = toGrow.WidenTo(_s.GrowToWidth, new Xoshiro256StarStar(_s.Seed ^ 0x67707D), symmetryNoise: 1e-3f);
+            _net = toGrow.WidenTo(d.GrowWidth, new Xoshiro256StarStar(_s.Seed ^ 0x67707D), symmetryNoise: 1e-3f);
             _adam = new Adam(_net.Parameters(), _options.LearningRate, beta2: _options.AdamBeta2);
             BuildStack();
             SaveCheckpoint(_store); // persist the widened shape immediately so a resume picks it up
-            Log($"net widened {oldWidth}→{_s.GrowToWidth} (Net2WiderNet warm start) at {Samples:N0} samples → {DescribeNet(_net)}");
+            Log($"net widened {oldWidth}→{d.GrowWidth} (Net2WiderNet warm start) at {Samples:N0} samples → {DescribeNet(_net)}");
         }
     }
 

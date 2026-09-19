@@ -1381,8 +1381,8 @@ Verified by reading both signatures and the assignment; not executed.
 
 | item | lines | kind | verdict |
 |---|---|---|---|
-| **A1** Extract `CubeDaviCurriculum` (the advance / auto-widen / depth-cap rules) as a pure static | **+~40** | mechanical prod move + tests | **do it** |
-| **A2** Fix the `:259` cast | +0 | prod, 1 line | **do it** (defect, in scope under the one-PR rule) |
+| **A1** Extract `CubeDaviCurriculum` (the advance / auto-widen / depth-cap rules) as a pure static | **+~40** | mechanical prod move + tests | ✅ **DONE** — 25 tests, 34 ms |
+| **A2** Fix the `:259` cast | +0 | prod, 1 line | ✅ **DONE** — fixed at the source: `CubeValueSearch.Solve`'s CPU overload now takes `IValueNet`, so the cast is gone rather than guarded |
 | **A3** Nullable factory seam on `CubeDaviCampaign` + lifecycle suite | +~200 | prod ~30 lines | **worth it — but not for the number** |
 | **A4** Same seam on `CubeEfficientCampaign` | +~81 | prod ~10 lines | as A3 |
 | **A5** One-chunk `TrainChunk` test | +9 | test-only | **do not** — §12.7 already priced slow-and-shallow |
@@ -1522,3 +1522,30 @@ roughly 2× here. Same obligation on A3 before it lands.
   stripped them). That comment is why the RushHour and FruitCake `TrainChunk`s *look* untested when they
   are in the measured bucket.
 - `ModelServiceInfrastructureTests.cs:387` states the superseded ILGPU reason as fact (§19.2).
+
+### 19.11 Status — what is done, and what is in flight
+
+**Done and verified** (build green, 25 new tests in 34 ms):
+
+- **A2**, the live `InvalidCastException`. Fixed at the source rather than the call site:
+  `CubeValueSearch.Solve`'s CPU convenience overload now takes `IValueNet` instead of `ResidualMlp`. It
+  only ever calls `Forward(Tensor)`, which every value net has — narrowing it bought nothing and cost a
+  crash, because the campaign had to cast its `IValueNet` field to satisfy the signature.
+- **A1**, `CubeDaviCurriculum`. All three traps held: the `float`/`double` mix with the `0.98f` literal
+  is preserved, `MeanValueAtDepth` stayed in the campaign so the extracted function is genuinely pure,
+  and growth remains a **separate** decision with a test pinning that a step can advance *and* grow.
+
+> One test caught an error of mine worth recording: I asserted that a loss sitting exactly **at** the
+> plateau threshold counts as an improvement. The comparison is strictly `<`, so it does not. The
+> corrected test now pins both the strictness and the fact that `0.98f` widens to `0.9800000190734863`
+> rather than `0.98` — so rewriting the literal moves the boundary between those two cases.
+
+**In flight when this was written** — two agents writing tests against §19.5 (the long tail) and §19.7
+items B1/B3/B5/B6. Files already on disk from them: `CubePolicyTrainStepTests.cs`,
+`SelfPlayChunkVariantTests.cs`, and edits to `SelfPlayLadderTests.cs`. **These are unverified** — they
+have not been compiled or run. Anyone picking this up should build, run the full suite, and check the
+agents' own reports for the APIs they flagged as uncertain before trusting them.
+
+**Not started:** B2 (XIT `TrainChunk` at frontier 1, ~109 lines) and B4 (the BlockDude gate limb, ~53,
+needs the `GateBoards` option). Both carry the §19.9 measurement obligation — they are the only items
+that can push the suite past ~3 minutes, and both estimates are unmeasured.

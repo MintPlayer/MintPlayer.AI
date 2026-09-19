@@ -3628,7 +3628,7 @@ change.
 engine was not), one was **not a defect at all** (`reachableMask` is live, reached through a renaming
 facade), and the remaining seven are fixed.
 
-## M69 — Campaigns coverage: the plan  *(investigated 2026-09-19; see `COVERAGE_90_PRD.md` §19)* 📋 PLANNED
+## M69 — Campaigns coverage  *(2026-09-19; see `COVERAGE_90_PRD.md` §19)* 🟡 IN PROGRESS — **A1 + A2 done; the long tail and B1/B3/B5/B6 are written but UNVERIFIED**
 
 `Campaigns` is at **61.31% (1,518 / 2,476 lines, 958 uncovered)**. A three-agent sweep split it by what
 actually blocks each group — three different problems, not one — and found **~445 lines reachable without
@@ -3653,6 +3653,16 @@ logic, and that one parameter gates all 286 lines including ~50 of pure arithmet
 5. **B2 — XIT `TrainChunk` at frontier 1** (~109). **Measure first.**
 6. **B4 — BlockDude gate limb** (~53). Needs `GateBoards` on the options record; `GateBoardsFor` already
    takes the count, so no other signature moves. **Measure first.**
+
+**Done so far.** **A2** — the `InvalidCastException` below, fixed at the source:
+`CubeValueSearch.Solve`'s CPU overload now takes `IValueNet`, so the cast is gone rather than guarded.
+**A1** — `CubeDaviCurriculum` extracted with 25 tests (34 ms), on rules governing a campaign that is
+**0/286 covered**. All three traps held, and one test caught me asserting the plateau threshold was
+inclusive when it is strictly `<`.
+
+**Unverified on disk:** `CubePolicyTrainStepTests.cs`, `SelfPlayChunkVariantTests.cs` and edits to
+`SelfPlayLadderTests.cs`, written by agents that were still running. **Build and run before trusting
+them.** Not started: B2 and B4, both carrying the §19.9 measurement obligation.
 
 **A live defect found on the way:** `CubeDaviCampaign.cs:259` casts `(ResidualMlp)_net` unconditionally,
 but `:155` assigns `new Mlp(...)` when `Residual` is false — which comes straight from the Lab's
