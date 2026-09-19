@@ -75,6 +75,12 @@ public class CampaignRegistrationTests : IDisposable
             Assert.IsType<CubeImitationCampaign>(sp.GetRequiredService<ITrainingCampaign>());
         using (var sp = Build(s => s.AddRushHourImitationCampaign(new RushHourImitationOptions())))
             Assert.IsType<RushHourImitationCampaign>(sp.GetRequiredService<ITrainingCampaign>());
+        // The two Block Dude phases (M69): registered like the others, and equally able to break silently --
+        // a campaign that fails to resolve only shows up when the Lab is actually run with --game blockdude.
+        using (var sp = Build(s => s.AddBlockDudeImitationCampaign(new BlockDudeImitationOptions())))
+            Assert.IsType<BlockDudeImitationCampaign>(sp.GetRequiredService<ITrainingCampaign>());
+        using (var sp = Build(s => s.AddBlockDudeExpertIterationCampaign(new BlockDudeExpertIterationOptions())))
+            Assert.IsType<BlockDudeExpertIterationCampaign>(sp.GetRequiredService<ITrainingCampaign>());
     }
 
     [Fact]

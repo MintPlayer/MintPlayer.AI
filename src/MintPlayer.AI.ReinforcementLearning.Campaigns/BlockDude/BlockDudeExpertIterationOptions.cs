@@ -113,4 +113,8 @@ public sealed record BlockDudeExpertIterationOptions
     /// currently is, so without this the far-distance labels would fade out of the mix as the frontier moves.
     /// </summary>
     public double DemoShare { get; init; } = 0.25;
+
+    /// <summary>Training batch size. A chunk trains nothing until it has collected this many
+    /// samples, so lowering it is what lets a test drive a real chunk cheaply (M64.7).</summary>
+    public int BatchSize { get; init; } = 128;
 }

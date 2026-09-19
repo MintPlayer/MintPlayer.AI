@@ -12,54 +12,27 @@ internal static class FruitCakeLab
     public static void Run(string[] args)
     {
         var a = new CliArgs(args);
-        double hours = a.Dbl("--hours", 1);
         string dataDir = a.Str("--data", "data");
-        ulong seed = a.ULong("--seed", 1);
-        int chunkSteps = a.Int("--chunk-steps", 2_000); // drops per chunk (each drop = simulate-to-rest; far costlier than a grid step)
-        long targetSteps = a.Long("--steps", 0);        // 0 = time-bounded only (score-maximizing); a hard drop cap otherwise
-        int evalEpisodes = a.Int("--episodes", 10);
-        float learningRate = a.Flt("--lr", 5e-4f);
-        float explore = a.Flt("--explore", 1.0f);       // ε-start; pass a low value (e.g. 0.2) to refine a warm-started net
-        int[] hidden = a.Ints("--hidden", [256, 256]);  // trunk widths for the Dueling Q-net
-        double gamma = a.Dbl("--gamma", 0.99);          // discount; high for the long drop horizon (PRD bundle uses 0.997)
-        int nStep = a.Int("--nstep", 1);                // n-step return horizon (1 = single-step DQN)
-        bool shape = a.Has("--shape");                  // enable reward shaping (tier-reached bonus + potential-based adjacency/height)
-        bool evalOnly = a.Has("--eval-only");
-        bool noisy = a.Has("--noisy");                  // NoisyNets exploration (learned σ) instead of ε-greedy
-        bool ab = a.Has("--ab");                        // head-to-head eval of --data's net vs --baseline's net (no training)
-        string baselineDir = a.Str("--baseline", "");   // the net to compare --data's net against
         int abEpisodes = a.Int("--ab-episodes", 200);   // paired greedy games per net (averages out eval noise)
-        bool searchEval = a.Has("--search-eval");       // F1 forward-model search vs plain net greedy, on --data's net
-        int depth = a.Int("--depth", 2);                // search lookahead (1 or 2)
-        int topK = a.Int("--topk", 5);                  // depth-2 first-ply expansion width
-        int topK2 = a.Int("--topk2", 3);                // deeper-ply expansion width (depth 3)
-        string leaf = a.Str("--leaf", "net");           // search leaf value (net | height | tierpot | blend)
-        bool grow = a.Has("--grow");                    // progressively grow the net wider+deeper mid-training (Net2Net demo)
-        int growEvery = a.Int("--grow-every", 2000);    // drops between growth steps (with --grow)
 
-        // A growing run starts from the tiny first stage and adds capacity mid-training (Net2Wider/DeeperNet).
-        if (grow) hidden = DqnGrowth.Start;
-
-        if (searchEval)
+        if (a.Has("--search-eval"))
         {
             // F1: does forward-model search beat the plain net on max-tier? No training/host needed.
-            FruitCakeSearchEval.Run(dataDir, abEpisodes, depth, topK, seedBase: 20_000, leaf, topK2);
+            FruitCakeSearchEval.Run(dataDir, abEpisodes, a.Int("--depth", 2), a.Int("--topk", 5),
+                                    seedBase: 20_000, a.Str("--leaf", "net"), a.Int("--topk2", 3));
             return;
         }
 
-        if (ab)
+        if (a.Has("--ab"))
         {
             // Head-to-head, no training/host needed: compare --data's net against --baseline's net.
-            FruitCakeAb.Run(baselineDir, dataDir, abEpisodes, seedBase: 20_000);
+            FruitCakeAb.Run(a.Str("--baseline", ""), dataDir, abEpisodes, seedBase: 20_000);
             return;
         }
 
-        var options = new FruitCakeDqnOptions
-        {
-            Seed = seed, ChunkSteps = chunkSteps, TargetSteps = targetSteps, EvalEpisodes = evalEpisodes,
-            LearningRate = learningRate, EpsilonStart = explore, Hidden = hidden, Gamma = gamma,
-            Noisy = noisy, NStep = nStep, Grow = grow, GrowEvery = growEvery,
-        };
+        var options = Parse(a, out double hours, out _, out bool evalOnly, out bool shape);
+        double gamma = options.Gamma;
+
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             // Shaping lives on the training env (ShapingGamma matches the learner's γ for policy-invariance);
             // the eval env stays a plain game so keep-best/A/B judge real merge points, never the shaped signal.
@@ -68,5 +41,45 @@ internal static class FruitCakeLab
                 evalEnv: new FruitCakeEnv(),
                 options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "fruitcake-dqn.csv")));
+    }
+
+    /// <summary>
+    /// The DQN options this entry point's flags resolve to, plus the three values the host needs
+    /// (<paramref name="hours"/>, <paramref name="dataDir"/>, <paramref name="evalOnly"/>) and
+    /// <paramref name="shape"/>, which selects the shaped TRAINING env while eval stays a plain game.
+    /// </summary>
+    /// <remarks>
+    /// M63.5: extracted from <see cref="Run"/>, where every default was reachable only by starting a real
+    /// training run. The <c>--grow</c> interaction moves with it — a growing run REPLACES the requested
+    /// <c>--hidden</c> with the tiny first stage, which is the least obvious rule here.
+    /// </remarks>
+    internal static FruitCakeDqnOptions Parse(CliArgs a, out double hours, out string dataDir,
+                                              out bool evalOnly, out bool shape)
+    {
+        hours = a.Dbl("--hours", 1);
+        dataDir = a.Str("--data", "data");
+        evalOnly = a.Has("--eval-only");
+        shape = a.Has("--shape");                       // tier-reached bonus + potential-based adjacency/height
+
+        int[] hidden = a.Ints("--hidden", [256, 256]);  // trunk widths for the Dueling Q-net
+        bool grow = a.Has("--grow");                    // grow the net wider+deeper mid-training (Net2Net demo)
+        // A growing run starts from the tiny first stage and adds capacity mid-training (Net2Wider/DeeperNet).
+        if (grow) hidden = DqnGrowth.Start;
+
+        return new FruitCakeDqnOptions
+        {
+            Seed = a.ULong("--seed", 1),
+            ChunkSteps = a.Int("--chunk-steps", 2_000), // drops per chunk (each drop = simulate-to-rest)
+            TargetSteps = a.Long("--steps", 0),         // 0 = time-bounded only; a hard drop cap otherwise
+            EvalEpisodes = a.Int("--episodes", 10),
+            LearningRate = a.Flt("--lr", 5e-4f),
+            EpsilonStart = a.Flt("--explore", 1.0f),    // ε-start; low (e.g. 0.2) refines a warm-started net
+            Hidden = hidden,
+            Gamma = a.Dbl("--gamma", 0.99),             // high for the long drop horizon
+            Noisy = a.Has("--noisy"),                   // NoisyNets (learned σ) instead of ε-greedy
+            NStep = a.Int("--nstep", 1),                // n-step return horizon (1 = single-step DQN)
+            Grow = grow,
+            GrowEvery = a.Int("--grow-every", 2000),    // drops between growth steps (with --grow)
+        };
     }
 }

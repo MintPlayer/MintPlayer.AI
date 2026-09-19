@@ -17,20 +17,9 @@ internal static class TetrisLab
     public static void Run(string[] args)
     {
         var a = new CliArgs(args);
-        double hours = a.Dbl("--hours", 1);
-        string dataDir = a.Str("--data", "data");
-        ulong seed = a.ULong("--seed", 1);
-        int pieceBudget = a.Int("--piece-budget", 500);
-        int chunkSteps = a.Int("--chunk-steps", 5_000);
-        long targetSteps = a.Long("--steps", 400_000);
-        int evalEpisodes = a.Int("--episodes", 20);
-        float learningRate = a.Flt("--lr", 1e-3f);
-        float explore = a.Flt("--explore", 1.0f);
-        int[] hidden = a.Ints("--hidden", [128, 128]);
-        double gamma = a.Dbl("--gamma", 0.995);
-        bool evalOnly = a.Has("--eval-only");
-        int baselines = a.Int("--baselines", 0);
-        string netPath = a.Str("--net", Path.Combine("src", "RLDemo.Web", "wwwroot", "models", "tetris.dqn.ckpt"));
+        var f = Parse(a);
+        (double hours, string dataDir, ulong seed, int pieceBudget) = (f.Hours, f.DataDir, f.Seed, f.PieceBudget);
+        (double gamma, bool evalOnly, int baselines, string netPath) = (f.Gamma, f.EvalOnly, f.Baselines, f.NetPath);
 
         // M62.3b diagnostic: how many placements does each technique actually reach, per level? The mask
         // is only believable if these counts match hand-arithmetic on the frame budget.
@@ -104,46 +93,64 @@ internal static class TetrisLab
             return;
         }
 
-        var options = new TetrisDqnOptions
-        {
-            Seed = seed, ChunkSteps = chunkSteps, TargetSteps = targetSteps, EvalEpisodes = evalEpisodes,
-            LearningRate = learningRate, EpsilonStart = explore, Hidden = hidden, Gamma = gamma,
-            Grow = a.Has("--grow"), GrowEvery = a.Int("--grow-every", 5000),
-            NStep = a.Int("--nstep", 3),
-            Noisy = a.Has("--noisy"),
-            // The M49/M51 recipe (γ=0 only): dense all-action regression toward the Dellacherie-basis
-            // value read back from the observation planes.
-            DenseRegression = a.Has("--dense"),
-            DenseTargetWeight = a.Flt("--dense-weight", 1.0f),
-            EpsilonEnd = a.Flt("--eps-end", 0.05f),
-            BufferCapacity = a.Int("--buffer", 100_000),
-        };
-        // Training + eval both uniform-random pieces, no garbage (the benchmark-honest protocol; garbage is
-        // an eval protocol and a web mode, not a training distribution — PRD §3.6). PBRS shaping defaults ON
-        // (M54.3 escalation: the bare reward is too sparse — 180K steps measured near-random) and lives on
-        // the TRAIN env only, so gates stay honest; --no-pbrs reverts to the bare reward.
-        bool pbrs = !a.Has("--no-pbrs");
-        // Mixed garbage on/off per training episode. MEASURED WORSE on both protocols (tet5train head-to-
-        // head vs tet4train, 30 seeds: A 17,022 vs 21,739 · B survival 101.3 vs 105.0): the dense target is
-        // the same function on any board, so the clean-trained net already generalizes to garbage — the
-        // garbage ceiling is γ=0 MYOPIA, which search fixes, not state coverage. Kept as an opt-in flag.
-        bool mixGarbage = a.Has("--mix-garbage");
+        var options = Options(a);
+        var shaping = Shaping(a);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             services => services.AddTetrisDqnCampaign(
                 trainEnv: new TetrisEnv(pieceBudget)
                 {
-                    ShapeBoardPotential = pbrs,
+                    ShapeBoardPotential = shaping.Pbrs,
                     PotentialGamma = gamma,
-                    MixedGarbageTraining = mixGarbage,
-                    // --mandatory-tetris: declining a reachable tetris on a CLEAN stack ends the episode.
-                    // Train env only — the eval env below deliberately leaves it off, so the gates keep
-                    // measuring the same game they always did.
-                    MandatoryTetris = a.Has("--mandatory-tetris"),
+                    MixedGarbageTraining = shaping.MixGarbage,
+                    MandatoryTetris = shaping.MandatoryTetris,
                 },
                 evalEnv: new TetrisEnv(pieceBudget),
                 options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "tetris-dqn.csv")));
     }
+
+    /// <summary>The flags read before any mode dispatch: the run's budget, where it writes, and the piece
+    /// budget / checkpoint path the census and baseline modes share with training.</summary>
+    /// <remarks>M63.6: extracted from <see cref="Run"/>. The net sizing knobs are re-read by
+    /// <see cref="Options"/>, exactly as they were before the extraction.</remarks>
+    internal sealed record Flags(
+        double Hours, string DataDir, ulong Seed, int PieceBudget, int ChunkSteps, long TargetSteps,
+        int EvalEpisodes, float LearningRate, float Explore, int[] Hidden, double Gamma, bool EvalOnly,
+        int Baselines, string NetPath);
+
+    /// <summary>Reads the pure head of <see cref="Run"/> — no board, net or episode is touched.</summary>
+    internal static Flags Parse(CliArgs a)
+        => new(
+            Hours: a.Dbl("--hours", 1),
+            DataDir: a.Str("--data", "data"),
+            Seed: a.ULong("--seed", 1),
+            PieceBudget: a.Int("--piece-budget", 500),
+            ChunkSteps: a.Int("--chunk-steps", 5_000),
+            TargetSteps: a.Long("--steps", 400_000),
+            EvalEpisodes: a.Int("--episodes", 20),
+            LearningRate: a.Flt("--lr", 1e-3f),
+            Explore: a.Flt("--explore", 1.0f),
+            Hidden: a.Ints("--hidden", [128, 128]),
+            Gamma: a.Dbl("--gamma", 0.995),
+            EvalOnly: a.Has("--eval-only"),
+            Baselines: a.Int("--baselines", 0),
+            NetPath: a.Str("--net", Path.Combine("src", "RLDemo.Web", "wwwroot", "models", "tetris.dqn.ckpt")));
+
+    /// <summary>
+    /// The three switches that shape the TRAIN env only — the eval env deliberately gets none of them, so the
+    /// gates keep measuring the same game they always did.
+    /// </summary>
+    /// <remarks>
+    /// M63.6: extracted from <see cref="Run"/>, where they were read inside the registration lambda.
+    /// <para>PBRS defaults ON (M54.3 escalation: the bare reward is too sparse — 180K steps measured
+    /// near-random); <c>--no-pbrs</c> reverts to the bare reward.</para>
+    /// <para>Mixed garbage per training episode was MEASURED WORSE on both protocols (tet5train vs
+    /// tet4train, 30 seeds: A 17,022 vs 21,739 · B survival 101.3 vs 105.0) — the garbage ceiling is γ=0
+    /// MYOPIA, which search fixes, not state coverage. Kept as an opt-in flag, hence default OFF.</para>
+    /// <para><c>--mandatory-tetris</c>: declining a reachable tetris on a CLEAN stack ends the episode.</para>
+    /// </remarks>
+    internal static (bool Pbrs, bool MixGarbage, bool MandatoryTetris) Shaping(CliArgs a)
+        => (!a.Has("--no-pbrs"), a.Has("--mix-garbage"), a.Has("--mandatory-tetris"));
 
     /// <summary>
     /// M62.4: how often is a 4-line clear on the table and declined? Reports, per tier, the number of
@@ -359,14 +366,71 @@ internal static class TetrisLab
             tetrises += b.Tetrises;
         }
         double mean = sum / episodes;
-        double ci = 1.96 * Math.Sqrt(Math.Max(0, sumSq / episodes - mean * mean) / episodes);
+        double ci = Ci(sum, sumSq, episodes);
         moveTicks.Sort();
         double msPerTick = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-        double p50 = moveTicks.Count == 0 ? 0 : moveTicks[moveTicks.Count / 2] * msPerTick;
-        double p99 = moveTicks.Count == 0 ? 0 : moveTicks[(int)(moveTicks.Count * 0.99)] * msPerTick;
+        var (p50, p99) = Percentiles(moveTicks, msPerTick);
         Console.WriteLine($"  {name,-20} mean {mean,9:F1} ± {ci:F1} (95% CI), " +
                           $"lines {lines / episodes:F1} · tetrises {tetrises / episodes:F2} · top-outs {topOuts}/{episodes} · " +
                           $"ms/move p50 {p50:F2} p99 {p99:F2}");
         return (name, mean, ci);
+    }
+
+    /// <summary>The DQN options this entry point's flags resolve to (M63.5: extracted from
+    /// <see cref="Run"/>, where every default was reachable only by starting a real training run).</summary>
+    internal static TetrisDqnOptions Options(CliArgs a)
+        => new()
+        {
+            Seed = a.ULong("--seed", 1),
+            ChunkSteps = a.Int("--chunk-steps", 5_000),
+            TargetSteps = a.Long("--steps", 400_000),
+            EvalEpisodes = a.Int("--episodes", 20),
+            LearningRate = a.Flt("--lr", 1e-3f),
+            EpsilonStart = a.Flt("--explore", 1.0f),
+            Hidden = a.Ints("--hidden", [128, 128]),
+            Gamma = a.Dbl("--gamma", 0.995),
+            Grow = a.Has("--grow"),
+            GrowEvery = a.Int("--grow-every", 5000),
+            NStep = a.Int("--nstep", 3),
+            Noisy = a.Has("--noisy"),
+            // The M49/M51 recipe (γ=0 only): dense all-action regression toward the Dellacherie-basis
+            // value read back from the observation planes.
+            DenseRegression = a.Has("--dense"),
+            DenseTargetWeight = a.Flt("--dense-weight", 1.0f),
+            EpsilonEnd = a.Flt("--eps-end", 0.05f),
+            BufferCapacity = a.Int("--buffer", 100_000),
+        };
+
+    /// <summary>
+    /// The 95% confidence half-width for an episode metric, from its running sum and sum of squares.
+    /// </summary>
+    /// <remarks>
+    /// M63.5: extracted from <c>RunProtocol</c>. This is the quantity every "CI-SEPARATED" /
+    /// "OVERLAPPING" baseline verdict is decided on, so a sign or divisor slip here silently changes a
+    /// gate result. The <c>Math.Max(0, ...)</c> guards the catastrophic-cancellation case where
+    /// <c>sumSq/n - mean²</c> goes slightly negative on a constant sample.
+    /// </remarks>
+    internal static double Ci(double sum, double sumSq, int episodes)
+    {
+        if (episodes <= 0) return 0;
+        double mean = sum / episodes;
+        return 1.96 * Math.Sqrt(Math.Max(0, sumSq / episodes - mean * mean) / episodes);
+    }
+
+    /// <summary>
+    /// Median and 99th-percentile move time, in milliseconds. Empty input reports (0, 0).
+    /// </summary>
+    /// <remarks>
+    /// M63.5: the p99 index is <c>(int)(count * 0.99)</c>, which reaches <c>count</c> itself once
+    /// <c>count * 0.99</c> rounds up to it — the input must be clamped, not trusted. Extracted so that
+    /// boundary is assertable rather than discovered on a short run.
+    /// </remarks>
+    internal static (double P50, double P99) Percentiles(IReadOnlyList<long> sortedTicks, double msPerTick)
+    {
+        if (sortedTicks.Count == 0) return (0, 0);
+        int last = sortedTicks.Count - 1;
+        int i50 = Math.Min(sortedTicks.Count / 2, last);
+        int i99 = Math.Min((int)(sortedTicks.Count * 0.99), last);
+        return (sortedTicks[i50] * msPerTick, sortedTicks[i99] * msPerTick);
     }
 }

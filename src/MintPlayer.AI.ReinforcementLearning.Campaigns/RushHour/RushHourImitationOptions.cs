@@ -9,4 +9,8 @@ public sealed record RushHourImitationOptions
     public bool Grow { get; init; }
     /// <summary>Samples between growth steps (with <see cref="Grow"/>).</summary>
     public int GrowEvery { get; init; } = 2048;
+
+    /// <summary>Training batch size. A chunk trains nothing until it has collected this many
+    /// samples, so lowering it is what lets a test drive a real chunk cheaply (M64.7).</summary>
+    public int BatchSize { get; init; } = 256;
 }

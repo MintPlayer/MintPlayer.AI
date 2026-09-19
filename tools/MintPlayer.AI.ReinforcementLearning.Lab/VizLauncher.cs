@@ -38,7 +38,7 @@ internal static class VizLauncher
     }
 
     /// <summary>Returns the requested viewer port, 0 when <c>--viz</c> is absent. Bare <c>--viz</c> → 5250.</summary>
-    private static int ParsePort(string[] args)
+    internal static int ParsePort(string[] args)
     {
         for (int i = 0; i < args.Length; i++)
             if (args[i] == "--viz")

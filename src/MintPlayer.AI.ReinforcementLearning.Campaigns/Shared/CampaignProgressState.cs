@@ -7,9 +7,20 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 /// owner-thread RNG states.</summary>
 /// <param name="Samples">Total training samples consumed across the whole run.</param>
 /// <param name="Units">Campaign-specific work unit — labelled configs, rounds, or self-play games.</param>
-/// <param name="LastMetric">Most recent eval metric that drives progression (0 when none yet).</param>
+/// <param name="LastMetric">Most recent eval metric that drives progression, exactly as the campaign passed it to
+/// <see cref="CampaignProgressState.Save"/>. The slot is campaign-defined — a win rate for self-play, an exact
+/// solve counter for the cube — so this layer never reinterprets it, and NaN round-trips verbatim in format
+/// version 2 and later.</param>
 /// <param name="Rngs">Owner-thread RNG states, in the order the campaign declares them.</param>
-public sealed record CampaignProgress(long Samples, long Units, double LastMetric, Xoshiro256StarStar[] Rngs);
+/// <param name="Version">The on-disk format version this was read from. Campaigns whose metric slot changed
+/// meaning between versions branch on it; the rest ignore it. See <see cref="CampaignProgressState"/>.</param>
+/// <param name="Rung">Which rung of the campaign's <see cref="Core.Training.GrowthLadder"/> the net is on, or
+/// <b>-1 for "not recorded"</b> (any pre-v3 sidecar, and any campaign that does not grow). RECORDED rather than
+/// recovered from the live trunk: shape-matching cannot tell "rung 0" apart from "an architecture this ladder
+/// never described", and guessing the latter as the former walks a resumed run straight to the top of the
+/// ladder. Same reasoning, and the same field, as <see cref="Core.Training.GrowthProgress.Rung"/>.</param>
+public sealed record CampaignProgress(
+    long Samples, long Units, double LastMetric, Xoshiro256StarStar[] Rngs, int Version, int Rung = -1);
 
 /// <summary>
 /// A tiny sidecar checkpoint for campaign progress, stored under its own algorithm id alongside the net and
@@ -34,7 +45,18 @@ public sealed record CampaignProgress(long Samples, long Units, double LastMetri
 /// </remarks>
 public static class CampaignProgressState
 {
-    private const int Version = 1;
+    /// <summary>
+    /// The version <see cref="Save"/> writes. <b>v1 → v2 (M65)</b>: the metric slot is now opaque to this layer and
+    /// round-trips verbatim, NaN included. In v1 the self-play campaign mapped its "not measured yet" NaN onto 0
+    /// before saving, so a v1 0 is ambiguous and only the reading campaign knows which reading is safe — hence
+    /// <see cref="CampaignProgress.Version"/>, rather than a translation here (the cube campaign carries an exact
+    /// solve counter in the same slot, for which 0 has always meant zero).
+    /// </summary>
+    /// <remarks><b>v2 → v3 (M70)</b>: appended the growth rung, so a growing campaign resumes on the rung it was
+    /// actually on instead of inferring one from the trunk shape. Additive and optional in the usual way — a v1/v2
+    /// sidecar reports <c>Rung = -1</c> ("not recorded"), and the caller falls back to the old shape-matching,
+    /// so existing stores keep resuming exactly as before.</remarks>
+    private const int Version = 3;
 
     /// <summary>Reads progress, or null when absent or shaped for a different campaign (both meaning "start from zero").</summary>
     /// <param name="rngCount">Number of RNG streams the caller expects, in its declared order.</param>
@@ -47,7 +69,7 @@ public static class CampaignProgressState
         try
         {
             using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
-            CheckpointFormat.ReadHeader(reader, kind, Version);
+            int version = CheckpointFormat.ReadHeader(reader, kind, Version);
 
             long samples = reader.ReadInt64();
             long units = reader.ReadInt64();
@@ -62,7 +84,12 @@ public static class CampaignProgressState
 
             var rngs = new Xoshiro256StarStar[rngCount];
             for (int i = 0; i < rngCount; i++) rngs[i] = CheckpointFormat.ReadRngState(reader);
-            return new CampaignProgress(samples, units, lastMetric, rngs);
+
+            // Appended in v3, so it is read LAST and only when the file is new enough. -1 means "this sidecar
+            // predates the field", which is a different statement from "rung 0" — the caller must not conflate
+            // them, because that conflation is the bug this field exists to close.
+            int rung = version >= 3 ? reader.ReadInt32() : -1;
+            return new CampaignProgress(samples, units, lastMetric, rngs, version, rung);
         }
         catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException)
         {
@@ -81,10 +108,20 @@ public static class CampaignProgressState
         live.SetState(s0, s1, s2, s3);
     }
 
-    /// <summary>Writes progress. Call from <c>Checkpoint</c>, next to the net and Adam saves.</summary>
+    /// <summary>Writes progress. Call from <c>Checkpoint</c>, next to the net and Adam saves.
+    /// <paramref name="lastMetric"/> is stored verbatim as an IEEE-754 double, so a campaign that uses NaN for
+    /// "not measured yet" should pass the NaN rather than flattening it to 0.</summary>
     public static void Save(
         IModelStore store, string environmentId, string algorithmId, string kind,
         long samples, long units, double lastMetric, params Xoshiro256StarStar[] rngs)
+        => Save(store, environmentId, algorithmId, kind, samples, units, lastMetric, rung: -1, rngs);
+
+    /// <summary>As above, recording which <see cref="Core.Training.GrowthLadder"/> rung the net is on.
+    /// Pass -1 from a campaign that does not grow; see <see cref="CampaignProgress.Rung"/> for why -1 and 0 are
+    /// deliberately different values.</summary>
+    public static void Save(
+        IModelStore store, string environmentId, string algorithmId, string kind,
+        long samples, long units, double lastMetric, int rung, params Xoshiro256StarStar[] rngs)
     {
         store.Save(environmentId, algorithmId, stream =>
         {
@@ -95,6 +132,7 @@ public static class CampaignProgressState
             writer.Write(lastMetric);
             writer.Write(rngs.Length);
             foreach (var rng in rngs) CheckpointFormat.WriteRngState(writer, rng);
+            writer.Write(rung);   // v3, appended last so v1/v2 readers are unaffected
         });
     }
 }

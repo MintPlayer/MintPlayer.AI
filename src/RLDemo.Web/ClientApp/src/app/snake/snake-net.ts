@@ -52,6 +52,14 @@ export function parseSnakeNet(buffer: ArrayBuffer): PgSnakeNet {
   const kind = readString();
   if (kind !== KIND) throw new Error(`snake-net: expected kind '${KIND}', got '${kind}'`);
   const version = i32();
+  // Reject an unknown version rather than parsing it as v1. This matters more than it looks: v2
+  // added the `noisy` flag byte immediately after the header, so reading a v3 stream as v1 does not
+  // fail — it shifts every subsequent float by one byte and yields a net of plausible-looking
+  // garbage. Shipped checkpoints are v1 (snake) and v2 (the rest), so this range rejects nothing
+  // that exists.
+  if (version < 1 || version > 2) {
+    throw new Error(`unsupported dueling-q checkpoint version ${version} (supported: 1-2)`);
+  }
   const inputSize = i32();
   const hiddenCount = i32();
   const hidden: number[] = [];

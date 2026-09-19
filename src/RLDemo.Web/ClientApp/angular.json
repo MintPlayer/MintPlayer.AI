@@ -57,7 +57,11 @@
             ],
             "stylePreprocessorOptions": {
               "sass": {
-                "silenceDeprecations": ["import", "global-builtin", "color-functions"]
+                "silenceDeprecations": [
+                  "import",
+                  "global-builtin",
+                  "color-functions"
+                ]
               }
             }
           },
@@ -96,6 +100,31 @@
             }
           },
           "defaultConfiguration": "development"
+        },
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "tsConfig": "tsconfig.spec.json",
+            "runner": "vitest",
+            "buildTarget": "::development",
+            "coverageReporters": [
+              "lcovonly",
+              "json",
+              "cobertura",
+              "text-summary"
+            ],
+            "coverageInclude": [
+              "src/app/**/*-logic.ts",
+              "src/app/**/*-net.ts",
+              "src/app/**/*-das.ts",
+              "src/app/game-2048/game-2048-classic.ts",
+              "src/app/**/*_solver.ts"
+            ],
+            "coverageExclude": [
+              "src/**/*.spec.ts",
+              "src/**/*.d.ts"
+            ]
+          }
         }
       }
     }

@@ -47,9 +47,22 @@ jobs:
       # --collect writes coverage.cobertura.xml into a GUID-named subdirectory of
       # --results-directory, hence the ** in the upload glob below.
       run: >
-        dotnet test --configuration Release --no-build --filter "Category!=Slow" --verbosity normal
+        dotnet test --configuration Release --no-build --filter "Category!=Slow&Category!=Determinism" --verbosity normal
         --settings coverlet.runsettings
         --collect:"XPlat Code Coverage" --results-directory coverage
+
+    # M64.0c -- the bitwise-identity gate. Runs UNINSTRUMENTED and separately from the coverage
+    # bucket: these compare checkpoint bytes against checked-in hash literals, so instrumentation
+    # would cost time and change nothing. Until now this gate existed only as Slow-tagged tests that
+    # CI never ran, which meant a change breaking training reproducibility shipped green.
+    #
+    # A failure here is NOT a flake. It means the trained bytes moved. Either that was intended (a
+    # deliberate change to the training recipe -- update the literal and say so in the commit) or it
+    # is exactly the regression this step exists to catch.
+    - name: Determinism gate
+      run: >
+        dotnet test --configuration Release --no-build --filter "Category=Determinism"
+        --verbosity normal
 
     # Nothing here gates the merge — the service publishes the `coverage/project` and
     # `coverage/patch` check runs itself; branch protection can require those.
@@ -74,9 +87,10 @@ jobs:
         # and would upload stray unparsable reports.
         disable-search: true
         base-sha: ${{ github.event.pull_request.base.sha }}
-        # Closes the build now instead of waiting out the ~2-minute server debounce, so the
-        # check runs appear while the PR is still being looked at.
-        finish: true
+        # M65: the frontend uploads a SECOND report (hand-written TypeScript) under the same
+        # (repo, sha, runId, runAttempt), and the service merges the two with max semantics. The
+        # LAST upload finishes the build, so this one must not.
+        finish: false
         # A coverage-service outage must never be the reason a PR cannot merge.
         fail-ci-if-error: false
 
@@ -93,3 +107,126 @@ jobs:
     - name: Build Angular app
       working-directory: src/RLDemo.Web/ClientApp
       run: npm ci && npm run build
+
+    # The frontend suite, which DOES feed coverage again as of M65 -- but a different report from the
+    # one M63.7 removed, and the difference is the whole point.
+    #
+    # M63.7 uploaded the Polyglot-GENERATED TypeScript twins, projected back onto the .pg sources.
+    # That was a double-count: the C# side already covers those same .pg lines at 93.9% through the
+    # #line pragmas, so it bought +0.1pp for +57s. It stays removed, and `coverageExclude` in
+    # angular.json keeps `*_solver.ts` out of this report for exactly that reason.
+    #
+    # What uploads now is the HAND-WRITTEN ClientApp code, which the C# side cannot see at all. It is
+    # scoped by `coverageInclude` to the modules that have specs rather than to all of src/**: the
+    # renderers, Three.js hosts and Angular components are excluded deliberately (covering them means
+    # faking a 2D canvas context to assert "it called fillRect", which measures nothing).
+    #
+    # The twins ARE measured here (coverageInclude covers them) but are stripped from this report and
+    # projected onto their .pg sources as a separate one -- see the remap step below. Hand-written .ts
+    # is tracked in git, so the service resolves it directly; the twins are gitignored and would not.
+    - name: Test Angular app
+      working-directory: src/RLDemo.Web/ClientApp
+      run: npm run test:coverage
+
+    # The cobertura reporter writes project-relative paths with the platform separator. The coverage
+    # service resolves a report path by suffix-matching it against `git ls-files`, which stores
+    # forward slashes relative to the REPO root -- so `src\app\x.ts` matches nothing and the file is
+    # silently dropped as unmatched. Normalise the separators and re-root the paths before uploading.
+    - name: Re-root the frontend coverage paths
+      if: always()
+      working-directory: src/RLDemo.Web/ClientApp
+      run: node ../../../tools/reroot_frontend_coverage.mjs coverage/ClientApp/cobertura-coverage.xml src/RLDemo.Web/ClientApp
+
+    # The THIRD report, and the one that completes the .pg union.
+    #
+    # Each *_solver.ts is transpiled from a .pg that also produces the C# the backend runs, but the
+    # two targets serve different callers: C# is the training agent, TypeScript is a visitor playing
+    # in the browser. So a .pg line the browser reaches and training never does is genuinely
+    # uncovered on the C# side -- measured, 137 such lines exist (the snake look-ahead planner and
+    # the mountaincar policy net, neither of which had ANY test before M66).
+    #
+    # This projects the twins' coverage back onto .pg line numbers through the v3 source maps
+    # Polyglot emits beside them. It has to be a separate report because the twins are gitignored
+    # build outputs: the service resolves a path by suffix-matching `git ls-files`, so a report
+    # naming a .ts twin is dropped without an error. The .pg IS tracked, so this one resolves.
+    # (reroot_frontend_coverage.mjs strips the twins from the report above, so nothing double-counts.)
+    #
+    # M67: the projection is now `polyglot coverage remap`, shipped in the MSBuild package beside the
+    # plugin manifests it reads. It replaces tools/pg_coverage_remap.mjs, which was always interim --
+    # a consumer-side tool would have duplicated the compiler's own `originMapping` vocabulary and
+    # drifted from it silently. See MintPlayer.Polyglot#71 / PR #72.
+    - name: Locate the Polyglot CLI
+      if: always()
+      id: polyglot
+      # The CLI ships in the restored nupkg at tools/<rid>/. Globbing rather than hardcoding the
+      # version keeps this from drifting out of step with the PackageReference.
+      run: |
+        TOOL=$(find "$HOME/.nuget/packages/mintplayer.polyglot.msbuild" -path '*/tools/linux-x64/polyglot' -type f | sort -V | tail -1)
+        if [ -z "$TOOL" ]; then echo "::error::polyglot CLI not found in the restored package"; exit 1; fi
+        chmod +x "$TOOL"
+        echo "tool=$TOOL" >> "$GITHUB_OUTPUT"
+
+    # --out-format cobertura, deliberately, though the input is lcov and the tool would otherwise hand
+    # back lcov.
+    #
+    # The reason is BRANCH DATA, not format matching. The remap emits branches count-only (per-arm
+    # identities are not comparable across two instrumenters targeting the same .pg line), and only
+    # cobertura, clover and JaCoCo can express a count -- lcov and istanbul output are line-only.
+    # Measured on this repo: cobertura out carries 272/886 conditions, lcov out carries ZERO.
+    #
+    # It is NOT about upload order or format matching. coverage.mintplayer.com now stores coverage in a
+    # GENERIC internal model -- not lcov, not cobertura -- and the database has been migrated; the ingest's
+    # branch merge is format-agnostic and order-independent (MintPlayer.Spark#420). So the wire format
+    # only decides what a report can EXPRESS, never how it merges. An earlier version of this comment
+    # claimed both legs had to match, and was out of date.
+    - name: Project the Polyglot twins onto their .pg sources
+      if: always()
+      run: >
+        "${{ steps.polyglot.outputs.tool }}" coverage remap
+        src/RLDemo.Web/ClientApp/coverage/ClientApp/lcov.info
+        --target typescript
+        --generated-dir src/RLDemo.Web/ClientApp/src
+        --root .
+        --out-format cobertura
+        --out coverage-pg/pg.cobertura.xml
+
+    - name: Upload frontend coverage
+      # Same guards as the C# upload: fork PRs have no OIDC, and a run that produced no report is a
+      # no-op rather than an upload of nothing.
+      if: >
+        always()
+        && github.event.pull_request.head.repo.full_name == github.repository
+        && hashFiles('src/RLDemo.Web/ClientApp/coverage/ClientApp/cobertura-coverage.xml') != ''
+      continue-on-error: true
+      uses: MintPlayer/MintPlayer.Spark/apps/CodeCoverage/action@coverage-upload-v1
+      with:
+        url: https://coverage.mintplayer.com
+        use-oidc: true
+        files: |
+          src/RLDemo.Web/ClientApp/coverage/ClientApp/cobertura-coverage.xml
+        disable-search: true
+        base-sha: ${{ github.event.pull_request.base.sha }}
+        # The .pg report below is the last one, so it closes the build.
+        finish: false
+        fail-ci-if-error: false
+
+    # Merged under the same (repo, sha, runId, runAttempt) as the C# report, which names the SAME
+    # .pg files. The service's max semantics is what turns the two into a per-line union: a .pg line
+    # counts as covered if either the training path or the browser path reached it.
+    - name: Upload the .pg union coverage
+      if: >
+        always()
+        && github.event.pull_request.head.repo.full_name == github.repository
+        && hashFiles('coverage-pg/pg.cobertura.xml') != ''
+      continue-on-error: true
+      uses: MintPlayer/MintPlayer.Spark/apps/CodeCoverage/action@coverage-upload-v1
+      with:
+        url: https://coverage.mintplayer.com
+        use-oidc: true
+        files: |
+          coverage-pg/pg.cobertura.xml
+        disable-search: true
+        base-sha: ${{ github.event.pull_request.base.sha }}
+        # The last upload of the build closes it.
+        finish: true
+        fail-ci-if-error: false

@@ -1,6 +1,12 @@
 // Client-side 2048 rules, mirroring Board2048 in MintPlayer.AI.ReinforcementLearning.Environments exactly
 // (same action ids and merge semantics) so manual play and playback reconstruction
 // behave identically to the server. Boards are 16 EXPONENTS row-major (0 = empty).
+//
+// The exponent saturates at 15 (`Math.min(pending + 1, 15)` below), mirroring
+// `Board2048.SlideLine`. That is a STORAGE CONSTRAINT, not an arithmetic accident: the server
+// packs four bits per cell, unmasked, into the n-tuple table index (NTuple2048Agent.cs:92, a
+// 16^4 table) and the expectimax transposition key (Expectimax2048.cs:180). Two 32768s merge
+// into one 32768 and still score 32768. 65536 is therefore unreachable by design, everywhere.
 
 export type Board = number[];
 

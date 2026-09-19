@@ -15,51 +15,25 @@ internal static class CrazyFruitsLab
     public static void Run(string[] args)
     {
         var a = new CliArgs(args);
-        double hours = a.Dbl("--hours", 1);
-        string dataDir = a.Str("--data", "data");
-        ulong seed = a.ULong("--seed", 1);
-        int moveBudget = a.Int("--move-budget", 30);
-        int chunkSteps = a.Int("--chunk-steps", 5_000);
-        long targetSteps = a.Long("--steps", 150_000);
-        int evalEpisodes = a.Int("--episodes", 20);
-        float learningRate = a.Flt("--lr", 5e-4f);
-        float explore = a.Flt("--explore", 1.0f);   // ε-start; low (e.g. 0.2) to refine a warm-started net
-        int[] hidden = a.Ints("--hidden", [256, 256]);
-        double gamma = a.Dbl("--gamma", 0.99);
-        bool evalOnly = a.Has("--eval-only");
-        bool grow = a.Has("--grow");
-        int growEvery = a.Int("--grow-every", 5000);
-        int baselines = a.Int("--baselines", 0);
-        string netPath = a.Str("--net", Path.Combine("src", "RLDemo.Web", "wwwroot", "models", "crazyfruits.dqn.ckpt"));
+        var f = Parse(a);
+        (double hours, string dataDir, ulong seed) = (f.Hours, f.DataDir, f.Seed);
+        (int moveBudget, double gamma, bool evalOnly) = (f.MoveBudget, f.Gamma, f.EvalOnly);
 
-        if (baselines > 0)
+        if (f.Baselines > 0)
         {
-            RunBaselines(baselines, moveBudget, seed, netPath);
+            RunBaselines(f.Baselines, moveBudget, seed, f.NetPath);
             return;
         }
 
         int probe = a.Int("--probe", 0);
         if (probe > 0)
         {
-            RunProbe(probe, moveBudget, netPath);
+            RunProbe(probe, moveBudget, f.NetPath);
             return;
         }
 
-        var options = new CrazyFruitsDqnOptions
-        {
-            Seed = seed, ChunkSteps = chunkSteps, TargetSteps = targetSteps, EvalEpisodes = evalEpisodes,
-            LearningRate = learningRate, EpsilonStart = explore, Hidden = hidden, Gamma = gamma,
-            Grow = grow, GrowEvery = growEvery,
-            NStep = a.Int("--nstep", 1),
-            // RANKING PRD M51.2: dense all-action regression toward the shaped observation plane (γ=0 only).
-            DenseRegression = a.Has("--dense"),
-            DenseTargetWeight = a.Flt("--dense-weight", 1.0f),
-        };
-        // Shaping on the TRAIN env only; the eval env scores the bare game, so gates stay honest.
-        // Default (γ=0 recipe): creation bonuses. --pbrs (the §3.6 escalation, with --gamma 0.5 --nstep 3):
-        // potential-based Φ over on-board specials instead — creation bonuses OFF, PotentialGamma = γ.
-        bool pbrs = a.Has("--pbrs");
-        bool shape = !a.Has("--no-shape") && !pbrs;
+        var options = Options(a, f);
+        var (pbrs, shape) = Shaping(a);
         LabHost.Run(args, dataDir, hours, evalOnly, useGpu: false,
             services => services.AddCrazyFruitsDqnCampaign(
                 trainEnv: new CrazyFruitsEnv(moveBudget)
@@ -71,6 +45,65 @@ internal static class CrazyFruitsLab
                 evalEnv: new CrazyFruitsEnv(moveBudget),
                 options),
             CampaignCli.ConsoleAndCsv(Path.Combine(dataDir, "logs", "crazyfruits-dqn.csv")));
+    }
+
+    /// <summary>The flags read before any mode dispatch: the run's budget, where it writes, and the move
+    /// budget / checkpoint path the baselines and probe modes share with training.</summary>
+    /// <remarks>M63.6: extracted from <see cref="Run"/>, where every default was reachable only by starting a
+    /// real training run.</remarks>
+    internal sealed record Flags(
+        double Hours, string DataDir, ulong Seed, int MoveBudget, int ChunkSteps, long TargetSteps,
+        int EvalEpisodes, float LearningRate, float Explore, int[] Hidden, double Gamma, bool EvalOnly,
+        bool Grow, int GrowEvery, int Baselines, string NetPath);
+
+    /// <summary>Reads the pure head of <see cref="Run"/> — no board, net or episode is touched.</summary>
+    internal static Flags Parse(CliArgs a)
+        => new(
+            Hours: a.Dbl("--hours", 1),
+            DataDir: a.Str("--data", "data"),
+            Seed: a.ULong("--seed", 1),
+            MoveBudget: a.Int("--move-budget", 30),
+            ChunkSteps: a.Int("--chunk-steps", 5_000),
+            TargetSteps: a.Long("--steps", 150_000),
+            EvalEpisodes: a.Int("--episodes", 20),
+            LearningRate: a.Flt("--lr", 5e-4f),
+            Explore: a.Flt("--explore", 1.0f),   // ε-start; low (e.g. 0.2) to refine a warm-started net
+            Hidden: a.Ints("--hidden", [256, 256]),
+            Gamma: a.Dbl("--gamma", 0.99),
+            EvalOnly: a.Has("--eval-only"),
+            Grow: a.Has("--grow"),
+            GrowEvery: a.Int("--grow-every", 5000),
+            Baselines: a.Int("--baselines", 0),
+            NetPath: a.Str("--net", Path.Combine("src", "RLDemo.Web", "wwwroot", "models", "crazyfruits.dqn.ckpt")));
+
+    /// <summary>The DQN options this entry point's flags resolve to (M63.6: extracted from
+    /// <see cref="Run"/>). The training-only flags are read here, after the baseline/probe dispatch,
+    /// exactly as before.</summary>
+    internal static CrazyFruitsDqnOptions Options(CliArgs a, Flags f)
+        => new()
+        {
+            Seed = f.Seed, ChunkSteps = f.ChunkSteps, TargetSteps = f.TargetSteps, EvalEpisodes = f.EvalEpisodes,
+            LearningRate = f.LearningRate, EpsilonStart = f.Explore, Hidden = f.Hidden, Gamma = f.Gamma,
+            Grow = f.Grow, GrowEvery = f.GrowEvery,
+            NStep = a.Int("--nstep", 1),
+            // RANKING PRD M51.2: dense all-action regression toward the shaped observation plane (γ=0 only).
+            DenseRegression = a.Has("--dense"),
+            DenseTargetWeight = a.Flt("--dense-weight", 1.0f),
+        };
+
+    /// <summary>
+    /// Which shaping the TRAIN env gets; the eval env scores the bare game, so gates stay honest.
+    /// </summary>
+    /// <remarks>
+    /// M63.6: extracted from <see cref="Run"/>. The rule the two flags encode is the non-obvious part:
+    /// the default (γ=0 recipe) is creation bonuses, and <c>--pbrs</c> (the §3.6 escalation, with
+    /// <c>--gamma 0.5 --nstep 3</c>) switches to a potential-based Φ over on-board specials INSTEAD —
+    /// so it turns the creation bonuses OFF even without <c>--no-shape</c>.
+    /// </remarks>
+    internal static (bool Pbrs, bool Shape) Shaping(CliArgs a)
+    {
+        bool pbrs = a.Has("--pbrs");
+        return (pbrs, !a.Has("--no-shape") && !pbrs);
     }
 
     /// <summary>
@@ -133,25 +166,46 @@ internal static class CrazyFruitsLab
         foreach (var (name, mean, ci) in results)
             Console.WriteLine($"  {name,-28} mean {mean,8:F1} ± {ci:F1} (95% CI)");
 
+        foreach (var line in GateLines(results)) Console.WriteLine(line);
+    }
+
+    /// <summary>
+    /// The baseline gate verdicts (M49/M50 PRD thresholds), as strings.
+    /// </summary>
+    /// <remarks>
+    /// Extracted from <c>RunBaselines</c> in M63.5. These lines ARE the gates — tier ordering, the
+    /// pre-training env validation (specials must not be so self-firing that random flattens the skill
+    /// landscape), the M50.3 escalation trigger, and the net's gap share — so they are the part most worth
+    /// pinning, and they were previously unassertable console side effects. Returned rather than printed
+    /// because <c>Console.Out</c> is process-global: capturing it in a test would force the whole suite to
+    /// run serially (PRD §12.3).
+    /// <para>The rows are positional: 0 random, 1 greedy, 3 expectimax-1, 4 expectimax-2, 5 net (when
+    /// present). M63.5 also moved the Count check AHEAD of the indexing — previously <c>results[3]</c> and
+    /// <c>results[4]</c> were read before anything verified the list was long enough.</para>
+    /// </remarks>
+    internal static IEnumerable<string> GateLines(IReadOnlyList<(string Name, double Mean, double Ci)> results)
+    {
+        if (results.Count < 5) yield break;
+
         var random = results[0];
         var greedy = results[1];
         var e1 = results[3];
         var e2 = results[4];
-        Console.WriteLine($"greedy vs random: {(greedy.Mean - greedy.Ci > random.Mean + random.Ci ? "CI-SEPARATED" : "OVERLAPPING")} " +
-                          $"(+{100 * (greedy.Mean - random.Mean) / random.Mean:F0}%)");
-        // SPECIALS PRD M50.2 gates: tier ordering + the pre-training env validation (specials must not be
-        // so self-firing that random flattens the skill landscape) + the M50.3 escalation trigger input.
-        Console.WriteLine($"expectimax-2 vs expectimax-1: {100 * (e2.Mean - e1.Mean) / e1.Mean:+0.0;-0.0}% (escalation trigger fires above +10%)");
-        Console.WriteLine($"env validation: random = {random.Mean / e2.Mean:P0} of expectimax-2 " +
-                          $"({(random.Mean < 0.70 * e2.Mean ? "OK (< 70%)" : "TOO SELF-FIRING (≥ 70%) — fix scoring before training")})");
+
+        yield return $"greedy vs random: {(greedy.Mean - greedy.Ci > random.Mean + random.Ci ? "CI-SEPARATED" : "OVERLAPPING")} " +
+                     $"(+{100 * (greedy.Mean - random.Mean) / random.Mean:F0}%)";
+        yield return $"expectimax-2 vs expectimax-1: {100 * (e2.Mean - e1.Mean) / e1.Mean:+0.0;-0.0}% (escalation trigger fires above +10%)";
+        yield return $"env validation: random = {random.Mean / e2.Mean:P0} of expectimax-2 " +
+                     $"({(random.Mean < 0.70 * e2.Mean ? "OK (< 70%)" : "TOO SELF-FIRING (≥ 70%) — fix scoring before training")})";
+
         if (results.Count == 6)
         {
             var netRow = results[5];
             double gapShare = (netRow.Mean - random.Mean) / (e1.Mean - random.Mean);
-            Console.WriteLine($"net vs random: +{100 * (netRow.Mean - random.Mean) / random.Mean:F1}% " +
-                              $"({(netRow.Mean - netRow.Ci > random.Mean + random.Ci ? "CI-SEPARATED" : "OVERLAPPING")}; gate ≥ +30%, separated)");
-            Console.WriteLine($"net gap share (random→expectimax-1): {gapShare:P0} (gate ≥ 64% — the M49 ratio)");
-            Console.WriteLine($"net vs greedy: {100 * (netRow.Mean - greedy.Mean) / greedy.Mean:+0.0;-0.0}% (reported, not gated)");
+            yield return $"net vs random: +{100 * (netRow.Mean - random.Mean) / random.Mean:F1}% " +
+                         $"({(netRow.Mean - netRow.Ci > random.Mean + random.Ci ? "CI-SEPARATED" : "OVERLAPPING")}; gate ≥ +30%, separated)";
+            yield return $"net gap share (random→expectimax-1): {gapShare:P0} (gate ≥ 64% — the M49 ratio)";
+            yield return $"net vs greedy: {100 * (netRow.Mean - greedy.Mean) / greedy.Mean:+0.0;-0.0}% (reported, not gated)";
         }
     }
 
@@ -287,7 +341,7 @@ internal static class CrazyFruitsLab
         return Summarize(name, episodes, sum, sumSq);
     }
 
-    private static (string, double, double) Summarize(string name, int n, double sum, double sumSq)
+    internal static (string, double, double) Summarize(string name, int n, double sum, double sumSq)
     {
         double mean = sum / n;
         double variance = Math.Max(0, sumSq / n - mean * mean);

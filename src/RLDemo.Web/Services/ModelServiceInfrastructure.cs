@@ -51,14 +51,38 @@ public sealed class StartupCheckpoint<T>(
     }
 
     /// <summary>Loads the stored checkpoint if one exists; safe to call any time. Returns whether a model is loaded.</summary>
+    /// <remarks>
+    /// The load is guarded because a checkpoint that EXISTS but cannot be read is a different failure from one
+    /// that is absent, and letting it escape breaks this type's contract in two places at once. Unguarded, a
+    /// corrupt file — a truncated Git-LFS pointer in <c>models/</c> is enough — faulted
+    /// <see cref="ModelStartupHostedService"/>, which under the default
+    /// <c>BackgroundServiceExceptionBehavior.StopHost</c> takes the whole web host down at startup; and if the
+    /// host survived, <see cref="Status"/> stayed <c>Loading</c>, so the lazy <see cref="Value"/> getter re-read
+    /// and re-threw on every request instead of reporting the game unavailable. The sibling
+    /// <see cref="RefreshingCheckpoint{T}"/> already swallowed exactly this.
+    /// </remarks>
     public bool TryLoad()
     {
         lock (_lock)
         {
             if (_value is not null) return true;
+            if (Status == ModelStatus.Failed) return false;   // don't re-read a checkpoint already known bad
+
             using var stream = store.TryOpenRead(environmentId, algorithmId);
             if (stream is null) return false;
-            _value = load(stream);
+
+            try
+            {
+                _value = load(stream);
+            }
+            catch (Exception ex)
+            {
+                Status = ModelStatus.Failed;
+                Error = $"The stored {modelName} could not be read: {ex.Message}";
+                logger.LogError(ex, "The stored {ModelName} could not be read — game unavailable.", modelName);
+                return false;
+            }
+
             Status = ModelStatus.Ready;
             logger.LogInformation("Loaded {ModelName} from the store.", modelName);
             return true;
@@ -71,6 +95,9 @@ public sealed class StartupCheckpoint<T>(
         if (TryLoad()) return;
         lock (_lock)
         {
+            // TryLoad may already have failed it with a specific reason; "no checkpoint" would overwrite the
+            // one message that says what is actually wrong.
+            if (Status == ModelStatus.Failed) return;
             Status = ModelStatus.Failed;
             Error = $"No trained {modelName} in the store.";
         }

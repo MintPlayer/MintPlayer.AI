@@ -55,10 +55,8 @@ internal static class FruitCakeAb
             if (candScore[i] > baseScore[i]) candWins++;
         }
         double meanDiff = diff.Average();
-        double se = Std(diff, meanDiff) / Math.Sqrt(episodes);
-        string verdict = meanDiff > 2 * se ? "candidate is SIGNIFICANTLY BETTER → ship it"
-            : meanDiff < -2 * se ? "candidate is SIGNIFICANTLY WORSE → keep the baseline"
-            : "NO significant difference → keep the baseline (don't ship a tie)";
+        double se = EvalStats.Std(diff, meanDiff) / Math.Sqrt(episodes);
+        string verdict = EvalStats.Verdict(meanDiff, se);
 
         Console.WriteLine($"  paired Δ (cand − base): {meanDiff:+0.0;-0.0} ± {se:0.0} (SE) | candidate wins {candWins}/{episodes} ({candWins * 100.0 / episodes:0}%)");
         Console.WriteLine($"  VERDICT: {verdict}   ({sw.Elapsed.TotalSeconds:F0}s)");
@@ -89,21 +87,9 @@ internal static class FruitCakeAb
         return (env.Score, maxTier);
     }
 
+    // M63.5: Std/Report/Median now live in the shared EvalStats (they were byte-identical copies here and
+    // in the sibling file, and carried a population-divisor bug behind the ship/no-ship verdict).
     private static void Report(string label, double[] score, int[] tier)
-    {
-        double mean = score.Average();
-        double sd = Std(score, mean);
-        var sorted = (double[])score.Clone();
-        Array.Sort(sorted);
-        double median = sorted[sorted.Length / 2];
-        var hist = tier.GroupBy(t => t).OrderByDescending(g => g.Key).Select(g => $"t{g.Key}:{g.Count()}");
-        Console.WriteLine($"  {label}: mean {mean,7:F1} ± {sd,5:F0} (SD)  median {median,6:F0}  meanTier {tier.Average():F2}  [{string.Join(" ", hist)}]");
-    }
+        => Console.WriteLine(EvalStats.ReportLine(label, score, tier));
 
-    private static double Std(double[] xs, double mean)
-    {
-        double s = 0;
-        foreach (var x in xs) s += (x - mean) * (x - mean);
-        return Math.Sqrt(s / xs.Length);
-    }
 }

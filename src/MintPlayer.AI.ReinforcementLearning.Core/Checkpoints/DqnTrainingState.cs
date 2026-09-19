@@ -19,7 +19,9 @@ public sealed class DqnTrainingState
     // v3: adds NoiseRng (NoisyNets). v2 states load with a default NoiseRng — harmless when not noisy.
     // v4: adds the in-flight n-step accumulator window. v<4 states load with no accumulator (the trainer
     //     then creates a fresh one) — exact for the single-step runs those older checkpoints came from.
-    private const int Version = 4;
+    /// <remarks><b>v4 → v5 (M70)</b>: appended <see cref="GrowthStage"/>. Additive — a v≤4 checkpoint reads it
+    /// as -1 ("not recorded") and the grower falls back to matching the trunk shape, exactly as before.</remarks>
+    private const int Version = 5;
 
     public required IValueNet Online { get; init; }
     public required IValueNet Target { get; init; }
@@ -40,6 +42,16 @@ public sealed class DqnTrainingState
 
     public float[] CurrentObs { get; set; } = [];
     public int StepsCompleted { get; set; }
+
+    /// <summary>Which stage of the growth schedule the net is on, or <b>-1 for "not recorded"</b> (any
+    /// checkpoint written before format v5, and any run that never grew).</summary>
+    /// <remarks>
+    /// RECORDED rather than recovered from the live trunk. Shape-matching cannot tell "stage 0" apart from "an
+    /// architecture this schedule never described", so an off-schedule net read as stage 0 at a high step count
+    /// is walked to the top of the ladder in a single call. -1 and 0 are therefore deliberately different
+    /// values, and only -1 may fall back to matching the shape.
+    /// </remarks>
+    public int GrowthStage { get; set; } = -1;
     public float LastLoss { get; set; }
     public double LastEval { get; set; } = double.NegativeInfinity;
 
@@ -68,6 +80,7 @@ public sealed class DqnTrainingState
         LastLoss = LastLoss,
         LastEval = LastEval,
         EnvState = EnvState,
+        GrowthStage = GrowthStage,
     };
 
     public void Save(Stream destination)
@@ -96,6 +109,8 @@ public sealed class DqnTrainingState
 
         writer.Write(Accumulator is not null);
         Accumulator?.Save(writer);
+
+        writer.Write(GrowthStage);   // v5, appended last so v≤4 readers are unaffected
     }
 
     public static DqnTrainingState Load(Stream source)
@@ -128,6 +143,9 @@ public sealed class DqnTrainingState
 
         if (version >= 4 && reader.ReadBoolean())
             state.Accumulator = NStepAccumulator.Load(reader, buffer.ObsDim, buffer.ActionCount);
+
+        // v5. Left at -1 for older files, which is "not recorded" and NOT "stage 0" — see GrowthStage.
+        if (version >= 5) state.GrowthStage = reader.ReadInt32();
         return state;
     }
 }

@@ -59,12 +59,19 @@ public static class CubeValueSearch
     }
 
     /// <summary>Convenience overload that scores on the CPU autograd backend (the no-GPU path).</summary>
+    /// <remarks>
+    /// Takes <see cref="IValueNet"/>, not <c>ResidualMlp</c>. The CPU path only ever calls
+    /// <c>Forward(Tensor)</c>, which every value net has, so narrowing it to the residual type bought
+    /// nothing and cost a crash: <c>CubeDaviCampaign</c> cast its <see cref="IValueNet"/> field to
+    /// <c>ResidualMlp</c> to satisfy this signature, and that cast throws whenever the campaign is
+    /// configured with a plain MLP (M69).
+    /// </remarks>
     public static SearchResult Solve(
-        ResidualMlp valueNet, FaceletCube start,
+        IValueNet valueNet, FaceletCube start,
         int maxExpansions = DefaultMaxExpansions, float weight = DefaultWeight, TimeSpan? maxTime = null)
         => Solve((features, rows) => CpuForward(valueNet, features, rows), start, maxExpansions, weight, maxTime);
 
-    private static float[] CpuForward(ResidualMlp valueNet, float[] features, int rows)
+    private static float[] CpuForward(IValueNet valueNet, float[] features, int rows)
     {
         using (GradMode.NoGrad())
         {

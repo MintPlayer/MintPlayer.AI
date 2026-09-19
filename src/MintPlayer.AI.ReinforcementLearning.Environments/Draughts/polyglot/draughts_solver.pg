@@ -545,71 +545,42 @@ class PgDraughtsConvNet {
   }
 }
 
-// The architecture-agnostic wrapper MCTS types against: an MLP trunk (the flat fields) or a wrapped
-// conv tower (the `conv` field). Mirrors the chess PgPolicyValueNet exactly.
+// The wrapper MCTS types against: it holds a conv tower and delegates to it.
+//
+// It USED to be architecture-agnostic — an MLP trunk in the flat fields, or a conv tower — mirroring
+// the chess PgPolicyValueNet. Draughts no longer mirrors chess there: the MLP half shipped dead and
+// was removed in M68 (see `forward`). Chess's equivalent tier is LIVE; do not "tidy" it by analogy.
 class PgDraughtsNet {
   var inputSize: i32
   var actions: i32
-  var hidden: List<i32>          // trunk hidden widths (from the checkpoint)
-  var trunkWFlat: List<f64>      // trunk weight matrices concatenated in layer order (each row-major [in, out])
-  var trunkBFlat: List<f64>      // trunk biases concatenated in layer order
-  var policyW: List<f64>         // [lastHidden * actions]
-  var policyB: List<f64>         // [actions]
-  var valueW: List<f64>          // [lastHidden * 1]
-  var valueB: List<f64>          // [1]
-  var conv: PgDraughtsConvNet?   // non-null ⇒ conv net; forward delegates to it (the MLP fields are unused)
+  var conv: PgDraughtsConvNet    // the tower this delegates to; never null (see the constructor)
 
-  constructor(inputSize: i32, actions: i32, hidden: List<i32>, trunkWFlat: List<f64>, trunkBFlat: List<f64>, policyW: List<f64>, policyB: List<f64>, valueW: List<f64>, valueB: List<f64>) {
+  constructor(inputSize: i32, actions: i32, conv: PgDraughtsConvNet) {
     this.inputSize = inputSize
     this.actions = actions
-    this.hidden = hidden
-    this.trunkWFlat = trunkWFlat
-    this.trunkBFlat = trunkBFlat
-    this.policyW = policyW
-    this.policyB = policyB
-    this.valueW = valueW
-    this.valueB = valueB
-    this.conv = null
+    this.conv = conv
   }
 
   static fn withConv(conv: PgDraughtsConvNet): PgDraughtsNet {
-    let n = PgDraughtsNet(conv.planes * conv.boardH * conv.boardW, conv.actions, List<i32>(), List<f64>(), List<f64>(), List<f64>(), List<f64>(), List<f64>(), List<f64>())
-    n.conv = conv
-    return n
+    return PgDraughtsNet(conv.planes * conv.boardH * conv.boardW, conv.actions, conv)
   }
 
+  // M68: the MLP tier that used to live here is deleted, along with the seven fields that fed it and
+  // the two helpers (`linear`, `relu`) only it called. `PgDraughtsConvNet` has its own.
+  //
+  // It SHIPPED DEAD, invisibly from both ends: the browser is conv-only (`draughts-net.ts` returns
+  // `withConv(...)` and hard-rejects any kind but `selfplay-pv-conv`), while the Lab's `--arch mlp`
+  // writes kind `selfplay-pv` — which that same parser refuses. The MLP tier was the second half of a
+  // path whose first half was never built. Coverage is what surfaced it: the block was dark from the
+  // C# side AND the TypeScript side, which no single-target report could have shown.
+  //
+  // `conv` is NON-NULLABLE, and that is load-bearing rather than tidiness: the null-assertion `!` does
+  // not survive TypeScript emission, so `this.conv!.forward(obs)` becomes `this.conv.forward(obs)` and
+  // `strictNullChecks` rejects the twin (TS2531) while the C# compiles happily. The old code only got
+  // away with it because an `if this.conv != null` guard gave TypeScript the narrowing. Taking the
+  // field non-null removes the need for either.
   fn forward(obs: List<f64>): PgDraughtsNetOut {
-    if this.conv != null { return this.conv!.forward(obs) }
-    var x = obs
-    var prev = this.inputSize
-    var wOff = 0
-    var bOff = 0
-    for l in 0..this.hidden.count {
-      let h = this.hidden[l]
-      x = relu(linear(x, this.trunkWFlat, wOff, this.trunkBFlat, bOff, prev, h))
-      wOff += prev * h
-      bOff += h
-      prev = h
-    }
-    let logits = linear(x, this.policyW, 0, this.policyB, 0, prev, this.actions)
-    let value = linear(x, this.valueW, 0, this.valueB, 0, prev, 1)
-    return PgDraughtsNetOut(logits, value[0])
-  }
-
-  static fn linear(x: List<f64>, w: List<f64>, wOff: i32, b: List<f64>, bOff: i32, inDim: i32, outDim: i32): List<f64> {
-    var out: List<f64> = List<f64>()
-    for o in 0..outDim {
-      var s = b[bOff + o]
-      for i in 0..inDim { s += x[i] * w[wOff + i * outDim + o] }
-      out.add(s)
-    }
-    return out
-  }
-
-  static fn relu(x: List<f64>): List<f64> {
-    var out: List<f64> = List<f64>()
-    for v in x { out.add(Math.max(0.0, v)) }
-    return out
+    return this.conv.forward(obs)
   }
 }
 

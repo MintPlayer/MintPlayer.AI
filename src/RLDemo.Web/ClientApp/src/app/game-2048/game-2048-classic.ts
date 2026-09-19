@@ -3,8 +3,12 @@
 // This drives the in-browser EXPERIENCE only: traversal-order merging with `mergedFrom`
 // double-merge prevention and per-tile previous positions so the DOM renderer can play
 // the original slide/pop/appear animations. Merge RESULTS are identical to the server's
-// `Board2048`/`applyMove` (both are standard 2048 rules); the API keeps speaking
-// exponent boards and server action ids — conversions live at this boundary only.
+// `Board2048`/`applyMove` — INCLUDING the exponent-15 saturation the server's 4-bit cell
+// format imposes, so 32768 is the terminal tile here too. (Until M68 this class merged
+// without the cap and diverged above exponent 15: the server would return a capped board
+// and the client replay would reconstruct 65536, failing the playback checksum.) The API
+// keeps speaking exponent boards and server action ids — conversions live at this
+// boundary only.
 
 /** Server action ids (game-2048-api): 0=left 1=down 2=right 3=up. Classic directions: 0=up 1=right 2=down 3=left. */
 export const serverActionToClassicDirection = (action: number): number => 3 - action;
@@ -98,7 +102,14 @@ export class ClassicEngine {
 
         if (next && next.value === tile.value && !next.mergedFrom) {
           // Merge — only once per tile per move (the classic double-merge prevention).
-          const merged = new ClassicTile(this.nextId++, positions.next.x, positions.next.y, tile.value * 2);
+          //
+          // Exponent saturation, for parity with `Board2048.SlideLine` (Game2048.cs:76). The server
+          // stores FOUR BITS PER CELL, and two consumers pack it unmasked: the n-tuple table index
+          // (NTuple2048Agent.cs:92, over 16^4 entries) and the expectimax transposition key
+          // (Expectimax2048.cs:180). So 32768 + 32768 yields 32768 and still scores 32768. Mirroring
+          // it is the fix; raising the cap would mean re-indexing a trained table.
+          const mergedValue = Math.min(tile.value * 2, 32768);
+          const merged = new ClassicTile(this.nextId++, positions.next.x, positions.next.y, mergedValue);
           merged.mergedFrom = [tile, next];
 
           this.grid[positions.next.x][positions.next.y] = merged;

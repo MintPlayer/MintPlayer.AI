@@ -13,6 +13,29 @@ internal static class CubeDaviLab
 
     public static void Run(string[] args)
     {
+        // Config precedence: in-code defaults → appsettings.json "cube-davi" section → CLI flags.
+        var cfg = CubeDaviConfig.Load(out string? cfgSource);
+        if (cfgSource is not null) Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} loaded cube-davi config from {cfgSource}");
+
+        var settings = Resolve(args, cfg, out double hours, out string dataDir, out bool evalOnly);
+
+        // GPU: DAVI's wide value net wins on GPU, so the campaign runs on the AdaptiveBackend (useGpu: true).
+        // The campaign owns its two depth-column CSVs, so the console-only eval hook is used (no generic metric CSV).
+        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: true,
+            services => services.AddCubeDaviCampaign(settings),
+            CampaignCli.Console());
+    }
+
+    /// <summary>
+    /// Resolves the campaign configuration: in-code defaults → <c>appsettings.json</c> → CLI flags, in that
+    /// order. Extracted from <see cref="Run"/> (M63.5) because it was previously reachable only by starting a
+    /// real training run — this is where every default and every precedence rule lives, and it is the one
+    /// place a silent config regression would hide.
+    /// </summary>
+    /// <remarks>A pure function of <paramref name="args"/> and <paramref name="cfg"/>: no IO, no statics.</remarks>
+    internal static CubeDaviSettings Resolve(string[] args, CubeDaviConfig cfg,
+                                             out double hoursOut, out string dataDirOut, out bool evalOnlyOut)
+    {
         double hours = 9;
         long targetSamples = 0;       // --samples N: stop after N total states processed (0 = time-bounded only)
         int[]? probeOverride = null;  // --probe-depths a,b,c: BWAS capability-probe depths
@@ -46,9 +69,6 @@ internal static class CubeDaviLab
         bool vsKociemba = false;      // also report Kociemba's QTM length per depth (Tier-2 gate)
         int evalEpisodes = 12;        // --episodes N: cubes per depth in --eval-only (fewer = faster deep probes)
 
-        // Config precedence: in-code defaults (above) → appsettings.json "cube-davi" section → CLI flags (below).
-        var cfg = CubeDaviConfig.Load(out string? cfgSource);
-        if (cfgSource is not null) Console.WriteLine($"{DateTime.UtcNow:HH:mm:ss} loaded cube-davi config from {cfgSource}");
         hours = cfg.Hours ?? hours;
         targetSamples = cfg.Samples ?? targetSamples;
         probeOverride = cfg.ProbeDepths ?? probeOverride;
@@ -118,7 +138,11 @@ internal static class CubeDaviLab
             else if (args[i] == "--episodes" && i + 1 < args.Length) evalEpisodes = int.Parse(args[++i]);
         }
 
-        var settings = new CubeDaviSettings
+        hoursOut = hours;
+        dataDirOut = dataDir;
+        evalOnlyOut = evalOnly;
+
+        return new CubeDaviSettings
         {
             Seed = seed,
             LogDirectory = Path.Combine(dataDir, "logs"),
@@ -151,11 +175,5 @@ internal static class CubeDaviLab
             ValueCurve = valueCurve,
             EvalEpisodes = evalEpisodes,
         };
-
-        // GPU: DAVI's wide value net wins on GPU, so the campaign runs on the AdaptiveBackend (useGpu: true).
-        // The campaign owns its two depth-column CSVs, so the console-only eval hook is used (no generic metric CSV).
-        LabHost.Run(args, dataDir, hours, evalOnly, useGpu: true,
-            services => services.AddCubeDaviCampaign(settings),
-            CampaignCli.Console());
     }
 }

@@ -1,0 +1,47 @@
+# Coverage policy for coverage.mintplayer.com.
+#
+# Read from the BASE ref of a pull request, never the head, so a PR cannot rewrite the policy it is
+# judged by. It overrides the server-side settings PER FIELD — keys absent here keep whatever is
+# stored, so this file and the repository settings page compose rather than compete.
+#
+# The gate is `headRate >= baseRate - projectThreshold`, where baseRate is the fixed target under
+# `fixed` and the base commit under `auto`.
+
+gate:
+  # A FLOOR, not a ratchet.
+  #
+  # COVERAGE_90_PRD.md §14 priced three options and chose "move the target to ~80%", explicitly
+  # rejecting "exclude tools/**" because it would move the number without covering a line. This
+  # encodes that decision, so it is a property of the repository rather than a sentence in a
+  # document the next milestone can quietly ignore.
+  #
+  # The service reports 82.8% for this branch — measured on the MERGED headline (C# + frontend +
+  # the .pg union), which is the only figure that matters here. The local fast bucket reads 82.19%
+  # but that is C#-only, a different denominator; §17 records this repo booking a whole milestone
+  # on confusing those two, so the target below is set from the service number.
+  #
+  # 80 rather than 82: a floor should say what the project has committed to, not wherever it
+  # happens to stand today. The ~2.8pp of headroom is deliberate — it is room for an honest
+  # refactor, not slack to be spent. Tightening it later is a one-line change.
+  projectMode: fixed
+  projectTarget: 80
+
+  # Allowed drop below the target, in percentage points. Not zero: the merged headline moves a
+  # little on its own because the .pg union and the frontend leg are re-derived per run.
+  projectThreshold: 1
+
+  # Only consulted while a build is PARTIAL, which ours are: the workflow uploads C# and the
+  # frontend with `finish: false` and closes with the .pg union. `scoped` compares each partial
+  # against the same subset of the baseline rather than against a whole-repo number it has not
+  # finished assembling.
+  projectBasis: scoped
+
+  # New code carries its own floor, independent of the repo total. This is the gate that actually
+  # holds a line — the project gate only says "at or above 80%", which a large enough PR can
+  # satisfy while adding untested code.
+  patchTarget: 80
+  patchThreshold: 5
+
+  # Red, not informational. The numbers have been trustworthy since M67 fixed the denominator and
+  # M70 stopped hiding the ILGPU assembly; a gate nobody has to answer to is a dashboard.
+  blocking: true

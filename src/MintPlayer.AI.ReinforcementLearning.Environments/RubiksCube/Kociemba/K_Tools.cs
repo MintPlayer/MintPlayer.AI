@@ -59,10 +59,18 @@ namespace MintPlayer.AI.ReinforcementLearning.Environments.RubiksCube.Kociemba
         /// <summary>
         /// Generates a random cube. </summary>
         /// <returns> A random cube in the string representation. Each cube of the cube space has the same probability. </returns>
-        public static string randomCube()
+        public static string randomCube() => randomCube(new Random());
+
+        /// <summary>
+        /// Generates a random cube from a caller-supplied <see cref="Random"/>, so the result is
+        /// reproducible. The parameterless overload uses an unseeded <c>Random</c> and therefore
+        /// cannot be asserted against a specific cube — which is why this overload exists: a test or
+        /// a benchmark that wants the same scramble twice has no other way to get it.
+        /// </summary>
+        /// <returns> A random cube in the string representation. Each cube of the cube space has the same probability. </returns>
+        public static string randomCube(Random gen)
         {
             CubieCube cc = new CubieCube();
-            Random gen = new Random();
             cc.setFlip((short)gen.Next(CoordCubeBuildTables.N_FLIP));
             cc.setTwist((short)gen.Next(CoordCubeBuildTables.N_TWIST));
             do

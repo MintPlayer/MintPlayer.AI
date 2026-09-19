@@ -17,7 +17,6 @@ namespace MintPlayer.AI.ReinforcementLearning.Tests;
 public class CampaignContractTests
 {
     [Fact]
-    [Trait("Category", "Slow")]
     public void SnakeCampaign_Trains_Checkpoints_AndResumesFromState()
     {
         var dir = Directory.CreateTempSubdirectory("snake-campaign-contract");
@@ -29,13 +28,13 @@ public class CampaignContractTests
             SnakeDqnCampaign Fresh() => new(
                 trainEnv: new SnakeEnv(5, stepPenalty: -0.01f, safeMask: false),
                 evalEnv: new SnakeEnv(6, stepPenalty: -0.01f, safeMask: false),
-                options: new DqnScoreOptions { Seed = 1, ChunkSteps = 1500, TargetSteps = 3000, EvalEpisodes = 3, LearningRate = 5e-4f, EpsilonStart = 1.0f, Hidden = [128, 128], Gamma = 0.99 },
+                options: new DqnScoreOptions { Seed = 1, ChunkSteps = 100, TargetSteps = 200, EvalEpisodes = 2, LearningRate = 5e-4f, EpsilonStart = 1.0f, Hidden = [32, 32], Gamma = 0.99 },
                 logger: null);
 
             var c1 = Fresh();
             Assert.False(c1.Resume(store));            // nothing in the store yet → fresh
             long afterChunk1 = c1.TrainChunk();
-            Assert.Equal(1500, afterChunk1);            // advanced by exactly one chunk
+            Assert.Equal(100, afterChunk1);            // advanced by exactly one chunk
             Assert.False(c1.IsComplete);                // 1500 < 3000
 
             var eval = c1.Evaluate();
@@ -52,7 +51,7 @@ public class CampaignContractTests
             Assert.True(c2.Resume(store));              // resumed
             long afterChunk2 = c2.TrainChunk();
             Assert.True(afterChunk2 > afterChunk1, $"resume continued to {afterChunk2}, expected past {afterChunk1}");
-            Assert.Equal(3000, afterChunk2);            // reached the cap
+            Assert.Equal(200, afterChunk2);            // reached the cap
             Assert.True(c2.IsComplete);
             c2.Dispose();
         }
@@ -63,7 +62,6 @@ public class CampaignContractTests
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public void FruitCakeCampaign_Trains_Checkpoints_AndResumesFromState()
     {
         var dir = Directory.CreateTempSubdirectory("fruitcake-campaign-contract");
@@ -108,7 +106,6 @@ public class CampaignContractTests
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public void FruitCakeCampaign_Noisy_Trains_Checkpoints_AndResumesAsNoisy()
     {
         var dir = Directory.CreateTempSubdirectory("fruitcake-noisy-campaign-contract");
@@ -151,7 +148,6 @@ public class CampaignContractTests
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public void RushHourCampaign_Checkpoints_AndResumes()
     {
         var dir = Directory.CreateTempSubdirectory("rushhour-campaign-contract");

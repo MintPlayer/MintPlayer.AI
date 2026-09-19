@@ -99,11 +99,11 @@ class PgChessState {
     return d
   }
 
-  fn clone(): PgChessState {
-    var sq: List<i32> = List<i32>()
-    for v in this.squares { sq.add(v) }
-    return PgChessState(sq, this.whiteToMove, this.castling, this.enPassant, this.halfmoveClock)
-  }
+  // (M68: `clone()` was deleted here. It supported a copy-then-mutate style that `makeMove` — which
+  // builds a fresh PgChessState and is what `applyIndex` delegates to — replaced. Verified orphaned:
+  // no caller in any .pg, none in ClientApp, and the C# facades ChessBoard/ChessMoveEncoding expose
+  // no Clone at all. Contrast tetris's `reachableMask`, which LOOKS dead by the same grep and is not
+  // — TetrisBoard.ReachableMask() renames it, and TetrisLab uses it under `--reach`.)
 
   // ── attack detection ──────────────────────────────────────────────────────────────────────
   fn isSquareAttacked(square: i32, byWhite: bool): bool {

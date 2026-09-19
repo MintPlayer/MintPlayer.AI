@@ -21,7 +21,14 @@ namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 public sealed class RushHourImitationCampaign(RushHourImitationOptions options, ILogger? logger = null) : ITrainingCampaign, INetworkTelemetrySource
 {
     private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
-    private const int BatchSize = 256;
+
+    /// <summary>Ladder rung the net is on; -1 until a v3+ sidecar says otherwise (M70). Persisted, not inferred
+    /// from the trunk shape — see <see cref="CampaignProgress.Rung"/>.</summary>
+    private int _rung = -1;
+    // M64.7: was a const. `TrainChunk` RETURNS EARLY DOING NOTHING while fewer than this many samples
+    // have been collected, so a hard-coded value made a small-batch test silently train nothing while
+    // still looking like it passed. Shipped value 256 stays the default, so training is unchanged.
+    private int BatchSize => options.BatchSize;
     private const int SamplesPerConfig = 1024;
     private const int MaxStatesPerConfig = 150_000;
 
@@ -66,22 +73,32 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options, 
 
     public bool Resume(IModelStore store)
     {
-        bool resumed;
+        bool resumed = false;
         using (var existing = store.TryOpenRead("rushhour", "policy"))
         {
             if (existing is not null)
             {
-                _net = RushHourPolicyNet.Load(existing);
-                Log("resumed policy net from the model store");
-                resumed = true;
+                // Mirror the BlockDude campaigns: a checkpoint whose shape no longer matches (the
+                // exact-length guard in PolicyValueNet.ReadExact) degrades to a fresh start instead of
+                // killing the run at startup — which is exactly the case that guard was added to detect.
+                try
+                {
+                    _net = RushHourPolicyNet.Load(existing);
+                    Log("resumed policy net from the model store");
+                    resumed = true;
+                }
+                catch (InvalidDataException ex)
+                {
+                    Log($"STALE net checkpoint ignored: {ex.Message}");
+                }
             }
-            else
+
+            if (!resumed)
             {
                 var initRng = new Xoshiro256StarStar(options.Seed ^ 0xDEADBEEF);
                 _net = new RushHourPolicyNet(initRng, RushHourGrowth.Ladder.TrunkFor(0));
                 Log(options.Grow ? $"initialized a fresh GROWING policy net (rung 0, trunk [{string.Join(",", RushHourGrowth.Ladder.TrunkFor(0))}])"
                          : "initialized a fresh policy net");
-                resumed = false;
             }
         }
         // Restore Adam's moment estimates when continuing a campaign — without them, resumed
@@ -97,6 +114,7 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options, 
         {
             _totalSamples = progress.Samples;
             _totalConfigs = (int)progress.Units;
+            _rung = progress.Rung;   // -1 from a pre-v3 sidecar: falls back to shape-matching
             CampaignProgressState.RestoreInto(progress.Rngs[0], _rng);
             CampaignProgressState.RestoreInto(progress.Rngs[1], _growRng);
             Log($"resumed progress: {_totalSamples:N0} samples over {_totalConfigs:N0} configs");
@@ -136,8 +154,8 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options, 
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
-        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, RushHourGrowth.Ladder, _growRng, Log) is var g && g.HasValue)
-            (_net, _adam) = (g.Value.Net, g.Value.Adam);
+        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, RushHourGrowth.Ladder, _growRng, Log, _rung) is var g && g.HasValue)
+            (_net, _adam, _rung) = (g.Value.Net, g.Value.Adam, g.Value.Rung);
         return _totalSamples;
     }
 
@@ -191,7 +209,7 @@ public sealed class RushHourImitationCampaign(RushHourImitationOptions options, 
         store.Save("rushhour", "policy", s => _net.Save(s));
         AdamState.Save(store, "rushhour", "policy-adam", _adam);
         CampaignProgressState.Save(store, "rushhour", ProgressId, ProgressKind,
-            _totalSamples, _totalConfigs, lastMetric: 0, _rng, _growRng);
+            _totalSamples, _totalConfigs, lastMetric: 0, _rung, _rng, _growRng);
     }
 
     public void Dispose() { }
