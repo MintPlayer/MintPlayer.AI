@@ -55,4 +55,11 @@ public sealed record BlockDudeImitationOptions
     /// <summary>Training batch size. A chunk trains nothing until it has collected this many
     /// samples, so lowering it is what lets a test drive a real chunk cheaply (M64.7).</summary>
     public int BatchSize { get; init; } = 256;
+
+    /// <summary>Boards in a rung's fixed greedy hold-out. Same lever as <see cref="BatchSize"/> and for the same
+    /// reason (M69/B4): the gate solves every board greedily, so 64 of them is what makes the gate limb too
+    /// expensive to reach from a test. Shrinking it takes a PREFIX of the same set — <c>GateBoardsFor</c> draws
+    /// from an unchanged RNG — so a small hold-out is a subset of the shipped one, not a different distribution.
+    /// The default is the shipped value, so no run changes.</summary>
+    public int GateBoards { get; init; } = BlockDudeCurriculum.GateBoards;
 }

@@ -340,7 +340,7 @@ public sealed class BlockDudeImitationCampaign : ITrainingCampaign, INetworkTele
     {
         if (_gateBoardsStage != stage)
         {
-            _gateBoards = BlockDudeCurriculum.GateBoardsFor(stage);
+            _gateBoards = BlockDudeCurriculum.GateBoardsFor(stage, _options.GateBoards);
             _gateBoardsStage = stage;
         }
         if (_gateBoards.Count == 0) return 0;

@@ -1541,12 +1541,21 @@ A corollary worth acting on before B2/B4: the cheapest wall-clock win available 
 adding fewer tests, it is making that one 2 m 9 s test cheaper or tagging it `Slow`. Nothing else in the
 bucket is within 40 s of it.
 
-> **B4's premise is wrong.** §19.7 says B4 "needs a `GateBoards` option". It does not:
-> `BlockDudeCurriculum.GateBoardsFor(int stage, int count = GateBoards)` **already takes a count** — the
-> seam exists. What is missing is one call site: `BlockDudeImitationCampaign.cs:343` calls
-> `GateBoardsFor(stage)` and takes the default 64. B4 is a parameter-threading job, not a new option.
-> Note also that B4 lands in the same area as the 2 m 9 s test above, which is the one place where the
-> critical-path argument does *not* give a free pass.
+**The model was then tested, and held.** B2 and B4 added 8 tests costing 1.7 s of work:
+
+| | tests | wall |
+|---|---|---|
+| before B2/B4 | 1130 | 134 s |
+| after B2/B4 | 1138 | **134 s** |
+
+Zero seconds. That is the critical-path claim confirmed rather than merely argued, and it is why the
+"budget" framing in §14 needs re-reading: the fast bucket has room for a great many more tests, and none
+of the coverage decisions in §19.7 should have been weighed against a seconds-added cost.
+
+> **B4's premise was wrong, and B2's was too** (both resolved — see §19.15).
+> `BlockDudeCurriculum.GateBoardsFor(int stage, int count = GateBoards)` **already took a count**, so B4
+> was a one-argument threading job, not a new option. B2 needed **no production change whatever**: the
+> XIT options record already exposed every knob the plan called for.
 
 ### 19.10 Two stale comments found on the way
 
@@ -1638,11 +1647,46 @@ baseline *of* before treating a deviation from it as a defect. A coverage run ha
 `coverlet.runsettings` excludes the Ilgpu assembly (§2), so a total taken without it is not comparable
 to one taken with it.
 
+### 19.15 B2 and B4 — done, and both plans overstated the work
+
+Both landed green on the first run. **1138/1138** fast in 134 s, **4/4** determinism in 3 s.
+
+| item | measured | plan said |
+|---|---|---|
+| `BlockDudeExpertIterationChunkTests` (B2) | 4 tests, **957 ms** | ~109 lines, "**must be measured**" |
+| `BlockDudeImitationGateTests` (B4) | 4 tests, **722 ms** | ~53 lines, "1–3 s, estimated" |
+
+**B2 needed no production change.** §19.7 listed it as test-only but flagged the cost as the risk. The
+real finding is that `BlockDudeExpertIterationOptions` **already exposed every knob** — `InitialFrontier`,
+`Expansions`, `BeamWidth`, `AttemptsPerLevel`, `BatchSize`. At `InitialFrontier = 1` the start state is
+one move from the door, so the same A*/beam oracle that makes the existing gate tests multi-minute
+terminates in a handful of expansions.
+
+**B4 was one argument.** Added `GateBoards` to `BlockDudeImitationOptions` defaulting to the shipped
+`BlockDudeCurriculum.GateBoards`, so no run changes, and threaded it at `BlockDudeImitationCampaign.cs`.
+One correction to §19.7's seam sketch: it says to pass `options.GateBoards`, but `options` is only in
+**constructor** scope there — the field is `_options`. Caught at build.
+
+**Why the gate limb had no coverage, stated plainly.** Every existing phase-1 test carries
+`GateEverySamples = long.MaxValue` with the comment *"never gate: gating would solve boards"*. That
+comment **is** the reason, and `GateBoards` is what retires it — the same move M64.7 made with
+`BatchSize`.
+
+**The assertions chosen, and why they are not ceremony:**
+
+- XIT asserts the **handoff**, not just success: `search_rate == 1.0` **with** `beam_hits == 0` and
+  `landmark_hits == 0` proves the *cheapest* tier did the work. A regression that broke A* would still
+  pass a `samples > 0` check by silently falling through to beam — which in the logs is
+  indistinguishable from the net having hit its limit. A starved-budget test (`Expansions = 1`,
+  `BeamWidth = 8`) then pins that the beam tier is what picks the work up.
+- `A_shrunk_hold_out_is_a_PREFIX_of_the_larger_one_not_a_different_draw` validates the claim that makes
+  `GateBoards` safe to expose at all. `GateBoardsFor` reseeds per **stage** and stops once it has `count`
+  accepted boards, so asking for fewer walks the same sequence and stops earlier. Were it ever to reseed
+  off `count`, a shrunk hold-out would measure a different distribution and every gate number taken in a
+  test would be incomparable with a real run's — silently.
+
 ### 19.14 Still not done
 
-- **B2** (XIT `TrainChunk` at frontier 1, ~109 lines) and **B4** (the BlockDude gate limb, ~53 lines).
-  Neither started. Read §19.9's reframe first — the wall-clock question is "does it exceed 2 m 9 s?",
-  and B4's stated blocker does not exist.
 - **A3/A4** (the Ilgpu factory seam on the two Cube campaigns, +281 lines → ~90%). Unchanged: this is a
   coupling decision, not a coverage one (§19.4).
 - **`CubeViz`'s two policy-side `catch { return null; }` arms are unreachable** and are deliberately not

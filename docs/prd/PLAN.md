@@ -3628,7 +3628,7 @@ change.
 engine was not), one was **not a defect at all** (`reachableMask` is live, reached through a renaming
 facade), and the remaining seven are fixed.
 
-## M69 — Campaigns coverage  *(2026-09-19; see `COVERAGE_90_PRD.md` §19)* ✅ VERIFIED — **1130/1130 fast + 4/4 determinism green in 134 s; three production defects fixed**
+## M69 — Campaigns coverage  *(2026-09-19; see `COVERAGE_90_PRD.md` §19)* ✅ COMPLETE — **1138/1138 fast + 4/4 determinism green in 134 s; three production defects fixed**
 
 `Campaigns` is at **61.31% (1,518 / 2,476 lines, 958 uncovered)**. A three-agent sweep split it by what
 actually blocks each group — three different problems, not one — and found **~445 lines reachable without
@@ -3671,8 +3671,14 @@ wrong question; "does it exceed 2 m 9 s" is the right one. §19.13 records the b
 surfaced this — the suite is never run unfiltered, so a bare `dotnet test` is not comparable to the
 remembered ~3-minute figure.
 
-**Open:** B2 and B4 (§19.14; B4's stated blocker does not exist — `GateBoardsFor` already takes a count).
-Two growth-rung hazards are now pinned by *green* tests and need a production decision (§19.12).
+**B2 and B4 are done** (§19.15), and both plans overstated the work: B2 needed **no production change**
+(the XIT options record already exposed every knob), and B4 was **one argument** (`GateBoardsFor` already
+took a count). 8 tests, 1.7 s. They also tested §19.9's critical-path claim and confirmed it — the fast
+bucket went 1130 → 1138 tests with wall time unchanged at 134 s.
+
+**Open:** A3/A4, the Ilgpu factory seam (§19.4) — a coupling decision, not a coverage one. Two
+growth-rung hazards are pinned by *green* tests and need a production decision (§19.12). The §14 / §15.5
+target question is still unanswered.
 
 **A live defect found on the way:** `CubeDaviCampaign.cs:259` casts `(ResidualMlp)_net` unconditionally,
 but `:155` assigns `new Mlp(...)` when `Residual` is false — which comes straight from the Lab's
