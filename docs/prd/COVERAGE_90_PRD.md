@@ -1612,22 +1612,49 @@ Everything M69 wrote is now **compiled and run**. Both CI buckets green: **1130/
 `RushHour_resumes_a_net_that_has_no_progress_sidecar_beside_it`, which would have failed against the
 code as it stood that morning.
 
-### 19.12 Two hazards now pinned by GREEN tests — needing a production decision
+### 19.12 Two hazards — FIXED (M70, owner's call: "in")
 
-Both were reported by the long-tail agent and are **recorded, not endorsed**. They matter because the
-tests that pin them *pass*, which makes them look settled when they are not.
+Both were reported by the long-tail agent and recorded here as needing a production decision, because the
+tests that pinned them *passed*, which made them look settled when they were not. The decision was to fix
+them in this PR rather than defer.
 
-- **`PolicyGrowth.CurrentRung` recovers the rung from the trunk SHAPE.** A net built outside the ladder
-  is indistinguishable from rung 0 and, at a high sample count, is walked from rung 0 to the top in a
-  single call. This is the shape of the recorded Rush Hour / Cube downgrade bug. The source documents it
-  in `<remarks>`; `An_off_ladder_trunk_reads_as_rung_zero_and_is_walked_to_the_top_in_one_call` now pins
-  the behaviour with a comment saying so explicitly.
-- **`DqnGrowth.CurrentStage` has the identical weakness** — an off-schedule trunk reads as stage 0.
+**What was wrong.** `PolicyGrowth.CurrentRung` and `DqnGrowth.CurrentStage` recovered the rung by matching
+the live trunk against the ladder. Shape-matching cannot tell **"rung 0"** apart from **"an architecture
+this ladder never described"**, so a net in the second category read as the first and, at a high sample
+count, was walked to the top of the ladder **in a single call**. Silently: every step is
+function-preserving, so the run kept training and only the architecture was wrong. It is the same shape as
+the recorded Rush Hour / Cube downgrade bug.
 
-The fix in both cases is to **persist the rung**, as `SaturationGrowth` already does. That is a
-production change with resume-compatibility consequences (existing checkpoints carry no rung), which is
-why it was not made inside a coverage milestone. Until it is, there are green tests asserting that a
-documented hazard behaves the way it currently behaves.
+**The fix: record it.** Exactly what `SaturationGrowth.GrowthProgress.Rung` already does, and for the
+reason its own doc comment gives.
+
+| format | was | now | field |
+|---|---|---|---|
+| `CampaignProgress` | v2 | **v3** | `Rung` |
+| `DqnTrainingState` | v4 | **v5** | `GrowthStage` |
+| `CubeEfficientCampaign`'s private sidecar | 2×`int64`, no header | appended | length-guarded read |
+
+**-1 is not 0, and that distinction carries the fix.** -1 means "not recorded" and is the only value that
+licenses the legacy shape-matching; 0 means "known to be on the bottom rung" and does not. A test pins that
+0 round-trips as 0, because flattening it anywhere would put a net genuinely on rung 0 back on the path the
+recording exists to avoid.
+
+**Back-compat, and why the hazard closes rather than persists.** Both formats **append**, so a pre-M70 store
+reads -1 and falls back to shape-matching exactly as before — nothing refuses to resume. Then the first
+checkpoint after that resume writes a real rung, so **a store repairs itself on first use**. `DqnGrowth`
+writes the stage back even when nothing grew, specifically so a legacy state stops being legacy on first
+contact. The legacy path is kept rather than deleted, and is pinned by its own explicitly-labelled test so
+it cannot be mistaken for endorsement.
+
+**Verified:** 1149/1149 fast in 123 s, **4/4 determinism**. The determinism gate is the one that matters
+here — both on-disk formats changed and training trajectories are bitwise unchanged.
+
+> **A finding from a test of mine that failed.** I expected an off-ladder net at rung 1 to grow into the
+> ladder's `[24,24,24]`. It produces `[20,20,20]`. The ladder decides the *kind* of step — rung 2 is deeper,
+> so it deepens — and `Deepen` preserves the net's **own** widths. So an off-ladder net **stays** off-ladder
+> as it grows, which means the rung and the trunk can disagree permanently. Not a bug, and the sharpest
+> argument for this whole change: the trunk was never a reliable encoding of the rung, and now nothing
+> requires it to be. Pinned with that reasoning rather than quietly corrected.
 
 ### 19.13 A methodology error worth recording: I measured against the wrong baseline
 

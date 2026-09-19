@@ -3740,3 +3740,17 @@ way.
 I predicted this would dilute the headline and was wrong — I had estimated from a backend-tests-only
 probe where `DeviceResidualTrainer` reads 0/324; under the full suite it is 322/324. A partial run is
 not a small version of a full run.
+
+### M70.1 — the growth rung is recorded, not guessed  *(2026-09-19; see `COVERAGE_90_PRD.md` §19.12)* ✅ DONE
+
+`PolicyGrowth.CurrentRung` and `DqnGrowth.CurrentStage` recovered the rung by matching the trunk shape,
+which cannot tell "rung 0" from "an architecture this ladder never described" — so an off-ladder net was
+walked to the top of the ladder in one call, silently, because every step is function-preserving. Same
+shape as the recorded Rush Hour / Cube downgrade bug, and it had **green tests pinning it**.
+
+Now recorded, as `SaturationGrowth` already did: `CampaignProgress` v2→v3 (`Rung`), `DqnTrainingState`
+v4→v5 (`GrowthStage`), plus the Cube-efficient private sidecar. **-1 ("not recorded") is deliberately not
+0**, and only -1 falls back to shape-matching. Both formats append, so pre-M70 stores still resume — and
+the first checkpoint after a resume writes a real rung, so a store repairs itself on first use.
+
+1149/1149 fast in 123 s, **4/4 determinism**: both on-disk formats changed, trajectories bitwise unchanged.

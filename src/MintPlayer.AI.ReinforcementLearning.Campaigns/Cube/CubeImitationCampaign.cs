@@ -21,6 +21,10 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
 {
     private readonly Xoshiro256StarStar _growRng = new(options.Seed ^ 0x6C0FFEEUL); // dedicated stream for growth
 
+    /// <summary>Ladder rung the net is on; -1 until a v3+ sidecar says otherwise (M70). Persisted, not inferred
+    /// from the trunk shape — see <see cref="CampaignProgress.Rung"/>.</summary>
+    private int _rung = -1;
+
     // Rooted at THIS run's configured width, so --grow starts where a plain run starts. It used to climb the
     // shared DqnGrowth ladder, which tops out at [128,128,128] — below any --width worth training — so growth
     // shrank the net it was meant to enlarge.
@@ -86,6 +90,7 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
             _totalSamples = progress.Samples;
             _round = progress.Units;
             _totalSolves = (long)progress.LastMetric; // an exact counter below 2^53, carried in the metric slot
+            _rung = progress.Rung;                    // -1 from a pre-v3 sidecar: falls back to shape-matching
             CampaignProgressState.RestoreInto(progress.Rngs[0], _rng);
             CampaignProgressState.RestoreInto(progress.Rngs[1], _growRng);
             Log($"resumed progress: {_totalSamples:N0} samples over {_round:N0} rounds");
@@ -146,8 +151,8 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
-        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, Ladder, _growRng, Log) is var g && g.HasValue)
-            (_net, _adam) = (g.Value.Net, g.Value.Adam);
+        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, Ladder, _growRng, Log, _rung) is var g && g.HasValue)
+            (_net, _adam, _rung) = (g.Value.Net, g.Value.Adam, g.Value.Rung);
         return _totalSamples;
     }
 
@@ -182,7 +187,7 @@ public sealed class CubeImitationCampaign(CubeImitationOptions options, ILogger?
         store.Save(CubeIds.Environment, _ids.Policy, s => _net.Save(s));
         AdamState.Save(store, CubeIds.Environment, _ids.PolicyAdam, _adam);
         CampaignProgressState.Save(store, CubeIds.Environment, ProgressId, ProgressKind,
-            _totalSamples, _round, _totalSolves, _rng, _growRng);
+            _totalSamples, _round, _totalSolves, _rung, _rng, _growRng);
     }
 
     // Namespaced per width rung, exactly as the net and Adam ids are, so one rung's progress never overwrites

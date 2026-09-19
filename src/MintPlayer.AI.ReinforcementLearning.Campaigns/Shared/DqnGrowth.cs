@@ -36,11 +36,24 @@ public static class DqnGrowth
     {
         if (!grow || state.Online is not DuelingQNet online || online.Noisy) return state;
         int target = Math.Min(Stages.Length - 1, state.StepsCompleted / Math.Max(1, growEvery));
-        int stage = CurrentStage(online.Trunk);
+
+        // RECORDED rung first, shape-matching only as the legacy fallback (M70). -1 means the checkpoint
+        // predates the field; it is not the same statement as "stage 0", and conflating them is the bug.
+        int stage = state.GrowthStage >= 0 ? state.GrowthStage : CurrentStage(online.Trunk);
         while (stage < target) { state = GrowTo(state, Stages[stage + 1], learningRate, rng, log); stage++; }
+
+        // Written back even when nothing grew, so the FIRST checkpoint of a legacy resume stops being legacy.
+        state.GrowthStage = stage;
         return state;
     }
 
+    /// <summary>The stage whose shape the live trunk matches, or 0 when it matches none. <b>Legacy fallback
+    /// only</b> — consulted when <see cref="DqnTrainingState.GrowthStage"/> is -1.</summary>
+    /// <remarks>
+    /// An architecture not on the schedule is indistinguishable here from stage 0, so an off-schedule net reads
+    /// as "the bottom" and, at a high step count, is walked to the top of the ladder in one call. M70 recorded
+    /// the stage on the state to close that; this remains for checkpoints written before it existed.
+    /// </remarks>
     private static int CurrentStage(int[] hidden)
     {
         for (int s = Stages.Length - 1; s >= 0; s--)

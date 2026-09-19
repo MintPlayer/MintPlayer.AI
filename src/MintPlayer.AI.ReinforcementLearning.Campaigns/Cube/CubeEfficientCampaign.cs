@@ -33,6 +33,10 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficien
     private const string PolicyId = "policy-efficient";
     private const string PolicyAdamId = "policy-efficient-adam";
     private const string PolicyProgressId = "policy-efficient-progress";
+
+    /// <summary>Ladder rung the net is on; -1 means not recorded (a sidecar written before M70), which falls
+    /// back to matching the trunk shape. Persisted, not inferred.</summary>
+    private int _rung = -1;
     private const int BatchSize = 1000;
     private const int SamplesPerRound = 50_000;
     private static readonly int[] EvalDepths = [4, 8, 12, 14, 16, 18, 20, 22, 24, 26];
@@ -94,6 +98,12 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficien
                 using var reader = new BinaryReader(progress, Encoding.UTF8, leaveOpen: true);
                 _totalSamples = reader.ReadInt64();
                 _round = reader.ReadInt64();
+
+                // M70 appended the rung. This sidecar carries no version header, so "was it written before the
+                // field existed?" is answered by the only evidence available — whether any bytes remain. An
+                // older file leaves _rung at -1, which means "not recorded" and falls back to shape-matching.
+                if (progress.CanSeek && progress.Position < progress.Length) _rung = reader.ReadInt32();
+
                 Log($"resumed progress: {_totalSamples:N0} samples generated, data stream at round {_round}");
             }
         }
@@ -128,8 +138,8 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficien
             _liveLoss = ce + huber;
             _liveAcc = acc;
         }
-        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, Ladder, _growRng, Log) is var g && g.HasValue)
-            (_net, _adam) = (g.Value.Net, g.Value.Adam);
+        if (PolicyGrowth.Maybe(_net, _totalSamples, options.Grow, options.GrowEvery, options.LearningRate, Ladder, _growRng, Log, _rung) is var g && g.HasValue)
+            (_net, _adam, _rung) = (g.Value.Net, g.Value.Adam, g.Value.Rung);
         return _totalSamples;
     }
 
@@ -195,6 +205,7 @@ public sealed class CubeEfficientCampaign(AdaptiveBackend adaptive, CubeEfficien
             using var writer = new BinaryWriter(s, Encoding.UTF8, leaveOpen: true);
             writer.Write(_totalSamples); // cumulative samples generated
             writer.Write(_round);        // data-stream round counter
+            writer.Write(_rung);         // M70: ladder rung, appended (this sidecar carries no version header)
         });
     }
 

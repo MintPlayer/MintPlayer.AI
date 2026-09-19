@@ -118,15 +118,45 @@ public class DqnGrowthTests
     }
 
     [Fact]
-    public void An_off_schedule_trunk_is_treated_as_stage_zero()
+    public void Without_a_recorded_stage_an_off_schedule_trunk_is_still_treated_as_stage_zero()
     {
-        // A trunk the schedule never describes (a non-grow resume) is indistinguishable from the bottom rung, so
-        // it is walked from stage 0 -- here to Stages[1], NOT left alone and NOT taken to the top. This is a
-        // recorded hazard rather than a nicety: the same shape-recovery guess is what once downgraded nets that
-        // borrowed this schedule while defaulting to a far wider trunk.
-        var grown = Grow(State([24], steps: 100));
+        // The LEGACY path, pinned deliberately. A checkpoint written before format v5 has GrowthStage == -1, so
+        // the stage falls back to matching the trunk shape — and a trunk the schedule never describes is
+        // indistinguishable from the bottom, so it is walked from stage 0. The same shape-recovery guess is what
+        // once downgraded nets that borrowed this schedule while defaulting to a far wider trunk.
+        //
+        // Kept rather than fixed: the alternative is refusing to resume pre-v5 checkpoints. It is a closing
+        // hazard — the first save after a resume records a real stage, so a store repairs itself on first use.
+        var state = State([24], steps: 100);
+        Assert.Equal(-1, state.GrowthStage);
+
+        var grown = Grow(state);
 
         Assert.Equal(DqnGrowth.Stages[1], ((DuelingQNet)grown.Online).Trunk);
+    }
+
+    [Fact]
+    public void A_recorded_stage_is_trusted_over_the_trunk_shape()
+    {
+        // THE FIX. Same unrecognisable [24] trunk, same step count — but the state knows which stage it is on,
+        // so the shape is never consulted and the net is left exactly where it was.
+        var state = State([24], steps: 100);
+        state.GrowthStage = DqnGrowth.Stages.Length - 1;
+
+        var grown = Grow(state);
+
+        Assert.Equal([24], ((DuelingQNet)grown.Online).Trunk);
+    }
+
+    [Fact]
+    public void A_legacy_state_records_its_stage_on_the_first_pass_so_it_stops_being_legacy()
+    {
+        // Why the hazard closes rather than persisting. The stage is written back even when nothing grew, so the
+        // next Checkpoint carries a real value and the shape is never consulted again for this store.
+        var state = State(DqnGrowth.Stages[1], steps: 0);
+        Assert.Equal(-1, state.GrowthStage);
+
+        Assert.Equal(1, Grow(state).GrowthStage);
     }
 
     [Fact]

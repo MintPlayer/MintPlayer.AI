@@ -22,10 +22,12 @@ namespace MintPlayer.AI.ReinforcementLearning.Tests;
 /// flatten with no error at all.</item>
 /// <item><b>The step must be function-preserving.</b> Logits for a fixed observation are identical across the
 /// grow; anything else is a loss spike that reads as ordinary training noise.</item>
-/// <item><b>An off-ladder trunk reads as rung 0 and is walked to the top in ONE call.</b> That is not a nicety:
-/// it is the exact shape of the bug that once made Rush Hour and Cube nets <i>smaller</i> when growth was enabled
-/// (their default trunks were far above the shared schedule's top rung). The behaviour is pinned here so that if
-/// it is ever changed it is changed deliberately.</item>
+/// <item><b>The rung is RECORDED, not read back out of the trunk shape (M70).</b> Shape-matching cannot tell
+/// "rung 0" from "an architecture this ladder never described", so an off-ladder net read as rung 0 at a high
+/// sample count was walked to the top in ONE call — the exact shape of the bug that once made Rush Hour and Cube
+/// nets <i>smaller</i> when growth was enabled (their default trunks were far above the shared schedule's top
+/// rung). Campaigns now pass the rung they persisted; shape-matching survives only as the fallback for stores
+/// written before the field existed, and that legacy path is pinned here too.</item>
 /// </list>
 /// </remarks>
 public class PolicyGrowthTests
@@ -45,8 +47,10 @@ public class PolicyGrowthTests
         return new Tensor(data, 1, data.Length);
     }
 
-    private static (CubePolicyNet Net, Adam Adam)? Grow(CubePolicyNet net, long samples, GrowthLadder ladder)
-        => PolicyGrowth.Maybe(net, samples, grow: true, GrowEvery, 1e-3f, ladder, new Xoshiro256StarStar(7), _ => { });
+    private static (CubePolicyNet Net, Adam Adam, int Rung)? Grow(
+        CubePolicyNet net, long samples, GrowthLadder ladder, int knownRung = -1)
+        => PolicyGrowth.Maybe(net, samples, grow: true, GrowEvery, 1e-3f, ladder, new Xoshiro256StarStar(7),
+            _ => { }, knownRung);
 
     // ── the early-outs: "nothing to do" must be a null, not a needless rebuild ─────────────────────
 
@@ -132,18 +136,67 @@ public class PolicyGrowthTests
         Assert.Contains(string.Join(",", ladder.TrunkFor(1)), lines[0]);
     }
 
-    // ── the recorded hazard ──────────────────────────────────────────────────────────────────────
+    // ── the rung: RECORDED, not recovered from the shape (M70) ───────────────────────────────────
 
     [Fact]
-    public void An_off_ladder_trunk_reads_as_rung_zero_and_is_walked_to_the_top_in_one_call()
+    public void A_recorded_rung_is_trusted_even_when_the_trunk_matches_no_rung_at_all()
     {
-        // [20,20] appears on no rung, so CurrentRung cannot tell it from the bottom. At a high sample count the
-        // loop therefore climbs every remaining rung at once. Documented, not endorsed: the fix is a ladder
-        // rooted at the caller's own default trunk (GrowthLadder.FromTrunk), which this test's Ladder() uses and
-        // which keeps the normal cases off this path entirely.
+        // THE FIX. [20,20] appears on no rung, so shape-matching cannot tell it from the bottom — that is the
+        // hazard. With the rung recorded, the shape is never consulted: a net known to be on the top rung does
+        // not grow, however unrecognisable its trunk is.
         var ladder = Ladder();
 
-        var grown = Grow(Net([20, 20]), 99 * GrowEvery, ladder);
+        Assert.Null(Grow(Net([20, 20]), 99 * GrowEvery, ladder, knownRung: ladder.Top));
+    }
+
+    [Fact]
+    public void A_recorded_rung_climbs_only_the_rungs_that_remain_above_it()
+    {
+        // Known to be on rung 1 of a 2-rung ladder at a sample count that targets the top: exactly ONE step,
+        // where reading the shape would have started at 0 and taken two.
+        var ladder = Ladder();
+
+        var grown = Grow(Net([20, 20]), 99 * GrowEvery, ladder, knownRung: ladder.Top - 1);
+
+        Assert.NotNull(grown);
+        Assert.Equal(ladder.Top, grown!.Value.Rung);
+
+        // Note what the resulting SHAPE is: [20,20,20], not the ladder's [24,24,24]. The ladder decides the
+        // KIND of step — rung 2 is deeper than rung 1, so this deepens — and Deepen keeps the net's own widths.
+        // An off-ladder net therefore stays off-ladder as it grows, which is worth pinning: it means the rung
+        // and the trunk can disagree permanently, and is precisely why the rung has to be recorded rather than
+        // read back out of the shape.
+        Assert.Equal([20, 20, 20], grown.Value.Net.Trunk);
+    }
+
+    [Fact]
+    public void The_returned_rung_is_what_the_caller_must_persist()
+    {
+        // Growth is only half the fix: a rung that is computed and then dropped leaves the next resume guessing
+        // again. The value comes back so the campaign can write it to its sidecar.
+        var ladder = Ladder();
+
+        var grown = Grow(Net(ladder.TrunkFor(0)), GrowEvery, ladder, knownRung: 0);
+
+        Assert.NotNull(grown);
+        Assert.Equal(1, grown!.Value.Rung);
+        Assert.Equal(ladder.TrunkFor(1), grown.Value.Net.Trunk);
+    }
+
+    [Fact]
+    public void Without_a_recorded_rung_an_off_ladder_trunk_still_reads_as_the_bottom()
+    {
+        // The LEGACY path, pinned deliberately. A sidecar written before M70 has no rung, so -1 falls back to
+        // shape-matching and the old hazard is still reachable for exactly those stores: [20,20] is on no rung,
+        // reads as the bottom, and a high sample count walks it to the top in one call.
+        //
+        // This is kept rather than fixed because the alternative is refusing to resume pre-M70 checkpoints. It
+        // is a bounded, closing hazard: the first Checkpoint after a resume writes a real rung, so a store fixes
+        // itself the moment it is used. Rooting ladders at the caller's default trunk (GrowthLadder.FromTrunk,
+        // which Ladder() uses) is what keeps normal cases off this path even before that.
+        var ladder = Ladder();
+
+        var grown = Grow(Net([20, 20]), 99 * GrowEvery, ladder, knownRung: -1);
 
         Assert.NotNull(grown);
         Assert.Equal(ladder.TrunkFor(ladder.Top), grown!.Value.Net.Trunk);

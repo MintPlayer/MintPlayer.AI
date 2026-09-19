@@ -194,7 +194,7 @@ public class CampaignStateSerializationTests
         var current = CampaignProgressState.TryLoad(store, "env", "progress", "test-progress", rngCount: 1);
 
         Assert.NotNull(current);
-        Assert.Equal(2, current!.Version);
+        Assert.Equal(3, current!.Version);   // v3 (M70) appended the growth rung
 
         // The same bytes in the version-1 layout — identical fields, older stamp — still read, and say so.
         store.Save("env", "legacy", stream =>
