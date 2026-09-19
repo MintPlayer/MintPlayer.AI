@@ -121,9 +121,9 @@ jobs:
     # renderers, Three.js hosts and Angular components are excluded deliberately (covering them means
     # faking a 2D canvas context to assert "it called fillRect", which measures nothing).
     #
-    # tools/pg_coverage_remap.mjs is retained but NOT used here -- it exists to rewrite .ts
-    # coordinates onto .pg line numbers, which is only needed for the gitignored twins. Hand-written
-    # .ts is tracked in git, so the service resolves it directly.
+    # The twins ARE measured here (coverageInclude covers them) but are stripped from this report and
+    # projected onto their .pg sources as a separate one -- see the remap step below. Hand-written .ts
+    # is tracked in git, so the service resolves it directly; the twins are gitignored and would not.
     - name: Test Angular app
       working-directory: src/RLDemo.Web/ClientApp
       run: npm run test:coverage
@@ -150,12 +150,36 @@ jobs:
     # build outputs: the service resolves a path by suffix-matching `git ls-files`, so a report
     # naming a .ts twin is dropped without an error. The .pg IS tracked, so this one resolves.
     # (reroot_frontend_coverage.mjs strips the twins from the report above, so nothing double-counts.)
+    #
+    # M67: the projection is now `polyglot coverage remap`, shipped in the MSBuild package beside the
+    # plugin manifests it reads. It replaces tools/pg_coverage_remap.mjs, which was always interim --
+    # a consumer-side tool would have duplicated the compiler's own `originMapping` vocabulary and
+    # drifted from it silently. See MintPlayer.Polyglot#71 / PR #72.
+    - name: Locate the Polyglot CLI
+      if: always()
+      id: polyglot
+      # The CLI ships in the restored nupkg at tools/<rid>/. Globbing rather than hardcoding the
+      # version keeps this from drifting out of step with the PackageReference.
+      run: |
+        TOOL=$(find "$HOME/.nuget/packages/mintplayer.polyglot.msbuild" -path '*/tools/linux-x64/polyglot' -type f | sort -V | tail -1)
+        if [ -z "$TOOL" ]; then echo "::error::polyglot CLI not found in the restored package"; exit 1; fi
+        chmod +x "$TOOL"
+        echo "tool=$TOOL" >> "$GITHUB_OUTPUT"
+
+    # --out-format cobertura, deliberately, though the input is lcov and the tool would otherwise hand
+    # back lcov. Both legs must reach the service in the SAME format: the ingest stamps a BranchFormat
+    # per file from the first report that carries branches and silently discards edges arriving later
+    # in another format (MintPlayer.Spark#420). C# uploads cobertura, so this does too.
     - name: Project the Polyglot twins onto their .pg sources
       if: always()
       run: >
-        node tools/pg_coverage_remap.mjs
-        src/RLDemo.Web/ClientApp/coverage/ClientApp/coverage-final.json
-        coverage-pg/pg.cobertura.xml .
+        "${{ steps.polyglot.outputs.tool }}" coverage remap
+        src/RLDemo.Web/ClientApp/coverage/ClientApp/lcov.info
+        --target typescript
+        --generated-dir src/RLDemo.Web/ClientApp/src
+        --root .
+        --out-format cobertura
+        --out coverage-pg/pg.cobertura.xml
 
     - name: Upload frontend coverage
       # Same guards as the C# upload: fork PRs have no OIDC, and a run that produced no report is a

@@ -929,6 +929,10 @@ M66 puts it back, and it works.
 | `tetris_solver.pg` | 729/749 | **734/749** |
 | **total** | **3,494/3,719 = 93.95%** | **3,649/3,719 = 98.12%** |
 
+> **§17 corrects the denominator below.** These figures were measured with the interim
+> `pg_coverage_remap.mjs`, whose denominator was the lines it happened to find statements for.
+> The 155-line gain is unchanged and robust; the percentages are not.
+
 **155 `.pg` lines are covered by the browser and by nothing else.** Repo-wide that is
 **78.70% → 79.70%**, and — this is the part that matters — **the denominator does not move**. These are
 not new lines being added to be counted; they are lines the C# report already listed and already scored
@@ -1118,3 +1122,76 @@ absolute agent path; the summary percentage no longer multiplies a string by 100
 (`branches-valid="0"`). If the service ever merged branch rates by average rather than by max, a 0/0
 report could dilute the branch number. Unverified — worth one check against a real run before the
 branch figure is trusted.
+
+---
+
+## 17. M67 — adopting `polyglot coverage remap`, and the denominator correction *(2026-09-19)*
+
+`MintPlayer.Polyglot.MSBuild` **0.10.1** ships `polyglot coverage remap`
+([Polyglot#71](https://github.com/MintPlayer/MintPlayer.Polyglot/issues/71) /
+[PR #72](https://github.com/MintPlayer/MintPlayer.Polyglot/pull/72)). `tools/pg_coverage_remap.mjs` is
+deleted; both workflows now call the shipped CLI.
+
+### 17.1 The gain holds; the denominator does not
+
+Running the official tool on the same lcov the interim tool consumed:
+
+| | interim tool | **`polyglot coverage remap` 0.10.1** |
+|---|---|---|
+| `.pg` files in the report | 7 | **9** |
+| `.pg` lines covered by the browser | 811 | **811** |
+| `.pg` lines in the denominator | 1,801 | **3,949** |
+| lines the browser covers and C# never reaches | 155 | **155** |
+
+**The 155 is unchanged**, which is the number that mattered — it is the measurement that justified the
+whole union, and it survives being recomputed by an independent implementation. Everything else moves.
+
+| | C# report's denominator (3,719) | **the mappable denominator (3,949)** |
+|---|---|---|
+| `.pg`, C# only | 93.95% | **88.48%** |
+| `.pg`, union | 98.12% | **92.40%** |
+| repo | 78.70% → 79.70% | **78.70% → 78.54%** |
+
+**So adopting the official tool moves the repo figure DOWN by 0.16pp, not up by 1.00pp as §16 reported.**
+That correction is the honest direction, and it is worth understanding rather than working around.
+
+### 17.2 Why the denominator grew by 230 lines
+
+Both targets' origin data map **3,949** `.pg` lines — verified identically from the C# `#line` pragmas and
+the TypeScript `.ts.map` (§16.1: symmetric difference zero). But the C# *coverage report* only declares
+**3,719** coverable lines, because Roslyn emits no sequence point for ~230 of them — declaration-only
+lines that carry a pragma but no IL.
+
+The interim tool never surfaced this: it took its denominator from whatever the istanbul report happened
+to contain. The official tool takes it from the **origin data**, which is the rule §4.2 already stated and
+which the tool's own documentation is explicit about — *"the denominator is the mapped set, not the
+file"*, and the file set comes from the sidecars, never from the report.
+
+**Those 230 lines belong in the denominator**, because a `.pg` line is coverable when *any* target can
+execute it, and the TypeScript twin can execute these. Our previous figure was flattered by Roslyn's
+narrower view of the same source. The service merges line *sets* per filename, so the merged denominator
+becomes 3,949 whichever leg supplies it.
+
+### 17.3 Two wiring decisions
+
+**`--out-format cobertura`, though the input is lcov.** The tool defaults to handing back the input
+format, which is right for a consumer feeding its own pipeline — but both our legs must reach the service
+in the **same** format. The ingest stamps a `BranchFormat` per file from the first report carrying
+branches and **silently discards edges arriving later in another format**
+([MintPlayer.Spark#420](https://github.com/MintPlayer/MintPlayer.Spark/issues/420)). C# uploads cobertura,
+so the `.pg` leg does too. Measured: the projected report carries **272/886** count-only conditions, which
+would have been dropped had it gone up as lcov.
+
+**The CLI is located by globbing the restored package** (`tools/<rid>/polyglot`) rather than by a
+hardcoded version, so it cannot drift out of step with the `PackageReference`. It fails loudly when the
+binary is absent, because the alternative — an empty report — reads as "nothing was covered".
+
+### 17.4 Not done, deliberately
+
+- **The C# leg is not remapped.** The docs suggest running it anyway to validate and to complete the file
+  set, but our C# report already names all nine `.pg` files, and the 230 extra mappable lines arrive via
+  the TypeScript leg regardless, since the service unions line sets. It would cost a CI step to change
+  nothing.
+- **`--branch-arms` stays off.** It is safe only for a single-target consumer; we overlay two.
+- **`reroot_frontend_coverage.mjs` stays.** It serves the hand-written ClientApp report, which is a
+  consumer-side path convention and was never Polyglot's concern (§16 / Polyglot PRD §5).

@@ -24,7 +24,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.10.0" PrivateAssets="all" />
+    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.10.1" PrivateAssets="all" />
     <PackageReference Include="MintPlayer.SourceGenerators" Version="10.20.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

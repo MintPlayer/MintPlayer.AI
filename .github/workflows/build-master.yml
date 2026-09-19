@@ -105,13 +105,27 @@ jobs:
       run: node ../../../tools/reroot_frontend_coverage.mjs coverage/ClientApp/cobertura-coverage.xml src/RLDemo.Web/ClientApp
 
     # The .pg union: the twins' coverage projected back onto their .pg sources through Polyglot's v3
-    # source maps. Rationale and why it must be its own report: see pull-request.yml.
+    # source maps, by `polyglot coverage remap` from the restored MSBuild package (M67).
+    # Rationale, and why --out-format is pinned to cobertura: see pull-request.yml.
+    - name: Locate the Polyglot CLI
+      if: always()
+      id: polyglot
+      run: |
+        TOOL=$(find "$HOME/.nuget/packages/mintplayer.polyglot.msbuild" -path '*/tools/linux-x64/polyglot' -type f | sort -V | tail -1)
+        if [ -z "$TOOL" ]; then echo "::error::polyglot CLI not found in the restored package"; exit 1; fi
+        chmod +x "$TOOL"
+        echo "tool=$TOOL" >> "$GITHUB_OUTPUT"
+
     - name: Project the Polyglot twins onto their .pg sources
       if: always()
       run: >
-        node tools/pg_coverage_remap.mjs
-        src/RLDemo.Web/ClientApp/coverage/ClientApp/coverage-final.json
-        coverage-pg/pg.cobertura.xml .
+        "${{ steps.polyglot.outputs.tool }}" coverage remap
+        src/RLDemo.Web/ClientApp/coverage/ClientApp/lcov.info
+        --target typescript
+        --generated-dir src/RLDemo.Web/ClientApp/src
+        --root .
+        --out-format cobertura
+        --out coverage-pg/pg.cobertura.xml
 
     - name: Upload frontend coverage
       if: always() && hashFiles('src/RLDemo.Web/ClientApp/coverage/ClientApp/cobertura-coverage.xml') != ''

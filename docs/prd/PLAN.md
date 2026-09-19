@@ -3524,6 +3524,46 @@ no browser path behind it, which is a weaker claim than this union makes.
 **Known gap:** the `.pg` report carries no branch data. If the service merged branch rates by average
 rather than max, a 0/0 report could dilute the branch figure — unverified, worth one check.
 
+## M67 — Adopting `polyglot coverage remap`  *(2026-09-19; see `COVERAGE_90_PRD.md` §17)* ✅ — **the 155-line gain holds; the denominator corrects**
+
+`MintPlayer.Polyglot.MSBuild` **0.10.1** ships `polyglot coverage remap`
+([Polyglot#71](https://github.com/MintPlayer/MintPlayer.Polyglot/issues/71) / PR #72), so the projection
+moves to the compiler that owns the mapping. `tools/pg_coverage_remap.mjs` is **deleted** — it was always
+interim; a consumer-side tool duplicates the compiler's `originMapping` vocabulary and drifts from it
+silently.
+
+**The number that mattered survived an independent implementation.** The official tool finds the same
+**155** `.pg` lines covered by the browser and by nothing else. Everything around it moved:
+
+| | interim | **official** |
+|---|---|---|
+| `.pg` files reported | 7 | **9** (a file no test touched is emitted at zero, not dropped) |
+| denominator | 1,801 | **3,949** (the mapped set, from the sidecars) |
+| repo effect | 78.70% → 79.70% | **78.70% → 78.54%** |
+
+**Adopting it moves the repo figure DOWN 0.16pp, not up 1.00pp as M66 reported**, and that is the honest
+direction. Both targets' origin data map 3,949 `.pg` lines, but the C# *report* declares only 3,719
+because Roslyn emits no sequence point for ~230 declaration-only lines that still carry a pragma. Those
+lines are executable in the TypeScript twin, so they are genuinely coverable and genuinely uncovered — the
+old figure was flattered by Roslyn's narrower view of the same source.
+
+- **M67.1** — bump to 0.10.1; delete the interim tool; both workflows call the shipped CLI, located by
+  **globbing the restored package** rather than a hardcoded version so it cannot drift from the
+  `PackageReference`, and failing loudly when absent (an empty report reads as "nothing was covered").
+- **M67.2** — **`--out-format cobertura`** although the input is lcov. The tool defaults to handing back
+  the input format, but both legs must reach the service in the SAME format: the ingest stamps a
+  `BranchFormat` per file from the first report carrying branches and silently discards edges arriving
+  later in another format ([MintPlayer.Spark#420](https://github.com/MintPlayer/MintPlayer.Spark/issues/420)).
+  Measured: the projected report carries **272/886** count-only conditions that would otherwise be dropped.
+- **Not done:** the C# leg is not remapped (our report already names all nine `.pg` files, and the 230
+  extra mappable lines arrive via the TypeScript leg since the service unions line sets);
+  `--branch-arms` stays off (safe only for a single-target consumer); `reroot_frontend_coverage.mjs`
+  stays, since it serves the hand-written ClientApp report and is a consumer-side path convention.
+
+**Incidental finding:** 0.10.0 was never actually on this machine — builds succeeded off the incremental
+stamp plus already-generated `obj/` output, so `_PolyglotVerifyTool` never ran. A clean clone would have
+failed. Worth knowing before trusting a local build to prove a Polyglot change.
+
 ---
 
 Run the playground: `dotnet run --project src/RLDemo.Web` (Development spawns + proxies
