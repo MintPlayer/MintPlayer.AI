@@ -1123,6 +1123,12 @@ absolute agent path; the summary percentage no longer multiplies a string by 100
 report could dilute the branch number. Unverified — worth one check against a real run before the
 branch figure is trusted.
 
+> **Both halves of that resolved in §17, and both the other way than feared.** The `.pg` report now
+> carries **272/886** count-only conditions, because M67 pins `--out-format cobertura` (§17.3). And the
+> dilution worry was unfounded regardless: Polyglot PR #72's SP7 read the ingest and found a branch-less
+> report **cannot** dilute an existing branch number — the merge skips the block entirely. Checking the
+> source beat the "worth one CI run" this paragraph settled for.
+
 ---
 
 ## 17. M67 — adopting `polyglot coverage remap`, and the denominator correction *(2026-09-19)*
@@ -1174,13 +1180,20 @@ becomes 3,949 whichever leg supplies it.
 
 ### 17.3 Two wiring decisions
 
-**`--out-format cobertura`, though the input is lcov.** The tool defaults to handing back the input
-format, which is right for a consumer feeding its own pipeline — but both our legs must reach the service
-in the **same** format. The ingest stamps a `BranchFormat` per file from the first report carrying
-branches and **silently discards edges arriving later in another format**
-([MintPlayer.Spark#420](https://github.com/MintPlayer/MintPlayer.Spark/issues/420)). C# uploads cobertura,
-so the `.pg` leg does too. Measured: the projected report carries **272/886** count-only conditions, which
-would have been dropped had it gone up as lcov.
+**`--out-format cobertura`, though the input is lcov — for branch data, not for format matching.**
+The tool defaults to handing back the input format. We override it because **the remap emits branch data
+count-only, and only cobertura, clover and JaCoCo can express a count** — lcov and istanbul output are
+line-only. Measured both ways on this repo's report: cobertura out carries **272/886** conditions, lcov
+out carries **zero**.
+
+> **Correction.** An earlier version of this section justified the override by the ingest's `BranchFormat`
+> stamping — that reports arriving in a second format would have their edges silently discarded, so both
+> legs had to match. **That is no longer true, and was already fixed when this was written.**
+> [MintPlayer.Spark#420](https://github.com/MintPlayer/MintPlayer.Spark/issues/420) ("format-agnostic,
+> order-independent branch merge + istanbul/clover parsers") closed on 2026-09-18, *before* Polyglot PR
+> #72 merged. Mixing formats across legs, and uploading them in any order, is safe. The claim came from
+> SP7's reading of the ingest as it stood during that spike and I carried it forward without re-checking
+> the issue — the decision happened to be right, the reasoning was stale.
 
 **The CLI is located by globbing the restored package** (`tools/<rid>/polyglot`) rather than by a
 hardcoded version, so it cannot drift out of step with the `PackageReference`. It fails loudly when the

@@ -167,9 +167,16 @@ jobs:
         echo "tool=$TOOL" >> "$GITHUB_OUTPUT"
 
     # --out-format cobertura, deliberately, though the input is lcov and the tool would otherwise hand
-    # back lcov. Both legs must reach the service in the SAME format: the ingest stamps a BranchFormat
-    # per file from the first report that carries branches and silently discards edges arriving later
-    # in another format (MintPlayer.Spark#420). C# uploads cobertura, so this does too.
+    # back lcov.
+    #
+    # The reason is BRANCH DATA, not format matching. The remap emits branches count-only (per-arm
+    # identities are not comparable across two instrumenters targeting the same .pg line), and only
+    # cobertura, clover and JaCoCo can express a count -- lcov and istanbul output are line-only.
+    # Measured on this repo: cobertura out carries 272/886 conditions, lcov out carries ZERO.
+    #
+    # It is NOT about upload order. MintPlayer.Spark#420 made the ingest's branch merge format-agnostic
+    # and order-independent, so mixing formats across legs is safe; an earlier version of this comment
+    # claimed otherwise and was out of date.
     - name: Project the Polyglot twins onto their .pg sources
       if: always()
       run: >

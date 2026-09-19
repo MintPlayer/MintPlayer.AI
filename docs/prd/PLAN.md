@@ -3550,11 +3550,13 @@ old figure was flattered by Roslyn's narrower view of the same source.
 - **M67.1** — bump to 0.10.1; delete the interim tool; both workflows call the shipped CLI, located by
   **globbing the restored package** rather than a hardcoded version so it cannot drift from the
   `PackageReference`, and failing loudly when absent (an empty report reads as "nothing was covered").
-- **M67.2** — **`--out-format cobertura`** although the input is lcov. The tool defaults to handing back
-  the input format, but both legs must reach the service in the SAME format: the ingest stamps a
-  `BranchFormat` per file from the first report carrying branches and silently discards edges arriving
-  later in another format ([MintPlayer.Spark#420](https://github.com/MintPlayer/MintPlayer.Spark/issues/420)).
-  Measured: the projected report carries **272/886** count-only conditions that would otherwise be dropped.
+- **M67.2** — **`--out-format cobertura`** although the input is lcov, **for branch data**: the remap
+  emits branches count-only, and only cobertura, clover and JaCoCo can carry a count — lcov and istanbul
+  output are line-only. Measured both ways: cobertura out carries **272/886** conditions, lcov out
+  carries **zero**. *(Correction: this was first justified by the ingest's `BranchFormat` stamping
+  hazard. [MintPlayer.Spark#420](https://github.com/MintPlayer/MintPlayer.Spark/issues/420) made the
+  branch merge format-agnostic and order-independent and closed 2026-09-18, before Polyglot PR #72
+  merged — so formats may be mixed and uploaded in any order. Right decision, stale reasoning.)*
 - **Not done:** the C# leg is not remapped (our report already names all nine `.pg` files, and the 230
   extra mappable lines arrive via the TypeScript leg since the service unions line sets);
   `--branch-arms` stays off (safe only for a single-target consumer); `reroot_frontend_coverage.mjs`
