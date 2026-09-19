@@ -1759,3 +1759,44 @@ about the tests you ran, not about the code.
 Not A3/A4 (§19.4). Those inject a **factory seam** so the Cube *campaigns* become testable without a
 GPU backend — +281 lines in `Campaigns`, and a coupling decision. This touches no C# at all and is
 purely about what the collector is allowed to instrument. They are independent.
+
+
+### 20.5 The threshold, encoded in the repo rather than in a PRD sentence
+
+There was **no coverage gate anywhere** before this — nothing in the workflows, nothing stored. §14's
+"move the target to ~80%" was a sentence in a document, which the next milestone could quietly ignore.
+
+`coverage.yml` at the repo root now carries it. coverage.mintplayer.com reads it **from the base ref**,
+never the head, so a pull request cannot rewrite the policy that judges it, and it overrides the
+server-side settings **per field** — keys it omits keep whatever is stored, so the file and the
+repository settings page compose rather than compete.
+
+**Settings:**
+
+| key | value | why |
+|---|---|---|
+| `projectMode` | `fixed` | §14 chose a target; a floor states it |
+| `projectTarget` | `80` | §14's decision, not today's reading |
+| `projectThreshold` | `1` | the merged headline moves slightly per run |
+| `projectBasis` | `scoped` | our builds are partial (three uploads, one `finish: true`) |
+| `patchTarget` | `80` | the gate that actually holds a line |
+| `blocking` | `true` | a gate nobody answers to is a dashboard |
+
+**Which number the target is set from — and a mistake avoided.** The local fast bucket reads **82.19%**
+(§20.3), but that is **C#-only**. The service headline merges three uploads — C#, the frontend and the
+`.pg` union — and reports **82.8%** for this branch. Those are different denominators, and §17 records
+this repo booking a whole milestone on confusing exactly those two figures. The target is therefore set
+from the **service** number, which is the only one a gate ever sees.
+
+Worth keeping: for most of this session the newest *recorded* service figure was M67's **79.36%**, and
+on that basis a fixed target of 80 would have been indefensible — the working plan was `auto` (ratchet
+against the base) precisely because the absolute merged number was unknown. It stopped being unknown,
+and the setting changed with it. A gate is only as good as the number it is calibrated against.
+
+**80 rather than 82.** A floor should say what the project has committed to, not wherever it happens to
+stand today. The ~2.8pp of headroom is room for an honest refactor, not slack to be spent — and
+`patchTarget: 80` means new code cannot quietly consume it. Tightening later is a one-line change.
+
+**Timing.** Because the file is read from the **base** ref, committing it here does **not** govern PR
+#54 itself; it takes effect once this branch is on master. To gate this PR, the same values have to be
+set on the repository settings page, which applies immediately.
