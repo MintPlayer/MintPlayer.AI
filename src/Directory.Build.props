@@ -10,4 +10,8 @@
     <RLNetVersion>0.7.0</RLNetVersion>
   </PropertyGroup>
 
+
+  <ItemGroup>
+    <PackageReference Include="MintPlayer.Versioning.MSBuild" Version="1.2.0" PrivateAssets="all" />
+  </ItemGroup>
 </Project>
