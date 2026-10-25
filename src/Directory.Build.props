@@ -1,13 +1,18 @@
 <Project>
 
   <!--
-    Single source of truth for the MintPlayer.AI.ReinforcementLearning SDK version. The five
-    published libraries (Core, Environments, Hosting, Ilgpu, Ilgpu.Hosting) set their <Version>
-    to $(RLNetVersion), so the whole SDK ships in LOCKSTEP — bump it here once per release.
+    The five published libraries (Core, Environments, Hosting, Ilgpu, Ilgpu.Hosting) set their
+    <Version> to $(RLNetVersion), which stays at the placeholder: MintPlayer.Versioning.MSBuild
+    replaces it with the package's highest <PackageId>/v<version> tag, and the release workflow
+    tags each release. They ship in LOCKSTEP through the `reinforcement-learning` group in
+    coverage.yml. Don't bump a version here.
     The demo apps (RLDemo.*) under src/ don't declare <Version>, so they stay unversioned.
   -->
   <PropertyGroup>
-    <RLNetVersion>0.7.0</RLNetVersion>
+    <RLNetVersion>0.0.0-PLACEHOLDER</RLNetVersion>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="MintPlayer.Versioning.MSBuild" Version="1.2.0" PrivateAssets="all" />
+  </ItemGroup>
 </Project>

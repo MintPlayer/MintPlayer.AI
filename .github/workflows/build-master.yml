@@ -4,6 +4,10 @@ on:
   push:
     branches: [ master ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
 
@@ -14,7 +18,7 @@ jobs:
     # public, so coverage.mintplayer.com auto-provisions it; no COVERAGE_TOKEN secret needed).
     # packages: write — PushGithub pushes nupkgs to GPR with github.token.
     permissions:
-      contents: read
+      contents: write
       packages: write
       id-token: write
 
@@ -155,9 +159,16 @@ jobs:
         finish: true
         fail-ci-if-error: false
 
-    # Only the two library projects are packable (IsPackable=false everywhere else).
+    - name: Version the packages
+      id: versioning
+      uses: MintPlayer/MintPlayer.Spark/apps/CodeCoverage/versioning-action@fc5aa28d12bea9a9c91afee290e13cf586184714 # versioning-v1
+
+    # Only the five library projects are packable (IsPackable=false everywhere else).
+    # No --no-build: the versions are decided after the tests, so pack builds again to stamp them into the
+    # assemblies (--no-build also skips restore, which leaves the nuspec's dependency versions stale).
+    # EnableSpaBuilder=false as in Build: the rebuild must not build the demo's Angular app.
     - name: Pack
-      run: dotnet pack --no-build --configuration Release
+      run: dotnet pack --configuration Release -p:EnableSpaBuilder=false
 
     - name: PushNuget
       run: dotnet nuget push **/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.PUBLISH_TO_NUGET_ORG }} --skip-duplicate

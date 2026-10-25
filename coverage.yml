@@ -45,3 +45,21 @@ gate:
   # Red, not informational. The numbers have been trustworthy since M67 fixed the denominator and
   # M70 stopped hiding the ILGPU assembly; a gate nobody has to answer to is a dashboard.
   blocking: true
+
+# MintPlayer package versioning (added by the onboarding pull request). The publish workflow tags every release
+# `<package id>/v<version>`; the commented lines are the defaults.
+versioning:
+  mode: server                       # server | local: local runs the engine on the runner, without the app
+#   releaseBranches: ["release/*.x"]
+#   ignore: ["**/*.md"]              # changed files that never release a package
+#   prerelease: upstream             # alpha | beta | next | preview | rc pins the label; upstream mirrors dependencies and the SDK
+  groups:                            # packages that always share one version
+    - name: reinforcement-learning
+      packages:
+        - MintPlayer.AI.ReinforcementLearning.Core
+        - MintPlayer.AI.ReinforcementLearning.Environments
+        - MintPlayer.AI.ReinforcementLearning.Hosting
+        - MintPlayer.AI.ReinforcementLearning.Ilgpu
+        - MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting
+#   packages:
+#     Acme.Generators: { anchor: free }   # free, or the framework package whose major it follows
