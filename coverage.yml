@@ -53,8 +53,13 @@ versioning:
 #   releaseBranches: ["release/*.x"]
 #   ignore: ["**/*.md"]              # changed files that never release a package
 #   prerelease: upstream             # alpha | beta | next | preview | rc pins the label; upstream mirrors dependencies and the SDK
-#   groups:                         # packages that always share one version
-#     - name: core
-#       packages: [Acme.Core, Acme.Core.*]
+  groups:                            # packages that always share one version
+    - name: reinforcement-learning
+      packages:
+        - MintPlayer.AI.ReinforcementLearning.Core
+        - MintPlayer.AI.ReinforcementLearning.Environments
+        - MintPlayer.AI.ReinforcementLearning.Hosting
+        - MintPlayer.AI.ReinforcementLearning.Ilgpu
+        - MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting
 #   packages:
 #     Acme.Generators: { anchor: free }   # free, or the framework package whose major it follows
