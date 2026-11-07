@@ -15,7 +15,8 @@ jobs:
     runs-on: ubuntu-latest
 
     # id-token: the coverage upload authenticates via GitHub OIDC (tokenless — the repo is
-    # public, so coverage.mintplayer.com auto-provisions it; no COVERAGE_TOKEN secret needed).
+    # public, so coverage.mintplayer.com auto-provisions it; no COVERAGE_TOKEN secret needed),
+    # and the NuGet login exchanges the same OIDC token for a short-lived nuget.org API key.
     # packages: write — PushGithub pushes nupkgs to GPR with github.token.
     permissions:
       contents: write
@@ -170,8 +171,17 @@ jobs:
     - name: Pack
       run: dotnet pack --configuration Release -p:EnableSpaBuilder=false
 
+    # Trusted publishing: the job's GitHub OIDC token (id-token: write) is exchanged for a short-lived
+    # nuget.org API key. The policy lives on nuget.org (owner MintPlayer, workflow build-master.yml,
+    # packages MintPlayer.AI*); a package outside it is refused. `user` is the nuget.org profile that owns the policy.
+    - name: NuGet login (trusted publishing)
+      id: nuget-login
+      uses: NuGet/login@v1
+      with:
+        user: Pieterjan
+
     - name: PushNuget
-      run: dotnet nuget push **/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.PUBLISH_TO_NUGET_ORG }} --skip-duplicate
+      run: dotnet nuget push **/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} --skip-duplicate
 
     - name: PushGithub
       run: dotnet nuget push **/*.nupkg --no-symbols --skip-duplicate
