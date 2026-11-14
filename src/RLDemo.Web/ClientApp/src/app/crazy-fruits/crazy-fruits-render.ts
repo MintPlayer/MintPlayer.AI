@@ -2,7 +2,7 @@
 // flags, strawberry-red wordmark, saturated fruit art; original art, no KidCity/Belgacom branding). Pure
 // view code: it reads the game's current animation step + progress and draws; all rules live in the engine.
 
-import { drawFruit as drawFruitCakeArt } from '../fruit-cake/fruit-cake-art';
+import { drawFruit as drawSuikaArt } from '../suika/suika-art';
 import { AnimStep, CrazyFruitsGame, SIZE } from './crazy-fruits-game';
 
 // Logical space; the canvas scales it to its CSS size (device-pixel-ratio handled by the component).
@@ -302,8 +302,8 @@ function cellCenter(cell: number): { x: number; y: number } {
   };
 }
 
-// ── Fruit art — FruitCake's cached vector clipart, scaled down, plus specials overlays ──────────────────
-// Six visually distinct picks from the 11-tier FruitCake catalog (no two share a color):
+// ── Fruit art — Suika's cached vector clipart, scaled down, plus specials overlays ──────────────────
+// Six visually distinct picks from the 11-tier Suika catalog (no two share a color):
 // 1 strawberry · 2 grape · 3 dekopon (orange) · 4 pear · 5 pineapple · 6 watermelon.
 // Grid values are PACKED (kind·16 + type): stripes are painted ALONG the blast axis so players can read
 // the direction, wrapped fruit get a golden wrapper ring, and the colorless sugar bomb is its own sphere.
@@ -321,7 +321,7 @@ export function drawFruit(ctx: CanvasRenderingContext2D, packed: number, x: numb
   }
   const wrapped = kind === 3 || kind === 5;
   if (wrapped) drawWrapperBack(ctx, x, y, r);
-  if (fruit >= 1 && fruit <= 6) drawFruitCakeArt(ctx, FRUIT_TIER[fruit], x, y, wrapped ? r * 0.8 : r);
+  if (fruit >= 1 && fruit <= 6) drawSuikaArt(ctx, FRUIT_TIER[fruit], x, y, wrapped ? r * 0.8 : r);
   if (kind === 1 || kind === 2) drawStripes(ctx, x, y, r, kind === 1);
   if (wrapped) drawWrapperFront(ctx, x, y, r);
 }

@@ -951,10 +951,10 @@ experiments. Reliable **100** (filling ~70% of the board) needs **multi-ply plan
 pattern (learned net guiding a beam/lookahead, already in this repo) or a Hamiltonian planner — out of scope for
 this learning-only milestone, recommended as the follow-up.
 
-## M28 — 2048 expectimax · NoisyNets exploration · FruitCake A/B  *(PR #15, branch `fruitcake-more-training`)* ✅
+## M28 — 2048 expectimax · NoisyNets exploration · Suika A/B  *(PR #15, branch `suika-more-training`)* ✅
 
 Three game-playing improvements plus a reusable exploration capability. Detail lives in
-`NOISYNETS_PRD.md` and `FRUITCAKE_AI_PRD.md`; this is the ledger entry.
+`NOISYNETS_PRD.md` and `SUIKA_AI_PRD.md`; this is the ledger entry.
 
 - **2048 expectimax** (`Expectimax2048`) — averages the n-tuple **afterstate value over the random spawn**,
   fixing 1-ply greedy's spawn-blindness (it would slide the big tile out of a corner and let a stray 2 wreck
@@ -965,21 +965,21 @@ Three game-playing improvements plus a reusable exploration capability. Detail l
   Gaussian, noise sampled as autograd *constants* → grads reach μ/σ, never the noise — no new op),
   `DuelingQNet` noisy heads + checkpoint **v2** (v1 files load as plain — every shipped `*.dqn.ckpt` keeps
   working), `DqnTrainer` NoisyNets path (resample cadence, ε=0, eval noise-off, serialized `NoiseRng`),
-  FruitCake `--noisy` + `ToNoisy` promote-plain→noisy. **Serving unchanged** (noise off default →
+  Suika `--noisy` + `ToNoisy` promote-plain→noisy. **Serving unchanged** (noise off default →
   deterministic means). 293/293 non-slow tests; noisy resume bitwise-identical.
-- **FruitCake N4 verdict — NoisyNets MATCHED ε-greedy, did NOT beat it → not shipped.** A 200-game paired
-  A/B (`FruitCakeAb`, `--game fruitcake --ab --baseline <dir>`) is a statistical tie: candidate **702.1** vs
+- **Suika N4 verdict — NoisyNets MATCHED ε-greedy, did NOT beat it → not shipped.** A 200-game paired
+  A/B (`SuikaAb`, `--game suika --ab --baseline <dir>`) is a statistical tie: candidate **702.1** vs
   baseline **714.4** (Δ **−12.3 ± 29.8 SE**, 49% wins), noisy net higher-variance. The eye-catching 886/971
-  single-evals were **seed-luck** — over 200 games both nets sit ~700–714. `models/fruitcake.dqn.ckpt`
+  single-evals were **seed-luck** — over 200 games both nets sit ~700–714. `models/suika.dqn.ckpt`
   unchanged. **Methodology lesson: judge this stochastic env with the multi-seed paired A/B, never a
-  10-episode eval.** Continued **ε-greedy** training remains the proven lever for real FruitCake gains.
+  10-episode eval.** Continued **ε-greedy** training remains the proven lever for real Suika gains.
 - **Vectorized DQN envs — tried & reverted** (~3× *slower*): the compute backend already parallelizes
   data-gen (multithreaded GEMM / CUDA), so a second parallelism layer just oversubscribes the cores. To use
   more cores, run N independent runs with the backend single-threaded. Writeup: `docs/OPTIMIZATIONS.md`.
 
-## M29 — FruitCake: break the pineapple plateau  *(planned — see `FRUITCAKE_IMPROVE_PRD.md`)* 🔜
+## M29 — Suika: break the pineapple plateau  *(planned — see `SUIKA_IMPROVE_PRD.md`)* 🔜
 
-The shipped FruitCake DQN plateaus at a **pineapple**, almost never a **watermelon**. A four-angle
+The shipped Suika DQN plateaus at a **pineapple**, almost never a **watermelon**. A four-angle
 investigation (observation, reward/algorithm, serving-side search, external Suika SOTA) **all converged**:
 the plateau is **reward-design + perception bound, NOT capacity or exploration** (continued ε-greedy *and*
 NoisyNets both failed — M28), and the game **rewards planning with a forward model far more than a reactive
@@ -987,7 +987,7 @@ net** (a 2025 Leiden thesis: DQN ≈ random + mode-collapse, while a Monte-Carlo
 human*). Two independent angles fingered the same gap — **adjacency of equal tiers**: perception can't see it,
 reward doesn't value it. Three levers, prioritized:
 
-- **A. Serving-side forward-model search (no retrain)** — `FruitCakeSearch`, depth-2 over the deterministic
+- **A. Serving-side forward-model search (no retrain)** — `SuikaSearch`, depth-2 over the deterministic
   physics (both pieces known ⇒ no chance node, *cleaner* than 2048's expectimax), leaf = merge points + the
   trained net's max-Q. The literature's #1 lever; reuses the current net; ship first.
 - **B. Richer relational inputs (retrain)** — mergeable-adjacency per column, per-column danger margin, next-next,
@@ -1002,90 +1002,90 @@ session: F0 baseline → F1 search (no-retrain win) → training session F2+F3+F
 
 > **B4 tier-occupancy grid — measured 2026-07-06, NULL result (commit `d8e6893`, not shipped).** The
 > lever-B escalation ("do B4 if B1–B3 underdeliver"): appended a 14×10 dominant-tier grid to the observation
-> (obs 89 → 229, single-sourced in `fruitcake_solver.pg`), trained a fresh net to 321k drops. Depth-3 net+search
+> (obs 89 → 229, single-sourced in `suika_solver.pg`), trained a fresh net to 321k drops. Depth-3 net+search
 > = **2519 / 52% watermelon** — a tie on the ~2505/~50% bar. The reactive net is **saturated**; richer perception
 > doesn't move the deployed search ceiling (same verdict as F2 inputs, M30 big-fruit, M28 NoisyNets, F6 distill,
-> curriculum). Code preserved at commit `d8e6893` (tag `archive/fruitcake-tier-grid-b4`); **never merged**
-> (229-dim obs would break the live 89-dim net). See `FRUITCAKE_IMPROVE_PRD.md` §4.B B4 + `docs/OPTIMIZATIONS.md`.
+> curriculum). Code preserved at commit `d8e6893` (tag `archive/suika-tier-grid-b4`); **never merged**
+> (229-dim obs would break the live 89-dim net). See `SUIKA_IMPROVE_PRD.md` §4.B B4 + `docs/OPTIMIZATIONS.md`.
 
-## M30 — FruitCake: big-fruit position inputs  *(planned — see `FRUITCAKE_BIGFRUIT_INPUTS_PRD.md`)* 🔜
+## M30 — Suika: big-fruit position inputs  *(planned — see `SUIKA_BIGFRUIT_INPUTS_PRD.md`)* 🔜
 
 A focused input experiment (the user's steer): the current 83-dim observation is a per-column **skyline with
 no absolute fruit positions**, so the net can't see *where* its biggest fruit sits. Add the **(x, y, tier) of the
 two biggest fruits** to `BuildObservation` (→ ~89-dim). **Checkpoint reuse: no** — width change ⇒ the shipped
-83-dim `fruitcake.dqn.ckpt` won't load (strict shape check + `FruitCakeModelService` width guard; no
+83-dim `suika.dqn.ckpt` won't load (strict shape check + `SuikaModelService` width guard; no
 weight-transfer util exists), so this is a **fresh retrain** (F5 precedent), not a resume — an optional ~50-line
 weight-pad warm-start util is the only alternative and isn't on the critical path. **Honest prior:** the reactive
 net is documented as **saturated** (F2 richer inputs already gave +36% score but 0 watermelon; the watermelon
 breakthrough was **search**, not the net; F6 distillation and curriculum both failed). So this is built to
 **falsify cheaply** and is judged on **net + forward-search** (the deployed system), not the greedy net. Plan
-G0–G4 in the PRD; ship `fruitcake.dqn.ckpt` **only if net+search beats the depth-3 ~50%-watermelon / ~2505 bar**
+G0–G4 in the PRD; ship `suika.dqn.ckpt` **only if net+search beats the depth-3 ~50%-watermelon / ~2505 bar**
 by a seed-noise-beating margin — else record a negative result (NoisyNets/F6 style) and keep the capability.
 
-## M31 — FruitCake: single-source physics via MintPlayer.Polyglot  *(planned — see `POLYGLOT_FRUITCAKE_PRD.md`)* 🔜
+## M31 — Suika: single-source physics via MintPlayer.Polyglot  *(planned — see `POLYGLOT_SUIKA_PRD.md`)* 🔜
 
-The FruitCake circle-physics solver is duplicated by hand in C# (`FruitCakeWorld`, training + serving) and TS
-(`fruit-cake-physics.ts`, human play) — kept in sync only by discipline (the risk `FRUITCAKE_AI_PRD.md` §4.8 flagged).
-**MintPlayer.Polyglot 0.1.0 now exists** (a maintained C#↔TS transpiler; FruitCake is its north-star conformance
+The Suika circle-physics solver is duplicated by hand in C# (`SuikaWorld`, training + serving) and TS
+(`suika-physics.ts`, human play) — kept in sync only by discipline (the risk `SUIKA_AI_PRD.md` §4.8 flagged).
+**MintPlayer.Polyglot 0.1.0 now exists** (a maintained C#↔TS transpiler; Suika is its north-star conformance
 sample), reopening §4.8's "not viable" verdict. A 3-agent investigation confirmed the fit: both cores are pure
 `+ − × ÷ √` with **no transcendentals** (rotation math is pure arithmetic; trig lives only in render/audio glue) and
 are already 1:1 ports — squarely inside Polyglot's byte-identical-safe op set. **Output dirs:** TS is configurable
-(CLI `--out` → `ClientApp/.../fruit-cake/`); C# is **not** (fixed `obj/.../polyglot/`, compiled in-assembly — so the
+(CLI `--out` → `ClientApp/.../suika/`); C# is **not** (fixed `obj/.../polyglot/`, compiled in-assembly — so the
 `.pg` must live in the Environments project). **Precision:** the pilot uses `f32` in the `.pg` → reproduces today's
 C# float32 / TS float64 split exactly (**no retrain**, net stays valid); `f64`-everywhere byte-identity is a deferred
 optional upgrade (needs net re-validation). **v0.1.0 constraints to design around:** generated C# is *internal-by-default*
-(FruitCakeWorld is public + cross-assembly → facade/`InternalsVisibleTo` until Polyglot ships public-emission) and there's
+(SuikaWorld is public + cross-assembly → facade/`InternalsVisibleTo` until Polyglot ships public-emission) and there's
 *no npm/Linux CLI* yet (commit the generated `.ts` for Linux CI). Plan **PG0–PG3**: PG0 = zero-risk validation → PG1 C# cutover → PG2 TS cutover → PG3 optional f64
 byte-identity. **PG0 PASSED (on Polyglot 0.1.1), 2026-07-04.** The real solver ports to a clean type-checking `.pg`.
 0.1.0 surfaced a blocker (a codegen precedence bug — dropped parens around `??` under `+` → generated TS went all-NaN);
 it was root-caused (handoff in `docs/prd/polyglot-pilot/`) and **fixed in Polyglot 0.1.1**. On 0.1.1 the pilot is
 **byte-identical C#↔TS and NaN-free** (7-drop trace + 28-drop varied cascade + float checksum) — so byte-identity holds
 for this solver. `f32` proved impractical (cast per literal) → `f64` (so the C# solver moves float32→double, gated by
-the PG1 net A/B). **PG0 + PG1 DONE.** **PG1 cutover (2026-07-04):** `FruitCakeWorld` is now a thin **public facade**
-over the transpiled internal core (`PgFruitCakeWorld`, committed generated C# — not built at runtime, so Linux CI is
+the PG1 net A/B). **PG0 + PG1 DONE.** **PG1 cutover (2026-07-04):** `SuikaWorld` is now a thin **public facade**
+over the transpiled internal core (`PgSuikaWorld`, committed generated C# — not built at runtime, so Linux CI is
 unaffected); consumers unchanged; physics moved **float32→double**; env Save/Restore delegates at double precision
-(bitwise resume kept). Full build + 17 FruitCake/parity tests green; the trained net re-validated on double physics
+(bitwise resume kept). Full build + 17 Suika/parity tests green; the trained net re-validated on double physics
 (30-game: greedy 895, net+search 2317 / 33% watermelon — within noise, **no retrain**). **PG2 DONE + browser-verified
 (2026-07-05):** Polyglot **0.1.4** added TS `export` emission (the 4th fix — 0.1.2 Linux CI, 0.1.3 nullable, 0.1.4
 exports); switched C# to **build-time transpilation** (MSBuild PackageReference 0.1.4, no committed `.cs`); the web
-client's `fruit-cake-physics.ts` is now a thin `FruitWorld` facade over the committed generated TS core; verified via
+client's `suika-physics.ts` is now a thin `FruitWorld` facade over the committed generated TS core; verified via
 host + Playwright (drops/merges/`onMerged`-exact/`mergeBorn`/score, 0 console errors). **PG3 (byte-identity) done as a
-side-effect** (f64 both sides). **⇒ PG0–PG2 COMPLETE: FruitCake physics is fully single-source (one `.pg` → C#
+side-effect** (f64 both sides). **⇒ PG0–PG2 COMPLETE: Suika physics is fully single-source (one `.pg` → C#
 training/serving + TS human-play).** Optional **PG4** (not built): watch-AI could stream only the chosen column + animate
 client-side (byte-identical physics enables it) to cut streaming bandwidth — but the depth-3 search + net stay C#-only.
 **⇒ PG4 is SUPERSEDED by M32** (full client-side inference removes the compute, the bandwidth, *and* the WebSocket).
 
-## M32 — FruitCake: fully client-side AI (zero server inference)  *(✅ CS0–CS7 DONE 2026-07-05 — see `FRUITCAKE_CLIENT_SIDE_AI_PRD.md`)*
+## M32 — Suika: fully client-side AI (zero server inference)  *(✅ CS0–CS7 DONE 2026-07-05 — see `SUIKA_CLIENT_SIDE_AI_PRD.md`)*
 
-> **✅ DONE (2026-07-05) — the FruitCake AI runs entirely in the browser.** CS0 `e429cdf` (world-queries →
+> **✅ DONE (2026-07-05) — the Suika AI runs entirely in the browser.** CS0 `e429cdf` (world-queries →
 > `.pg` + fixed a leaked-`float` timestep) · CS1 `19bd0b8` (`buildObservation` → `.pg`, obs reproduces legacy
 > float32 within 1e-5) · CS2 `e8e3c6b` (`PgDuelingNet.forward` → `.pg`, argmax-exact vs SDK) · CS4 `63213db`
-> (`chooseColumn` depth-3 → `.pg`, **same column** as C# `FruitCakeSearch`) · CS3+CS6 `d458311` (ship the 89-dim
-> net as `ClientApp/public/fruitcake-net.ckpt` (LFS) + TS `.ckpt` parser; client-side `FruitCakeDirector`
-> replaces the WebSocket watch mode) · CS7 `b54bfc5` (retire `FruitCakeController` / `FruitCakeModelService` /
-> `FruitCakeApi` / stale 83-dim `models/fruitcake.dqn.ckpt`). **Verified host + Playwright:** watch mode plays
-> (fruit fall/roll/merge, score climbs), **0 console errors**, weights fetched once from `/fruitcake-net.ckpt`,
-> **0 `/api/fruitcake` requests**. 22 FruitCake/Polyglot tests green. Three Polyglot 0.1.4 codegen bugs found +
+> (`chooseColumn` depth-3 → `.pg`, **same column** as C# `SuikaSearch`) · CS3+CS6 `d458311` (ship the 89-dim
+> net as `ClientApp/public/suika-net.ckpt` (LFS) + TS `.ckpt` parser; client-side `SuikaDirector`
+> replaces the WebSocket watch mode) · CS7 `b54bfc5` (retire `SuikaController` / `SuikaModelService` /
+> `SuikaApi` / stale 83-dim `models/suika.dqn.ckpt`). **Verified host + Playwright:** watch mode plays
+> (fruit fall/roll/merge, score climbs), **0 console errors**, weights fetched once from `/suika-net.ckpt`,
+> **0 `/api/suika` requests**. 22 Suika/Polyglot tests green. Three Polyglot 0.1.4 codegen bugs found +
 > worked around (filed **MintPlayer.Polyglot#9**; handoff `docs/prd/polyglot-pilot/POLYGLOT_BUG_HANDOFF_M32.md`).
 > **CS5 (quality A/B) — DONE, ship-as-is:** depth-3 net+search on the shipped G3 89-dim net (100 paired games)
 > = **2493 mean / 49% watermelon / meanTier 10.48**, wins 100/100 vs greedy — **on par with the prior live AI**
 > (83-dim was ~2505 / 50%, within noise). Browser f64 inference is argmax/column-equivalent (CS2/CS4), so this
 > is representative. No retrain needed. (Also = the **M30/G4 verdict**: big-fruit inputs are a *null result* for
-> net+search quality — the saturated-net prior holds; kept because they don't hurt.) **The canonical FruitCake
-> net now lives once at `ClientApp/public/fruitcake-net.ckpt`** (browser); the server loads no FruitCake net.
+> net+search quality — the saturated-net prior holds; kept because they don't hurt.) **The canonical Suika
+> net now lives once at `ClientApp/public/suika-net.ckpt`** (browser); the server loads no Suika net.
 > **Shipped in PR #23** (single PR: NetTransfer + M30 + M31 + M32).
 
 
 
 **Cost-driven (user's steer).** "Watch the AI play" runs the **entire** AI server-side (net forward pass + depth-3
-search) and streams every intra-drop frame over the `/api/fruitcake/live` WebSocket — so both server **CPU and
+search) and streams every intra-drop frame over the `/api/suika/live` WebSocket — so both server **CPU and
 bandwidth scale linearly with concurrent viewers** (100 viewers ≈ 100× load on the single Hetzner VPS, a real
 monthly-bill risk). A 4-agent analysis (2026-07-05) confirmed the AI is fully portable: the net is plain float32
 matmuls (**noise is off at inference ⇒ mean weights only**), the depth-3 search is **RNG-free deterministic**
 game-tree logic, the **physics is already in the browser** (M31 single-source solver), and `BuildObservation` is a
 pure function. Nothing is C#-specific — it was only *written* in C#. **Design pivot (user steer 2026-07-05):** rather
 than hand-port to TS + babysit golden fixtures, **single-source the inference path (observation + net forward + search)
-in the same `fruitcake_solver.pg` as the physics** → C# **and** TS byte-identical by construction. This also
+in the same `suika_solver.pg` as the physics** → C# **and** TS byte-identical by construction. This also
 *dissolves* the float-parity problem: with the forward pass authored as **f64 on both sides**, no `Math.fround`
 emulation is needed — the deliberate consequence is serving inference moves from the SDK's f32 path to the Polyglot f64
 path (strictly more precise; PG1 already validated the net on f64 physics). Two hard boundaries stay per-platform:
@@ -1096,20 +1096,20 @@ path (strictly more precise; PG1 already validated the net on f64 physics). Two 
 `ClientApp/public/`) + TS `.ckpt` parser → CS4 `chooseColumn` depth-3 expectimax in the `.pg` (inline leaf, top-k as an
 explicit loop) → CS5 point C# serving + Lab `--search-eval` at the f64 core + one A/B vs the ~50%/2505 bar → CS6
 collapse `watch` into a **local director loop** (drop the socket) → CS7 **retire** the server path (`Live` WebSocket +
-`FruitCakeModelService` net load + `FruitCakeApi` socket) and measure. **Correctness crux (cheaper than a hand-port):**
+`SuikaModelService` net load + `SuikaApi` socket) and measure. **Correctness crux (cheaper than a hand-port):**
 per-block **Polyglot-C# == SDK-C#** equivalence tests (obs equality, argmax-exact forward, same-column search) + C#↔TS
 byte-identity **free from the transpiler** (no committed goldens, no tolerance); only D5's f32→f64 serving switch needs
 an end-to-end A/B. **Payoff:** per-viewer server cost → **0** (one ~370 KB CDN-cacheable weights download). **Depends
 on M30/G4** for a valid 89-dim net (client falls back to the heuristic leaf until it lands; CS0–CS2/CS4 are net-agnostic
-in parallel). **Supersedes PG4.** Also advances MintPlayer.Polyglot (FruitCake is its north-star conformance sample).
+in parallel). **Supersedes PG4.** Also advances MintPlayer.Polyglot (Suika is its north-star conformance sample).
 
 > **Branch `net-transfer-input-grow` — merge readiness (updated 2026-07-05).** This branch carries **four** initiatives:
-> M-series NetTransfer/`GrowInput` (SDK, self-contained), **M30** FruitCake big-fruit inputs (obs 83→89), **M31**
-> Polyglot single-source physics, and **M32** fully client-side FruitCake AI. **The old merge blocker is RESOLVED:**
-> the stale 83-dim server model no longer matters — M32 removed the server's FruitCake net entirely; the browser now
-> runs the AI from the 89-dim `ClientApp/public/fruitcake-net.ckpt`. **Remaining pre-master judgement (quality, not
+> M-series NetTransfer/`GrowInput` (SDK, self-contained), **M30** Suika big-fruit inputs (obs 83→89), **M31**
+> Polyglot single-source physics, and **M32** fully client-side Suika AI. **The old merge blocker is RESOLVED:**
+> the stale 83-dim server model no longer matters — M32 removed the server's Suika net entirely; the browser now
+> runs the AI from the 89-dim `ClientApp/public/suika-net.ckpt`. **Remaining pre-master judgement (quality, not
 > architecture):** the shipped browser net is the **G3** net; if its net+search play quality (G4 A/B vs the
-> ~50%-watermelon / ~2505 bar) is unsatisfying, retrain (M30/G4) and replace `ClientApp/public/fruitcake-net.ckpt`.
+> ~50%-watermelon / ~2505 bar) is unsatisfying, retrain (M30/G4) and replace `ClientApp/public/suika-net.ckpt`.
 > Still recommended: **split into separate PRs** (NetTransfer is independently mergeable; M30/M31/M32 are entangled).
 > **UPDATE: merged to master via PR #23 (single PR) 2026-07-05.** A/B ship-as-is (2493 / 49% watermelon, on par).
 
@@ -1229,7 +1229,7 @@ lives; and on the CPU path every parameter is host-resident `float[]`, so readin
   changes. Sampling on a background thread is a benign race with training writes and **provably harmless** (no writes/
   RNG/ordering) — **verified**: viz vs no-viz `snake.dqn.ckpt` + `snake.dqn-state.ckpt` are SHA256-identical.
 - **Environment-aware tooltips (all games)**: the source optionally exposes `InputLabels`/`OutputLabels` +
-  `SampleIo()` + `SampleActivations()` (default null → generic). Labels live on the envs — `FruitCakeEnv` (89
+  `SampleIo()` + `SampleActivations()` (default null → generic). Labels live on the envs — `SuikaEnv` (89
   features + 14 columns), `SnakeEnv` (177 egocentric-vision features + 4 directions), `RubiksCubeEnv` (12
   quarter-turns), `RushHourBoard` (32 vehicle×dir moves). **Every neuron shows a live value** in all five games — input feature
   values, output Q-values/scores, and **hidden-neuron activations** (each net type exposes `LayerActivations`). The
@@ -1244,7 +1244,7 @@ lives; and on the CPU path every parameter is host-resident `float[]`, so readin
   SSE) is the owner's call — bidirectional-ready for future viewer→trainer controls. **Fully async** (per-viewer
   bounded `Channel` + async send pump + async sample loop; no blocking I/O; costs nothing with no viewer connected).
   **Gated to a Development host environment** (`VizLauncher` skips it in Production; the Lab defaults to Development).
-  `--game <snake|fruitcake|rushhour|cube|cube-policy|cube-davi> --viz [port]` (bare `--viz` = 5250).
+  `--game <snake|suika|rushhour|cube|cube-policy|cube-davi> --viz [port]` (bare `--viz` = 5250).
 
 **Gate (met).** `--game snake --viz` → the net **visibly evolves while training** (weight heatmaps/edges shift,
 per-layer |w| grows, eval climbs); **hover tooltips** explain each part for RL newcomers; a **Production** process
@@ -1269,18 +1269,18 @@ duplicate a random existing one, the next layer's incoming weights split evenly 
 (`[16]→[32]→[32,32]→[64,64]→[64,64,64]→[128,128,128]`, alternating wider/deeper) on a step cadence, rebuilding the
 Adam optimizer (moments are keyed to the parameter set) via `DqnTrainingState.WithNetwork` (buffer/RNGs/n-step
 accumulator/step-count carried over; obs & action dims unchanged so they stay valid). Wired into **both DQN games**:
-`--game snake|fruitcake --grow [--grow-every N]` (starts from the tiny stage, grows mid-run).
+`--game snake|suika --grow [--grow-every N]` (starts from the tiny stage, grows mid-run).
 
 **Coverage — every trainable net now grows.** The growth math is factored into `Net2Net` (`WidenTrunk` + `SetIdentity`)
 and shared:
-- **DQN games** (Snake, FruitCake) — `DuelingQNet` grows wider+deeper via `--grow` (`DqnGrowth`).
+- **DQN games** (Snake, Suika) — `DuelingQNet` grows wider+deeper via `--grow` (`DqnGrowth`).
 - **Imitation/EfficientCube policy nets** (Cube, Cube-policy, Rush Hour) — the two-headed nets were **refactored** from
   a fixed 2-layer trunk to a variable-depth `PolicyValueNet` core (shared by `CubePolicyNet`/`RushHourPolicyNet`).
   Checkpoint format bumped to **v2** (stores the trunk-widths array); **v1 shipped files still load** (one hidden width
   → a two-layer trunk), guarded by a test. They grow wider+deeper via `--grow` (`PolicyGrowth`, same schedule).
 - **DAVI value net** (`ResidualMlp`, cube-davi) — already grew **width** (pre-existing `--auto-widen` / `--grow-to`).
 
-**Gate (met).** `--game fruitcake --viz --grow` grows the DQN net `[16]`→`[128,128,128]` live (wider **and** deeper),
+**Gate (met).** `--game suika --viz --grow` grows the DQN net `[16]`→`[128,128,128]` live (wider **and** deeper),
 and `--game rushhour --viz --grow` grows the **policy** net the same way (`docs/screenshots/m37-policy-net-grows.png` —
 note the identity diagonals in the just-deepened layers' heatmaps), both with **no loss spike** (function-preserving).
 320 fast tests green (incl. Net2Net forward-equality for DuelingQNet + PolicyValueNet, and a v1-checkpoint-load test).
@@ -1290,7 +1290,7 @@ Screenshots: `docs/screenshots/m36-network-grows.png` (DQN), `m37-policy-net-gro
 
 **Status (2026-07-12):** B0–B5 complete on `m38-reduce-boilerplate-plan` (PR #31), each behaviour-preserving with its
 own commit; solution builds 0/0 and the fast suite (now **326** tests) stays green after every step. **B2 is
-SHA256-bitwise-verified** (fresh seed-1 `snake`/`fruitcake` produce byte-identical deployable + resume checkpoints vs
+SHA256-bitwise-verified** (fresh seed-1 `snake`/`suika` produce byte-identical deployable + resume checkpoints vs
 the pre-refactor build), and the whole branch was independently re-reviewed line-by-line (no behavioural divergence)
 and **exercised live**: the web host loaded the real shipped checkpoints (`StartupCheckpoint`/`RefreshingCheckpoint`,
 incl. the Cube `onReload` GPU-resident rebuild on a real RTX 3060), the Lab games ran through `LabHost` (CPU + GPU),
@@ -1334,9 +1334,9 @@ is bisectable).**
   green; net negative diff.
 - **B2 — re-cut `DqnScoreCampaign` base (the M36/M37 absorption).** Shared score-max DQN spine owning
   resume/train/save-best/checkpoint **plus** net-growth (`grow`/`growEvery` + `_growRng` + `DqnGrowth.Maybe` in its
-  `TrainChunk`) **plus** `INetworkTelemetrySource` itself; Snake/FruitCake supply only env + `BaseOptions` +
-  `EvaluateNet` + labels + FruitCake's `AdaptWarmNet` (plain→noisy + `GrowInput`). **Gate (the hard one):** a
-  fixed-seed `--game snake`/`fruitcake` run yields a **SHA256-equal** `*.dqn.ckpt` + `*.dqn-state.ckpt` vs a
+  `TrainChunk`) **plus** `INetworkTelemetrySource` itself; Snake/Suika supply only env + `BaseOptions` +
+  `EvaluateNet` + labels + Suika's `AdaptWarmNet` (plain→noisy + `GrowInput`). **Gate (the hard one):** a
+  fixed-seed `--game snake`/`suika` run yields a **SHA256-equal** `*.dqn.ckpt` + `*.dqn-state.ckpt` vs a
   pre-refactor baseline; `--viz` still streams both nets live.
 - **B3 — Lab CLI + host plumbing.** `CliArgs` value-reader (hides bounds-check + `++i` + `InvariantCulture` — fixes
   the locale inconsistency) + `CommonLabArgs.Parse` for the shared 6 flags; `LabHost.Run(...)` owning
@@ -1347,13 +1347,13 @@ is bisectable).**
   shared (their `Evaluate`/data-gen are different algorithms). **Gate:** a short imitation/policy run is
   SHA256-equal to baseline.
 - **B5 — frontend watch scaffolding (optional polish).** `WatchWakeLock` (mode-signal-driven; hides sentinel +
-  `visibilitychange`) for snake/mountaincar/fruit-cake; `runDirectorLoop(...)` for the 2 `setInterval` directors;
+  `visibilitychange`) for snake/mountaincar/suika; `runDirectorLoop(...)` for the 2 `setInterval` directors;
   `fetchStatus`/`classifySolve` in `*-api.ts`; `AtomicFile.Write` for the 2 temp writes. **Gate:** frontend builds;
   manual watch-mode smoke.
 
 **Deliberately left alone:** per-game *solve* controllers/DTOs (different algorithms — a shared base would be
 shallow/leaky, PR #27's correct call), the 3 imitation/policy campaigns *as wholes*, `CubeDaviLab`'s 46-flag block,
-`CampaignRunner`/`DqnGrowth`/`PolicyGrowth`/`VizServer` (already deep), fruit-cake's rAF loop.
+`CampaignRunner`/`DqnGrowth`/`PolicyGrowth`/`VizServer` (already deep), suika's rAF loop.
 
 **Gate (whole milestone):** full solution builds 0/0; `dotnet test --filter "Category!=Slow"` green; DQN + a
 policy campaign SHA256-bitwise-identical vs baseline; `--viz` live for every game; net **negative** line diff with
@@ -1399,7 +1399,7 @@ self-play loop, and each game's rules.
 - **M39.2 — chess as consumer #2.** `ChessBoard` + full legal movegen + draw/mate detection; the 8×8×73 = 4672 move encoding;
   `ChessGame`/`ChessEnv` (`IEnvironment` + `IActionMaskProvider` + `IStatefulEnvironment`); flattened-plane observation (static,
   train==serve); a thin `ChessPolicyNet` wrapper over `PolicyValueNet` (policy head 4672, value `tanh` → WDL); `ChessSelfPlayCampaign`
-  + `--game chess` Lab dispatch; an Elo eval (`ChessAb`, mirroring `FruitCakeAb`). **Gate (the hard one): perft** node-counts matched
+  + `--game chess` Lab dispatch; an Elo eval (`ChessAb`, mirroring `SuikaAb`). **Gate (the hard one): perft** node-counts matched
   to published values (startpos, Kiwipete, …) to depth 5–6 *before any training*; move encode/decode round-trips; terminated-vs-truncated
   split correct; win-rate vs random-legal climbs; contract-test resume; ship `models/chess.az.ckpt` (LFS).
 - **M39.3 — scale + robustness (optional).** Batched-leaf MCTS; GPU-resident forward *if* the net grows enough to clear the
@@ -1419,33 +1419,33 @@ perft passes; both games' self-play win-rate rises vs a fixed baseline; resume r
 ## M40 — Play the chess AI in the browser (single-source via MintPlayer.Polyglot)  *(2026-07-12; see `CHESS_WEB_POLYGLOT_PRD.md`)* — M40.1–M40.4 ✅ SHIPPED (net committed; conv-net strength upgrade tracked in M42)
 
 **Goal.** Play the self-taught chess AI (M39) **in the browser**, client-side, with **zero server inference** — the
-FruitCake pattern (ARCHITECTURE §10): write the inference path once in a `.pg`, transpile to C# (training/serving) +
+Suika pattern (ARCHITECTURE §10): write the inference path once in a `.pg`, transpile to C# (training/serving) +
 TypeScript (browser); the browser downloads and parses the `.ckpt` and runs the net + MCTS locally. The wrong path
 is a server `ChessController` (per-viewer CPU — the thing M32/M33 removed); the right path is single-source.
 
 **Feasibility — VERIFIED (2026-07-12)** by transpiling a probe with the bundled `polyglot.exe`:
 - `Math.exp`, `Math.tanh`, `Math.log`, `Math.sqrt` all transpile (need `import { Math } from "std.math"`), so MCTS's
   masked-softmax priors + `tanh` value + PUCT `sqrt` are expressible. Transcendentals are **not** bit-exact across
-  C#/JS (only `+ - * / sqrt` are — the reason FruitCake avoided them) but chess **inference doesn't need bit-exactness**
+  C#/JS (only `+ - * / sqrt` are — the reason Suika avoided them) but chess **inference doesn't need bit-exactness**
   (the browser AI must play well, not match C# to the ULP), so `exp`/`tanh` are fine.
 - Bitwise ops `& | << >>` transpile (castling flags; booleans also fine).
 - **Polyglot itself is extendable:** the toolchain lives at `C:\Repos\MintPlayer.Polyglot` — a missing feature
   (`switch`/enum/Math fn) can be **added there and PR'd** (owner-authorized). Known limits to design around
-  (from the FruitCake solver): **no nested-generic params** (use flat `List<f64>` + offsets like `PgDuelingNet`),
+  (from the Suika solver): **no nested-generic params** (use flat `List<f64>` + offsets like `PgDuelingNet`),
   prefer `i32` consts + `if/else` over enums/`switch`.
 
 **Phases (each ends on a green build + its gate).**
 - **M40.1 — single-source the engine. ✅ SHIPPED 2026-07-12.** Ported `ChessBoard`/`ChessRules` + `ChessMoveEncoding`
   into `Environments/Chess/polyglot/chess_solver.pg` (internal `Pg`-prefixed core: `PgChessState` + `PgChessMove` —
   board `List<i32>[64]`, promotion/castling as `i32`, bounded `for`+`continue` rays, `List<(i32,i32)>` delta tables;
-  every construct proven by `fruitcake_solver.pg`). `MintPlayer.Polyglot.MSBuild` transpiles every `**/*.pg` to `obj/`
+  every construct proven by `suika_solver.pg`). `MintPlayer.Polyglot.MSBuild` transpiles every `**/*.pg` to `obj/`
   before CoreCompile (bumped 0.3.1 → **0.6.0**, which bundles win-x64 + linux-x64 + linux-arm64 + osx-x64 + osx-arm64,
   so CI/ubuntu is unaffected and macOS dev no longer needs `$(PolyglotTool)`). `ChessState`/`ChessRules`/
   `ChessMoveEncoding` are now **thin C# facades** over the core (public API + both test files unchanged); `ChessGame`'s
   seam (`LegalMoves`/`Apply`/`Result`) delegates to the core's `legalMoveIndices`/`applyIndex`/`result` so training and
   the browser share one implementation; `perft` recurses entirely in-core. **Gate MET: perft 25/25 on the generated
   engine** (incl. startpos d5 = 4,865,609, Kiwipete d4 = 4,085,603, ~10 s), encoding round-trip + terminal-detection
-  green, `SelfPlayCampaign` chess contract green, full suite 362/362 (no FruitCake/Snake/MountainCar regression from
+  green, `SelfPlayCampaign` chess contract green, full suite 362/362 (no Suika/Snake/MountainCar regression from
   the shared re-transpile). **Polyglot MSBuild multi-`.pg` incremental bug — FIXED upstream in 0.6.0 (PR #26):** a
   single-`.pg` edit used to make MSBuild's partial-incremental build hand the CLI a subset → inline duplicate prelude
   clash (CS0101/CS0260). Diagnosed here, verified a stamp-`Outputs` + `RemoveDir` fix against the source `.targets`,
@@ -1728,15 +1728,15 @@ the SHA256 determinism tests work. The refactor is narrow, and several "violatio
 (`Backend.Current` global, static `WriteObservation`, DI-free Polyglot `Pg*` cores behind facades).
 
 - **M46.1 ✅ — Campaigns → public library** (`src/…ReinforcementLearning.Campaigns`, per-game subfolders
-  `SelfPlay/ Cube/ Snake/ FruitCake/ RushHour/ Shared/`; the Lab exe reorganized into matching per-game folders and
+  `SelfPlay/ Cube/ Snake/ Suika/ RushHour/ Shared/`; the Lab exe reorganized into matching per-game folders and
   keeps only CLI/GPU/viz glue + `CliArgs` internals). `extern alias Lab` retired from the campaign tests (kept solely
   for `CliArgsTests`). **Gate MET:** 29 targeted campaign/determinism/CLI tests green incl. the self-play checkpoint
   SHA test; Campaigns/Lab/Tests build clean.
-- **M46.2 ✅ — Options records + injected environments.** `DqnScoreOptions` (+`FruitCakeDqnOptions` adding
+- **M46.2 ✅ — Options records + injected environments.** `DqnScoreOptions` (+`SuikaDqnOptions` adding
   Noisy/NStep), `CubeImitationOptions`, `RushHourImitationOptions`, `CubeEfficientOptions` (defaults = the Lab flag
   defaults; `SelfPlayOptions`/`CubeDaviSettings` already existed) replace every positional-primitive campaign ctor.
   The DQN spine takes its **training env as a ctor dependency** (`DqnScoreCampaign(IEnvironment, DqnScoreOptions)`);
-  Snake/FruitCake take (trainEnv, evalEnv, options) — env construction (grids, step penalty, reward shaping) moved
+  Snake/Suika take (trainEnv, evalEnv, options) — env construction (grids, step penalty, reward shaping) moved
   to the Labs. Snake needed no options subclass at all (grid labels read `SnakeEnv.Size`). **Gate MET:** new
   `DqnScoreCampaignTests` runs the whole resume→train→checkpoint→resume contract against a pure in-memory stub
   `IEnvironment` (the M46.2 seam proof); 11 targeted campaign/contract/SHA tests green; envs/seeds/DqnOptions
@@ -2038,11 +2038,11 @@ reward and the input plane; combo shaping would double-count (shape what pays la
 **Rejected up front:** bigger shaping bonuses (reward-hack trap), combo shaping (double-count), γ>0 schedules
 (n=2 losses: M49 γ=0.99, M50.3 `cf8train`), regret-prioritized replay (subsumed by dense regression).
 
-## M53 — FruitCake "Watch AI": the per-drop freeze  *(2026-08-02; branch `m53-fruitcake-ai-stall`; PR #41; see `FRUITCAKE_WATCH_AI_STALL_PRD.md`)* ✅ (shipped same day, CI green 500/500: rest→next-spawn is **250 ms median / 255 ms p95** = exactly `BETWEEN_S`, so the search is invisible; 0 long tasks, 0 starvations, 0 replay drift over 19 drops — **search config `3/5/2` unchanged, no strength traded**)
+## M53 — Suika "Watch AI": the per-drop freeze  *(2026-08-02; branch `m53-suika-ai-stall`; PR #41; see `SUIKA_WATCH_AI_STALL_PRD.md`)* ✅ (shipped same day, CI green 500/500: rest→next-spawn is **250 ms median / 255 ms p95** = exactly `BETWEEN_S`, so the search is invisible; 0 long tasks, 0 starvations, 0 replay drift over 19 drops — **search config `3/5/2` unchanged, no strength traded**)
 
-**Why:** owner reports the watch view at `ai.mintplayer.com/fruitcake` freezing ~3 s every time a fruit lands
+**Why:** owner reports the watch view at `ai.mintplayer.com/suika` freezing ~3 s every time a fruit lands
 or merges; manual play is smooth. 3-agent investigation 2026-08-02 measured it on prod **and** localhost:
-the depth-3 search runs **synchronously inside the rAF callback** (`fruit-cake-director.ts:60-70`), blocking
+the depth-3 search runs **synchronously inside the rAF callback** (`suika-director.ts:60-70`), blocking
 the main thread **0.97–5.7 s per drop**. rAF gaps, `PerformanceObserver('longtask')` and a MessageChannel
 starvation probe agree to within 1–2 ms ⇒ blocked thread, not a paused clock; the tab was blocked **37–46 %
 of wall time**. Measured per decision: **784** `dropAndScore`, **3 920** `net.forward`, ~78 k `world.step`,
@@ -2054,11 +2054,11 @@ independently confirms all of it** — 10 drops / 10 stalls (7 after a plain lan
 durations monotonic in fruit count (2.78→4.02 s as it fills, dropping to 1.78 s right after a cascade cleared
 the board), and a **total** freeze (max luma delta 1/255 across the whole 1920×1080 frame for 3.1 s). It also
 pins the perceived ~3 s as **`BETWEEN_S` + `think`** (the NEXT-preview repaints once, 233 ms after physics
-stops, then everything dies) and confirms a **second defect**: the `dt` clamp at `fruit-cake.ts:89` discards
+stops, then everything dies) and confirms a **second defect**: the `dt` clamp at `suika.ts:89` discards
 ~92 % of the stall and resumes with one 26 px frame against a 3–5 px norm (⇒ dt ≈ 0.23 s at the measured
 g ≈ 1000 px/s²) — the fruit visibly teleports a quarter-second down its fall on every drop. Closes the
 never-measured M32 risk
-(`FRUITCAKE_CLIENT_SIDE_AI_PRD.md:283`). Note the retired C# serving path shipped `2/10/3` = 154 rollouts;
+(`SUIKA_CLIENT_SIDE_AI_PRD.md:283`). Note the retired C# serving path shipped `2/10/3` = 154 rollouts;
 M32 moved the decision into the browser and kept the **5× more expensive** `3/5/2`.
 
 - **M53.0 — Baseline.** ✅ (2026-08-02) Root cause measured; growth curve, call counts, CPU profile recorded.
@@ -2066,12 +2066,12 @@ M32 moved the decision into the browser and kept the **5× more expensive** `3/5
   rewrites `new Worker(new URL('./x.worker', import.meta.url))` natively and serves the emitted bundle
   (HTTP 200, marker present) — **no `tsconfig.worker.json`, no `angular.json` change, no new dependency**
   (`webWorkerTsConfig` is inert for this builder).
-- **M53.1 — Search off the main thread.** ✅ (2026-08-02: 0 long tasks, largest rAF gap 5 ms/6000 frames, search round-trip median 2409 ms fully off-thread; wire format proved lossless — `clone(false)` of the live world vs a world rebuilt from `tier/x/y/vx/vy` came back byte-identical) New `fruit-cake-ai.worker.ts` owning the net + a world rebuilt from
+- **M53.1 — Search off the main thread.** ✅ (2026-08-02: 0 long tasks, largest rAF gap 5 ms/6000 frames, search round-trip median 2409 ms fully off-thread; wire format proved lossless — `clone(false)` of the live world vs a world rebuilt from `tier/x/y/vx/vy` came back byte-identical) New `suika-ai.worker.ts` owning the net + a world rebuilt from
   a posted body snapshot; director gains a `thinking` phase with a `pending` guard *(this request/response
   shape is **superseded by M53.2** — the shipped director has a look-ahead queue and a `waiting` phase, no
   `thinking`; M53.1's gates still stand as the proof the block was gone before the inversion)*. The generated
-  `fruitcake_solver.ts` is already worker-safe (no imports, zero host globals) so it moves **unmodified** —
-  **`fruitcake_solver.pg` is NOT touched** (bitwise C#↔TS parity, pinned by `PolyglotNetParityTests` at
+  `suika_solver.ts` is already worker-safe (no imports, zero host globals) so it moves **unmodified** —
+  **`suika_solver.pg` is NOT touched** (bitwise C#↔TS parity, pinned by `PolyglotNetParityTests` at
   exactly 3/5/2). **Gates:** no search-attributable long task > 50 ms over ≥60 s · zero rAF gaps > 200 ms ·
   column choice identical to the synchronous path on a fixed board · net-missing fallback still plays.
 - **M53.2 — Remove the visible wait (worker runs the game ahead; UI replays).** ✅ (2026-08-02: p95 gap 255 ms vs a 400 ms budget, starved 0, drifted 0/19, long tasks 0; a measured 2196 ms game-over restart was fixed by requesting the next game the moment a board is lost, so the AI searches *during* the pause) *(owner's steer 2026-08-02 —
@@ -2097,14 +2097,14 @@ M32 moved the decision into the browser and kept the **5× more expensive** `3/5
   separate pacing call made *after* the AI plays smoothly; don't bundle a strength regression into a latency
   fix). Width reduction is **not** a fix on its own — at +240 ms/fruit even a 5× cut leaves ~1.1 s at 24
   fruit, a floor that still climbs with board fill. Price it
-  with `FruitCakeSearchEval` (`--search-eval --depth/--topk/--topk2`, config is a CLI flag): `3/5/2` vs the
+  with `SuikaSearchEval` (`--search-eval --depth/--topk/--topk2`, config is a CLI flag): `3/5/2` vs the
   shipped C# default `2/10/3` vs `2/5/3`. Traps: **`--ab-episodes`** not `--episodes`; `--seed` ignored
   (`seedBase` hardcoded 20 000 ⇒ the greedy arm is a free bit-identical control); absolute `--data` path; and
-  the browser ships **`data/fruitcake-bigfruit`** (sha256-matched to `wwwroot/models/fruitcake-net.ckpt`) —
-  `src/RLDemo.Web/data/fruitcake.dqn.ckpt` is a *different* stale net from the retired server path.
+  the browser ships **`data/suika-bigfruit`** (sha256-matched to `wwwroot/models/suika-net.ckpt`) —
+  `src/RLDemo.Web/data/suika.dqn.ckpt` is a *different* stale net from the retired server path.
   **Gate:** reduced config only if within 1 SE of `3/5/2`, or the owner accepts the measured cost explicitly.
 - **M53.4 — Ship.** ✅ (2026-08-02) `ARCHITECTURE.md` documents the worker-owns-the-game inversion; stale M32-era
-  "server-streamed" docstrings and the "brief thinking hitch" comment corrected. **`src/RLDemo.Web/data/fruitcake.dqn.ckpt`
+  "server-streamed" docstrings and the "brief thinking hitch" comment corrected. **`src/RLDemo.Web/data/suika.dqn.ckpt`
   NOT deleted** — that dir is also the documented training-campaign `--data` store, so it is plausibly a campaign
   checkpoint, not dead weight; no code references it either way. Left for a deliberate cleanup rather than bundled
   into a latency fix.
@@ -2412,10 +2412,10 @@ rolling 20 Hz) driving human play *and* the AI's reachable set · **full from-sc
   the realized reward, **uncentred** — and its episodes never terminate, so a ranking error costs one move
   rather than the game.
   *Repo defects to fix here:* `TetrisLab` missing `if (grow) hidden = DqnGrowth.Start;` (present in Snake
-  and FruitCake — `--grow` is a landmine for every DQN game); `DqnGrowth` ceiling below the shipped trunk;
+  and Suika — `--grow` is a landmine for every DQN game); `DqnGrowth` ceiling below the shipped trunk;
   `--noisy` on Tetris cold-starts and shares the ε-greedy state file (no `ToNoisy`, no split `StateId`);
   Lab defaults reproduce the known-failed tet1–tet3 recipe; `NOISYNETS_PRD.md` still says "not started"
-  (shipped M28, and measured to **match not beat** ε-greedy on FruitCake); `TETRIS_PRD.md` §3.6 documents a
+  (shipped M28, and measured to **match not beat** ε-greedy on Suika); `TETRIS_PRD.md` §3.6 documents a
   `--garbage N` flag that does not exist; `TetrisEnv.cs:23` says obs 814 (it is 854); no checkpoint
   plane-layout version stamp.
   *Operational (L12):* two Lab processes silently shared `data/tet14train`, interleaving its CSV and
@@ -2507,9 +2507,9 @@ stale-ckpt guards check `inputSize` only · dead `RewardTetrisBonus` · CI runs 
 | **M21 shortest-move solver — BWAS capability (2026-06-14, residual 1024×4, ~44k iters)** | **provably-optimal shallow; beat Kociemba's QTM mid-range** | batched A* (w=2.5, ≤40k exp, 12/depth): **12/12 & QTM-optimal through depth 10** (exactly d·qt), **100% solved through depth 12**, 83% d13, 75% d14; **every solve beats Kociemba's QTM, often ~2×** (d10 10 vs 19, d12 12.2 vs 29.3). Greedy (live curve) collapses ~d10-11 — search reads the net far deeper. Beats the earlier 1024×3 MLP at every deep level (d12 100% vs 80%). Full god's-number (26 QTM) NOT reached — honest two-tier story |
 | M28 2048 expectimax (2026-06-26) | beat the shipped n-tuple greedy on score, serving-viable | **~84k vs ~44k (1.9×)**, best tile 4096→8192 over 100 games, *no retrain*; ~1.2 s/playout at depth 1 |
 | M28 NoisyNets capability (2026-06-26) | learns, serializes, serves deterministically; no shipped checkpoint broken | 293/293; σ-grads flow; noisy resume bitwise; v1 ckpts load as plain; serving unchanged (noise off) |
-| M28 FruitCake NoisyNets empirical (2026-06-26) | match or beat ε-greedy at equal budget (multi-seed) | **matched** — 200-game paired A/B tie (702.1 vs 714.4, Δ −12.3 ± 29.8 SE); single-evals were seed-luck; not shipped |
+| M28 Suika NoisyNets empirical (2026-06-26) | match or beat ε-greedy at equal budget (multi-seed) | **matched** — 200-game paired A/B tie (702.1 vs 714.4, Δ −12.3 ± 29.8 SE); single-evals were seed-luck; not shipped |
 | M36.1 network visualizer — watch it train (2026-07-12) | see the net evolve live during training (all games); beginner-readable; zero training impact | **met** — pull-based seam; **all six `--game`s** stream topology + weight frames over a **WebSocket** to a self-contained page with **hover tooltips**; net visibly evolves (heatmaps/edges shift, eval 7.0→13.9); **Development-gated**; viz vs no-viz checkpoints **SHA256-identical**; 314 tests green |
-| M37 progressive net growth (2026-07-12) | grow the net wider+deeper mid-training without a loss spike, everywhere possible | **met** — shared `Net2Net` (WidenTrunk/SetIdentity); `--grow` grows **all** trainable nets live: `DuelingQNet` (Snake, FruitCake) and the refactored variable-depth `PolicyValueNet` (Cube, Cube-policy, Rush Hour), `[16]`→`[128,128,128]`; DAVI `ResidualMlp` already grew width. Policy checkpoint → v2 with v1 back-compat (tested). 320 tests (4 new: widen/deepen forward-equality ×2, v1 load, grown round-trip) |
+| M37 progressive net growth (2026-07-12) | grow the net wider+deeper mid-training without a loss spike, everywhere possible | **met** — shared `Net2Net` (WidenTrunk/SetIdentity); `--grow` grows **all** trainable nets live: `DuelingQNet` (Snake, Suika) and the refactored variable-depth `PolicyValueNet` (Cube, Cube-policy, Rush Hour), `[16]`→`[128,128,128]`; DAVI `ResidualMlp` already grew width. Policy checkpoint → v2 with v1 back-compat (tested). 320 tests (4 new: widen/deepen forward-equality ×2, v1 load, grown round-trip) |
 | M49 Crazy Fruits primitive net (2026-07-24) | ≥ +30% over random-legal, 500 held-out episodes, CI-separated | **+57.2%** (3552.5±83.3 vs 2259.7±49.9) on run 3/3 — γ=0 + per-action feature planes; γ=0.99 failed at +1.9% (bootstrap-noise trap), γ=0 alone +7.8%; +48.8% over greedy, expectimax-1 (4270.9) = headroom |
 
 ## Shipped (2026-06-11) — release engineering
@@ -3479,7 +3479,7 @@ of the union.
 | `mountaincar_solver.pg` | 40/69 | **69/69** |
 | `snake_solver.pg` | 374/496 | **493/496** |
 | `tetris_solver.pg` | 729/749 | **734/749** |
-| `fruitcake_solver.pg` | 315/322 | **317/322** |
+| `suika_solver.pg` | 315/322 | **317/322** |
 | **all nine** | **3,494/3,719 = 93.95%** | **3,649/3,719 = 98.12%** |
 
 **155 `.pg` lines are covered by the browser and by nothing else**, and the denominator does not move —
@@ -3501,7 +3501,7 @@ these are lines the C# report already listed and already scored uncovered. Front
   `originMapping.style` and warn when a declared target has none.
 - **M66.4 — the twin specs**, which are what actually buys the 155: `snake_solver.spec.ts` (31 tests —
   the M34 beam planner, `pruneBeam` top-k, flood fill, death paths), `tetris_solver.spec.ts` (9 —
-  human-play micro-moves and top-out), `fruitcake_solver.spec.ts` (6 — rotation physics), and
+  human-play micro-moves and top-out), `suika_solver.spec.ts` (6 — rotation physics), and
   `mountaincar_solver.spec.ts` extended (13 — `PgMlpNet` and `chooseAction`).
 - **M66.5 — three reports, one merge.** The twins go back into `coverageInclude` (excluding them is what
   made `pg_coverage_remap.mjs` a silent no-op), are **stripped** from the frontend report by
@@ -3754,3 +3754,10 @@ v4→v5 (`GrowthStage`), plus the Cube-efficient private sidecar. **-1 ("not rec
 the first checkpoint after a resume writes a real rung, so a store repairs itself on first use.
 
 1149/1149 fast in 123 s, **4/4 determinism**: both on-disk formats changed, trajectories bitwise unchanged.
+
+## M71 — Suika: rename FruitCake → Suika, and the never-ending buzz  *(2026-11-14; branch `suika-rename-and-music-fix`; see `SUIKA_RENAME_AUDIO_PRD.md`)* ✅
+
+- **Rename:** every FruitCake mention → Suika (40 `git mv` paths, 97 files). Compatibility shims: `/fruitcake` route redirect, one-time `fruitcake:*` → `suika:*` localStorage migration, Lab `--game fruitcake` alias.
+- **Buzz root cause:** the game constructor started opted-in music on a suspended `AudioContext`; the first landing thud's `resume()` woke the endless drone, and 🔊 mute did not cover music.
+- **Fix:** music starts only on the first user gesture (`unlockAudio()`), mute silences music, 1.5 s fade-in.
+- **Regression test:** `ClientApp/src/app/suika/suika-audio.spec.ts`.

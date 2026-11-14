@@ -1021,7 +1021,7 @@ the same protocol and the same held-out seeds, but they are not paired per-seed.
    - **`--grow` cannot deliver capacity here.** `DqnGrowth.Stages` tops out at `[128,128,128]` - *half* the
      shipped `[256,256]` - and `CurrentStage` returns 0 for any off-ladder trunk, so it calls
      `WidenTo([32])` on a 2-layer net and **throws** (`DuelingQNet.cs:118`). `TetrisLab` is also missing the
-     `if (grow) hidden = DqnGrowth.Start;` line that `SnakeLab.cs:54` and `FruitCakeLab.cs:41` both have.
+     `if (grow) hidden = DqnGrowth.Start;` line that `SnakeLab.cs:54` and `SuikaLab.cs:41` both have.
      `--grow` is the M37 *visualiser* feature, not a scaling tool.
 
 ### Why Crazy Fruits works - the comparison that should have been done first
@@ -1094,10 +1094,10 @@ it fails silently, which is the worst property a defect can have. Fixed in
 2. `DqnGrowth.Stages` ceiling `[128,128,128]` is below the shipped `[256,256]`; either extend it or make
    `CurrentStage` fail loudly on an off-ladder trunk. A landmine for **every** DQN game, not just Tetris.
 3. `--noisy` on Tetris cold-starts and shares the epsilon-greedy state file - needs `ToNoisy` in
-   `AdaptWarmNet` and a split `StateId`, both of which FruitCake already has.
+   `AdaptWarmNet` and a split `StateId`, both of which Suika already has.
 4. Lab defaults reproduce the known-failed tet1-tet3 recipe; a bare `--game tetris` reruns 0-for-3 settings.
 5. `NOISYNETS_PRD.md` status still says "not started" (shipped M28). Its measured verdict is also on record:
-   on FruitCake NoisyNets **matched, did not beat** epsilon-greedy (-12.3 +/- 29.8 over 200 paired games).
+   on Suika NoisyNets **matched, did not beat** epsilon-greedy (-12.3 +/- 29.8 over 200 paired games).
 6. `TETRIS_PRD.md` section 3.6 documents a `--garbage N` flag that does not exist (it is `--mix-garbage`).
 7. `TetrisEnv.cs:23` comment says obs 814; it is 854.
 8. No checkpoint plane-layout version stamp (the L8 follow-up).

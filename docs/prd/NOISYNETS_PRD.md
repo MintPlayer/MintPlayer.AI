@@ -2,13 +2,13 @@
 
 > Add **NoisyNets** (learned, state-dependent exploration; Fortunato et al. 2017,
 > [arXiv:1706.10295](https://arxiv.org/abs/1706.10295)) to the from-scratch
-> `MintPlayer.AI.ReinforcementLearning` library as an opt-in DQN capability, with **FruitCake** as
+> `MintPlayer.AI.ReinforcementLearning` library as an opt-in DQN capability, with **Suika** as
 > the first adopter.
 
 - **Status:** Draft v1.0 · 2026-06-25 (investigation complete; not started)
 - **Author:** Pieterjan (with Claude Code)
 - **Depends on:** the DQN stack (`DqnTrainer`, `DuelingQNet`, `DuelingQNetCheckpoint`) and the
-  FruitCake AI work (`docs/prd/FRUITCAKE_AI_PRD.md`). Companion to [PRD.md](PRD.md) §3/§8 (algorithm
+  Suika AI work (`docs/prd/SUIKA_AI_PRD.md`). Companion to [PRD.md](PRD.md) §3/§8 (algorithm
   ladder + asset portability).
 
 ---
@@ -16,7 +16,7 @@
 ## 1. Summary & Vision
 
 DQN here explores with **ε-greedy** — undirected, uniform random actions that anneal to a 0.05 floor.
-On a long-horizon, stochastic game (FruitCake/Suika), that dithering rarely stumbles onto a coherent
+On a long-horizon, stochastic game (Suika/Suika), that dithering rarely stumbles onto a coherent
 *better* multi-step strategy, and **continued/refinement training at low ε mostly polishes the
 current policy rather than discovering a higher peak** (the premature-convergence concern raised in
 the prior investigation). **NoisyNets** replaces ε-greedy with *learned, state-dependent* exploration:
@@ -25,7 +25,7 @@ explores by perturbing its own weights, and σ is learned by backprop so explora
 where the policy is confident and persists where it isn't.
 
 This is the library's first **principled exploration upgrade** beyond ε-greedy — a reusable SDK
-capability (the library is the deliverable; FruitCake is the showcase), and a Rainbow building block
+capability (the library is the deliverable; Suika is the showcase), and a Rainbow building block
 for later.
 
 ---
@@ -38,15 +38,15 @@ for later.
 - A **`noisy` option on `DuelingQNet`** (value/advantage heads become noisy) and a **`DqnOptions.NoisyNets`**
   training flag that resamples noise correctly and disables ε-greedy.
 - **Deterministic inference** (noise off → mean weights) so serving/eval is unchanged and reproducible.
-- **Backward-compatible checkpoints** — every already-shipped `*.dqn.ckpt` (snake/cube/fruitcake) keeps
+- **Backward-compatible checkpoints** — every already-shipped `*.dqn.ckpt` (snake/cube/suika) keeps
   loading unchanged.
-- **FruitCake as the first consumer** via a Lab `--noisy` flag, measured against the ε-greedy baseline.
+- **Suika as the first consumer** via a Lab `--noisy` flag, measured against the ε-greedy baseline.
 
 ### Non-Goals (v1)
 - Conv layers / image observations (the library has no CNN; NoisyNets goes on the FC/Dueling heads).
 - The **independent** Gaussian variant (use factorized — cheaper, standard).
 - Other Rainbow components (prioritized replay, C51, n-step) — separate future work.
-- Making `Mlp` / non-Dueling paths noisy (defer; FruitCake/Snake use Dueling).
+- Making `Mlp` / non-Dueling paths noisy (defer; Suika/Snake use Dueling).
 - Policy-gradient entropy bonuses (a PPO/SAC tool, not value-based DQN).
 - Re-shipping any model unless a noisy run **beats** the current best (keep-best gating decides).
 
@@ -117,12 +117,12 @@ W = μ_w + σ_w ⊙ ε_w        b = μ_b + σ_b ⊙ ε_b
 - Serving: model services already gate on `net.InputSize` (unaffected); for inference they put the net in
   eval/means mode (`NoiseEnabled=false`, the default), so they need no change.
 
-### 4.5 Consumer: FruitCake (`tools/…Lab/`)
-- Lab `--noisy` flag → `FruitCakeDqnCampaign(noisy: true)` → `DqnOptions { NoisyNets = true }` and
+### 4.5 Consumer: Suika (`tools/…Lab/`)
+- Lab `--noisy` flag → `SuikaDqnCampaign(noisy: true)` → `DqnOptions { NoisyNets = true }` and
   `Epsilon = LinearSchedule(0,0,1)` (ε≈0; exploration comes from σ).
 - **Reuse the trained model (recommended — no full retrain).** A noisy net has more parameters than a
   plain one (4 tensors/layer at the heads vs 2), so the standard checkpoint `Load` can't ingest the
-  shipped `fruitcake.dqn.ckpt` directly (shape mismatch) and the *automatic* warm-start path rejects it.
+  shipped `suika.dqn.ckpt` directly (shape mismatch) and the *automatic* warm-start path rejects it.
   But every noisy layer's **mean** params (μ_w, μ_b) correspond exactly to a plain `Linear`'s W/b, so a
   small **promote-plain→noisy** conversion copies the trained weights into μ (trunk copied 1:1; the
   heads' W/b → head μ) and initializes σ fresh (σ₀/√p). With noise off, the result is **behaviorally
@@ -133,7 +133,7 @@ W = μ_w + σ_w ⊙ ε_w        b = μ_b + σ_b ⊙ ε_b
 - Other games keep `NoisyNets=false` → untouched.
 
 ### 4.6 Measurement
-Compare a noisy FruitCake DQN to the ε-greedy baseline at equal env-steps: **eval mean score** and
+Compare a noisy Suika DQN to the ε-greedy baseline at equal env-steps: **eval mean score** and
 **mean/median max-tier** over **≥20–50 episodes** (the env is stochastic — control eval variance),
 across **multiple seeds**. Log **mean |σ| per noisy layer** to confirm exploration self-anneals (and
 doesn't collapse to ~0 prematurely).
@@ -153,32 +153,32 @@ doesn't collapse to ~0 prematurely).
   `RngStreams.Noise`/`state.NoiseRng` + ε=0 + eval noise-off. *Gate:* a short noisy training smoke
   learns end-to-end (no NaN; mean score rises); a noisy `CampaignContractTests` case (fresh →
   TrainChunk → Checkpoint → fresh Resume continues, asserting `Online.Noisy`).
-- **N3 — FruitCake consumer + experiment.** `--noisy` Lab flag + campaign option, **plus a
+- **N3 — Suika consumer + experiment.** `--noisy` Lab flag + campaign option, **plus a
   promote-plain→noisy conversion** (load the shipped checkpoint → build the noisy net → copy means →
   fresh σ) so the noisy run **warm-starts from the current model** rather than cold-starting. Train (a
   few seeds) and compare to the ε-greedy baseline (§4.6). *Gate:* a clear, multi-seed comparison
   reported (noisy ≥ baseline, or documented if not).
-- **N4 — Ship (conditional).** If a noisy net beats the current best, ship its `fruitcake.dqn.ckpt` to
+- **N4 — Ship (conditional).** If a noisy net beats the current best, ship its `suika.dqn.ckpt` to
   `models/` via Git LFS (serving stays deterministic — `NoiseEnabled` false). Otherwise keep NoisyNets
   as a validated opt-in capability and leave the shipped model as-is.
 
   **Result (2026-06-26): MATCHED, not beaten — did NOT ship.** A from-scratch noisy run peaked at a 959.7
-  *10-episode* eval (vs the baseline's 886.4 10-ep), but a **200-game paired A/B** (`FruitCakeAb`,
-  `--game fruitcake --ab`) showed it was a statistical tie: candidate **702.1 ± 259** vs baseline
+  *10-episode* eval (vs the baseline's 886.4 10-ep), but a **200-game paired A/B** (`SuikaAb`,
+  `--game suika --ab`) showed it was a statistical tie: candidate **702.1 ± 259** vs baseline
   **714.4** (paired Δ = **−12.3 ± 29.8 SE**, 49% win-rate), with the noisy net showing *higher variance*
   (a tier-5 early-crash tail from late-training instability). The headline single-eval numbers (886/971)
   were **seed-luck** — on a robust 200-game set both nets sit ~700–714. So NoisyNets *matches* ε-greedy
-  here (the PRD success bar) but yields no improvement worth shipping; `models/fruitcake.dqn.ckpt` is
+  here (the PRD success bar) but yields no improvement worth shipping; `models/suika.dqn.ckpt` is
   unchanged. The capability (N0–N3) stands as a validated, tested opt-in. **Methodology note:** judge this
   stochastic env with the multi-seed paired A/B, never a 10-episode eval. (Warm-start into full σ₀=0.5 was
-  tried first and *degraded* the strong policy — see [[fruitcake-game]]; from-scratch is the right use.)
+  tried first and *degraded* the strong policy — see [[suika-game]]; from-scratch is the right use.)
 
 ---
 
 ## 6. Success criteria
 - **Capability:** `NoisyLinear` learns (σ gradients flow), trains stably, serializes, and serves
   deterministically — all behind an opt-in flag, with no shipped checkpoint broken.
-- **Empirical:** on FruitCake, the noisy agent matches or beats the ε-greedy baseline at equal
+- **Empirical:** on Suika, the noisy agent matches or beats the ε-greedy baseline at equal
   env-steps (multi-seed), and/or escapes the refinement plateau the ε-greedy run is stuck on.
 - **SDK:** the capability is game-agnostic — any future DQN game opts in with one flag.
 
@@ -192,15 +192,15 @@ doesn't collapse to ~0 prematurely).
 | **Checkpoint back-compat regression** | Version-gated read; an explicit **v1-fixture loads-as-plain** test (N1 gate) — the hard requirement. |
 | **Noisy can't warm-start the shipped net** | Expected (different shape); `--noisy` is a fresh line; keep-best protects the deployed model. |
 | **Eval noise left on** → nondeterministic serving | `NoiseEnabled` defaults **false**; eval wrapped in noise-off; serving unchanged. |
-| **No measured benefit on FruitCake** | It's opt-in; N3 reports honestly; the SDK capability stands regardless and helps future games. |
+| **No measured benefit on Suika** | It's opt-in; N3 reports honestly; the SDK capability stands regardless and helps future games. |
 
 ---
 
 ## 8. Open questions
 1. **Trunk noisy too, or heads only?** Start heads-only (standard/sufficient); revisit if exploration is weak.
 2. **Noise granularity** — one draw per forward (recommended, matches Rainbow/dqn_zoo) vs per-sample. Start per-forward.
-3. **Should the noisy FruitCake net replace the shipped one**, or ship alongside as a labelled variant? Decide at N4 from the numbers.
-4. **Generalize to `Mlp`/non-Dueling** and expose for other games (Snake) once validated on FruitCake.
+3. **Should the noisy Suika net replace the shipped one**, or ship alongside as a labelled variant? Decide at N4 from the numbers.
+4. **Generalize to `Mlp`/non-Dueling** and expose for other games (Snake) once validated on Suika.
 
 **Sources:** [NoisyNets (arXiv:1706.10295)](https://arxiv.org/abs/1706.10295) ·
 [Rainbow (arXiv:1710.02298)](https://arxiv.org/abs/1710.02298) ·

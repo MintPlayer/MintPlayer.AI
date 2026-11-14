@@ -18,7 +18,7 @@ succeeds**, so CI / fresh clones are unaffected — but it's confusing and easy 
 
 ## Symptom
 
-In a project with **2+ `.pg` files** built by the glob-all MSBuild target (here: `fruitcake_solver.pg`,
+In a project with **2+ `.pg` files** built by the glob-all MSBuild target (here: `suika_solver.pg`,
 `mountaincar_solver.pg`, `snake_solver.pg`), after **editing one `.pg` and rebuilding**, the C# transpile of one solver
 unit is intermittently emitted in **"standalone" mode** — it inlines the `Option`/`Some`/`None` prelude (which also lives
 in the shared `__polyglot_prelude.cs`) and declares a **non-`partial`** `static class PolyglotProgram` (the other units
@@ -68,7 +68,7 @@ None at ship time — clean/CI builds are correct. During iterative `.pg` editin
 `rm src/MintPlayer.AI.ReinforcementLearning.Environments/obj/*/net10.0/polyglot/*.cs` then rebuild.
 
 Note: the M34 search *does* use a top-level `record PgSnakeBeamNode` (a typed frontier element — required to avoid a
-separate TS `any`-inference failure; see `SNAKE_SEARCH_PRD.md` §9). Records build fine on a clean build (FruitCake uses
+separate TS `any`-inference failure; see `SNAKE_SEARCH_PRD.md` §9). Records build fine on a clean build (Suika uses
 them too); this incremental-staleness bug is unrelated to records. If you hit the errors above during iterative `.pg`
 editing: `rm src/MintPlayer.AI.ReinforcementLearning.Environments/obj/*/net10.0/polyglot/*.cs` then rebuild.
 
@@ -108,7 +108,7 @@ forces MSBuild to re-run with the **full** set.)
 
 If the CLI cleaned `--out` at the start of every build but MSBuild still invoked it with a **subset**, then a
 single-file incremental build would **delete the other solvers' generated `.cs`** and emit only the changed one →
-"type `PgFruitCakeWorld` not found" etc. The out-dir cleaning must be paired with **always invoking the CLI with the
+"type `PgSuikaWorld` not found" etc. The out-dir cleaning must be paired with **always invoking the CLI with the
 full set**. The real fix is therefore MSBuild-side.
 
 ### Verified fix (MSBuild `.targets`) — force all-or-nothing with a single stamp output

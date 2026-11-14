@@ -53,7 +53,7 @@ The proof is already in the tree:
 | `CampaignContractTests` (Snake) | `ChunkSteps=1500, TargetSteps=3000, Hidden=[128,128]` | **yes** |
 
 Identical assertions, **25× the budget**. Shrinking `CampaignContractTests` to the budget the Tetris
-and CrazyFruits tests already prove affordable moves `SnakeDqnCampaign`, `FruitCakeDqnCampaign` and
+and CrazyFruits tests already prove affordable moves `SnakeDqnCampaign`, `SuikaDqnCampaign` and
 `RushHourImitationCampaign` into the measured bucket for no new test code and no production change.
 
 ### The `BatchSize` trap — read this before shrinking anything
@@ -290,7 +290,7 @@ multi-milestone arc — is now unavoidable rather than optional.
   jobs; the clean figure was 292s. Re-measure before reporting.
 - Both guesses about *where* that time went were also wrong (the shrunk tests measured 15.2s in
   isolation, the determinism gate 0.7s). The real cost was three pre-existing BlockDude gate-board
-  tests at 223s/209s/199s. **Isolated measurement understates**: FruitCake is 15.2s alone but 34s
+  tests at 223s/209s/199s. **Isolated measurement understates**: Suika is 15.2s alone but 34s
   inside the full run, because instrumented cost depends on cache contention.
 - To meet the 180s budget the gate-board **sampling constants** were cut (8→3 boards per stage, 8→2
   on starvation, 7→3 stages on the dead-end measurement). Every assertion is unchanged and coverage

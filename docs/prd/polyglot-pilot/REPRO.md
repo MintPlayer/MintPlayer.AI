@@ -1,7 +1,7 @@
 # PG0 pilot — repro & findings (2026-07-04)
 
-Artifacts from the PG0 validation pilot for `POLYGLOT_FRUITCAKE_PRD.md`. `fruitcake_solver.pg` is a faithful
-single-source port of `FruitCakeWorld.cs` + `FruitCatalog.cs` (real 1-based 11-tier catalog, f64).
+Artifacts from the PG0 validation pilot for `POLYGLOT_SUIKA_PRD.md`. `suika_solver.pg` is a faithful
+single-source port of `SuikaWorld.cs` + `FruitCatalog.cs` (real 1-based 11-tier catalog, f64).
 
 ## Toolchain (all on this machine, no install needed)
 - CLI is bundled in the NuGet package: `~/.nuget/packages/mintplayer.polyglot.msbuild/0.1.0/tools/win-x64/polyglot.exe`
@@ -35,7 +35,7 @@ skipped wall-correction.
 ## Minimal repro (drop one fruit → all TS bodies NaN)
 ```
 CLI=~/.nuget/packages/mintplayer.polyglot.msbuild/0.1.0/tools/win-x64/polyglot.exe
-"$CLI" build fruitcake_solver.pg --out gen   # after: mkdir gen
+"$CLI" build suika_solver.pg --out gen   # after: mkdir gen
 # add a nanCount() over bodies (x!=x || ...) and a main that drops one tier-1 fruit and prints count+nan
 # → C#: nan=0   TS: nan=1   (all-NaN in TS from the first settle)
 ```

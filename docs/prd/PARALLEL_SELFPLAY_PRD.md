@@ -31,7 +31,7 @@ Meanwhile the repo **already parallelizes data generation for the Rubik's cube**
 - **Game-specific, in the Lab (duplicated):** cube training-data generation —
   `CubeImitationCampaign.cs:71` (Kociemba-oracle self-play) and `CubeEfficientCampaign.cs:93` (teacher-free scramble-reversal). Both hand-roll the **same** idiom: `Parallel.For(0, ProcessorCount-2, …)` + **per-worker result lists** (disjoint indices) + **per-worker seeded `Xoshiro256StarStar`** + an `Interlocked` counter. Copy-pasted between the two; **not in Core**.
 - **Reusable, in Core (generic):** `ManagedBackend` GEMM/row-ops (`IComputeBackend.cs:426`, MAC-thresholded, disjoint row bands — the NN math under *every* campaign); `VectorEnv.Step` (`VectorEnv.cs:67`, per-env RNG, disjoint slots, `parallel:true`); `ValueIterationTrainer` batch featurization (`ValueIterationTrainer.cs:188/218`, used by `cube-davi`).
-- **No explicit parallelism:** `SelfPlayCampaign` and the DQN campaigns (`SnakeDqnCampaign`, `FruitCakeDqnCampaign`, `DqnScoreCampaign`) — their only CPU parallelism is the implicit backend GEMM.
+- **No explicit parallelism:** `SelfPlayCampaign` and the DQN campaigns (`SnakeDqnCampaign`, `SuikaDqnCampaign`, `DqnScoreCampaign`) — their only CPU parallelism is the implicit backend GEMM.
 
 **So: there is no reusable "parallel data-generation / episode rollout" primitive in Core.** Each Lab campaign that wants it hand-rolls the pattern; self-play never did. There is **no deliberate reason** — it's organic growth, and the hand-rolled idiom is *exactly* the deterministic pattern Core already uses elsewhere (`VectorEnv`, GEMM). It should be extracted.
 
@@ -87,7 +87,7 @@ public static class DeterministicParallel
 ## 6. Risks
 1. **Reproducibility regression** — the whole point; mitigated by the per-index-RNG + ordered-merge design and a SHA dop-1-vs-N gate (M41.2).
 2. **Hidden shared state in inference** — investigation found none (fresh buffers, `[ThreadStatic]` NoGrad); guard by keeping `Backward`/optimizer strictly off worker threads.
-3. **Nested parallelism** (outer per-game × inner GEMM) — batch-1 self-play forwards don't trip the GEMM `rows>=2` gate, so no oversubscription; if it ever does, pin the inner backend to DOP-1 during generation (the `FruitCakeAb` precedent, `FruitCakeAb.cs:36`).
+3. **Nested parallelism** (outer per-game × inner GEMM) — batch-1 self-play forwards don't trip the GEMM `rows>=2` gate, so no oversubscription; if it ever does, pin the inner backend to DOP-1 during generation (the `SuikaAb` precedent, `SuikaAb.cs:36`).
 4. **Scope creep** — DQN campaigns could also adopt it later; out of scope for M41 (they're not the bottleneck).
 
 ## 7. Verification

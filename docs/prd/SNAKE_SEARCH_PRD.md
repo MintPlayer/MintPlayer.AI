@@ -125,7 +125,7 @@ Two issues surfaced; both were worked around from the `.pg` side.
   `let x = []`). A first attempt used **parallel `List` frontiers** (`List<PgSnakeEnv>` + `List<i32>` + `List<f64>`);
   because `childFirst` derived from `beamFirst[n]` and `beamFirst` was reassigned from a list holding `childFirst`,
   TS strict-mode saw a **circular `any`** and failed to compile (`TS7022`/`TS7034`). Fix: use a **`record
-  PgSnakeBeamNode`** as the frontier element (like FruitCake's `PgPlyResult`) — the typed list element breaks the
+  PgSnakeBeamNode`** as the frontier element (like Suika's `PgPlyResult`) — the typed list element breaks the
   cycle. Also compute the net's `rootQ` unconditionally (typed by `net.forward`) rather than in a branch.
 - **Incremental-rebuild prelude collision (build flake, not shipping).** In a multi-`.pg` project, an *incremental*
   rebuild after editing a `.pg` intermittently emits one unit in "standalone" mode (duplicate global
@@ -133,6 +133,6 @@ Two issues surfaced; both were worked around from the `.pg` side.
   doesn't clean its `--out` dir, so a stale `__polyglot_prelude.cs` collides on re-transpile; the target's incremental
   gate then caches the bad `.cs`. **Clean/CI builds are unaffected** (verified). Dev workaround:
   `rm obj/*/net10.0/polyglot/*.cs` then rebuild. (This is independent of the record above — records build fine cleanly,
-  as FruitCake proves.)
+  as Suika proves.)
 
 Full repro + fix ideas: `docs/prd/polyglot-pilot/POLYGLOT_TOPLEVEL_RECORD_BUG.md`.

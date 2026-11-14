@@ -1,6 +1,6 @@
 // Loads the trained Snake DuelingQNet checkpoint in the browser and builds the single-source PgSnakeNet
 // (generated from snake_solver.pg). Mirrors the C# reader (DuelingQNetCheckpoint / CheckpointFormat) — same
-// byte layout as fruit-cake/fruitcake-net.ts (kind "dueling-q"); the only difference is it constructs Snake's
+// byte layout as suika/suika-net.ts (kind "dueling-q"); the only difference is it constructs Snake's
 // generated net type. (A shared ckpt.ts parser across games is a possible future refactor.)
 //
 //   uint32 magic "RLNC" · string kind "dueling-q" (7-bit-varint length + UTF-8) · int32 version

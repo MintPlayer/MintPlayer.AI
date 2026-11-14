@@ -11,7 +11,7 @@
 - **Author:** Pieterjan (with Claude Code)
 - **Depends on:** `Core/Nn` (`IValueNet`, `Linear`, `Mlp`, `DuelingQNet`, `ResidualMlp`, `NoisyLinear`), the
   checkpoint stack (`DuelingQNetCheckpoint` et al.), and the asset-portability roadmap in `PLAN.md` /
-  `PRD.md` §8. Companion to `FRUITCAKE_BIGFRUIT_INPUTS_PRD.md` (its §4.B optional warm-start path is this feature).
+  `PRD.md` §8. Companion to `SUIKA_BIGFRUIT_INPUTS_PRD.md` (its §4.B optional warm-start path is this feature).
 
 ---
 
@@ -19,12 +19,12 @@
 
 When an environment's observation grows — a richer feature is added — the first layer's weight matrix changes shape
 (`[oldIn × H] → [newIn × H]`). Every checkpoint enforces an **exact-shape** load (`DuelingQNetCheckpoint.Read`
-throws on mismatch; `FruitCakeModelService` has a width guard), and there is **no weight-transfer/layer-grow
-utility** — so the only option today is **retrain from scratch**. This already cost a full retrain once (FruitCake
+throws on mismatch; `SuikaModelService` has a width guard), and there is **no weight-transfer/layer-grow
+utility** — so the only option today is **retrain from scratch**. This already cost a full retrain once (Suika
 obs 41→83) and **will recur** every time any env's observation is enriched. That is precisely the work the SDK's
 "keep the work" thesis says we shouldn't throw away.
 
-This is justified by the **recurring cross-env need**, deliberately **decoupled from the FruitCake big-fruit
+This is justified by the **recurring cross-env need**, deliberately **decoupled from the Suika big-fruit
 experiment** (whose net is documented as saturated and may show no gain — a weak basis for an SDK feature). The
 feature's value stands whether or not that experiment wins.
 
@@ -96,7 +96,7 @@ A small static class documenting the **transfer story** and holding the generic 
 `GrowInput` transfers **weights only** — like `WidenTo`. The caller (a training campaign) must, after growing:
 **rebuild the optimizer** (Adam moments are keyed to the old parameter set) and **start with a fresh replay buffer**
 (stored transitions hold old-width observations and cannot feed the wider net). This makes `GrowInput` a clean
-**warm-start** primitive (the FruitCake-style "load shipped net, train on the enriched env"), not a mid-run
+**warm-start** primitive (the Suika approach: "load shipped net, train on the enriched env"), not a mid-run
 buffer-preserving resize. Stated in the XML doc so the constraint can't be missed.
 
 ## 5. Milestone plan
@@ -111,7 +111,7 @@ buffer-preserving resize. Stated in the XML doc so the constraint can't be misse
   all other params copied exactly; (d) `newInputSize ≤ InputSize` throws. Include a noisy-`DuelingQNet` case
   (noise-off determinism preserved). Mirrors the `WidenTo` test style.
 - **T3 — Docs.** ARCHITECTURE.md §Nn: a short "weight transfer" paragraph (the four transforms + where each lives +
-  the caller-rebuilds-optimizer/buffer note). Update `FRUITCAKE_BIGFRUIT_INPUTS_PRD.md` §4.B to reference
+  the caller-rebuilds-optimizer/buffer note). Update `SUIKA_BIGFRUIT_INPUTS_PRD.md` §4.B to reference
   `GrowInput` as the now-available optional warm-start path.
 - **T4 — Trainer auto-grow on warm-start.** ✅ *Done.* `DqnTrainer.Train` now grows a `warmStart` net via
   `GrowInput` when the env's observation is wider than the net's input (full-state `resume` still guards — its
@@ -129,10 +129,10 @@ is asserted numerically (max abs diff < 1e-5 over a random batch), exactly as `W
 | A net's first param isn't the input weight (breaks the generic copy) | Documented interface invariant + loud assertion in `TransferGrownInput` (Rows == InputSize check); all current impls verified. |
 | Caller forgets to rebuild optimizer / reuses a stale-width buffer | XML doc states it explicitly; the obs-width guard already catches a stale buffer at the env boundary. |
 | Dedup of `CopyFrom` subtly changes target-net sync | `CopyParameters` is the *same* param-zip loop; covered by the existing copy tests (T0 gate). |
-| Feature ships but the FruitCake consumer shows no gain | Decoupled by design (§1): justified by the cross-env recurring need, not that experiment. |
+| Feature ships but the Suika consumer shows no gain | Decoupled by design (§1): justified by the cross-env recurring need, not that experiment. |
 
 ## 8. Sources
 - Internal: `PLAN.md` "switch algorithm, keep the work" / `PRD.md` §8 (asset portability — the roadmap this fills);
-  `ResidualMlp.WidenTo` (the function-preserving precedent + its test style); `FRUITCAKE_BIGFRUIT_INPUTS_PRD.md`
+  `ResidualMlp.WidenTo` (the function-preserving precedent + its test style); `SUIKA_BIGFRUIT_INPUTS_PRD.md`
   §4.B (the optional warm-start consumer).
 - Chen et al. 2016, *Net2Net* — function-preserving transforms (the basis for both `WidenTo` and zero-pad input-grow).

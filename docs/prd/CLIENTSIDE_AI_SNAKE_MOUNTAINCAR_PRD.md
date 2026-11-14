@@ -1,6 +1,6 @@
 # Client-side AI for Snake & MountainCar (PRD & Plan) — M33
 
-> **Goal (user's steer):** do for the remaining WebSocket-AI games what M32 did for FruitCake — move the env
+> **Goal (user's steer):** do for the remaining WebSocket-AI games what M32 did for Suika — move the env
 > **dynamics** + **observation** + **net forward** (+ any serving "wrapper" like masking) into a MintPlayer.Polyglot
 > `.pg` where feasible, ship the trained **checkpoint** as a browser asset, run the AI **client-side**, and delete
 > the server serving path. Per-viewer server inference/streaming → **zero**.
@@ -10,7 +10,7 @@
   retired). Verified host + Playwright (Snake ate 40; MountainCar reaches the flag), 0 console errors, 0 `/api/*`
   AI calls. Branch `snake-clientside-ai`. See PLAN.md M33 for commit refs.
 - **Author:** Pieterjan (with Claude Code)
-- **Precedent:** `FRUITCAKE_CLIENT_SIDE_AI_PRD.md` (M32, shipped) — the pattern this replicates.
+- **Precedent:** `SUIKA_CLIENT_SIDE_AI_PRD.md` (M32, shipped) — the pattern this replicates.
 
 ---
 
@@ -37,12 +37,12 @@ longer inlines → a shared `nn.pg` is viable, no CS0101); **`i32()` TS wrap fix
 stays fixed. **Consequence: MountainCar's transcendental fork DISSOLVES** — `cos`/`tanh` can now be written directly
 in a `.pg`; the C#↔TS sub-ULP drift is harmless (no server twin post-cutover, argmax-robust), so MountainCar gets the
 same uniform full-Polyglot treatment as Snake (no poly-approx). §5's Option A is now the clean default. The
-Environments `.csproj` is bumped 0.1.4 → **0.3.0** (FruitCake TS codegen verified content-identical, 22 tests green).
+Environments `.csproj` is bumped 0.1.4 → **0.3.0** (Suika TS codegen verified content-identical, 22 tests green).
 
 ### ⚠️ BLOCKER discovered (MintPlayer.Polyglot#14) — multi-`.pg` prelude collision
 Adding a **second** `.pg` (Snake) to the Environments project fails to compile: **every transpiled `.pg` emits its
 own copy of the prelude** (`Option`/`Some`/`None` records + `PolyglotProgram`), so two generated `.cs` in one
-assembly hit **CS0101 duplicate** (+ CS8863). FruitCake only worked as the *sole* `.pg`. This contradicts the
+assembly hit **CS0101 duplicate** (+ CS8863). Suika only worked as the *sole* `.pg`. This contradicts the
 package targets' own §4.5 comment ("linked build → each type defined once → no CS0101") — the *import* linking works,
 but the auto-emitted prelude isn't deduped. **`snake_solver.pg` is written, type-checks, and generates correct
 C#/TS individually**, but is **parked** (excluded via `PolyglotFile Remove` in the csproj) until the fix. Given the
@@ -70,9 +70,9 @@ fixed: delete the `Remove`, then continue SN1–SN6 (facade, parity tests, parse
 ### Checkpoint parser generalization
 The `.ckpt` envelope (`CheckpointFormat`) is shared: `RLNC` magic + 7-bit-length kind string + int32 version, then
 length-prefixed int/float/bool blocks. Two payload shapes:
-- **`dueling-q`** (Snake) — identical to FruitCake. **`fruitcake-net.ts` parses it unchanged.**
+- **`dueling-q`** (Snake) — identical to Suika. **`suika-net.ts` parses it unchanged.**
 - **`mlp`** (MountainCar) — `Ints Sizes` + `byte HiddenActivation` + per-layer `(W, b)` floats.
-⇒ Lift the shared header/primitive readers out of `fruitcake-net.ts` into a **shared `ckpt.ts`** (`parseDuelingQNet`
+⇒ Lift the shared header/primitive readers out of `suika-net.ts` into a **shared `ckpt.ts`** (`parseDuelingQNet`
 + a new `parseMlp`); each game's loader hands the parsed tensors to *its* generated net class.
 
 ### EpisodeStreamer
@@ -88,7 +88,7 @@ migrate (delete in whichever PR lands second).
   it's the 177-wide patch.)* Pure integer/`+−×÷` math → **byte-identity is free**.
 - **Net = plain `DuelingQNet` 177 → [256,256] → 4**, checkpoint kind `dueling-q` v1 → **reuse `PgDuelingNet.forward`
   and the existing parser verbatim.**
-- **No search** — one greedy, **masked** Q-step per tick. Much simpler than FruitCake.
+- **No search** — one greedy, **masked** Q-step per tick. Much simpler than Suika.
 - **The "wrapper" that must move to the browser = the action mask** (`CurrentActionMask` + `ReachableFreeSpace`):
   (a) forbid the 180° reversal onto the neck; (b) the **anti-self-trap shield** — a **BFS flood-fill** keeping only
   moves whose reachable free space ≥ snake length (never all-false). The net was trained *with* this shield
@@ -116,10 +116,10 @@ migrate (delete in whichever PR lands second).
   free-space features). Gate: reproduces `SnakeEnv.Observation()` exactly (integer math → exact, not tolerance).
 - **SN2 — action mask in the `.pg`.** `currentActionMask() -> [bool;4]` (reversal + flood-fill shield). Gate: matches
   `SnakeEnv.CurrentActionMask()` on played boards.
-- **SN3 — net forward.** Copy `PgDuelingNet` into `snake_solver.pg` (verbatim from FruitCake). Gate: argmax-exact vs
+- **SN3 — net forward.** Copy `PgDuelingNet` into `snake_solver.pg` (verbatim from Suika). Gate: argmax-exact vs
   SDK `DuelingQNet.Forward` (reuse the M32 parity-test pattern).
 - **SN4 — checkpoint delivery + shared parser.** Copy `models/snake.dqn.ckpt` → `ClientApp/public/snake-net.ckpt`
-  (LFS); refactor `fruitcake-net.ts` → shared `ckpt.ts` (`parseDuelingQNet` unchanged). Gate: browser parses it →
+  (LFS); refactor `suika-net.ts` → shared `ckpt.ts` (`parseDuelingQNet` unchanged). Gate: browser parses it →
   177/[256,256]/4.
 - **SN5 — client director + rewire watch mode.** `snake-director.ts`: masked greedy step over `PgSnakeEnv` +
   `PgDuelingNet`, `toFrame()` for the existing renderer; rewrite `snake.ts` watch mode to drive it (drop
@@ -154,7 +154,7 @@ checkpoint is kind `mlp`, needing a new `parseMlp` + a `PgMlpNet` forward.)
 > byte-identical across C#/TS (~1 ULP), but that no longer matters (no server twin after cutover; argmax-robust). So
 > **Option A is now the clean default — no polynomial approximations needed.** The fork below is retained for record.
 
-So MountainCar **cannot** get FruitCake's "byte-identical single source" for free. Two viable approaches:
+So MountainCar **cannot** get Suika's "byte-identical single source" for free. Two viable approaches:
 
 - **Option A — uniform Polyglot, with byte-identical polynomial approximations of `cos` and `tanh`** (pure `+−×÷`).
   *Pro:* true single-source + C#↔TS byte-identity, matching the uniform goal. *Con:* the approximations change the

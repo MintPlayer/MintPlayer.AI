@@ -8,7 +8,7 @@ namespace RLDemo.Web.Services;
 /// Owns the Block Dude policy net and plays levels with it.
 /// </summary>
 /// <remarks>
-/// <para><b>Server-side inference, unlike FruitCake's in-browser net.</b> The reason is the checkpoint: this net
+/// <para><b>Server-side inference, unlike Suika's in-browser net.</b> The reason is the checkpoint: this net
 /// is 16 MB, which is a poor thing to push to every visitor of a page whose game itself runs fine without it.
 /// One request per "watch the AI" click is cheaper for the user and keeps the net where it is already known to
 /// work.</para>

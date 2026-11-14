@@ -112,13 +112,13 @@ tetris_solver.pg:36:5: error: expected a declaration
 ```
 
 Line 33 is `init(seed: i32) {`. P37 (`027a878`) renamed the constructor keyword. There are **22 `init(` sites
-across the 7 solvers** (chess 4, crazyfruits 3, draughts 4, fruitcake 3, mountaincar 2, snake 2, tetris 4).
+across the 7 solvers** (chess 4, crazyfruits 3, draughts 4, suika 3, mountaincar 2, snake 2, tetris 4).
 
 A one-line `sed -E 's/^([[:space:]]*)init\(/\1constructor(/'` migrates all seven — **and all seven then
 `check` clean at HEAD**, with no other change:
 
 ```
-chess_solver.pg          no problems      fruitcake_solver.pg    no problems
+chess_solver.pg          no problems      suika_solver.pg    no problems
 crazyfruits_solver.pg    no problems      mountaincar_solver.pg  no problems
 draughts_solver.pg       no problems      snake_solver.pg        no problems
 tetris_solver.pg         no problems

@@ -33,7 +33,7 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
   </ItemGroup>
 
-  <!-- The generated solver types (PgFruitCakeWorld etc.) are internal; the public FruitCakeWorld facade wraps
+  <!-- The generated solver types (PgSuikaWorld etc.) are internal; the public SuikaWorld facade wraps
        them and the parity test compares the two. -->
   <ItemGroup>
     <InternalsVisibleTo Include="MintPlayer.AI.ReinforcementLearning.Tests" />

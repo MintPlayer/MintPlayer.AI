@@ -41,8 +41,8 @@ builder.Services.AddGpuBackend();
 // generated call adds RushHourModelService / Game2048ModelService / CubeModelService as singletons plus the
 // CubeSolverWarmupService as an IModelStartupService.
 builder.Services.AddRLDemoWebModelServices();
-// FruitCake has no server model service: its AI (physics + net + depth-3 search) runs entirely in the browser
-// from the single-source Polyglot core + the shipped ClientApp/public/fruitcake-net.ckpt (M32). Zero server inference.
+// Suika has no server model service: its AI (physics + net + depth-3 search) runs entirely in the browser
+// from the single-source Polyglot core + the shipped ClientApp/public/suika-net.ckpt (M32). Zero server inference.
 // The startup-loader forwardings must reuse the SAME singleton instances the controllers inject (the hosted
 // service loads checkpoints INTO them), so they stay hand-written — [Register(typeof(IModelStartupService))]
 // would register separate instances.

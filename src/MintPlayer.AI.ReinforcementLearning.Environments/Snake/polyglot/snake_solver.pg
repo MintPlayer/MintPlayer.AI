@@ -15,7 +15,7 @@
 import { List } from "std.collections"
 import { Math } from "std.math"
 
-// ── Dueling-Q net inference (PgSnakeNet: a deliberate copy of FruitCake's PgDuelingNet — same architecture. 
+// ── Dueling-Q net inference (PgSnakeNet: a deliberate copy of Suika's PgDuelingNet — same architecture. 
 // f64 forward pass over flat weight arrays. Q(s,a) = A(s,a) + (V(s) − mean_a A(s,a)); ReLU trunk; linear heads.
 // Weights (float32 in the .ckpt) are loaded into these f64 arrays by the per-platform parser.
 class PgSnakeNet {
@@ -805,7 +805,7 @@ class PgSnakeEnv {
   }
 
   // Keep the `k` highest-scoring nodes (all of them if ≤ k). Manual top-k scan — a List sort with a comparator
-  // doesn't transpile cleanly (same reason FruitCake's selectTopK scans instead of sorting).
+  // doesn't transpile cleanly (same reason Suika's selectTopK scans instead of sorting).
   static fn pruneBeam(nodes: List<PgSnakeBeamNode>, k: i32): List<PgSnakeBeamNode> {
     if nodes.count <= k { return nodes }
     var kept: List<PgSnakeBeamNode> = List<PgSnakeBeamNode>()

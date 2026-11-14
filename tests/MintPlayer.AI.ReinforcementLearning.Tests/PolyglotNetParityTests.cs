@@ -1,22 +1,22 @@
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
 using MintPlayer.AI.ReinforcementLearning.Core.Random;
-using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
+using MintPlayer.AI.ReinforcementLearning.Environments.Suika;
 
 namespace MintPlayer.AI.ReinforcementLearning.Tests;
 
 /// <summary>
-/// CS2 + CS4 gates (docs/prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md): the single-source inference path (net forward +
-/// depth-3 search) now lives in fruitcake_solver.pg (f64), so C# serving and the browser run bit-identical
+/// CS2 + CS4 gates (docs/prd/SUIKA_CLIENT_SIDE_AI_PRD.md): the single-source inference path (net forward +
+/// depth-3 search) now lives in suika_solver.pg (f64), so C# serving and the browser run bit-identical
 /// inference from one source. These pin that the generated f64 code reproduces the trusted SDK implementations:
-/// <c>PgDuelingNet.forward</c> vs <see cref="DuelingQNet.Forward"/> (CS2), and <c>PgFruitCakeWorld.chooseColumn</c>
-/// vs <see cref="FruitCakeSearch"/> (CS4). PgDuelingNet/PgFruitCakeWorld are the internal generated types (global
+/// <c>PgDuelingNet.forward</c> vs <see cref="DuelingQNet.Forward"/> (CS2), and <c>PgSuikaWorld.chooseColumn</c>
+/// vs <see cref="SuikaSearch"/> (CS4). PgDuelingNet/PgSuikaWorld are the internal generated types (global
 /// namespace), visible via InternalsVisibleTo. C#↔TS byte-identity comes free from the transpiler.
 /// </summary>
 public class PolyglotNetParityTests
 {
-    private const int InputSize = FruitCakeEnv.ObservationSize; // 89
-    private const int Actions = FruitCakeEnv.ColumnCount;       // 14
+    private const int InputSize = SuikaEnv.ObservationSize; // 89
+    private const int Actions = SuikaEnv.ColumnCount;       // 14
     private static readonly int[] Hidden = [256, 256];
 
     // Build the .pg net from a fresh SDK net's parameters (Parameters() order for a plain net:
@@ -69,7 +69,7 @@ public class PolyglotNetParityTests
     }
 
     [Fact]
-    public void CoreSearch_MatchesCsFruitCakeSearch_SameColumn()
+    public void CoreSearch_MatchesCsSuikaSearch_SameColumn()
     {
         var pg = MakePgNet(new Xoshiro256StarStar(999), out _);
 
@@ -77,8 +77,8 @@ public class PolyglotNetParityTests
         // seeding both with the same float-cast coordinates so their f64 states are bit-identical.
         (int Tier, double X)[] script =
             [(1, 305), (2, 312), (1, 260), (3, 410), (1, 300), (1, 306), (2, 258), (4, 360), (1, 500), (1, 506), (5, 200)];
-        var core = new PgFruitCakeWorld();
-        var facade = new FruitCakeWorld();
+        var core = new PgSuikaWorld();
+        var facade = new SuikaWorld();
         foreach (var (t, x) in script)
         {
             core.spawnFruit(t, (float)x, 90f);
@@ -90,14 +90,14 @@ public class PolyglotNetParityTests
         // C# reference search with a leaf identical to the .pg's inlined leaf: the same PgDuelingNet over the same
         // raw f64 observation. With identical physics (single-source core) and identical leaf, the two searches
         // must choose the exact same column — this pins the ported search LOGIC (top-k, expectimax, pruning, argmax).
-        double Leaf(FruitCakeWorld w)
+        double Leaf(SuikaWorld w)
         {
             double sum = 0;
             for (int d = 1; d <= FruitCatalog.MaxDroppableTier; d++)
                 sum += pg.forward([.. w.BuildObservationF64(d, d)]).Max();
             return sum / FruitCatalog.MaxDroppableTier;
         }
-        var cs = new FruitCakeSearch(Leaf) { MaxDepth = 3, TopK = 5, TopK2 = 2 };
+        var cs = new SuikaSearch(Leaf) { MaxDepth = 3, TopK = 5, TopK2 = 2 };
 
         foreach (var (cur, next) in new[] { (1, 2), (3, 5), (5, 1), (2, 4) })
         {

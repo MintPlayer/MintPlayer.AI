@@ -24,15 +24,15 @@ We want two things:
   served page; **the network's weights visibly change as training proceeds** — edges and per-layer heatmaps repaint
   on a steady cadence, and the metric read-outs (step, loss, eval, ε) advance. Opening the page *mid-run* immediately
   shows the current graph, then continues live. Closing/refreshing the browser never disturbs training.
-- **All games:** `--viz` works for **every trainable game** (`snake`, `fruitcake`, `rushhour`, `cube`, `cube-policy`,
+- **All games:** `--viz` works for **every trainable game** (`snake`, `suika`, `rushhour`, `cube`, `cube-policy`,
   `cube-davi`) — DQN, imitation-policy, EfficientCube-policy, and DAVI value nets alike — through one generic seam,
   with no per-trainer code.
 - **Beginner-friendly & environment-aware:** hovering any neuron, connection, or heatmap shows a plain-language
-  tooltip. Each **input** names the exact observation feature it is (FruitCake: "Column 7: surface height"; Snake:
+  tooltip. Each **input** names the exact observation feature it is (Suika: "Column 7: surface height"; Snake:
   "Vision: is a wall/body 4 up, 1 left?"), each **output** names the action it controls (Snake: "Move Up"; Cube:
   "R' — turn the Right face counter-clockwise"; Rush Hour: "Move the red car one cell up/left"; DAVI: "Estimated
   distance to solved"), and **every neuron shows a live value** — input feature values, output Q-values/scores, and
-  **hidden-neuron activations** — for all five trainable games. The DQN games (Snake, FruitCake) forward their actual
+  **hidden-neuron activations** — for all five trainable games. The DQN games (Snake, Suika) forward their actual
   current observation; the batch-trained nets (Cube, Rush Hour, DAVI), which have no running env, forward a **fixed
   probe state** each frame, so you watch the net's opinion of one specific board evolve as it learns.
 - **Dev-only, gated:** the live socket only comes up in a **Development** host environment; a Production-configured
@@ -107,7 +107,7 @@ public interface INetworkTelemetrySource
 ```
 
 The label/IO members are **default-implemented** (null), so a game opts in without every other campaign changing.
-Labels are published on the environments (`FruitCakeEnv.ObservationLabels`/`ActionLabels`, `SnakeEnv`,
+Labels are published on the environments (`SuikaEnv.ObservationLabels`/`ActionLabels`, `SnakeEnv`,
 `RubiksCubeEnv.ActionLabels` = the 12 quarter-turns, `RushHourBoard.ActionLabels` = the 32 vehicle×dir moves) and
 attached by whichever campaign owns that net. The campaign's `SampleIo()`/`SampleActivations()`
 forward one observation through the net to get per-action Q-values/scores and each hidden layer's activations
@@ -153,7 +153,7 @@ the source every ~150 ms and broadcasts:
 
 `VizLauncher.TryStart(args, campaign, env)` is the shared `--viz [port]` handler used by every Lab: it parses the
 flag, **requires a Development environment** (else prints a note and skips), checks the campaign is a telemetry
-source, and starts the server. Wired into all six games — `--game <snake|fruitcake|rushhour|cube|cube-policy|cube-davi> --viz`.
+source, and starts the server. Wired into all six games — `--game <snake|suika|rushhour|cube|cube-policy|cube-davi> --viz`.
 
 ### 4.D Static viewer — Angular `/network` (follow-on phase)
 
@@ -165,11 +165,11 @@ language of the live page.
 
 - **M36.1 — live during training, all games, beginner tooltips + per-neuron live values (this PRD's gate; SHIPPED).**
   Pull-based Core seam + every campaign as a source + the async Lab `--viz` viewer with hover tooltips, gated to
-  Development. Environment-aware labels (Snake, FruitCake, Cube, Rush Hour, DAVI) and **live per-neuron values**
+  Development. Environment-aware labels (Snake, Suika, Cube, Rush Hour, DAVI) and **live per-neuron values**
   (input feature values, output Q/scores, hidden-neuron activations) — the DQN games forward their real observation,
   the batch nets a fixed probe state. **Gate (met):** `--game <any> --viz` → the net visibly evolves in-browser;
   tooltips name each neuron and show its live value; a Production process skips the socket; viz vs no-viz checkpoints
-  are SHA256-identical (verified with a viewer connected). Verified in-browser on Snake, FruitCake, Rush Hour, DAVI.
+  are SHA256-identical (verified with a viewer connected). Verified in-browser on Snake, Suika, Rush Hour, DAVI.
 - **M36.2 — static `.ckpt` inspection in the web app (planned).** Angular `/network` route reusing the browser
   `.ckpt` parsers to render the same graph/heatmap for a chosen shipped checkpoint, client-side.
 - **M36.3 — richer live view (optional, planned).** Signed (diverging) heatmaps; viewer→trainer controls over the

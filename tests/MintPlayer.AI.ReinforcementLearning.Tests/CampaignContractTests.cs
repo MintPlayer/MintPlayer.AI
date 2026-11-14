@@ -1,7 +1,7 @@
 using MintPlayer.AI.ReinforcementLearning.Campaigns;
 using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
 using MintPlayer.AI.ReinforcementLearning.Core.Nn;
-using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
+using MintPlayer.AI.ReinforcementLearning.Environments.Suika;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 
 namespace MintPlayer.AI.ReinforcementLearning.Tests;
@@ -62,18 +62,18 @@ public class CampaignContractTests
     }
 
     [Fact]
-    public void FruitCakeCampaign_Trains_Checkpoints_AndResumesFromState()
+    public void SuikaCampaign_Trains_Checkpoints_AndResumesFromState()
     {
-        var dir = Directory.CreateTempSubdirectory("fruitcake-campaign-contract");
+        var dir = Directory.CreateTempSubdirectory("suika-campaign-contract");
         try
         {
             var store = new FileModelStore(dir.FullName);
             // Tiny drop budget: asserts the CONTRACT (advance/checkpoint/resume), not learning.
             // chunk 40 → first chunk lands at 40 (< target); the second continues to the 80 cap (IsComplete).
-            FruitCakeDqnCampaign Fresh() => new(
-                trainEnv: new FruitCakeEnv { ShapingGamma = 0.99 },
-                evalEnv: new FruitCakeEnv(),
-                new FruitCakeDqnOptions { Seed = 1, ChunkSteps = 40, TargetSteps = 80, EvalEpisodes = 2, LearningRate = 5e-4f, EpsilonStart = 1.0f, Hidden = [64, 64], Gamma = 0.99 });
+            SuikaDqnCampaign Fresh() => new(
+                trainEnv: new SuikaEnv { ShapingGamma = 0.99 },
+                evalEnv: new SuikaEnv(),
+                new SuikaDqnOptions { Seed = 1, ChunkSteps = 40, TargetSteps = 80, EvalEpisodes = 2, LearningRate = 5e-4f, EpsilonStart = 1.0f, Hidden = [64, 64], Gamma = 0.99 });
 
             var c1 = Fresh();
             Assert.False(c1.Resume(store));            // nothing in the store yet → fresh
@@ -87,8 +87,8 @@ public class CampaignContractTests
 
             c1.Checkpoint(store);
             c1.Dispose();
-            using (var net = store.TryOpenRead("fruitcake", "dqn")) Assert.NotNull(net);          // deployable net (web id)
-            using (var state = store.TryOpenRead("fruitcake", "dqn-state")) Assert.NotNull(state); // full resume state
+            using (var net = store.TryOpenRead("suika", "dqn")) Assert.NotNull(net);          // deployable net (web id)
+            using (var state = store.TryOpenRead("suika", "dqn-state")) Assert.NotNull(state); // full resume state
 
             // A brand-new campaign instance must continue from the checkpoint, not start over.
             var c2 = Fresh();
@@ -106,16 +106,16 @@ public class CampaignContractTests
     }
 
     [Fact]
-    public void FruitCakeCampaign_Noisy_Trains_Checkpoints_AndResumesAsNoisy()
+    public void SuikaCampaign_Noisy_Trains_Checkpoints_AndResumesAsNoisy()
     {
-        var dir = Directory.CreateTempSubdirectory("fruitcake-noisy-campaign-contract");
+        var dir = Directory.CreateTempSubdirectory("suika-noisy-campaign-contract");
         try
         {
             var store = new FileModelStore(dir.FullName);
-            FruitCakeDqnCampaign Fresh() => new(
-                trainEnv: new FruitCakeEnv { ShapingGamma = 0.99 },
-                evalEnv: new FruitCakeEnv(),
-                new FruitCakeDqnOptions { Seed = 1, ChunkSteps = 40, TargetSteps = 80, EvalEpisodes = 2, LearningRate = 5e-4f, EpsilonStart = 1.0f, Hidden = [64, 64], Gamma = 0.99, Noisy = true });
+            SuikaDqnCampaign Fresh() => new(
+                trainEnv: new SuikaEnv { ShapingGamma = 0.99 },
+                evalEnv: new SuikaEnv(),
+                new SuikaDqnOptions { Seed = 1, ChunkSteps = 40, TargetSteps = 80, EvalEpisodes = 2, LearningRate = 5e-4f, EpsilonStart = 1.0f, Hidden = [64, 64], Gamma = 0.99, Noisy = true });
 
             var c1 = Fresh();
             Assert.False(c1.Resume(store));
@@ -127,12 +127,12 @@ public class CampaignContractTests
             c1.Checkpoint(store);
             c1.Dispose();
             // The noisy line uses its OWN state id, and the saved net carries the noisy flag.
-            using (var state = store.TryOpenRead("fruitcake", "dqn-noisy-state"))
+            using (var state = store.TryOpenRead("suika", "dqn-noisy-state"))
             {
                 Assert.NotNull(state);
                 Assert.True(Assert.IsType<DuelingQNet>(DqnTrainingState.Load(state!).Online).Noisy);
             }
-            using (var plainState = store.TryOpenRead("fruitcake", "dqn-state"))
+            using (var plainState = store.TryOpenRead("suika", "dqn-state"))
                 Assert.Null(plainState); // didn't collide with the plain line
 
             var c2 = Fresh();

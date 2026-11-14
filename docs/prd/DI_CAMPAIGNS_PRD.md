@@ -48,7 +48,7 @@ These look like DI violations but are deliberate; the refactor must leave them a
 - **Static `WriteObservation`/`BuildObservation`** — the train==serve guarantee.
 - **Polyglot-generated cores** (`PgChessState`, `PgSnakeEnv`, `PgConvNet`, … from the single-source `.pg`
   files, ~2,240 lines) — generated C#/TS, DI-free by construction and *pure*, so they need no dependencies.
-  The hand-written facades (`ChessGame`, `SnakeEnv`, `FruitCakeEnv`) are the injectable surface; they keep
+  The hand-written facades (`ChessGame`, `SnakeEnv`, `SuikaEnv`) are the injectable surface; they keep
   `new`ing the generated core internally. Don't push DI below the facade.
 - **GPU layering via factories** — `SelfPlayCampaign` takes `forwardFactory`/`trainStepFactory`/`backend`
   (defaulting to CPU autograd) precisely so the generic campaign never references an `Ilgpu` type
@@ -115,11 +115,11 @@ breaks the determinism gate.
 
 - **New class library `src/MintPlayer.AI.ReinforcementLearning.Campaigns`** referencing Core +
   Environments + Ilgpu. All 8 campaign types (`SelfPlayCampaign<TState>`, `DqnScoreCampaign`,
-  `SnakeDqnCampaign`, `FruitCakeDqnCampaign`, `CubeImitationCampaign`, `RushHourImitationCampaign`,
+  `SnakeDqnCampaign`, `SuikaDqnCampaign`, `CubeImitationCampaign`, `RushHourImitationCampaign`,
   `CubeEfficientCampaign`, `CubeDaviCampaign`) move there and become `public`. The Lab exe keeps CLI
   parsing, GPU factory wiring, `VizLauncher`, and the per-game `Run(args)` glue.
   Layout (owner, 2026-07-14): **per-game subfolders in both projects** — Campaigns gets
-  `SelfPlay/ Cube/ Snake/ FruitCake/ RushHour/ Shared/`, the Lab gets `Chess/ Connect4/ Cube/ FruitCake/
+  `SelfPlay/ Cube/ Snake/ Suika/ RushHour/ Shared/`, the Lab gets `Chess/ Connect4/ Cube/ Suika/
   RushHour/ Snake/` with the shared host glue (`Program`, `LabHost`, `CliArgs`, `CampaignCli`, viz) at its
   root. Folders are organizational only: the library keeps ONE flat `…Campaigns` namespace so consumers
   don't chase per-game usings.
@@ -127,7 +127,7 @@ breaks the determinism gate.
   the two cube GPU campaigns take `AdaptiveBackend` directly — a single lib referencing Ilgpu is the
   honest dependency graph. (`SelfPlayCampaign` itself still must not use `Ilgpu` types — enforced by
   its factory params, unchanged.)
-- **Options records per campaign family** (`SnakeDqnOptions`, `FruitCakeDqnOptions`, `CubeImitationOptions`,
+- **Options records per campaign family** (`SnakeDqnOptions`, `SuikaDqnOptions`, `CubeImitationOptions`,
   `RushHourImitationOptions`, `CubeEfficientOptions`; `SelfPlayOptions` and `CubeDaviSettings` already
   exist): the positional-primitive ctors collapse to `(deps…, XxxOptions options)`. Options are plain
   records built from `CliArgs` in the Lab — no `IConfiguration` binding needed (the Lab is flag-driven,

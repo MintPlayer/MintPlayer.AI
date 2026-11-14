@@ -7,7 +7,7 @@
 > cannot run in a browser — today only **Rush Hour, 2048 and Cube**.
 >
 > **Every game added since M32 is fully client-side**, and that is what you should reach for: Snake, MountainCar,
-> FruitCake, Crazy Fruits, Tetris, Chess, Draughts, Block Dude and Lunar Lockout. They have **no controller and
+> Suika, Crazy Fruits, Tetris, Chess, Draughts, Block Dude and Lunar Lockout. They have **no controller and
 > no model service at all**, and cost nothing per viewer.
 >
 > ### The client-side checklist

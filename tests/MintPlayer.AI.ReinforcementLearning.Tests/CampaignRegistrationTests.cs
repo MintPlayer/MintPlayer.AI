@@ -6,7 +6,7 @@ using MintPlayer.AI.ReinforcementLearning.Environments; // generated AddReinforc
 using MintPlayer.AI.ReinforcementLearning.Environments.Chess;
 using MintPlayer.AI.ReinforcementLearning.Environments.Connect4;
 using MintPlayer.AI.ReinforcementLearning.Environments.Draughts;
-using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
+using MintPlayer.AI.ReinforcementLearning.Environments.Suika;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 using MintPlayer.AI.ReinforcementLearning.Hosting;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting;
@@ -69,8 +69,8 @@ public class CampaignRegistrationTests : IDisposable
     {
         using (var sp = Build(s => s.AddSnakeDqnCampaign(new SnakeEnv(6), new SnakeEnv(12), new DqnScoreOptions())))
             Assert.IsType<SnakeDqnCampaign>(sp.GetRequiredService<ITrainingCampaign>());
-        using (var sp = Build(s => s.AddFruitCakeDqnCampaign(new FruitCakeEnv(), new FruitCakeEnv(), new FruitCakeDqnOptions())))
-            Assert.IsType<FruitCakeDqnCampaign>(sp.GetRequiredService<ITrainingCampaign>());
+        using (var sp = Build(s => s.AddSuikaDqnCampaign(new SuikaEnv(), new SuikaEnv(), new SuikaDqnOptions())))
+            Assert.IsType<SuikaDqnCampaign>(sp.GetRequiredService<ITrainingCampaign>());
         using (var sp = Build(s => s.AddCubeImitationCampaign(new CubeImitationOptions())))
             Assert.IsType<CubeImitationCampaign>(sp.GetRequiredService<ITrainingCampaign>());
         using (var sp = Build(s => s.AddRushHourImitationCampaign(new RushHourImitationOptions())))
