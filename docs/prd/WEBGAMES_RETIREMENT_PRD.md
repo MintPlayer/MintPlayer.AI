@@ -93,7 +93,7 @@ hand-written TypeScript (`Scripts/*.ts` → `wwwroot/js` via `Microsoft.TypeScri
 ### 2.2 This repo — what already exists
 
 11 Angular routes (`src/RLDemo.Web/ClientApp/src/app/app.routes.ts`): `rushhour`, `2048`, `cube`, `snake`,
-`mountaincar`, `fruitcake`, `crazyfruits`, `tetris`, `chess`, `draughts`, plus `gallery`. 21 committed LFS
+`mountaincar`, `suika`, `crazyfruits`, `tetris`, `chess`, `draughts`, plus `gallery`. 21 committed LFS
 checkpoints. Seven games run **100% in the browser** via a Polyglot `.pg` single source; only Rush Hour,
 2048 and Cube are server-authoritative.
 
@@ -588,7 +588,7 @@ Includes the two pre-existing defects in §12.6.
 `docs/ADDING_A_GAME.md`; then the owner deletes `C:\Repos\WebGames`. Leave `C:\Repos\Spelletjes` alone — it
 still holds Rush Hour, `RushHour.Core`, its tests and the designer PRDs, none of which are in scope here.
 
-**✅ M58.9 — Fix the stale home card** noted in the audit: `app/home/home.ts:65` still says FruitCake has
+**✅ M58.9 — Fix the stale home card** noted in the audit: `app/home/home.ts:65` still says Suika has
 "no AI (yet)", untrue since M32. One-line fix, lands in the same PR.
 
 Test suites run **once**, at the end of M58.6 (after all engine, campaign and UI milestones), per the repo's
@@ -673,7 +673,7 @@ net.
 **Two defects found while building it, both of which invalidated the obvious experiment.**
 
 1. **The shared ladder made Block Dude's net SMALLER.** `DqnGrowth.Stages` is
-   `[16] → [32] → [32,32] → [64,64] → [64,64,64] → [128,128,128]`, sized for the Snake/FruitCake DQN nets.
+   `[16] → [32] → [32,32] → [64,64] → [64,64,64] → [128,128,128]`, sized for the Snake/Suika DQN nets.
    Block Dude's default trunk is `[512,512]` against a 1181-wide observation, so the shared ladder's **top**
    rung holds less capacity than the net this game already trains with. A `--grow` run would have started 32×
    narrower and finished smaller than it started — and any conclusion drawn from it about the stage-3 plateau
@@ -1082,7 +1082,7 @@ bevels, drop shadows, glow or bloom. Colour carries meaning and nothing else.
 
 ### 10.1 The house style, as measured
 
-Canvas 2D is the house default for grid games (Snake, FruitCake, Tetris, Crazy Fruits, Rush Hour); DOM
+Canvas 2D is the house default for grid games (Snake, Suika, Tetris, Crazy Fruits, Rush Hour); DOM
 appears only in 2048 (a deliberate port of Cirulli's CSS) and chess/draughts. Notable: **there is no SCSS
 variable file and no CSS custom properties** beyond the Bootstrap re-point in `ClientApp/src/styles.scss:5-27`
 — every game hard-codes hex. The shared set: page `#14171f`, text `#e6e8ee`, accent `#6ea8fe`, panels
@@ -1094,7 +1094,7 @@ variable file and no CSS custom properties** beyond the Bootstrap re-point in `C
 top-highlight strip in Tetris — which this design does **not** adopt, being the one piece of house gloss.
 
 **⚠️ Scope note: the app is dark-only today.** No `prefers-color-scheme`, no `data-bs-theme`, no theme
-toggle anywhere in `src/app`. In-game skins are renderer-level palette objects (`fruit-cake-fruits.ts:61-65`).
+toggle anywhere in `src/app`. In-game skins are renderer-level palette objects (`suika-fruits.ts:61-65`).
 So the light palettes below live **inside the new renderers**, selected via
 `matchMedia('(prefers-color-scheme: light)')` — they are not an app-wide theming feature, and introducing
 one is not in M58's scope.
@@ -1117,7 +1117,7 @@ snapshot. Logical space + `ctx.scale(cssW / LOGICAL_W)` per `tetris-render.ts`; 
 `snake-renderer.ts:40-48`. `LOGICAL_W = cols * 48`, so `C = 48` in logical units. SVG rejected: no precedent
 in the repo, and Canvas+DPR already covers the scaling need.
 
-**Palette — 6 tokens, one meaning each.** A record mirroring `THEMES` in `fruit-cake-fruits.ts`:
+**Palette — 6 tokens, one meaning each.** A record mirroring `THEMES` in `suika-fruits.ts`:
 
 | token | dark | light | meaning |
 |---|---|---|---|
@@ -1157,7 +1157,7 @@ everywhere except the carryable block.**
 
 **Readability.** Carryable ⟂ terrain is triple-coded (value + inset + radius); the exit is the only
 *unfilled* element; the dude is the only chromatic mass and the only ~0.84C figure. An optional
-`showLabels` toggle (precedent: `fruit-cake-render.ts:224-237`) stamps `B`/`E` glyphs — off by default.
+`showLabels` toggle (precedent: `suika-render.ts:224-237`) stamps `B`/`E` glyphs — off by default.
 
 **Animation — rAF glide, linear, no easing theatrics.** Structure copied from `SnakeTubeRenderer`:
 `{prev, next, t0, durMs}`, `push()` re-kicks, and the loop **parks itself at `p ≥ 1`** so a resting board
@@ -1178,7 +1178,7 @@ Moves queued mid-glide buffer one deep rather than interrupting; the engine stay
 glow/pulse, bloom, screen shake, score popups, overshoot, idle animation, canvas hover effects. The only
 inessential motion permitted is a 160 ms board fade on level load, so a level change doesn't flicker.
 
-**Responsive / mobile.** Stage per `fruit-cake.scss:22-75` / `tetris.scss:32-93`: `width: min(760px, 100%)`,
+**Responsive / mobile.** Stage per `suika.scss:22-75` / `tetris.scss:32-93`: `width: min(760px, 100%)`,
 `aspect-ratio` from level dims, 8px radius, `overflow: hidden`, canvas `touch-action: none`, fullscreen
 rule. At 360px a 16-wide level is ~22 CSS px/cell — **so no control may be a single cell.** Gestures follow
 `tetris.ts:227-273` (Pointer Events + `setPointerCapture`): tap left/right of the dude to step, hold-repeat
@@ -1228,8 +1228,8 @@ Same module shape; `LOGICAL = 5 * 96 = 480` square, `C = 96`, stage `min(520px, 
 | `…\rocket.png` (500×500, **no alpha**) | **drop** — stray duplicate, and RGB without transparency is unusable over either background |
 
 No other images exist in either project (both `.resx` files hold only `ResXFileRef` pointers to these four;
-the `Form1.resx` files are stock designer resources). Zero assets migrate — which matches the FruitCake
-precedent ("Asset-free: pure Canvas 2D", `fruit-cake-art.ts:7`), keeps the ClientApp asset-free apart from
+the `Form1.resx` files are stock designer resources). Zero assets migrate — which matches the Suika
+precedent ("Asset-free: pure Canvas 2D", `suika-art.ts:7`), keeps the ClientApp asset-free apart from
 `public/favicon.ico`, and needs no external downloads.
 
 ### 10.6 Files to create / copy from
@@ -1237,7 +1237,7 @@ precedent ("Asset-free: pure Canvas 2D", `fruit-cake-art.ts:7`), keeps the Clien
 New: `app/block-dude/{block-dude-render.ts, block-dude.ts, .html, .scss}` and
 `app/lunar-lockout/{lunar-lockout-render.ts, …}`. Copy the rAF/snap/park structure from
 `app/snake/snake-renderer.ts`; logical-space + `ctx.scale` + overlay text from `app/tetris/tetris-render.ts`;
-stage/fullscreen SCSS from `app/fruit-cake/fruit-cake.scss:22-75` and `app/tetris/tetris.scss:32-93`;
+stage/fullscreen SCSS from `app/suika/suika.scss:22-75` and `app/tetris/tetris.scss:32-93`;
 pointer gestures from `app/tetris/tetris.ts:227-273`; DOM move buttons from
 `app/rush-hour/rush-hour.html:121-132`.
 

@@ -163,7 +163,7 @@ game, that game's score is permanently exempt from the "best" indicator (rounds 
 the next normal game), so the 30-move leaderboard framing stays honest.
 
 ### 3.9 Frontend
-Renderer decodes packed values: FruitCake clipart by `fruitOf`, overlays by `kindOf` (stripe lines along the
+Renderer decodes packed values: Suika clipart by `fruitOf`, overlays by `kindOf` (stripe lines along the
 blast axis, wrapper ring/glow, a colorless dark sugar-bomb sphere with sprinkles). The `pop` animation step
 is ENRICHED, not multiplied: it carries `clearedBy` (row/column beam, 3×3 shockwave ring, zap-lines for a
 bomb) and `created` (creation cells sparkle in instead of fading). `fall` and `reshuffle` unchanged

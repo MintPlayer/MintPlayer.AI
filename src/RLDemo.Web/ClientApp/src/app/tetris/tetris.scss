@@ -72,7 +72,7 @@
     }
   }
 
-  // Stage-only fullscreen (the FruitCake pattern): the canvas — board AND the in-canvas right-hand
+  // Stage-only fullscreen (the Suika pattern): the canvas — board AND the in-canvas right-hand
   // column — centers in the viewport at its aspect ratio; --zoom still applies within the viewport.
   &.fullscreen {
     width: 100vw;

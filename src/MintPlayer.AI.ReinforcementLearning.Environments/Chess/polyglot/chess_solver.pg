@@ -8,13 +8,13 @@
 // PieceType/ChessMove/sbyte[] API the rest of the SDK and the perft tests consume.
 // Perft (the movegen correctness gate) recurses entirely in this core.
 //
-// Subset choices (mirror the FruitCake precedent): the mailbox board is a List<i32>
+// Subset choices (mirror the Suika precedent): the mailbox board is a List<i32>
 // of 64 cells (0 empty, +1..+6 White P,N,B,R,Q,K, −1..−6 Black); promotion is an i32
 // piece code (0 = none, 2..5 = N,B,R,Q); castling is an i32 bitmask (WK=1,WQ=2,BK=4,
 // BQ=8). No i64 — perft returns i32 (fits every position/depth the tests probe;
 // the C# facade widens to long). Ray/slide loops are bounded `for`+`continue` (no
 // `while`); delta tables are List<(i32,i32)> iterated with tuple destructuring — every
-// construct here is one proven by fruitcake_solver.pg.
+// construct here is one proven by suika_solver.pg.
 
 import { List } from "std.collections"
 import { Math } from "std.math"
@@ -533,7 +533,7 @@ class PgChessState {
 // the .ckpt; the per-platform parser (chess-net.ts / the C# parity loader) loads them into these f64
 // flat arrays. Trunk weights/biases are concatenated in layer order (each row-major [in, out]) with
 // per-layer offsets from `hidden` — a single List<f64> avoids nested-generic (List<List<f64>>) params,
-// which the transpiler mishandles (same shape as fruitcake's PgDuelingNet).
+// which the transpiler mishandles (same shape as suika's PgDuelingNet).
 
 // forward() output: raw policy logits (length actions) + the raw scalar value (linear — the leaf
 // evaluator applies tanh, matching PolicyValueNet's linear value head + SelfPlayCampaign.Evaluate).

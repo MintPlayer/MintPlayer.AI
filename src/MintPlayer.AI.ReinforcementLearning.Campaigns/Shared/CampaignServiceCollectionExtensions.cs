@@ -3,7 +3,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Nn;
 using MintPlayer.AI.ReinforcementLearning.Core.Planning;
 using MintPlayer.AI.ReinforcementLearning.Core.Training;
 using MintPlayer.AI.ReinforcementLearning.Environments.CrazyFruits;
-using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
+using MintPlayer.AI.ReinforcementLearning.Environments.Suika;
 using MintPlayer.AI.ReinforcementLearning.Environments.Snake;
 using MintPlayer.AI.ReinforcementLearning.Environments.Tetris;
 using MintPlayer.AI.ReinforcementLearning.Ilgpu;
@@ -63,11 +63,11 @@ public static class CampaignServiceCollectionExtensions
         => services.AddSingleton<ITrainingCampaign>(_ =>
             new SnakeDqnCampaign(evalEnv: evalEnv, trainEnv: trainEnv, options: options, logger: null));
 
-    /// <summary>Score-maximizing FruitCake DQN; the training env carries any reward shaping, the eval env
-    /// stays a plain game (see <see cref="FruitCakeDqnCampaign"/>).</summary>
-    public static IServiceCollection AddFruitCakeDqnCampaign(this IServiceCollection services,
-        FruitCakeEnv trainEnv, FruitCakeEnv evalEnv, FruitCakeDqnOptions options)
-        => services.AddSingleton<ITrainingCampaign>(_ => new FruitCakeDqnCampaign(trainEnv, evalEnv, options));
+    /// <summary>Score-maximizing Suika DQN; the training env carries any reward shaping, the eval env
+    /// stays a plain game (see <see cref="SuikaDqnCampaign"/>).</summary>
+    public static IServiceCollection AddSuikaDqnCampaign(this IServiceCollection services,
+        SuikaEnv trainEnv, SuikaEnv evalEnv, SuikaDqnOptions options)
+        => services.AddSingleton<ITrainingCampaign>(_ => new SuikaDqnCampaign(trainEnv, evalEnv, options));
 
     /// <summary>Score-maximizing Crazy Fruits (match-3 + specials) DQN (PLAN M49/M50).</summary>
     public static IServiceCollection AddCrazyFruitsDqnCampaign(this IServiceCollection services,

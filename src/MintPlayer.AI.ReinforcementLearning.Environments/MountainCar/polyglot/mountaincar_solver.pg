@@ -1,7 +1,7 @@
 // mountaincar_solver.pg — single-source MountainCar env + inference (M33), transpiled to C# and TS.
 //
 // ONE source for the classic-control dynamics + observation + the PPO policy forward pass, so the C# training/eval
-// env AND the browser "watch AI" run the same logic. Unlike FruitCake/Snake this uses transcendentals — `cos` in
+// env AND the browser "watch AI" run the same logic. Unlike Suika/Snake this uses transcendentals — `cos` in
 // the dynamics and `tanh` in the net (Polyglot 0.3.0+ std.math). Those are NOT byte-identical across .NET and JS
 // (~1 ULP), but there's no server twin after the cutover and the decision is argmax over 3 logits (robust to sub-ULP
 // drift), so it's harmless. The C# side is exact (same Math.Cos/Math.Tanh as before).

@@ -38,7 +38,7 @@ credible net, shortest training run, gates about correctness and "beats random" 
 Author the whole rules engine in MintPlayer.Polyglot
 (`src/MintPlayer.AI.ReinforcementLearning.Environments/CrazyFruits/polyglot/crazyfruits_solver.pg`, one
 `pgconfig.json` include routing the TS twin to `ClientApp/src/app/crazy-fruits/crazyfruits_solver`), the
-draughts/snake/FruitCake pattern: board generation, match detection, swap legality, gravity + refill, cascade
+draughts/snake/Suika pattern: board generation, match detection, swap legality, gravity + refill, cascade
 resolution, scoring, the legal-move mask, `buildObservation`, the net `forward`, and the scripted baselines
 (§3.7) all live in the `.pg`, wrapped by a thin C# facade. Browser play (M49.4/M49.5) is then a pure-frontend
 milestone by construction, and C#↔TS parity is testable with the existing `PolyglotSolverParityTests` pattern.
@@ -91,14 +91,14 @@ context and learns the refill-EV residual — with them it gates at **+57.2%**.
 
 ### 3.6 Environment + campaign — configuration, not new machinery
 `CrazyFruitsEnv : IEnvironment<float[], int>` + `IActionMaskProvider` + `IStatefulEnvironment`, a thin adapter
-over the `.pg` core (the Snake/FruitCake shape). Training reuses the **M46 `DqnScoreCampaign` spine as-is**
+over the `.pg` core (the Snake/Suika shape). Training reuses the **M46 `DqnScoreCampaign` spine as-is**
 (env injected via ctor, `DqnScoreOptions`): `AddCrazyFruitsCampaign()` in the Campaigns lib + a
 `CrazyFruitsLab` and a `--game crazyfruits` case in the Lab. Checkpoint key `crazyfruits.dqn`, shipped at
 `src/RLDemo.Web/wwwroot/models/crazyfruits.dqn.ckpt` (Git LFS — Pattern C serves it as a static file).
 
 ### 3.7 Net + algorithm — masked dueling DQN (the Snake recipe)
 **Lock: masked dueling DQN over a flat MLP** — `DuelingQNet`, 448 → 256 → 256 → dueling heads → 112, invalid
-actions masked to −∞. Exactly the proven Snake/FruitCake stack: existing trainer, existing checkpoint format,
+actions masked to −∞. Exactly the proven Snake/Suika stack: existing trainer, existing checkpoint format,
 existing browser-side `PgDuelingNet` parser pattern. Refill randomness is plain environment stochasticity —
 off-policy replay absorbs it.
 **Rejected:** AlphaZero/MCTS self-play (the chess/draughts path) — three independent misfits: refill is
@@ -118,10 +118,10 @@ wide margin — if not, the env is broken), (b) the eval opponents the net is ju
 difficulty tiers on the site.
 
 ### 3.9 Web architecture — Pattern C, fully client-side
-No controller, no server net (the modern default: snake/mountaincar/fruitcake/chess/draughts). Frontend folder
+No controller, no server net (the modern default: snake/mountaincar/suika/chess/draughts). Frontend folder
 `ClientApp/src/app/crazy-fruits/`:
 - `crazyfruits_solver.ts` — generated, gitignored Polyglot twin (engine + baselines + net forward).
-- `crazyfruits-net.ts` — `.ckpt` parser building the TS `PgDuelingNet` (clone of `fruitcake-net.ts`).
+- `crazyfruits-net.ts` — `.ckpt` parser building the TS `PgDuelingNet` (clone of `suika-net.ts`).
 - `crazy-fruits-director.ts` — client-side watch-AI state machine (tier: random/greedy/expectimax/net).
 - `crazy-fruits.ts/.html/.scss` + `crazy-fruits-render.ts` — component (signals, `mode` = human/watch) and
   Canvas 2D renderer, rAF outside Angular's zone; fruit-stall theme (bunting, strawberry accent, big readable
@@ -133,12 +133,12 @@ Registration: route in `app.routes.ts`, nav link in `app.html`, card in `home/ho
 ### 3.10 Input — one pointer-events path for smartphones AND desktops
 Requirement: the game must work properly on smartphones (touch) and desktops (mouse). **Lock: unified
 `PointerEvent`s** — `(pointerdown)/(pointermove)/(pointerup)` bound on the canvas — the repo idiom proven by
-FruitCake. Pointer events are the DOM's unification of exactly the two requested trios: on touch devices
+Suika. Pointer events are the DOM's unification of exactly the two requested trios: on touch devices
 `pointerdown/move/up` fire for `touchstart/touchmove/touchend`, on desktops for `mousedown/mousemove/mouseup`
 — one code path, no double-fire, pen support free.
 **Rejected:** separate `touchstart/touchmove/touchend` + `mousedown/mousemove/mouseup` listener pairs — touch
 browsers synthesize mouse events after touch (double-fire hazards) and two gesture codepaths must be kept in
-sync forever. (2048's raw-touch swipe detector predates the FruitCake pattern and detects a *directional
+sync forever. (2048's raw-touch swipe detector predates the Suika pattern and detects a *directional
 gesture on the whole board*; Crazy Fruits drags a *specific cell*, which pointer events express directly.)
 
 Two gestures, both supported:
@@ -147,7 +147,7 @@ Two gestures, both supported:
 - **Tap-tap:** `pointerdown`+`up` on a cell selects it (highlight); next tap on an orthogonal neighbour attempts
   the swap; any other tap moves the selection.
 
-Mechanics copied from FruitCake/2048: `touch-action: none` on the canvas (we own dragging — no page pan/zoom),
+Mechanics copied from Suika/2048: `touch-action: none` on the canvas (we own dragging — no page pan/zoom),
 coordinates via `getBoundingClientRect()` → cell = rect-relative fraction × 8 (bounds-checked),
 `preventDefault()` in handlers, `setPointerCapture` on drag start so the gesture survives leaving the canvas.
 Animations (swap glide, invalid-swap shake-and-revert, pop, fall) run on the rAF loop.
@@ -243,5 +243,5 @@ Wayback CDX for kidcity.be (`page.php?house=crazyfruits`, NL 2007-10-30 / FR 200
 (ieee-cog.org/2019/papers/paper_152.pdf — DQN/PPO below random, A3C won) · *Strategies for Using PPO in Mobile
 Puzzle Games* (King), arXiv:2007.01542 (mask ⇒ ~8× speedup; step-penalty retro) · *Testing Match-3 Video Games
 with Deep RL*, arXiv:2007.01137 · CandyRL / *Generalized RL for Gameplay* (KTH) · repo:
-`docs/ADDING_A_GAME.md`, `SNAKE_SEARCH_PRD.md` (masked dueling DQN), `fruit-cake.ts` (pointer input),
+`docs/ADDING_A_GAME.md`, `SNAKE_SEARCH_PRD.md` (masked dueling DQN), `suika.ts` (pointer input),
 `DRAUGHTS_SELFPLAY_PRD.md` (.pg-first engine discipline).

@@ -15,7 +15,7 @@ import { parseSnakeNet } from './snake-net';
 // representable in float32, so values round-trip to `toBe`/`toEqual` equality with no tolerance.
 //
 // This file carries the full explanation for the four "dueling-q" readers (snake, tetris, crazy-fruits,
-// fruit-cake), which share the layout byte for byte; their specs assert the same contract against their
+// suika), which share the layout byte for byte; their specs assert the same contract against their
 // own entry point and their own generated net type.
 
 /** Writes a checkpoint by hand, from the documented layout rather than from the reader's constants. */

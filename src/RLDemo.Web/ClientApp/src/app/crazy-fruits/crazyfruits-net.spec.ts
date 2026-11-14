@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseDuelingQNet } from './crazyfruits-net';
 
 // Crazy Fruits' half of the C#/TS checkpoint pair. The "dueling-q" layout is shared with snake, tetris
-// and fruit-cake — `snake/snake-net.spec.ts` carries the full rationale for writing the bytes by hand
+// and suika — `snake/snake-net.spec.ts` carries the full rationale for writing the bytes by hand
 // from the format description rather than from the reader's own constants. What is specific here is the
 // entry point and the generated net type it constructs, so the same contract is asserted against them.
 

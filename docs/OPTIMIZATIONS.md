@@ -333,9 +333,9 @@ hurts at higher weight (one solve, 1024×4 value net, weight 1.5, ≤20k exp):
 
 ## Investigated, not pursued — vectorized DQN envs (measured 2026-06-26)
 
-Tried speeding up FruitCake DQN data generation by stepping **N = ProcessorCount envs in parallel**
+Tried speeding up Suika DQN data generation by stepping **N = ProcessorCount envs in parallel**
 (`DqnOptions.Actors`, a synchronous-vectorized loop fanning `env.Step` out over `Parallel.For` while a
-single learner trains), on the assumption the run is **env-bound** (FruitCake's physics-in-the-loop is
+single learner trains), on the assumption the run is **env-bound** (Suika's physics-in-the-loop is
 the dominant per-step cost). **Negative result — ~3× SLOWER**, not faster:
 
 | | drops/min | avg cores |
@@ -351,7 +351,7 @@ the dominant per-step cost). **Negative result — ~3× SLOWER**, not faster:
   1.19-core average is the tell: the process is mostly *blocked*, not computing.
 - **Principle (the takeaway): data generation/compute is parallelized in the backend. Don't add a second
   parallelism layer on top** — neither N vectorized envs nor an intra-`Step` `Parallel.For` (the latter is
-  even worse: FruitCake physics is a small, *data-dependent* sequential-impulse solver, so fine-grained
+  even worse: Suika physics is a small, *data-dependent* sequential-impulse solver, so fine-grained
   parallelism is pure dispatch overhead). There is no idle CPU headroom for env-parallelism to fill.
 - **To actually use more cores for data gen: run N independent runs concurrently** (a multi-seed sweep),
   with the backend made **single-threaded** for the duration — `Backend.Current = new ManagedBackend(maxDegreeOfParallelism: 1)`
@@ -366,10 +366,10 @@ the dominant per-step cost). **Negative result — ~3× SLOWER**, not faster:
 - The `DqnOptions.Actors` / vectorized-trainer prototype was **reverted** (no dead code); recoverable from
   git history (`feat(dqn): vectorized envs` + its revert).
 
-## Investigated, not pursued — FruitCake planner distillation (F6, measured 2026-06-28)
+## Investigated, not pursued — Suika planner distillation (F6, measured 2026-06-28)
 
-Tried to **lift the FruitCake net itself** by distilling the depth-3 forward search (the planner that gets
-~50% watermelon) *into* the net — a two-headed policy/value net (`FruitCakePolicyNet`) trained by imitation:
+Tried to **lift the Suika net itself** by distilling the depth-3 forward search (the planner that gets
+~50% watermelon) *into* the net — a two-headed policy/value net (`SuikaPolicyNet`) trained by imitation:
 CE on the planner's chosen column + Huber on the realized return-to-go, DAgger exploration, a rolling reuse
 buffer. The hope was (a) a strong *reactive* policy (cheap serving, no search) and (b) a planning-aware
 **value-head leaf** that beats the DQN's max-Q leaf, so search on top compounds past 50% (the AlphaZero
@@ -388,22 +388,22 @@ recipe). **Negative result on every axis** — 30-game paired A/B (seeds 20000+,
   + mode-collapse; planners win). The policy alone is even **worse than the DQN's own greedy** (~960), and the
   distilled value head is a **worse search leaf** than the DQN's Q (3% vs 43%).
 - **Principle (the takeaway): on a game that rewards lookahead, the lever is the SEARCH, not the net.** Don't
-  retry reactive-policy/value distillation for FruitCake/Suika — and more generally, don't expect a one-pass
+  retry reactive-policy/value distillation for Suika/Suika — and more generally, don't expect a one-pass
   net to absorb a planner whose strength is forward simulation. The only paradigm with theoretical upside is
   full AlphaZero *expert iteration* (search in the loop at train **and** inference), but distillation is one
   step of that loop and it failed to produce even a value head beating the DQN leaf, so its ROI is poor given
   the ~1.7 s/labeled-drop data cost.
-- The distillation code (`FruitCakePolicyNet`, `FruitCakeImitationCampaign` `--distill`, `FruitCakeDistillEval`
+- The distillation code (`SuikaPolicyNet`, `SuikaImitationCampaign` `--distill`, `SuikaDistillEval`
   `--distill-eval`) was **not merged** (PR #21 closed; no dead code on `master`); recoverable from the
-  `fruitcake-planner-distillation` branch / commit `7201dd5`.
+  `suika-planner-distillation` branch / commit `7201dd5`.
 
-## Investigated, not pursued — FruitCake tier-occupancy grid (B4, measured 2026-07-06)
+## Investigated, not pursued — Suika tier-occupancy grid (B4, measured 2026-07-06)
 
-The last untried perception lever from `FRUITCAKE_IMPROVE_PRD.md` §4.B: give the reactive net a **2-D view** the
+The last untried perception lever from `SUIKA_IMPROVE_PRD.md` §4.B: give the reactive net a **2-D view** the
 1-D skyline collapses. The shipped observation is a per-column skyline (topmost fruit per column) + relational
 blocks + big-fruit positions; it cannot see **buried** fruit or 2-D same-tier adjacency. B4 appends a **14×10
 tier-occupancy grid** (140 cells, each = the max tier of any fruit whose bounding box overlaps it ÷11; 0 = empty),
-flattened into the MLP — **obs 89 → 229**, single-sourced in `fruitcake_solver.pg` so the training env, the search
+flattened into the MLP — **obs 89 → 229**, single-sourced in `suika_solver.pg` so the training env, the search
 leaf, and the browser stay in lockstep. Trained a **fresh** net at width 229 (same recipe as the F5/G3 baselines:
 `--shape --nstep 3 --gamma 0.997`) to **321k drops**. **Null result** — judged on the deployed metric (depth-3
 net+search, `--search-eval --depth 3 --topk 5 --topk2 2`), a 50-game read:
@@ -420,9 +420,9 @@ net+search, `--search-eval --depth 3 --topk 5 --topk2 2`), a 50-game read:
   Richer inputs (F2 relational blocks, M30 big-fruit positions, and now the B4 grid) improve greedy play modestly
   but do **not** move the deployed net+search system — the depth-3 planner already extracts what the board offers.
   The reactive net is **saturated**; don't spend more retrains on observation richness for this game.
-- Code preserved at commit `d8e6893` (tag `archive/fruitcake-tier-grid-b4`; branch removed) as a validated-capability
+- Code preserved at commit `d8e6893` (tag `archive/suika-tier-grid-b4`; branch removed) as a validated-capability
   artifact (like NoisyNets / F6 distillation); **never merged** — the 229-dim observation would desync the live
-  89-dim browser net (`wwwroot/models/fruitcake-net.ckpt`).
+  89-dim browser net (`wwwroot/models/suika-net.ckpt`).
 
 ## Planned
 

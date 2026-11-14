@@ -25,9 +25,9 @@
       "output": "src/RLDemo.Web/ClientApp/src/app/draughts/draughts_solver"
     },
     {
-      "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/polyglot/fruitcake_solver.pg",
+      "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/Suika/polyglot/suika_solver.pg",
       "target": "typescript",
-      "output": "src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake_solver"
+      "output": "src/RLDemo.Web/ClientApp/src/app/suika/suika_solver"
     },
     {
       "pattern": "src/MintPlayer.AI.ReinforcementLearning.Environments/LunarLockout/polyglot/lunarlockout_solver.pg",

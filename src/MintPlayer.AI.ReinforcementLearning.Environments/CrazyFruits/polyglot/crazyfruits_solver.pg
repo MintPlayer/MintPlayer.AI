@@ -1032,7 +1032,7 @@ class PgCrazyFruits {
   }
 }
 
-// ── Dueling-Q net inference (single-source forward pass; the fruitcake PgDuelingNet pattern) ───────────────
+// ── Dueling-Q net inference (single-source forward pass; the suika PgDuelingNet pattern) ───────────────
 // INFERENCE ONLY — training stays on the SDK. Weights are float32 in the checkpoint; the per-platform parser
 // (C# DuelingQNetCheckpoint / crazyfruits-net.ts — binary I/O stays out of Polyglot) loads them into these
 // f64 arrays. Q(s,a) = A(s,a) + (V(s) − mean_a A(s,a)); ReLU trunk; heads have no activation. Trunk tensors

@@ -1,0 +1,95 @@
+using MintPlayer.AI.ReinforcementLearning.Core.Checkpoints;
+using MintPlayer.AI.ReinforcementLearning.Core.Nn;
+using MintPlayer.AI.ReinforcementLearning.Core.Numerics;
+using MintPlayer.AI.ReinforcementLearning.Core.Training;
+using MintPlayer.AI.ReinforcementLearning.Environments.Suika;
+
+/// <summary>
+/// Suika A/B: judge two saved <see cref="DuelingQNet"/>s head-to-head over many PAIRED-seed greedy
+/// episodes, so the verdict averages out the high single-eval variance (a 10-episode eval bounced 750–971
+/// on the SAME net, so one such number proves nothing). Both nets play the same seed set (paired → the gap
+/// estimate has lower variance), and the difference is reported with a standard error so "better" means
+/// statistically better, not a lucky draw.
+///
+/// Episodes are independent, so they run concurrently with the compute backend forced single-threaded —
+/// the N episodes ARE the parallelism (see docs/OPTIMIZATIONS.md: don't stack a second layer on the
+/// already-parallel backend). Serving is deterministic (noise off), so a noisy candidate is judged on its
+/// means — exactly the policy that would ship.
+/// </summary>
+internal static class SuikaAb
+{
+    public static void Run(string baselineDir, string candidateDir, int episodes, ulong seedBase)
+    {
+        var baseline = Load(baselineDir);
+        var candidate = Load(candidateDir);
+
+        Console.WriteLine($"Suika A/B — {episodes} paired greedy episodes (seeds {seedBase}..{seedBase + (ulong)episodes - 1}):");
+        Console.WriteLine($"  baseline : {baselineDir}  (noisy={baseline.Noisy})");
+        Console.WriteLine($"  candidate: {candidateDir}  (noisy={candidate.Noisy})");
+
+        var baseScore = new double[episodes];
+        var candScore = new double[episodes];
+        var baseTier = new int[episodes];
+        var candTier = new int[episodes];
+
+        // The N episodes are the parallelism; single-thread the backend so we don't oversubscribe.
+        Backend.Current = new ManagedBackend(maxDegreeOfParallelism: 1);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Parallel.For(0, episodes, i =>
+        {
+            ulong seed = seedBase + (ulong)i;
+            (baseScore[i], baseTier[i]) = Play(baseline, seed);
+            (candScore[i], candTier[i]) = Play(candidate, seed);
+        });
+        sw.Stop();
+
+        Report("baseline ", baseScore, baseTier);
+        Report("candidate", candScore, candTier);
+
+        // Paired difference (same seed per row) → a lower-variance estimate of the true gap.
+        var diff = new double[episodes];
+        int candWins = 0;
+        for (int i = 0; i < episodes; i++)
+        {
+            diff[i] = candScore[i] - baseScore[i];
+            if (candScore[i] > baseScore[i]) candWins++;
+        }
+        double meanDiff = diff.Average();
+        double se = EvalStats.Std(diff, meanDiff) / Math.Sqrt(episodes);
+        string verdict = EvalStats.Verdict(meanDiff, se);
+
+        Console.WriteLine($"  paired Δ (cand − base): {meanDiff:+0.0;-0.0} ± {se:0.0} (SE) | candidate wins {candWins}/{episodes} ({candWins * 100.0 / episodes:0}%)");
+        Console.WriteLine($"  VERDICT: {verdict}   ({sw.Elapsed.TotalSeconds:F0}s)");
+    }
+
+    private static DuelingQNet Load(string dir)
+    {
+        var store = new FileModelStore(dir);
+        using var stream = store.TryOpenRead("suika", "dqn")
+            ?? throw new FileNotFoundException($"No suika.dqn.ckpt under '{dir}'.");
+        return DuelingQNetCheckpoint.Load(stream);
+    }
+
+    private static (double Score, int MaxTier) Play(DuelingQNet net, ulong seed)
+    {
+        var env = new SuikaEnv();
+        var agent = new GreedyQAgent(net, SuikaEnv.ColumnCount); // noise off (loaded default) → deterministic
+        var (obs, _) = env.Reset(seed);
+        int maxTier = 0;
+        while (true)
+        {
+            var step = env.Step(agent.Act(obs, greedy: true));
+            obs = step.Observation;
+            foreach (var b in env.World.Bodies)
+                if (b.Tier > maxTier) maxTier = b.Tier;
+            if (step.Done) break;
+        }
+        return (env.Score, maxTier);
+    }
+
+    // M63.5: Std/Report/Median now live in the shared EvalStats (they were byte-identical copies here and
+    // in the sibling file, and carried a population-divisor bug behind the ship/no-ship verdict).
+    private static void Report(string label, double[] score, int[] tier)
+        => Console.WriteLine(EvalStats.ReportLine(label, score, tier));
+
+}

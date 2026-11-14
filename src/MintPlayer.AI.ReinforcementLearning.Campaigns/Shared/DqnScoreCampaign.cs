@@ -11,7 +11,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Training;
 namespace MintPlayer.AI.ReinforcementLearning.Campaigns;
 
 /// <summary>
-/// The shared spine of a <b>score-maximizing</b> DQN campaign (Snake, FruitCake): an open-ended game whose eval is
+/// The shared spine of a <b>score-maximizing</b> DQN campaign (Snake, Suika): an open-ended game whose eval is
 /// a mean episodic score, not a solve rate. It owns everything these campaigns do identically — resume-or-warm-start
 /// from the model store, per-chunk training against a raised absolute <see cref="DqnOptions.MaxSteps"/>, the
 /// keep-best gate on the deployable net (DQN eval is noisy, so the shipped net is only overwritten when an eval
@@ -65,7 +65,7 @@ public abstract partial class DqnScoreCampaign : ITrainingCampaign, INetworkTele
     protected abstract string StepNoun { get; }
     /// <summary>The gate metric's label for logs ("food@12" / "mean score").</summary>
     protected abstract string GateLabel { get; }
-    /// <summary>Human display name for the campaign ("Snake DQN" / "FruitCake DQN").</summary>
+    /// <summary>Human display name for the campaign ("Snake DQN" / "Suika DQN").</summary>
     protected abstract string DisplayName { get; }
     /// <summary>Optional suffix on the fresh-start log (e.g. " (train 6×6, eval 12×12)"); empty by default.</summary>
     protected virtual string FreshStartDetail => "";
@@ -73,7 +73,7 @@ public abstract partial class DqnScoreCampaign : ITrainingCampaign, INetworkTele
     protected abstract int ObservationSize { get; }
     protected abstract IReadOnlyList<string>? InputLabels { get; }
     protected abstract IReadOnlyList<string>? OutputLabels { get; }
-    /// <summary>Adapt a freshly-loaded deployable net before warm-starting; identity by default (FruitCake promotes
+    /// <summary>Adapt a freshly-loaded deployable net before warm-starting; identity by default (Suika promotes
     /// plain→noisy and grows the input to fit an enriched observation).</summary>
     protected virtual IValueNet AdaptWarmNet(DuelingQNet loaded) => loaded;
     /// <summary>Run the greedy eval and return the keep-best <c>Gate</c> value plus the game-specific middle metrics

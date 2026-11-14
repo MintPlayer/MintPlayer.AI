@@ -9,7 +9,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Tests;
 
 /// <summary>
 /// M69 (COVERAGE_90_PRD §19.5 item 4) — <see cref="DqnGrowth.Maybe"/>, the mid-run Net2Net step every DQN campaign
-/// (Snake, FruitCake, CrazyFruits, Tetris) reaches once per chunk. Only its early-out was covered.
+/// (Snake, Suika, CrazyFruits, Tetris) reaches once per chunk. Only its early-out was covered.
 /// </summary>
 /// <remarks>
 /// <para><b>Three silent failures, none of which throws.</b></para>

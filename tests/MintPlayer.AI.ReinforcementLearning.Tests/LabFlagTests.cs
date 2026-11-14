@@ -348,7 +348,7 @@ public class LabFlagTests
     [Fact]
     public void Snake_grow_replaces_the_requested_hidden_widths()
     {
-        // Same rule as FruitCake: --grow does not ADD to --hidden, it REPLACES it with the tiny first stage,
+        // Same rule as Suika: --grow does not ADD to --hidden, it REPLACES it with the tiny first stage,
         // because a growing run must start small. This lived in Run and so was never asserted.
         Assert.Equal([512, 512], SnakeLab.Parse(new CliArgs(["--hidden", "512,512"])).Hidden);
 

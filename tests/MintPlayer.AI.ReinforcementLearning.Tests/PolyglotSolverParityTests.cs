@@ -1,11 +1,11 @@
-using MintPlayer.AI.ReinforcementLearning.Environments.FruitCake;
+using MintPlayer.AI.ReinforcementLearning.Environments.Suika;
 
 namespace MintPlayer.AI.ReinforcementLearning.Tests;
 
 /// <summary>
-/// PG1 gate for the single-source FruitCake solver (docs/prd/POLYGLOT_FRUITCAKE_PRD.md). The physics is
-/// transpiled once from fruitcake_solver.pg into the internal <c>PgFruitCakeWorld</c>; the public
-/// <see cref="FruitCakeWorld"/> is a thin facade over it. These pin (a) the facade delegates to the generated
+/// PG1 gate for the single-source Suika solver (docs/prd/POLYGLOT_SUIKA_PRD.md). The physics is
+/// transpiled once from suika_solver.pg into the internal <c>PgSuikaWorld</c>; the public
+/// <see cref="SuikaWorld"/> is a thin facade over it. These pin (a) the facade delegates to the generated
 /// core faithfully — same outcomes through the public API as the raw core — and (b) the solver is deterministic.
 /// The generated core is internal (global namespace), visible here via InternalsVisibleTo.
 /// </summary>
@@ -20,7 +20,7 @@ public class PolyglotSolverParityTests
 
     private static (int Score, int Count) RunCore()
     {
-        var w = new PgFruitCakeWorld();
+        var w = new PgSuikaWorld();
         int score = 0;
         foreach (var (tier, x) in Script)
         {
@@ -32,7 +32,7 @@ public class PolyglotSolverParityTests
 
     private static (int Score, int Count) RunFacade()
     {
-        var w = new FruitCakeWorld();
+        var w = new SuikaWorld();
         int score = 0;
         foreach (var (tier, x) in Script)
         {
@@ -54,14 +54,14 @@ public class PolyglotSolverParityTests
         Assert.Equal(RunFacade(), RunFacade());
     }
 
-    // CS0 (docs/prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md): the search's world-queries now live in the .pg (single
+    // CS0 (docs/prd/SUIKA_CLIENT_SIDE_AI_PRD.md): the search's world-queries now live in the .pg (single
     // source, so the browser search reuses them). These pin the generated core clone/query behaviour the
     // C# facade delegates to (and the TS adapter gets byte-identically from the same .pg).
 
     [Fact]
     public void CoreClone_IsIndependentDeepCopy()
     {
-        var w = new PgFruitCakeWorld();
+        var w = new PgSuikaWorld();
         foreach (var (tier, x) in Script)
         {
             w.spawnFruit(tier, x, 90.0);
@@ -90,8 +90,8 @@ public class PolyglotSolverParityTests
     {
         // Seed the core with the SAME float-cast inputs the facade uses, so both sims are bit-identical and the
         // continuous pile-height matches exactly — this isolates the query delegation, not input precision.
-        var core = new PgFruitCakeWorld();
-        var facade = new FruitCakeWorld();
+        var core = new PgSuikaWorld();
+        var facade = new SuikaWorld();
         foreach (var (tier, x) in Script)
         {
             core.spawnFruit(tier, (float)x, 90f);
@@ -105,19 +105,19 @@ public class PolyglotSolverParityTests
         Assert.Equal((float)core.pileHeight(), facade.PileHeight());
     }
 
-    // CS1 (docs/prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md): BuildObservation now lives in the .pg (f64), and the C#
+    // CS1 (docs/prd/SUIKA_CLIENT_SIDE_AI_PRD.md): BuildObservation now lives in the .pg (f64), and the C#
     // env delegates (core f64 -> float). This pins that the single-source obs reproduces the legacy float32
     // observation the net was trained on, within f32/f64 rounding — so the argmax-relevant features are unchanged
     // and no retrain is needed. (Also validates the cast-free column-overlap reformulation on real boards.)
     [Fact]
     public void CoreObservation_MatchesLegacyFloat32_WithinTolerance()
     {
-        var w = new FruitCakeWorld();
+        var w = new SuikaWorld();
         foreach (var (tier, x) in Script) { w.SpawnFruit(tier, (float)x, 90f); w.SettleAfterDrop(30f, 8, 600); }
 
         foreach (var (cur, next) in new[] { (1, 2), (3, 5), (5, 1) })
         {
-            var actual = FruitCakeEnv.BuildObservation(w, cur, next); // single-source (.pg f64 -> float)
+            var actual = SuikaEnv.BuildObservation(w, cur, next); // single-source (.pg f64 -> float)
             var legacy = LegacyObservationFloat32(w, cur, next);
             Assert.Equal(legacy.Length, actual.Length);
             for (int i = 0; i < legacy.Length; i++)
@@ -127,10 +127,10 @@ public class PolyglotSolverParityTests
     }
 
     // The pre-.pg float32 observation, kept here as the one-time equivalence reference for the port above.
-    private static float[] LegacyObservationFloat32(FruitCakeWorld world, int current, int next)
+    private static float[] LegacyObservationFloat32(SuikaWorld world, int current, int next)
     {
-        const int ColumnCount = FruitCakeEnv.ColumnCount;
-        const float W = FruitCakeWorld.Width, H = FruitCakeWorld.Height, DangerY = FruitCakeWorld.DangerLineY;
+        const int ColumnCount = SuikaEnv.ColumnCount;
+        const float W = SuikaWorld.Width, H = SuikaWorld.Height, DangerY = SuikaWorld.DangerLineY;
         float binW = W / ColumnCount;
 
         var topY = new float[ColumnCount];
@@ -148,7 +148,7 @@ public class PolyglotSolverParityTests
                 if (t < topY[c]) { topY[c] = t; topTier[c] = b.Tier; }
         }
 
-        var obs = new float[FruitCakeEnv.ObservationSize];
+        var obs = new float[SuikaEnv.ObservationSize];
         int i = 0;
         float minTop = H;
         for (int c = 0; c < ColumnCount; c++)
@@ -194,8 +194,8 @@ public class PolyglotSolverParityTests
         {
             if (b is not null)
             {
-                o[idx++] = Math.Clamp(b.X / FruitCakeWorld.Width, 0f, 1f);
-                o[idx++] = Math.Clamp(b.Y / FruitCakeWorld.Height, 0f, 1f);
+                o[idx++] = Math.Clamp(b.X / SuikaWorld.Width, 0f, 1f);
+                o[idx++] = Math.Clamp(b.Y / SuikaWorld.Height, 0f, 1f);
                 o[idx++] = Math.Clamp(b.Tier / 11f, 0f, 1f);
             }
             else { o[idx++] = 0.5f; o[idx++] = 1f; o[idx++] = 0f; }

@@ -79,11 +79,11 @@ public sealed record TetrisDqnOptions : DqnScoreOptions
 }
 
 /// <summary>
-/// <see cref="FruitCakeDqnCampaign"/> knobs on top of the shared spine's. Reward shaping is NOT here — it lives
-/// on the injected training env (<c>FruitCakeEnv.ShapeRewards</c>/<c>ShapingGamma</c>), because it changes what
+/// <see cref="SuikaDqnCampaign"/> knobs on top of the shared spine's. Reward shaping is NOT here — it lives
+/// on the injected training env (<c>SuikaEnv.ShapeRewards</c>/<c>ShapingGamma</c>), because it changes what
 /// the env emits, not how the campaign trains.
 /// </summary>
-public sealed record FruitCakeDqnOptions : DqnScoreOptions
+public sealed record SuikaDqnOptions : DqnScoreOptions
 {
     /// <summary>NoisyNets exploration (learned σ) instead of ε-greedy; trains as a separate resume-state line.</summary>
     public bool Noisy { get; init; }

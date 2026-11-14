@@ -24,7 +24,7 @@ public sealed class CrazyFruitsEnv : IEnvironment<float[], int>, IActionMaskProv
     /// clear a manageable (Huber-linear) tail instead of a 50σ TD target.</summary>
     public const float RewardScale = 100f;
 
-    // Matches the web renderer's picks from the FruitCake art catalog (crazy-fruits-render.ts FRUIT_TIER).
+    // Matches the web renderer's picks from the Suika art catalog (crazy-fruits-render.ts FRUIT_TIER).
     private static readonly string[] FruitNames = ["strawberry", "grape", "orange", "pear", "pineapple", "watermelon"];
 
     /// <summary>Plain-language name per observation feature, index order of <c>buildObservation</c>.</summary>

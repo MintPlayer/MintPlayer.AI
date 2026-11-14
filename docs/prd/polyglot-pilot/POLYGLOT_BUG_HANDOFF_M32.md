@@ -1,9 +1,9 @@
-# Polyglot codegen bugs found porting the FruitCake inference path (v0.1.4)
+# Polyglot codegen bugs found porting the Suika inference path (v0.1.4)
 
 > Filed upstream: **MintPlayer.Polyglot#9** — https://github.com/MintPlayer/MintPlayer.Polyglot/issues/9
 
-Context: MintPlayer.AI M32 (`FRUITCAKE_CLIENT_SIDE_AI_PRD.md`) is single-sourcing the FruitCake **inference**
-path (observation + net + search) into `fruitcake_solver.pg`, on top of the already-single-sourced physics.
+Context: MintPlayer.AI M32 (`SUIKA_CLIENT_SIDE_AI_PRD.md`) is single-sourcing the Suika **inference**
+path (observation + net + search) into `suika_solver.pg`, on top of the already-single-sourced physics.
 While porting `buildObservation` (CS1) on **MintPlayer.Polyglot.MSBuild 0.1.4**, two codegen bugs surfaced.
 Both have clean `.pg`-side workarounds (used in the port), so they are **not blocking** — but both emit code
 that does not compile / would crash, so they're worth fixing (and adding to the conformance gate).

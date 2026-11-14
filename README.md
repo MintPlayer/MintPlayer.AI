@@ -35,9 +35,9 @@ See also:
 | `src/MintPlayer.AI.ReinforcementLearning.Core` | Environment API (Gymnasium-faithful), spaces, seeded RNG, agents, trainers, solvers, checkpoints + model store |
 | `src/MintPlayer.AI.ReinforcementLearning.Environments` | GridWorld, FrozenLake, CartPole, 2048, Rush Hour (incl. BFS solver + puzzle generator), Rubik's Cube (incl. a C# port of Kociemba's two-phase solver) |
 | `src/RLDemo.Console` | Console demo — watch agents learn and play (`--save`/`--load` persist trained models) |
-| `src/RLDemo.Web` | **MintPlayer.AI.ReinforcementLearning Playground** — ASP.NET Core + Angular web app: Rush Hour, 2048, Rubik's Cube, Snake, Mountain Car, FruitCake, Crazy Fruits, Tetris, Chess, Draughts, Block Dude and Lunar Lockout — each playable yourself and watchable as the trained AI plays (most of them running **entirely in the browser**, no server), plus a public gallery of every submitted board |
+| `src/RLDemo.Web` | **MintPlayer.AI.ReinforcementLearning Playground** — ASP.NET Core + Angular web app: Rush Hour, 2048, Rubik's Cube, Snake, Mountain Car, Suika, Crazy Fruits, Tetris, Chess, Draughts, Block Dude and Lunar Lockout — each playable yourself and watchable as the trained AI plays (most of them running **entirely in the browser**, no server), plus a public gallery of every submitted board |
 | `tests/MintPlayer.AI.ReinforcementLearning.Tests` | xUnit suite incl. solved-threshold gates, determinism tests and web API integration tests |
-| `tools/MintPlayer.AI.ReinforcementLearning.Lab` | Long-running training campaigns (Rush Hour, Rubik's Cube, Snake, FruitCake) — resumable, checkpointing into the model store. Add `--viz` for a live in-browser **network visualizer** (see below) |
+| `tools/MintPlayer.AI.ReinforcementLearning.Lab` | Long-running training campaigns (Rush Hour, Rubik's Cube, Snake, Suika) — resumable, checkpointing into the model store. Add `--viz` for a live in-browser **network visualizer** (see below) |
 
 ## Run the playground
 
@@ -142,7 +142,7 @@ plus a few per-game knobs.
 
 | Flag | Meaning |
 |---|---|
-| `--game <name>` | `rushhour` (default), `snake`, `fruitcake`, `cube`, `cube-policy`, `cube-davi` |
+| `--game <name>` | `rushhour` (default), `snake`, `suika`, `cube`, `cube-policy`, `cube-davi` |
 | `--hours H` | wall-clock training budget |
 | `--data DIR` | model-store directory to read/write checkpoints (e.g. `src/RLDemo.Web/data` or `models`) |
 | `--seed S` | RNG seed (runs are reproducible) |
@@ -155,9 +155,9 @@ plus a few per-game knobs.
 
 | Game | Flags |
 |---|---|
-| `snake`, `fruitcake` (DQN) | `--steps N` (absolute step cap), `--chunk-steps N`, `--episodes N` (eval games), `--explore E` (ε-start), `--hidden a,b` (trunk widths), `--gamma G` |
+| `snake`, `suika` (DQN) | `--steps N` (absolute step cap), `--chunk-steps N`, `--episodes N` (eval games), `--explore E` (ε-start), `--hidden a,b` (trunk widths), `--gamma G` |
 | `snake` (extra) | `--train-grid`, `--eval-grid`, `--step-penalty`, `--safe-mask`; `--search` evaluates the look-ahead planner (with `--depth`/`--beam`/`--w-*`/`--net`) instead of training |
-| `fruitcake` (extra) | `--nstep N`, `--shape` (reward shaping), `--noisy` (NoisyNets); offline comparison modes `--ab` (`--baseline`, `--ab-episodes`) and `--search-eval` (`--depth`/`--topk`/`--topk2`/`--leaf`) |
+| `suika` (extra) | `--nstep N`, `--shape` (reward shaping), `--noisy` (NoisyNets); offline comparison modes `--ab` (`--baseline`, `--ab-episodes`) and `--search-eval` (`--depth`/`--topk`/`--topk2`/`--leaf`) |
 | `cube` (imitation) | `--width W` (trunk width) |
 | `cube-policy` (EfficientCube) | `--width W`, `--max-scramble D`, `--beam W`, `--episodes N` |
 | `rushhour` (imitation) | common flags only |
@@ -209,7 +209,7 @@ with per-layer weight heatmaps and a loss sparkline, all repainting live — you
 from random init toward a policy. **Hover any neuron, connection, or heatmap** for a plain-language
 explanation: each input names the observation feature it is (and its current value), each output the
 action it controls (and its live Q-value/score), and hidden neurons show their current activation. Works
-for every game — `snake`, `fruitcake`, `rushhour`, `cube`, `cube-policy`, `cube-davi`.
+for every game — `snake`, `suika`, `rushhour`, `cube`, `cube-policy`, `cube-davi`.
 
 ![Live network visualizer](docs/screenshots/m36-network-visualizer.png)
 
@@ -217,7 +217,7 @@ for every game — `snake`, `fruitcake`, `rushhour`, `cube`, `cube-policy`, `cub
 (function-preserving Net2WiderNet / Net2DeeperNet). Add `--grow` and watch the graph add units and layers live:
 
 ```
-dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --game fruitcake --viz --grow
+dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- --game suika --viz --grow
 ```
 
 It starts from a tiny net and grows through `[16] → [32] → [32,32] → … → [128,128,128]` with no loss spike (each
@@ -226,10 +226,10 @@ down (and open the page immediately) to catch every stage from the start:
 
 ```
 dotnet run --project tools/MintPlayer.AI.ReinforcementLearning.Lab -c Release -- \
-  --game fruitcake --viz --grow --grow-every 5000
+  --game suika --viz --grow --grow-every 5000
 ```
 
-`--grow` works for **every trainable game** — the DQN nets (Snake, FruitCake) and the two-headed imitation policy
+`--grow` works for **every trainable game** — the DQN nets (Snake, Suika) and the two-headed imitation policy
 nets (`--game cube|rushhour --grow`); the cube's self-taught DAVI value net already grows its width during its
 campaign (`--auto-widen`).
 

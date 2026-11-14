@@ -5,7 +5,7 @@ using Connect4Lab = Lab::Connect4Lab;
 using CubeLab = Lab::CubeLab;
 using CubePolicyLab = Lab::CubePolicyLab;
 using DraughtsLab = Lab::DraughtsLab;
-using FruitCakeLab = Lab::FruitCakeLab;
+using SuikaLab = Lab::SuikaLab;
 using RushHourLab = Lab::RushHourLab;
 using SnakeLab = Lab::SnakeLab;
 using TetrisLab = Lab::TetrisLab;
@@ -102,12 +102,12 @@ public class LabParseTests
         Assert.Equal(50_000, o.GrowEvery);
     }
 
-    // ── FruitCake ──
+    // ── Suika ──
 
     [Fact]
-    public void FruitCake_defaults()
+    public void Suika_defaults()
     {
-        var o = FruitCakeLab.Parse(new CliArgs([]), out double hours, out string dataDir, out bool evalOnly, out bool shape);
+        var o = SuikaLab.Parse(new CliArgs([]), out double hours, out string dataDir, out bool evalOnly, out bool shape);
 
         Assert.Equal(1, hours);
         Assert.Equal("data", dataDir);
@@ -121,23 +121,23 @@ public class LabParseTests
     }
 
     [Fact]
-    public void FruitCake_grow_replaces_the_requested_hidden_widths()
+    public void Suika_grow_replaces_the_requested_hidden_widths()
     {
         // The least obvious rule in the file: --grow does not ADD to --hidden, it REPLACES it with the tiny
         // first stage, because a growing run must start small and add capacity mid-training.
-        var withHidden = FruitCakeLab.Parse(new CliArgs(["--hidden", "512,512"]), out _, out _, out _, out _);
+        var withHidden = SuikaLab.Parse(new CliArgs(["--hidden", "512,512"]), out _, out _, out _, out _);
         Assert.Equal([512, 512], withHidden.Hidden);
 
-        var growing = FruitCakeLab.Parse(new CliArgs(["--hidden", "512,512", "--grow"]), out _, out _, out _, out _);
+        var growing = SuikaLab.Parse(new CliArgs(["--hidden", "512,512", "--grow"]), out _, out _, out _, out _);
         Assert.True(growing.Grow);
         Assert.NotEqual([512, 512], growing.Hidden);
     }
 
     [Fact]
-    public void FruitCake_shape_is_reported_separately_from_the_options()
+    public void Suika_shape_is_reported_separately_from_the_options()
     {
         // Shaping applies to the TRAINING env only — eval stays a plain game so A/B judges real merge points.
-        FruitCakeLab.Parse(new CliArgs(["--shape"]), out _, out _, out _, out bool shape);
+        SuikaLab.Parse(new CliArgs(["--shape"]), out _, out _, out _, out bool shape);
 
         Assert.True(shape);
     }

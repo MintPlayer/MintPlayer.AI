@@ -233,7 +233,7 @@ trustworthy. §2's claim is confirmed and then some — the nine solvers enter a
 93.9% covered**, i.e. they were depressing the number purely by being invisible.
 
 Per-solver, and this is actionable on its own: `blockdude` 99.4%, `crazyfruits` 99.2%, `lunarlockout`
-98.9%, `chess` 98.0%, `fruitcake` 97.5%, `tetris` 97.3%, `draughts` 93.2%, **`snake` 75.4%**,
+98.9%, `chess` 98.0%, `suika` 97.5%, `tetris` 97.3%, `draughts` 93.2%, **`snake` 75.4%**,
 **`mountaincar` 58.0%**. The last two are the only `.pg` files worth writing tests against.
 
 **The cost finding: instrumenting the solvers costs 5× wall-clock.** They are the hot path — the
@@ -566,7 +566,7 @@ under `WebApplicationFactory`).
 | # | Target | Unlocks | Refactor cost |
 |---|---|---|---|
 | 1 | `CubeDaviLab.Resolve(args, cfg, …)` + `CubeDaviConfig.Load(dirs, out source)` | ~225 | ~10 lines — two halves of one config contract, test together |
-| 2 | The `Parse` seam ×8 (Chess, Draughts, Snake, FruitCake, BlockDude, Cube, CubePolicy, RushHour, Connect4) | ~600 | ~6 lines each |
+| 2 | The `Parse` seam ×8 (Chess, Draughts, Snake, Suika, BlockDude, Cube, CubePolicy, RushHour, Connect4) | ~600 | ~6 lines each |
 | 3 | `GateLines(...)` in Tetris + CrazyFruits `RunBaselines` | ~60 | ~12 lines |
 | 4 | `private`→`internal` only: `Summarize`, `Emit`/`ExistingLength`, `Envelope`/`CurrentTopology`, `ParsePort`, `RotateLog` | ~50 | **zero** |
 | 5 | `VizServer.SampleOnce(ref string?)` + `internal` ctor | ~30 | ~10 lines |
@@ -600,8 +600,8 @@ over with `Assert.NotNull` smoke tests** — the owner wants the number to mean 
 
 1. **`Std` uses the population divisor `N`**, then the caller computes `SE = Std/√N`, understating
    the standard error (should be the sample SD, `N−1`). It feeds the "SIGNIFICANTLY BETTER → ship
-   it" verdict in `FruitCakeAb`. Duplicated **verbatim** in `FruitCakeAb.cs` and
-   `FruitCakeSearchEval.cs` — dedupe into `EvalStats` and fix once.
+   it" verdict in `SuikaAb`. Duplicated **verbatim** in `SuikaAb.cs` and
+   `SuikaSearchEval.cs` — dedupe into `EvalStats` and fix once.
 2. **`CliArgs.Value` has no `StartsWith("--")` guard** — `--data --seed 7` makes `Str("--data")`
    return `"--seed"`, and `Has("--grow")` is true when `--grow` appears as a *value*.
 3. **`CampaignCli`: `headerWritten = File.Exists(csvPath)`** treats a zero-byte file as
@@ -854,7 +854,7 @@ minute it costs.
 - **`CubeImitationCampaign.Evaluate`** (most of its remaining 79): an untrained net fails every greedy
   rollout, so each of 160 eval episodes pays a full 2,000-expansion A* at 11 net forwards per
   expansion. Needs eval budgets on the options record before it is affordable.
-- **`BlockDudeLevelBench` (136), `FruitCakeSearchEval` (75), `FruitCakeAb`, `BlockDudeValueCalibration`**:
+- **`BlockDudeLevelBench` (136), `SuikaSearchEval` (75), `SuikaAb`, `BlockDudeValueCalibration`**:
   §12.4's deliberate exclusions — they play real episodes or load checkpoints.
 - **`VizServer`'s socket lifecycle**: never bind a port; it would collide with the owner's own `--viz`.
 - **The 14 Canvas/Three.js/WebSocket renderers and 15 Angular components** (~8,200 TS lines): see §15.2.
@@ -922,7 +922,7 @@ M66 puts it back, and it works.
 | `chess_solver.pg` | 499/509 | 499/509 |
 | `crazyfruits_solver.pg` | 617/622 | 617/622 |
 | `draughts_solver.pg` | 385/413 | 385/413 |
-| `fruitcake_solver.pg` | 315/322 | **317/322** |
+| `suika_solver.pg` | 315/322 | **317/322** |
 | `lunarlockout_solver.pg` | 177/179 | 177/179 |
 | `mountaincar_solver.pg` | 40/69 | **69/69** |
 | `snake_solver.pg` | 374/496 | **493/496** |
@@ -953,7 +953,7 @@ info for, in all nine solvers:
 | chess | 926 | 548 | 548 | 548 | 0 | 0 |
 | crazyfruits | 1104 | 657 | 657 | 657 | 0 | 0 |
 | draughts | 754 | 445 | 445 | 445 | 0 | 0 |
-| fruitcake | 624 | 341 | 341 | 341 | 0 | 0 |
+| suika | 624 | 341 | 341 | 341 | 0 | 0 |
 | lunarlockout | 342 | 190 | 190 | 190 | 0 | 0 |
 | mountaincar | 153 | 74 | 74 | 74 | 0 | 0 |
 | snake | 831 | 516 | 516 | 516 | 0 | 0 |
@@ -994,7 +994,7 @@ than incidental (`plugins/csharp/polyglot-plugin.json` declares
 
 The TypeScript marker matters for a reason a glob would get wrong: `mountaincar_solver.spec.ts` is a
 **hand-written, git-tracked test** that any naive `*_solver*.ts` pattern swallows. The sidecar test
-excludes it. (`docs/prd/polyglot-pilot/fruitcake_solver.pg` is a similar decoy on the source side — a
+excludes it. (`docs/prd/polyglot-pilot/suika_solver.pg` is a similar decoy on the source side — a
 tracked documentation copy that generates nothing and is absent from `pgconfig.json`.)
 
 ### 16.3 A third target would be invisible today
@@ -1073,7 +1073,7 @@ The percentage is the least interesting part of this. The 137 lines are not scat
   library. A transposed weight index or a tanh applied to the output layer would have shipped silently.
 
 Two smaller ones: tetris's human-play micro-move locking and top-out (training only uses the macro
-`applyPlacement`), and fruitcake's angular-velocity integration (training constructs the world with
+`applyPlacement`), and suika's angular-velocity integration (training constructs the world with
 rotation off; all three browser call sites construct it on).
 
 ### 16.7 What is deliberately NOT covered, and one thing to delete instead
@@ -1321,7 +1321,7 @@ from the code; none needed a product call.
 | `setPruning`'s asymmetric `unchecked` | `unchecked` on both halves | The odd branch (`0x0f \| (value << 4)`) exceeds `sbyte` for `value >= 8`. It compiles only because the project does not enable `<CheckForOverflowUnderflow>` — so the two halves behave differently the moment anything does. |
 | `Tools.randomCube` unseeded | added a `Random`-taking **overload** | Changing the existing signature would be breaking. An overload gives reproducibility to a test or benchmark that needs the same scramble twice, without touching callers. |
 | `SnakeGame` with `size < 3` | throws `RangeError` | `reset()` seeds a three-cell snake by walking the head column down by two, so a narrower board yields negative cells and a body longer than the board — a corrupt game, not an error. Measured: `snake.ts` clamps to `MIN_SIZE = 6`, so this is unreachable from the UI and the guard covers direct construction only. |
-| dueling-Q readers accept any version | validate `1..2` | **The least cosmetic of the six.** v2 added the `noisy` flag byte immediately after the header, so a reader that treats an unknown version as v1 does **not** fail — it shifts every subsequent float by one byte and returns a net of plausible-looking garbage. Shipped checkpoints measured as v1 (`snake-net.ckpt`) and v2 (crazyfruits, fruitcake, tetris), so the range rejects nothing that exists. |
+| dueling-Q readers accept any version | validate `1..2` | **The least cosmetic of the six.** v2 added the `noisy` flag byte immediately after the header, so a reader that treats an unknown version as v1 does **not** fail — it shifts every subsequent float by one byte and returns a net of plausible-looking garbage. Shipped checkpoints measured as v1 (`snake-net.ckpt`) and v2 (crazyfruits, suika, tetris), so the range rejects nothing that exists. |
 
 Tests added for the two with observable behaviour (the snake guard, the version rejection). The rest are
 deletions or internal.
@@ -1418,7 +1418,7 @@ whole block is estimated under 10 seconds** against a ~2m suite.
 | 5 | `PolicyGrowth.Maybe` | **13** | **see §19.6** |
 | 6 | `TetrisDqnCampaign.AdaptWarmNet` | **8** | warm-start width rule + the `InvalidOperationException` |
 | 7 | `CrazyFruits.DenseTargetsFromObservation` | **7** | needs `private`→`internal`; the Tetris twin is already `internal` and tested |
-| 8 | `FruitCakeDqnCampaign.AdaptWarmNet` | **5** | noisy promotion + grow-input |
+| 8 | `SuikaDqnCampaign.AdaptWarmNet` | **5** | noisy promotion + grow-input |
 | 9 | `SelectGpus` ordinal parsing | **5** | needs a small pure extraction |
 | 11 | `ConvNetBuilder` save/load | **2** | |
 | 12 | Block Dude ×2 in `CpuCampaigns_Resolve` | **2** | ceremony-adjacent |
@@ -1529,7 +1529,7 @@ tests are
 |---|---|---|
 | `BlockDudeGateBoardLabellingTests.EveryGateBoardIsOneTheExactOracleCanFullyLabel` | **2 m 9 s** | no |
 | `BlockDudeDeadEndTests.ASubstantialShareOfReachableStatesIsUnwinnable...` | 1 m 32 s | no |
-| `PolyglotNetParityTests.CoreSearch_MatchesCsFruitCakeSearch_SameColumn` | 1 m 3 s | no |
+| `PolyglotNetParityTests.CoreSearch_MatchesCsSuikaSearch_SameColumn` | 1 m 3 s | no |
 
 The whole bucket finishes in 134 s while its slowest member takes 129 s. **96% of the wall clock is one
 test**, and xUnit runs the other ~1129 alongside it. So the operative question for B2/B4 is *not* "how
@@ -1560,7 +1560,7 @@ of the coverage decisions in §19.7 should have been weighed against a seconds-a
 ### 19.10 Two stale comments found on the way
 
 - `CampaignContractTests.cs:14` still says "Marked Slow" but the file has **no `[Trait]` at all** (M64.1
-  stripped them). That comment is why the RushHour and FruitCake `TrainChunk`s *look* untested when they
+  stripped them). That comment is why the RushHour and Suika `TrainChunk`s *look* untested when they
   are in the measured bucket.
 - `ModelServiceInfrastructureTests.cs:387` states the superseded ILGPU reason as fact (§19.2).
 - `CAMPAIGN_TESTABILITY_PRD.md` §M64.5 is still marked ✅ at `:226` for `PolicyGrowth.Maybe` (item at

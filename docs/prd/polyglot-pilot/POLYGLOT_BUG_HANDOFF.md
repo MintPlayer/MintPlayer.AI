@@ -1,9 +1,9 @@
 # Handoff → MintPlayer.Polyglot: null-coalescing precedence bug (dropped parentheses)
 
 **For:** a session working in `C:\Repos\MintPlayer.Polyglot`.
-**From:** the MintPlayer.AI FruitCake single-source pilot (PG0, see `POLYGLOT_FRUITCAKE_PRD.md` / `REPRO.md`).
+**From:** the MintPlayer.AI Suika single-source pilot (PG0, see `POLYGLOT_SUIKA_PRD.md` / `REPRO.md`).
 **Severity:** high — silently wrong output on **both** targets, and **cross-target divergent** (C# vs TS differ), which
-defeats the whole byte-identical promise. It makes the real FruitCake solver produce **NaN in every body in TS**.
+defeats the whole byte-identical promise. It makes the real Suika solver produce **NaN in every body in TS**.
 **Version:** MintPlayer.Polyglot **0.1.0** (CLI bundled at `~/.nuget/packages/mintplayer.polyglot.msbuild/0.1.0/tools/win-x64/polyglot.exe`), Node v24, .NET 10.
 
 ---
@@ -61,10 +61,10 @@ Both are wrong (should be `5.0`); worse, they **disagree** (`0.0` vs `NaN`).
 - **Suggested regression coverage:** `a + (x ?? y)`, `(a ?? b) * c`, `a - (b ?? c)`, `a && (b ?? c)`, ternary/`??`
   mixes, and `?.` chains under arithmetic (the `?.`→`undefined`/`null` split is what turns this into NaN-vs-0).
 
-## 6. Why the existing FruitCake conformance sample didn't catch it (gate soundness)
-`FruitCakeWorld.correctPosition` in the north-star sample has the **same** line
+## 6. Why the existing Suika conformance sample didn't catch it (gate soundness)
+`SuikaWorld.correctPosition` in the north-star sample has the **same** line
 (`invSum = a.invMass + (b?.invMass ?? 0.0)`), so the sample's generated TS is very likely **also latently NaN**, yet
-`fruitcake_sketch.pg` passes the conformance gate. The gate compares **integer/string stdout only**, and the sample's
+`suika_sketch.pg` passes the conformance gate. The gate compares **integer/string stdout only**, and the sample's
 short scripted cascade happens to yield matching integer output despite the underlying float state diverging (in the
 MintPlayer.AI port, C# and TS integer outputs match for 6 scripted drops, then diverge on the 7th). **Recommendation:**
 strengthen the gate for numeric programs — e.g. assert "no NaN/Inf in final state" and/or a scaled-integer checksum of
@@ -80,7 +80,7 @@ mkdir -p out && "$CLI" build precedence_null_coalesce.pg --out out    # CLI does
 
 ## 8. Minor v0.1.0 rough edges seen during the pilot (not blocking, FYI)
 - `f32` requires an explicit `(f32)` cast on **every** float literal (`16.0` is `f64`) — impractical for a numeric
-  file; the FruitCake port uses `f64`.
+  file; the Suika port uses `f64`.
 - `i64` return lowers to TS `BigInt(Math.trunc(x))`, which **throws** on `NaN`/`Infinity` input.
 - The CLI `build --out <dir>` does not create `<dir>` (errors "cannot write") — must `mkdir` first.
 - Generated top-level C# types are `internal` (known P11 limit) — cross-assembly consumers need a facade / public

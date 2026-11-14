@@ -2,40 +2,40 @@
 
 **Status:** Planned · 2026-07-12 · branch TBD (off the M39 branch / `master`)
 **Owner:** Pieterjan
-**Milestone:** [PLAN.md](PLAN.md) M40 · **Depends on:** M39 (the chess engine, the self-play-trained `PolicyValueNet`, the `.ckpt` format) and the MintPlayer.Polyglot single-source toolchain already used by FruitCake ([../ARCHITECTURE.md](../ARCHITECTURE.md) §10; `Environments/FruitCake/polyglot/`).
+**Milestone:** [PLAN.md](PLAN.md) M40 · **Depends on:** M39 (the chess engine, the self-play-trained `PolicyValueNet`, the `.ckpt` format) and the MintPlayer.Polyglot single-source toolchain already used by Suika ([../ARCHITECTURE.md](../ARCHITECTURE.md) §10; `Environments/Suika/polyglot/`).
 
 ## 1. Problem
 
-You can *watch* a game the chess AI played (a replay), but you can't *play against it in the browser* — there's no web chess page, and the AI is C# (net + MCTS), so a static page can't run it. The wrong fix is a server `ChessController` that runs MCTS per move (server inference, per-viewer CPU — the exact thing M32/M33 removed for FruitCake/Snake). The **right** fix is the pattern MintPlayer.Polyglot exists for and FruitCake already proves: **write the inference path once in a `.pg`, transpile to C# (training/serving) and TypeScript (browser), and run the whole AI client-side, with the browser downloading and parsing the `.ckpt`.** Zero server inference.
+You can *watch* a game the chess AI played (a replay), but you can't *play against it in the browser* — there's no web chess page, and the AI is C# (net + MCTS), so a static page can't run it. The wrong fix is a server `ChessController` that runs MCTS per move (server inference, per-viewer CPU — the exact thing M32/M33 removed for Suika/Snake). The **right** fix is the pattern MintPlayer.Polyglot exists for and Suika already proves: **write the inference path once in a `.pg`, transpile to C# (training/serving) and TypeScript (browser), and run the whole AI client-side, with the browser downloading and parsing the `.ckpt`.** Zero server inference.
 
 ## 2. Feasibility — verified
 
 The open question was whether chess's inference math and move-gen fit Polyglot's subset. Probed by transpiling (2026-07-12):
 
-- **`Math.exp`, `Math.tanh`, `Math.log`, `Math.sqrt` all transpile** (with `import { Math } from "std.math"`) — so MCTS's masked-softmax priors, the `tanh` value head, and the PUCT `sqrt` term are all expressible. (FruitCake avoided transcendentals because its physics must be *bit-exact* across C#/JS; only `+ - * / sqrt` are. **Chess inference does not need bit-exactness** — the browser AI just needs to play well, not match C# to the ULP — so non-bit-exact `exp`/`tanh` are fine here.)
+- **`Math.exp`, `Math.tanh`, `Math.log`, `Math.sqrt` all transpile** (with `import { Math } from "std.math"`) — so MCTS's masked-softmax priors, the `tanh` value head, and the PUCT `sqrt` term are all expressible. (Suika avoided transcendentals because its physics must be *bit-exact* across C#/JS; only `+ - * / sqrt` are. **Chess inference does not need bit-exactness** — the browser AI just needs to play well, not match C# to the ULP — so non-bit-exact `exp`/`tanh` are fine here.)
 - **Bitwise operators `& | << >>` transpile** — castling-rights flags and any bit tricks work (booleans are also an option).
-- **Polyglot itself is extendable if a gap appears.** The language/toolchain lives at `C:\Repos\MintPlayer.Polyglot`; a missing feature (e.g. a `match`/`switch`, an enum, a Math function) can be added there and PR'd. The known limits to design around (from the FruitCake solver): **no nested-generic params** (`List<List<f64>>` is mishandled — use flat `List<f64>` + offsets, as `PgDuelingNet` does), and prefer `i32` constants + `if/else` over enums/`switch` unless we add them upstream.
+- **Polyglot itself is extendable if a gap appears.** The language/toolchain lives at `C:\Repos\MintPlayer.Polyglot`; a missing feature (e.g. a `match`/`switch`, an enum, a Math function) can be added there and PR'd. The known limits to design around (from the Suika solver): **no nested-generic params** (`List<List<f64>>` is mishandled — use flat `List<f64>` + offsets, as `PgDuelingNet` does), and prefer `i32` constants + `if/else` over enums/`switch` unless we add them upstream.
 
 **Conclusion:** the chess engine + observation + net forward + MCTS can be single-sourced to `chess_solver.pg` and run client-side. This is a build, not a research risk.
 
 ## 3. Goal & success criteria
 
 - **Play a full game against the self-taught AI in the browser** — an interactive board (you're White; click/drag to move, legal moves highlighted), the AI (Black) replies from a `.pg`-single-sourced net + MCTS running **in your browser**, over the shipped `.ckpt` it downloads. No server move computation.
-- **Single source.** The chess **engine** (legal move-gen, apply, terminal, move encoding), the **observation**, the **net forward**, and the **MCTS** live once in `chess_solver.pg`, transpiled to C# (compiled into the Environments assembly, like FruitCake) and to committed TypeScript for the web client. A parity test pins the C# facade to the generated core; **perft still passes 25/25 against the generated engine** (the M39.2 gate carries over onto the single source).
-- **Zero server inference / load-only web app.** The web app only serves the `.ckpt` (static file, `application/octet-stream` mapping like the FruitCake net) and the SPA. Per-viewer server cost is zero — consistent with M32/M33.
+- **Single source.** The chess **engine** (legal move-gen, apply, terminal, move encoding), the **observation**, the **net forward**, and the **MCTS** live once in `chess_solver.pg`, transpiled to C# (compiled into the Environments assembly, like Suika) and to committed TypeScript for the web client. A parity test pins the C# facade to the generated core; **perft still passes 25/25 against the generated engine** (the M39.2 gate carries over onto the single source).
+- **Zero server inference / load-only web app.** The web app only serves the `.ckpt` (static file, `application/octet-stream` mapping like the Suika net) and the SPA. Per-viewer server cost is zero — consistent with M32/M33.
 - **Honest scope.** It's the M39 network — a small MLP, briefly CPU-trained — so it plays *legal, still-learning* chess, beatable by a decent human. Browser MCTS is tuned (modest sims) for interactive latency (~1–2 s/move).
-- **Training unchanged.** Training stays on the SDK (autograd/GEMM); the `.pg` is **inference + rules** only. The engine (generated C#) is shared by training's self-play; the net *forward* in the `.pg` is inference-only (training learns the weights via autograd, exactly as FruitCake).
+- **Training unchanged.** Training stays on the SDK (autograd/GEMM); the `.pg` is **inference + rules** only. The engine (generated C#) is shared by training's self-play; the net *forward* in the `.pg` is inference-only (training learns the weights via autograd, exactly as Suika).
 
 **Non-goals.** Engine strength; a server chess endpoint; bit-exact C#/JS transcendentals (not needed — this isn't a shared fairness sim); underpromotion-free or reduced rules (the engine is already full + perft-verified); training in the browser.
 
-## 4. Design — follow the FruitCake pattern
+## 4. Design — follow the Suika pattern
 
 | Piece | Where | Note |
 |---|---|---|
 | `chess_solver.pg` | `Environments/Chess/polyglot/` | **single source:** the engine (a `Pg`-prefixed board + `legalMoves`/`apply`/`result`/`isAttacked`), `writeObservation`, `PgPolicyValueNet.forward` (flat-array trunk + policy/value heads, `tanh` value), the 4672 `encode`/`decode`, and a chess `mcts` (PUCT, masked-softmax priors, `sqrt` exploration, **no Dirichlet** — inference only). Transpiled to C# (`obj/`, build-time) + committed `chess_solver.ts`. |
 | C# facade | `Environments/Chess/ChessGame.cs` (rewired) | Wraps the generated `Pg` engine as `IZeroSumGame<TState>` (float/host view), so M39's `SelfPlayCampaign`/`ChessGame` keep working on the single source. Replaces the hand-written `ChessBoard.cs` engine internals; **perft tests re-point at the generated core**. |
-| TS `.ckpt` parser | `ClientApp/src/app/chess/chess-net.ts` | Mirrors the C# `PolicyValueNet` reader (magic `RLNC`, kind `selfplay-pv`, v2 trunk-widths, params in `Parameters()` order) → builds the generated `PgPolicyValueNet`. The one non-Polyglot piece (binary I/O), exactly like `fruitcake-net.ts`. |
-| Chess director | `ClientApp/src/app/chess/chess-director.ts` | Runs the transpiled `mcts` + net over the loaded `.ckpt` to pick the AI's reply — the analog of `fruit-cake-director.ts`. |
+| TS `.ckpt` parser | `ClientApp/src/app/chess/chess-net.ts` | Mirrors the C# `PolicyValueNet` reader (magic `RLNC`, kind `selfplay-pv`, v2 trunk-widths, params in `Parameters()` order) → builds the generated `PgPolicyValueNet`. The one non-Polyglot piece (binary I/O), exactly like `suika-net.ts`. |
+| Chess director | `ClientApp/src/app/chess/chess-director.ts` | Runs the transpiled `mcts` + net over the loaded `.ckpt` to pick the AI's reply — the analog of `suika-director.ts`. |
 | Angular page | `ClientApp/src/app/chess/` + route/nav | Interactive board (unicode glyphs or simple SVG), human move input validated by the transpiled `legalMoves`, AI reply from the director, status (check/mate/draw), last-move highlight. |
 | Shipped weights | `wwwroot/models/chess.az.ckpt` (LFS) + the `.ckpt` MIME mapping | Fetched by the browser; the checkpoint the director loads. |
 
@@ -47,8 +47,8 @@ The open question was whether chess's inference math and move-gen fit Polyglot's
 
 ## 6. Risks
 
-1. **Browser MCTS performance.** Chess move-gen per node is heavier than FruitCake's depth-3 search; hundreds of sims/move in transpiled TS may be slow. Mitigation: modest inference sims (100–300), a ply/time budget, and profile — it's a latency knob, not a correctness one. (Batched-leaf / WASM are later levers.)
-2. **Polyglot language gaps.** The port may want a `switch`/`match`, enums, or a Math function not yet in `std.math`. Mitigation: design around them (i32 consts + `if/else`, flat arrays — proven by FruitCake) **or add them to `C:\Repos\MintPlayer.Polyglot` and PR** (now an available option). No nested-generic params.
+1. **Browser MCTS performance.** Chess move-gen per node is heavier than Suika's depth-3 search; hundreds of sims/move in transpiled TS may be slow. Mitigation: modest inference sims (100–300), a ply/time budget, and profile — it's a latency knob, not a correctness one. (Batched-leaf / WASM are later levers.)
+2. **Polyglot language gaps.** The port may want a `switch`/`match`, enums, or a Math function not yet in `std.math`. Mitigation: design around them (i32 consts + `if/else`, flat arrays — proven by Suika) **or add them to `C:\Repos\MintPlayer.Polyglot` and PR** (now an available option). No nested-generic params.
 3. **Re-validating the engine after the port.** Rewriting a perft-verified engine in another language risks a subtle regression. Mitigation: perft (25/25) + the encoding round-trip run against the *generated* engine as the M40.1 gate; a facade-vs-core parity test.
 4. **Honest strength.** Still a small, briefly-trained net → beatable. Framed as a from-scratch, self-taught, learning AI (the charm), not an engine.
 
@@ -89,7 +89,7 @@ The chess self-play stack is **done and committed**; M40 builds on it. Key artif
 ### 8b. Model-store ids / checkpoint (what the browser must parse)
 `SelfPlayCampaign` saves to store `(env, algo)`: net = `("chess","az")` written `PolicyValueNet.Save(stream, kind:"selfplay-pv")`;
 Adam = `("chess","az-adam")`. File on disk: `<data>/chess.az.ckpt`. **The TS `.ckpt` parser (chess-net.ts) reads
-(little-endian, mirroring `CheckpointFormat` + `PolicyValueNet.Save`; see `fruitcake-net.ts` for the exact idiom):**
+(little-endian, mirroring `CheckpointFormat` + `PolicyValueNet.Save`; see `suika-net.ts` for the exact idiom):**
 ```
 uint32 magic  = 0x434E4C52 ("RLNC")
 string kind   = "selfplay-pv"   (BinaryWriter 7-bit-encoded-int length prefix + UTF-8 bytes)
@@ -116,19 +116,19 @@ dotnet run -c Release --project tools/…Lab -- --game chess --demo --sims 400 -
 #     build <file>.pg --target typescript --out <dir>   (and --target csharp)
 ```
 
-### 8d. Polyglot facts (from the FruitCake precedent — `Environments/FruitCake/polyglot/`)
-- Source: `fruitcake_solver.pg` (single source) → C# in `obj/` (build-time, MSBuild PackageReference
-  `MintPlayer.Polyglot.MSBuild` v0.3.1, `PrivateAssets=all`) + committed TS `fruitcake_solver.ts`. macOS dev must
+### 8d. Polyglot facts (from the Suika precedent — `Environments/Suika/polyglot/`)
+- Source: `suika_solver.pg` (single source) → C# in `obj/` (build-time, MSBuild PackageReference
+  `MintPlayer.Polyglot.MSBuild` v0.3.1, `PrivateAssets=all`) + committed TS `suika_solver.ts`. macOS dev must
   point `$(PolyglotTool)` at a local `polyglot` binary. `dotnet watch` re-transpiles on save.
 - Syntax: `import { List } from "std.collections"`, `import { Math } from "std.math"`; `record X(f: t)`; `class X { var f: t; constructor(...) {...}; fn m(...): t {...} }` *(was `init(...)` before the 0.9.9 migration, 2026-08-30)*; `fn f(a: i32): t => expr`; `for i in 0..n`, `for v in list`;
   types `f64 i32 bool List<T> T?`; `Math.min/max/sqrt/exp/tanh/log/PI`. Generated C# types are `Pg`-prefixed + internal,
-  wrapped by a hand-written **facade** (`FruitCakeWorld.cs`); a **parity test** pins facade↔core.
+  wrapped by a hand-written **facade** (`SuikaWorld.cs`); a **parity test** pins facade↔core.
 - **Constraints:** no nested-generic params (`List<List<f64>>` mishandled → flat `List<f64>` + offsets, see
   `PgDuelingNet`); prefer `i32` consts + `if/else` over enums/`switch`. If blocked, extend Polyglot at
   `C:\Repos\MintPlayer.Polyglot` and PR (owner-authorized 2026-07-12).
 - Browser wiring (analogs to build): `chess-net.ts` (`.ckpt` parser → `PgPolicyValueNet`), `chess-director.ts`
   (runs transpiled mcts+net), the Angular `chess/` component + route; ship `wwwroot/models/chess.az.ckpt` (LFS) + the
-  `.ckpt`→`application/octet-stream` static-file mapping in `Program.cs` (see how FruitCake's net is served).
+  `.ckpt`→`application/octet-stream` static-file mapping in `Program.cs` (see how Suika's net is served).
 
 ### 8e. Status of the "watch" demo (already delivered)
 A browser **replay** artifact of one AI game exists (published via the Artifact tool from `--game chess --demo`

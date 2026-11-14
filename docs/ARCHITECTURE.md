@@ -7,7 +7,7 @@ from-scratch C# reinforcement-learning library. It complements the other docs ra
 - **[prd/PLAN.md](prd/PLAN.md)** — the milestone roadmap (what was built when, and why).
 - **[OPTIMIZATIONS.md](OPTIMIZATIONS.md)** — the performance/capability ledger (CPU & GPU compute, residency, training efficiency — done and not-pursued, with rationale).
 - **[ADDING_A_GAME.md](ADDING_A_GAME.md)** — the end-to-end checklist for adding one new game (env → service → controller → DI → frontend).
-- Feature/game PRDs under **[prd/](prd/)** (FruitCake, NoisyNets, …) — the *why* and history behind specific subsystems.
+- Feature/game PRDs under **[prd/](prd/)** (Suika, NoisyNets, …) — the *why* and history behind specific subsystems.
 
 This file is the **code map**: the subsystems, the checkpoint/file formats, the wire protocol, and "where to change things" for common tasks.
 
@@ -43,7 +43,7 @@ MintPlayer.AI.ReinforcementLearning.sln
 │   ├── …Core/             Tensors + tape autograd, Adam, NN modules, compute-backend seam,
 │   │                      seeded RNG, agents, trainers, planning, checkpoints, model store.   [SDK]
 │   ├── …Environments/     The games: GridWorld, FrozenLake, CartPole, MountainCar, Snake,
-│   │                      2048, RushHour, RubiksCube, FruitCake (+ inference search helpers). [SDK]
+│   │                      2048, RushHour, RubiksCube, Suika (+ inference search helpers). [SDK]
 │   ├── …Campaigns/        The ITrainingCampaign implementations (self-play, DQN-score, imitation,
 │   │                      DAVI) + shared training plumbing, per-game subfolders (PLAN M46.1).
 │   ├── …Hosting/          AIHost.CreateBuilder + DI (IModelStore, TimeProvider, CampaignRunner). [SDK]
@@ -135,7 +135,7 @@ them is the classic silent DQN bug.
 | CartPole | 4 | 2 | Bit-exact Gymnasium port. |
 | MountainCar | 2 | 3 | Momentum-building control. |
 | Snake | 177 | 4 | Egocentric 9×9 patch + scalars + **flood-fill** free-cell reachability (anti-self-trap). |
-| FruitCake | 89 | 14 | Suika merge physics (**single-source solver** — one `.pg` → C# + TS, see §10); reward shaping (training-only); big-fruit position inputs; see below. |
+| Suika | 89 | 14 | Suika merge physics (**single-source solver** — one `.pg` → C# + TS, see §10); reward shaping (training-only); big-fruit position inputs; see below. |
 | CrazyFruits | 448 | 112 | Match-3 (M49): 6 one-hot fruit planes + would-match plane; **hard mask = match-producing swaps only**; deadlock reshuffles in-engine (mask never all-false); single-source `.pg` engine incl. the scripted random/greedy/expectimax-1 tiers. |
 | Tetris | 854 | 40 | **Afterstate macro-actions** (M54): action = rot·10+col hard drop; obs = 200 board bits + piece one-hots + **sixteen** 40-wide per-action planes (M57.1 widened the M54 Dellacherie basis from six; planes 0-5 are still that basis); **the mask CAN go all-false = top-out = terminated** (unlike every other game); full NES rules (levels, ×(level+1) scoring, gravity curve) + a rising-garbage mode (per-cell garbage identity masks); single-source `.pg` engine incl. random/Dellacherie/della-search/net/net-search tiers; trained with **dense all-action regression** toward the widened evaluator at **γ=0.995**; the resume state says **n-step 1**, not the 3 the PRD and the Lab default claim (M62.4 — the recipe survives only inside the checkpoint, which is why `LabHost` now writes `<dataDir>/invocation.txt`). **M62 adds a reachability layer:** the tap budget (DAS 6 / hypertap 5 / rolling 3 frames per shift) decides what is LEGAL, not merely attractive — `simulateReach` walks the piece down against the real stack and returns both legality and the **input timeline the browser pilot replays**, so the placement you watch is the one the AI chose. Opt-in via `setReachEnforced`, so the default path and the parity checksum are untouched. **Known gap:** the evaluator tetrises but the net does not (exact argmax 18–51% tetris-rate, distilled net ~3%), and the retrain is blocked until the training recipe is re-measured. |
 | 2048 | 16 | 4 | Log-scaled tiles; action masking. |
@@ -148,9 +148,9 @@ them is the classic silent DQN bug.
 **The static `BuildObservation` pattern.** Observation construction is a *static* method so the live
 serving path feeds the net the **byte-identical** observation the policy trained on. When you change an
 observation, you change it in exactly one place and bump the net's input width (the model-load guard rejects
-a stale-width checkpoint). **FruitCake goes further (M32):** its `BuildObservation` — plus the net forward
-pass and the depth-3 search — are single-sourced in `fruitcake_solver.pg` (see §10), so the *same* code runs
-in C# and, transpiled, in the browser. `FruitCakeEnv.BuildObservation` is now a thin delegate to the
+a stale-width checkpoint). **Suika goes further (M32):** its `BuildObservation` — plus the net forward
+pass and the depth-3 search — are single-sourced in `suika_solver.pg` (see §10), so the *same* code runs
+in C# and, transpiled, in the browser. `SuikaEnv.BuildObservation` is now a thin delegate to the
 generated core.
 
 ---
@@ -173,7 +173,7 @@ learned value net lives in `Core/Planning`; inference-time **search** lives next
 | [`Core/Planning/ValueGuidedSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Planning/ValueGuidedSearch.cs), [`GreedyValuePlanner.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Planning/GreedyValuePlanner.cs) | Weighted-A\* / greedy solve over a learned cost-to-go. `SolveBatched` scores a whole round of successors in one forward — **always prefer it**; the per-node `Solve` under-feeds the matrix multiply, and moving Block Dude onto the batched path alone took it 6/15 → 7/15 on the same weights. |
 | [`Core/Planning/PolicyBeamSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Planning/PolicyBeamSearch.cs) | Policy-ranked beam search — **the tier for solutions that are too DEEP for a node budget**. Costs `width × depth` instead of holding a growing frontier, so a 900-move solution is in range where no A\* budget reaches it (Block Dude: 8/15 → **10/15**, adding two levels no other tier solves). Ranked by cumulative log-π alone, which is valid because every candidate sits at the same depth. **Incomplete** — a pruned solution is gone — so it complements the A\* searches rather than replacing them. |
 | [`Core/Planning/PolicyValueSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Planning/PolicyValueSearch.cs) | The same batched search using **both** heads: `f = g + weight·h + policyWeight·surprise`, where surprise is the accumulated −log π of the moves that reached a node. For nets whose policy head is better trained than the value head (imitation / expert iteration), which is the usual case. Reduces exactly to `ValueGuidedSearch.SolveBatched` at `policyWeight = 0`. **The prior biases order, it never prunes** — a hard policy mask can make a solvable problem unsolvable. |
-| [`Environments/FruitCake/FruitCakeSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/FruitCakeSearch.cs) | Depth-1→3 forward search; known current+next maximize, the 3rd ply is an **expectimax chance node** over the unknown fruit. |
+| [`Environments/Suika/SuikaSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/Suika/SuikaSearch.cs) | Depth-1→3 forward search; known current+next maximize, the 3rd ply is an **expectimax chance node** over the unknown fruit. |
 | [`Environments/Game2048/Expectimax2048.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/Game2048/Expectimax2048.cs) | Expectimax over the n-tuple afterstate value (chance node = the random tile spawn). |
 | [`Environments/RubiksCube/CubePolicySearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/CubePolicySearch.cs), [`CubeValueSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/RubiksCube/CubeValueSearch.cs) | Beam / value-guided search over the cube nets. |
 
@@ -213,13 +213,13 @@ targets[i] = (float)(batch.Rewards[i] + bootstrap);   // y = Rₙ + γⁿ·(1−
 ```
 
 ```csharp
-// FruitCakeSearch.cs — search amplifies a (capped) reactive net WITHOUT retraining; leaf value is injected
-public int ChooseColumn(FruitCakeWorld world, int current, int next) { … }   // MaxDepth 1|2|3, TopK / TopK2 pruning
+// SuikaSearch.cs — search amplifies a (capped) reactive net WITHOUT retraining; leaf value is injected
+public int ChooseColumn(SuikaWorld world, int current, int next) { … }   // MaxDepth 1|2|3, TopK / TopK2 pruning
 ```
 
-**Inference search is the headline lever for FruitCake**: the reactive net plateaus (it can't plan), and
+**Inference search is the headline lever for Suika**: the reactive net plateaus (it can't plan), and
 depth-2→3 forward search took watermelon-rate 0% → 30% → 50% with **no retraining** — the net is only the
-search's leaf evaluator. See `prd/FRUITCAKE_IMPROVE_PRD.md`.
+search's leaf evaluator. See `prd/SUIKA_IMPROVE_PRD.md`.
 
 ---
 
@@ -256,7 +256,7 @@ if (version >= 4 && reader.ReadBoolean())
 ```
 
 **Git LFS.** `.gitattributes` has `*.ckpt filter=lfs diff=lfs merge=lfs -text`; shipped nets live in
-`models/` (e.g. `models/fruitcake.dqn.ckpt`) and seed the web app + serve as A/B baselines.
+`models/` (e.g. `models/suika.dqn.ckpt`) and seed the web app + serve as A/B baselines.
 
 ---
 
@@ -267,21 +267,21 @@ browser is a pure renderer with no game timer (this avoids client/server timer r
 `prd/` web-interaction notes). Endpoints accept both **GET (HTTP/1.1 Upgrade)** and **CONNECT (HTTP/2
 Extended CONNECT, RFC 8441)** so the socket works under HTTP/1.1 and HTTP/2.
 
-- **FruitCake (M32) and Snake (M33) no longer use the server at all.** Each game's entire AI — physics,
-  observation, net forward pass, and its planner (FruitCake's depth-3 search; Snake's M34 look-ahead search and
+- **Suika (M32) and Snake (M33) no longer use the server at all.** Each game's entire AI — physics,
+  observation, net forward pass, and its planner (Suika's depth-3 search; Snake's M34 look-ahead search and
   the M48 Hamiltonian safety-cycle mode) — is single-sourced in its `.pg` and runs **in the browser** (a
   `*Director` over the generated TS core + the shipped `wwwroot/models/*.ckpt`). There is **no** controller, no
   `/api/<game>` WebSocket, and no server-side net for either — per-viewer server cost is zero. See §10.
-- **FruitCake's AI runs in a Web Worker, and the worker owns the game (M53).** Its depth-3 search costs 784
+- **Suika's AI runs in a Web Worker, and the worker owns the game (M53).** Its depth-3 search costs 784
   clone+settle rollouts and ~3920 forward passes per drop — 0.97–5.7 s, growing +240 ms per fruit on the
   board. Run inline in the rAF callback that froze the whole tab once per drop. Now
-  `fruit-cake-ai.worker.ts` is the **authority**: it plays think → settle with no animation pacing and
-  streams decided drops (`fruit-cake-ai-protocol.ts`), staying 4 ahead of the viewer, while
-  `FruitCakeDirector` only *replays* them. The replay is exact because both sides run the same
+  `suika-ai.worker.ts` is the **authority**: it plays think → settle with no animation pacing and
+  streams decided drops (`suika-ai-protocol.ts`), staying 4 ahead of the viewer, while
+  `SuikaDirector` only *replays* them. The replay is exact because both sides run the same
   deterministic generated physics — the wire carries `(tier, column, substeps)`, not a trajectory, and
   `substeps` is what keeps the two worlds in lockstep. This is why the search config stays at the full
   `depth 3 / topK 5 / topK2 2`: the worker is what makes keeping it affordable. See
-  `prd/FRUITCAKE_WATCH_AI_STALL_PRD.md`.
+  `prd/SUIKA_WATCH_AI_STALL_PRD.md`.
 - Games that still stream (see the remaining `*Controller`s) follow the pattern below.
 
 ```csharp
@@ -374,9 +374,9 @@ stops early) and **score-maximizing** (eval = mean return; runs to the wall-cloc
 | [`…Hosting/AIHost.cs`](../src/MintPlayer.AI.ReinforcementLearning.Hosting/AIHost.cs) | `AIHost.CreateBuilder(dataDir).Build()` → DI with `IModelStore`, `TimeProvider`, `CampaignRunner`. |
 | [`…Ilgpu.Hosting/`](../src/MintPlayer.AI.ReinforcementLearning.Ilgpu.Hosting/) | `services.AddGpuBackend()` registers `AdaptiveBackend` (opt-in; only large nets benefit). |
 | [`tools/…Lab/Program.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/Program.cs) | `--game <name>` dispatch → per-game Lab. |
-| [`tools/…Lab/FruitCakeLab.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCake/FruitCakeLab.cs) (+ [`…Campaign.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/FruitCake/FruitCakeDqnCampaign.cs)) | Flag parsing + the campaign; flags incl. `--hours`/`--steps`/`--seed`/`--lr`/`--gamma`/`--nstep`/`--shape`/`--noisy`/`--curriculum`/`--ab`/`--search-eval`. |
-| [`tools/…Lab/FruitCakeAb.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCake/FruitCakeAb.cs) | Paired-seed A/B of two nets → mean±SD, paired Δ±SE, verdict. |
-| [`tools/…Lab/FruitCakeSearchEval.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/FruitCake/FruitCakeSearchEval.cs) | Same net, **search vs greedy** on paired seeds → score + max-tier distribution + watermelon count. |
+| [`tools/…Lab/SuikaLab.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/Suika/SuikaLab.cs) (+ [`…Campaign.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/Suika/SuikaDqnCampaign.cs)) | Flag parsing + the campaign; flags incl. `--hours`/`--steps`/`--seed`/`--lr`/`--gamma`/`--nstep`/`--shape`/`--noisy`/`--curriculum`/`--ab`/`--search-eval`. |
+| [`tools/…Lab/SuikaAb.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/Suika/SuikaAb.cs) | Paired-seed A/B of two nets → mean±SD, paired Δ±SE, verdict. |
+| [`tools/…Lab/SuikaSearchEval.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/Suika/SuikaSearchEval.cs) | Same net, **search vs greedy** on paired seeds → score + max-tier distribution + watermelon count. |
 | [`tools/…Lab/CampaignCli.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/CampaignCli.cs) | `ConsoleAndCsv(path)` — the `OnEval` IO bridge (console + CSV). |
 | [`Core/Telemetry/NetworkTelemetry.cs`](../src/MintPlayer.AI.ReinforcementLearning.Core/Telemetry/NetworkTelemetry.cs) | Live-network telemetry seam (**pull** model): `INetworkTelemetrySource` (`NetKind`/`SnapshotParameters()`/`Sample()`) + `NetworkInspector` (describes/snapshots any net from its parameter tensors; bounded ≤24² weight heatmap). Read-only — training stays bitwise-identical. Every campaign implements the source. |
 | [`tools/…Lab/VizServer.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/VizServer.cs) + [`VizLauncher.cs`](../tools/MintPlayer.AI.ReinforcementLearning.Lab/VizLauncher.cs) | `--viz [port]` live viewer: an `HttpListener` on localhost serving one self-contained Canvas 2D page (node-link graph + heatmaps + **beginner hover tooltips**) + a **WebSocket** (`/ws`). Fully async (per-viewer `Channel` + async pump + async sample loop). `VizLauncher` is the shared flag handler, **gated to a Development environment**. Bidirectional-ready for future viewer→trainer controls. |
@@ -384,16 +384,16 @@ stops early) and **score-maximizing** (eval = mean return; runs to the wall-cloc
 ```bash
 # Train (score-maximizing, resumable): writes <data>/<env>.dqn.ckpt (deployable, save-best) + .dqn-state.ckpt (resume)
 dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab -- \
-  --game fruitcake --hours 2 --data ./data --seed 1 --lr 5e-4 --gamma 0.997 --nstep 3 --shape
+  --game suika --hours 2 --data ./data --seed 1 --lr 5e-4 --gamma 0.997 --nstep 3 --shape
 # Resume: rerun the SAME command (auto-resumes from .dqn-state.ckpt; raises the absolute MaxSteps).
 
 # Compare two nets (paired-seed A/B with a statistical verdict)
 dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab -- \
-  --game fruitcake --ab --baseline ./models --data ./candidate --ab-episodes 200
+  --game suika --ab --baseline ./models --data ./candidate --ab-episodes 200
 
 # Search vs greedy on one net (does inference lookahead help?)
 dotnet run -c Release --project tools/MintPlayer.AI.ReinforcementLearning.Lab -- \
-  --game fruitcake --search-eval --data ./data --depth 3 --topk 5 --topk2 2
+  --game suika --search-eval --data ./data --depth 3 --topk 5 --topk2 2
 ```
 
 **Grow the net mid-training (M37).** Function-preserving growth (Net2WiderNet/Net2DeeperNet) is factored into
@@ -411,7 +411,7 @@ in `DqnGrowth.Stages`; operators in `Net2Net`.
 each part. It's a **pull** model: each campaign implements `INetworkTelemetrySource`, and `VizServer`'s async sample
 loop reads `SnapshotParameters()`/`Sample()` on a cadence. A source may also expose `InputLabels`/`OutputLabels` +
 `SampleIo()` + `SampleActivations()` (default null) to name each neuron and stream its live value. Labels live on the
-envs (`SnakeEnv`, `FruitCakeEnv`, `RubiksCubeEnv`, `RushHourBoard`); every neuron — input, hidden (each net exposes
+envs (`SnakeEnv`, `SuikaEnv`, `RubiksCubeEnv`, `RushHourBoard`); every neuron — input, hidden (each net exposes
 `LayerActivations`), and output — shows a live value. The DQN games forward their actual `CurrentObs`; the
 batch-trained nets (Cube/Rush Hour/DAVI) forward a fixed probe state (see `CubeViz`). The viewer attaches output
 labels to the column matching their count (an action head can precede a value head) and draws labeled columns in full. Reading the parameter `float[]`s never mutates anything, so
@@ -430,7 +430,7 @@ Re-running continues bitwise-identically. The cube's self-taught DAVI campaign h
 ## 9. Game solving stacks — deep dives
 
 Beyond the high-level trainer/search map (§4), three games have substantial multi-stage solving pipelines
-worth their own walkthrough. (FruitCake's is in §4 + §6; CartPole / MountainCar / Snake are single-net.)
+worth their own walkthrough. (Suika's is in §4 + §6; CartPole / MountainCar / Snake are single-net.)
 
 ### Rubik's Cube solving stack
 
@@ -490,7 +490,7 @@ the reasons are measured rather than guessed (`WEBGAMES_RETIREMENT_PRD.md` §8.4
 | [`BlockDudeExpertIterationCampaign.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/BlockDude/BlockDudeExpertIterationCampaign.cs) + [`BlockDudeDemonstrations.cs`](../src/MintPlayer.AI.ReinforcementLearning.Campaigns/BlockDude/BlockDudeDemonstrations.cs) | **Phase 2**: expert iteration on the SHIPPED levels via a reverse curriculum over the human solutions. `--phase 2`, ids `policy-xit*`. |
 | [`BlockDudeSearch.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/BlockDude/BlockDudeSearch.cs) | Net-guided search over `Core.Planning`, batched. `Solve` = value head as the heuristic; `SolveWithPolicy` = value head **plus** the policy head as a prior; `SolveByBeam` = the long-level tier; `ZeroHeuristic` / `UniformPriors` = the controls, without which "solves N/15" cannot be attributed to the net at all. **In Environments, not Campaigns** — inference lives next to the net (as for Cube and Rush Hour) so the load-only web app can use it without referencing the training assembly. |
 | [`BlockDudeGreedy.cs`](../src/MintPlayer.AI.ReinforcementLearning.Environments/BlockDude/BlockDudeGreedy.cs) | Policy-alone rollout — **the shipped tier**: the net solves all 15 levels this way, one forward pass per move. `recordMoves` returns the line played (off by default; the gate runs thousands of rollouts and needs only the verdict). |
-| [`RLDemo.Web/Services/BlockDudeModelService.cs`](../src/RLDemo.Web/Services/BlockDudeModelService.cs) + [`Controllers/BlockDudeController.cs`](../src/RLDemo.Web/Controllers/BlockDudeController.cs) | `POST /api/blockdude/solve` — the game page's "Watch AI". Greedy first, beam only as a fallback. Server-side (unlike FruitCake's in-browser net) because the checkpoint is 16 MB. Takes a GRID, not a level name, so a new level needs no server change. |
+| [`RLDemo.Web/Services/BlockDudeModelService.cs`](../src/RLDemo.Web/Services/BlockDudeModelService.cs) + [`Controllers/BlockDudeController.cs`](../src/RLDemo.Web/Controllers/BlockDudeController.cs) | `POST /api/blockdude/solve` — the game page's "Watch AI". Greedy first, beam only as a fallback. Server-side (unlike Suika's in-browser net) because the checkpoint is 16 MB. Takes a GRID, not a level name, so a new level needs no server change. |
 | `tools/…Lab/BlockDude/` `LevelBench` · `ValueCalibration` · `DemoProbe` | `--eval-levels [--search]`, `--value-calibration` (predicted vs exact distance, banded), `--demo-probe` (how far back search can still finish). |
 
 *Change it:* obs in the `.pg` `buildObservation` (both twins regenerate); curriculum + gate in
@@ -527,18 +527,18 @@ form in `Env2048.Step`.
 
 "Play yourself" runs **entirely in the browser** — a pure-TS engine per game ticks on `requestAnimationFrame`
 (canvas games) or `setInterval` (turn-based), no backend in the loop. The browser rules mirror the C# training
-env so human and AI obey identical mechanics. FruitCake goes furthest: its **physics is literally the same code
+env so human and AI obey identical mechanics. Suika goes furthest: its **physics is literally the same code
 as the C# env** — one MintPlayer.Polyglot `.pg` transpiled to both (callout below) — while the others are thin
 logic modules mirroring the C# envs by hand.
 
 | Path (`RLDemo.Web/ClientApp/src/app/`) | Role |
 |---|---|
-| `fruit-cake/fruitcake_solver.ts` | **Generated (gitignored) — do not edit.** Emitted by `dotnet build` from `fruitcake_solver.pg` (repo-root `pgconfig.json` include rules; same for every `*_solver.ts` twin below): `PgFruitCakeWorld` physics **plus** the whole inference path — `buildObservation`, `PgDuelingNet.forward`, `chooseColumn` (depth-3 search). Edit the `.pg` and build. |
-| [`fruit-cake/fruitcake-net.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake-net.ts) | Parses the shipped `.ckpt` binary (mirrors the C# `DuelingQNetCheckpoint` reader) → builds `PgDuelingNet`. The one inference piece that isn't Polyglot (binary I/O). |
-| [`fruit-cake/fruit-cake-director.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-director.ts) | **Client-side "watch AI"** (M32): a real-time state machine that runs the generated physics + `chooseColumn` over the loaded net locally — replaces the retired server WebSocket stream. Emits `FruitCakeFrame`s ([`fruit-cake-frame.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-frame.ts)) for `renderFrame`. |
-| [`fruit-cake/fruit-cake-physics.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-physics.ts) | Thin **`FruitWorld` facade** over the generated core — **not the physics**. Re-adds host-only surface: `onMerged` (exact, from the core's merge list), `onLanded` (host-side approximation), and per-fruit `mergeBorn`/age via a side-table. Edit the `.pg`, not this. |
-| `fruit-cake/` [`game`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-game.ts) · [`render`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-render.ts) · [`audio`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-audio.ts) · [`fruits`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-fruits.ts) | Rules + localStorage; Canvas 2D art + HUD + letterbox scaling; Web Audio; the 11-tier merge catalog (render/scoring; a second copy of the catalog also lives inside the `.pg`). |
-| [`fruit-cake/fruit-cake.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake.ts) (component) | Fixed-timestep rAF loop, pointer aim/drop, `mode` signal (human ↔ watch), fullscreen. |
+| `suika/suika_solver.ts` | **Generated (gitignored) — do not edit.** Emitted by `dotnet build` from `suika_solver.pg` (repo-root `pgconfig.json` include rules; same for every `*_solver.ts` twin below): `PgSuikaWorld` physics **plus** the whole inference path — `buildObservation`, `PgDuelingNet.forward`, `chooseColumn` (depth-3 search). Edit the `.pg` and build. |
+| [`suika/suika-net.ts`](../src/RLDemo.Web/ClientApp/src/app/suika/suika-net.ts) | Parses the shipped `.ckpt` binary (mirrors the C# `DuelingQNetCheckpoint` reader) → builds `PgDuelingNet`. The one inference piece that isn't Polyglot (binary I/O). |
+| [`suika/suika-director.ts`](../src/RLDemo.Web/ClientApp/src/app/suika/suika-director.ts) | **Client-side "watch AI"** (M32): a real-time state machine that runs the generated physics + `chooseColumn` over the loaded net locally — replaces the retired server WebSocket stream. Emits `SuikaFrame`s ([`suika-frame.ts`](../src/RLDemo.Web/ClientApp/src/app/suika/suika-frame.ts)) for `renderFrame`. |
+| [`suika/suika-physics.ts`](../src/RLDemo.Web/ClientApp/src/app/suika/suika-physics.ts) | Thin **`FruitWorld` facade** over the generated core — **not the physics**. Re-adds host-only surface: `onMerged` (exact, from the core's merge list), `onLanded` (host-side approximation), and per-fruit `mergeBorn`/age via a side-table. Edit the `.pg`, not this. |
+| `suika/` [`game`](../src/RLDemo.Web/ClientApp/src/app/suika/suika-game.ts) · [`render`](../src/RLDemo.Web/ClientApp/src/app/suika/suika-render.ts) · [`audio`](../src/RLDemo.Web/ClientApp/src/app/suika/suika-audio.ts) · [`fruits`](../src/RLDemo.Web/ClientApp/src/app/suika/suika-fruits.ts) | Rules + localStorage; Canvas 2D art + HUD + letterbox scaling; Web Audio; the 11-tier merge catalog (render/scoring; a second copy of the catalog also lives inside the `.pg`). |
+| [`suika/suika.ts`](../src/RLDemo.Web/ClientApp/src/app/suika/suika.ts) (component) | Fixed-timestep rAF loop, pointer aim/drop, `mode` signal (human ↔ watch), fullscreen. |
 | [`snake/`](../src/RLDemo.Web/ClientApp/src/app/snake/) `snake_solver.ts` (generated, gitignored) · [`snake-net.ts`](../src/RLDemo.Web/ClientApp/src/app/snake/snake-net.ts) · [`snake-director.ts`](../src/RLDemo.Web/ClientApp/src/app/snake/snake-director.ts) · [`snake-renderer.ts`](../src/RLDemo.Web/ClientApp/src/app/snake/snake-renderer.ts) · [`snake.ts`](../src/RLDemo.Web/ClientApp/src/app/snake/snake.ts) | Snake, fully client-side (PLAN M33/M34/M48): generated engine + `PgSnakeNet` + BOTH planners (edit `snake_solver.pg` and build) — `chooseActionSearch` (M34 look-ahead) and `chooseActionCycle` (M48 Hamiltonian safety cycle). Director takes a `'search' \| 'cycle'` strategy and emits `SnakeAiFrame`s. **Renderer (M35 + M60):** one uniform-width round-cornered tube stroked through interpolated cell centres, rAF-glided across the 120 ms tick and **parked at `p ≥ 1`** (a resting board costs no frames); plus the **cycle overlay** — the full loop as a 5 px `#3a4154` hairline (a `Path2D` cached on `(cycleEpoch, cell)`) with the head→food arc overdrawn in `#ffd479` at 0.45, flashing once for 300 ms whenever the plan changes. Drawn *under* the tube, which is load-bearing: the body is a contiguous run behind the head on the cycle, so the head→food arc always lies on non-body cells and is never occluded. The board sizes its backing store to its real CSS width (`tetris.ts` pattern), so drawing units are CSS px. |
 | [`snake-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/snake/snake-logic.ts), [`mountaincar-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/mountaincar/mountaincar-logic.ts), [`game-2048-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/game-2048/game-2048-logic.ts), [`rush-hour-logic.ts`](../src/RLDemo.Web/ClientApp/src/app/rush-hour/rush-hour-logic.ts) | Browser-side rules for human play, mirroring the C# envs. |
 | [`cube/cube.ts`](../src/RLDemo.Web/ClientApp/src/app/cube/cube.ts) | Three.js scene + manual turns + Kociemba/AI solver playback. |
@@ -555,10 +555,10 @@ canvas loops run **outside** Angular's zone.
 *Change it:* game rules → the `*-logic.ts` (keep the C# env in sync — see the PRD-sync comments); render/input →
 `*-render.ts` or the component; new game → add a folder + route (+ server controller/service).
 
-**Single-source FruitCake physics (MintPlayer.Polyglot).** The FruitCake solver is written **once** in
-[`…/Environments/FruitCake/polyglot/fruitcake_solver.pg`](../src/MintPlayer.AI.ReinforcementLearning.Environments/FruitCake/polyglot/fruitcake_solver.pg)
+**Single-source Suika physics (MintPlayer.Polyglot).** The Suika solver is written **once** in
+[`…/Environments/Suika/polyglot/suika_solver.pg`](../src/MintPlayer.AI.ReinforcementLearning.Environments/Suika/polyglot/suika_solver.pg)
 and transpiled to **C#** (build-time via the `MintPlayer.Polyglot.MSBuild` PackageReference → `obj/`, wrapped by the
-public `FruitCakeWorld` **facade**) and to **TypeScript** (`fruitcake_solver.ts` in ClientApp, wrapped by the
+public `SuikaWorld` **facade**) and to **TypeScript** (`suika_solver.ts` in ClientApp, wrapped by the
 `FruitWorld` **adapter**). Both targets are byte-identical (f64). Since Polyglot **0.8.1** both emissions happen in
 the **same `dotnet build`**: the repo-root `pgconfig.json` declares `targets: [csharp, typescript]` and routes each
 game's TS twin into its ClientApp folder via `include` rules. Neither generated side is committed anymore — the
@@ -566,10 +566,10 @@ game's TS twin into its ClientApp folder via `include` rules. Neither generated 
 RLDemo.Web (it project-references Environments), so they cannot drift from the
 `.pg`. **To change the physics, edit the `.pg` and build** — never the generated `.cs`/`.ts` or the facades'
 physics; the facades hold only host glue (events, rendering hooks, RNG, state I/O). See
-`…/FruitCake/polyglot/README.md` and
-[`prd/POLYGLOT_FRUITCAKE_PRD.md`](prd/POLYGLOT_FRUITCAKE_PRD.md).
+`…/Suika/polyglot/README.md` and
+[`prd/POLYGLOT_SUIKA_PRD.md`](prd/POLYGLOT_SUIKA_PRD.md).
 
-**Writing `.pg` — toolchain and conventions** (all 7 solvers: chess, crazyfruits, draughts, fruitcake,
+**Writing `.pg` — toolchain and conventions** (all 7 solvers: chess, crazyfruits, draughts, suika,
 mountaincar, snake, tetris). The pin is **`MintPlayer.Polyglot.MSBuild` 0.9.9**.
 
 - **Constructors are `constructor(...)`, never `init(...)`** (renamed upstream in v0.9.8; the repo migrated
@@ -591,16 +591,16 @@ mountaincar, snake, tetris). The pin is **`MintPlayer.Polyglot.MSBuild` 0.9.9**.
 Full investigation and migration record:
 [`prd/polyglot-pilot/POLYGLOT_M57_FEASIBILITY.md`](prd/polyglot-pilot/POLYGLOT_M57_FEASIBILITY.md).
 
-**The `.pg` now holds the whole *inference* path too (M32).** Beyond physics, `fruitcake_solver.pg` also contains
+**The `.pg` now holds the whole *inference* path too (M32).** Beyond physics, `suika_solver.pg` also contains
 `buildObservation` (the 89-dim vector), `PgDuelingNet.forward` (f64 dueling-Q forward pass), and `chooseColumn`
-(the depth-3 expectimax search with the net-leaf inlined) — so the **entire FruitCake AI is single-sourced** and, f64
+(the depth-3 expectimax search with the net-leaf inlined) — so the **entire Suika AI is single-sourced** and, f64
 on both sides, byte-identical in C# and the browser. Consequently **watch-AI runs fully client-side**
-([`fruit-cake-director.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruit-cake-director.ts) over the generated
-TS core + the shipped [`wwwroot/models/fruitcake-net.ckpt`](../src/RLDemo.Web/wwwroot/models/fruitcake-net.ckpt),
-parsed by [`fruitcake-net.ts`](../src/RLDemo.Web/ClientApp/src/app/fruit-cake/fruitcake-net.ts)); there is no
-FruitCake server controller or net. Training stays C#/SDK-only (autograd/GEMM/GPU) and *produces* the weights; the
-only per-platform inference piece is the binary `.ckpt` parser (C# `DuelingQNetCheckpoint`; TS `fruitcake-net.ts`).
-See [`prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md`](prd/FRUITCAKE_CLIENT_SIDE_AI_PRD.md).
+([`suika-director.ts`](../src/RLDemo.Web/ClientApp/src/app/suika/suika-director.ts) over the generated
+TS core + the shipped [`wwwroot/models/suika-net.ckpt`](../src/RLDemo.Web/wwwroot/models/suika-net.ckpt),
+parsed by [`suika-net.ts`](../src/RLDemo.Web/ClientApp/src/app/suika/suika-net.ts)); there is no
+Suika server controller or net. Training stays C#/SDK-only (autograd/GEMM/GPU) and *produces* the weights; the
+only per-platform inference piece is the binary `.ckpt` parser (C# `DuelingQNetCheckpoint`; TS `suika-net.ts`).
+See [`prd/SUIKA_CLIENT_SIDE_AI_PRD.md`](prd/SUIKA_CLIENT_SIDE_AI_PRD.md).
 
 **Serving the browser weights.** The `.ckpt` files live in `src/RLDemo.Web/wwwroot/models/` (LFS) and are fetched
 by the browser from `/models/*-net.ckpt`. ASP.NET's static-file middleware refuses **unknown extensions**, so

@@ -2,7 +2,7 @@
 // Each `--game` dispatches to its ITrainingCampaign on the shared CampaignRunner (PLAN M25);
 // the runner owns the loop/resume/eval cadence/checkpointing, the per-game *Lab files own the flags.
 //
-// Usage: MintPlayer.AI.ReinforcementLearning.Lab [--game rushhour|snake|fruitcake|cube|cube-policy|cube-davi|connect4|chess|draughts]
+// Usage: MintPlayer.AI.ReinforcementLearning.Lab [--game rushhour|snake|suika|cube|cube-policy|cube-davi|connect4|chess|draughts]
 //                                                [--hours H] [--data DIR] [--seed S] [--lr LR] [--eval-only]
 //                                                [--viz [port]] ...
 // Default game: rushhour (the original Kociemba-free BFS-oracle imitation campaign, PLAN M16).
@@ -34,7 +34,8 @@ for (int i = 0; i < args.Length; i++)
         if (game.Equals("rushhour", StringComparison.OrdinalIgnoreCase)) { RushHourLab.Run(args); return; }
         if (game.Equals("blockdude", StringComparison.OrdinalIgnoreCase)) { BlockDudeLab.Run(args); return; }
         if (game.Equals("snake", StringComparison.OrdinalIgnoreCase)) { SnakeLab.Run(args); return; }
-        if (game.Equals("fruitcake", StringComparison.OrdinalIgnoreCase)) { FruitCakeLab.Run(args); return; }
+        if (game.Equals("suika", StringComparison.OrdinalIgnoreCase)
+            || game.Equals("fruitcake", StringComparison.OrdinalIgnoreCase)) { SuikaLab.Run(args); return; } // fruitcake = pre-rename alias
         if (game.Equals("crazyfruits", StringComparison.OrdinalIgnoreCase)) { CrazyFruitsLab.Run(args); return; }
         if (game.Equals("tetris", StringComparison.OrdinalIgnoreCase)) { TetrisLab.Run(args); return; }
         if (game.Equals("connect4", StringComparison.OrdinalIgnoreCase)) { Connect4Lab.Run(args); return; }

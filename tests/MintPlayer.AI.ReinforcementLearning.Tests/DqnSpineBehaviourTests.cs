@@ -10,7 +10,7 @@ namespace MintPlayer.AI.ReinforcementLearning.Tests;
 /// <summary>
 /// M64.3 — the rules the DQN spine enforces that nothing tested: save-best, warm start, and the
 /// absolute step cap. All four game DQN campaigns inherit these, so a regression here is a
-/// regression in Snake, FruitCake, CrazyFruits and Tetris at once.
+/// regression in Snake, Suika, CrazyFruits and Tetris at once.
 /// </summary>
 public class DqnSpineBehaviourTests
 {

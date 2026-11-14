@@ -9,7 +9,8 @@ export const routes: Routes = [
   { path: 'cube', loadComponent: () => import('./cube/cube').then(m => m.Cube) },
   { path: 'snake', loadComponent: () => import('./snake/snake').then(m => m.Snake) },
   { path: 'mountaincar', loadComponent: () => import('./mountaincar/mountaincar').then(m => m.MountainCar) },
-  { path: 'fruitcake', loadComponent: () => import('./fruit-cake/fruit-cake').then(m => m.FruitCake) },
+  { path: 'fruitcake', redirectTo: 'suika' }, // pre-rename URL — keep old links working
+  { path: 'suika', loadComponent: () => import('./suika/suika').then(m => m.Suika) },
   { path: 'crazyfruits', loadComponent: () => import('./crazy-fruits/crazy-fruits').then(m => m.CrazyFruits) },
   { path: 'tetris', loadComponent: () => import('./tetris/tetris').then(m => m.Tetris) },
   { path: 'chess', loadComponent: () => import('./chess/chess').then(m => m.Chess) },

@@ -3,7 +3,7 @@ using MintPlayer.AI.ReinforcementLearning.Core.Training;
 namespace MintPlayer.AI.ReinforcementLearning.Tests;
 
 /// <summary>
-/// Contract tests for n-step return folding (PRD FRUITCAKE_IMPROVE §F4 gate): n=1 is exactly single-step DQN,
+/// Contract tests for n-step return folding (PRD SUIKA_IMPROVE §F4 gate): n=1 is exactly single-step DQN,
 /// n-step rewards are the correct discounted sums, episode ends are handled, and the in-flight window round-trips
 /// through serialization (so a resumed run stays bitwise-identical).
 /// </summary>

@@ -3,7 +3,7 @@ import { ChessDifficulty, loadChessNet, loadDifficulties } from './chess-net';
 
 // Client-side chess "play against the AI" director — the whole AI runs in the browser, single-sourced from
 // chess_solver.pg (the same engine + net + MCTS the C# training uses). You are White; the AI is Black and replies
-// with PgChessMcts over the net loaded from the shipped .ckpt. No server move computation (the FruitCake pattern).
+// with PgChessMcts over the net loaded from the shipped .ckpt. No server move computation (the Suika pattern).
 //
 // The engine speaks AlphaZero action indices (0..4671). The board UI speaks (from, to) squares, so the director
 // resolves a human click to a legal index (auto-queen on promotion) and reads decoded moves back for highlighting.

@@ -21,11 +21,11 @@ duplication rather than fight it, and adds the further duplication a three-agent
 **What "boilerplate" means here** (audited 2026-07-12, three parallel agents; counts verified against `master`):
 
 ### Lab / training campaigns (`tools/…Lab/`)
-- **DQN campaign twins.** `SnakeDqnCampaign.cs` (213 L) and `FruitCakeDqnCampaign.cs` (236 L) are the *same*
+- **DQN campaign twins.** `SnakeDqnCampaign.cs` (213 L) and `SuikaDqnCampaign.cs` (236 L) are the *same*
   score-maximizing Double+Dueling DQN campaign. `TrainChunk` is byte-identical; warm-start/resume, the
-  save-best gate, the eval loop, and the telemetry block are all parallel. FruitCake's only real extras: a
+  save-best gate, the eval loop, and the telemetry block are all parallel. Suika's only real extras: a
   noisy `StateId` line and the plain→noisy / `GrowInput` warm-net adaptation.
-- **`INetworkTelemetrySource` duplicated 6×** (M36). Every campaign — Snake, FruitCake, RushHourImitation,
+- **`INetworkTelemetrySource` duplicated 6×** (M36). Every campaign — Snake, Suika, RushHourImitation,
   CubeImitation, CubeEfficient, CubeDavi — carries a ~30-line explicit-interface block
   (`SnapshotParameters`/`Sample`/`SampleIo`/`SampleActivations`). The two DQN copies are ~90% identical twins.
 - **Net-growth wiring** (M37) repeated per campaign: `grow`/`growEvery` ctor params, a `_growRng` field, and a
@@ -59,9 +59,9 @@ duplication rather than fight it, and adds the further duplication a three-agent
 - **Component `pollStatus()` self-rescheduling poller — 3 copies, with a real divergence bug:** `cube.ts` has
   a `try/catch`; `game-2048.ts` and `rush-hour.ts` **do not** → an uncaught rejection on a backend blip.
 - **`*-api.ts` `status()` + 503→`loading` classification — 3 copies.**
-- **Watch-mode wake-lock + `visibilitychange` scaffolding — 3 copies** (snake, mountaincar, fruit-cake);
+- **Watch-mode wake-lock + `visibilitychange` scaffolding — 3 copies** (snake, mountaincar, suika);
   `onVisibilityChange()` is byte-identical.
-- **Director watch-loop skeleton — 2 copies** (snake, mountaincar; fruit-cake's rAF loop differs — leave it).
+- **Director watch-loop skeleton — 2 copies** (snake, mountaincar; suika's rAF loop differs — leave it).
 - **Atomic temp-file write — 2 copies** (`GalleryStore`, `RushHourDeckStore`; trivial).
 
 ## 2. Goal & success criteria
@@ -69,7 +69,7 @@ duplication rather than fight it, and adds the further duplication a three-agent
 **Reduce the duplication above into deep, well-named modules — with zero behaviour change — and fix the two
 latent bugs the duplication has already caused.**
 
-- **Behaviour-preserving (the hard gate).** Training stays **bitwise-identical**: a `--game snake` / `fruitcake`
+- **Behaviour-preserving (the hard gate).** Training stays **bitwise-identical**: a `--game snake` / `suika`
   run (and the imitation/policy campaigns) produces a **SHA256-equal** checkpoint before and after. The web API
   contract tests and the campaign/checkpoint test suites stay green. Only log wording may change.
 - **Deep, not shallow.** Every extraction must hide more than it exposes (Ousterhout): a `RefreshingCheckpoint<T>`
@@ -87,7 +87,7 @@ latent bugs the duplication has already caused.**
 
 **Non-goals.** No new features, no API/DTO changes visible to clients, no change to checkpoint formats or the
 wire protocol. No merging of the three imitation/policy *campaigns* (only their plumbing is extracted). No
-touching the `.pg` single-source FruitCake path. No frontend visual change.
+touching the `.pg` single-source Suika path. No frontend visual change.
 
 ## 3. Design — the shared modules
 
@@ -99,7 +99,7 @@ Grouped by the concern each hides. Each is a **deep module**: small surface, mea
    (`grow`/`growEvery` + `_growRng` + `DqnGrowth.Maybe` inside its `TrainChunk`), **and
    `INetworkTelemetrySource`** (`NetKind`, `SnapshotParameters`, `Sample`, `SampleIo`, `SampleActivations`,
    reading `State?.Online ?? WarmNet`). Subclasses supply only: `Environment`, `TrainEnv`, `BaseOptions`,
-   `EvaluateNet`, `ObservationSize`/`InputLabels`/`OutputLabels`, and (FruitCake) an `AdaptWarmNet` hook for
+   `EvaluateNet`, `ObservationSize`/`InputLabels`/`OutputLabels`, and (Suika) an `AdaptWarmNet` hook for
    plain→noisy + `GrowInput`. *This is the re-cut of PR #27 change 1, enlarged to fold in the M36 telemetry
    twin and the M37 growth wiring.*
 2. **`CliArgs` value-reader + `CommonLabArgs.Parse`** — `CliArgs` hides the `i+1<Length` guard, `++i` walk, and
@@ -148,7 +148,7 @@ Grouped by the concern each hides. Each is a **deep module**: small surface, mea
   stay bespoke.
 - **`CubeDaviLab`'s 46-flag + appsettings block**, `CampaignRunner`, `DqnGrowth`/`PolicyGrowth`,
   `CubePolicyTraining`, `CubeViz`, `VizLauncher`, `VizServer` — already deep/good.
-- **fruit-cake's rAF watch loop** — genuinely different from the `setInterval` directors.
+- **suika's rAF watch loop** — genuinely different from the `setInterval` directors.
 
 ## 5. Risks
 
@@ -165,7 +165,7 @@ Grouped by the concern each hides. Each is a **deep module**: small surface, mea
 - `dotnet build` clean (0 warn / 0 err) after every step.
 - `dotnet test --filter "Category!=Slow"` green (campaign contract/runner, checkpoint round-trip, web API/service
   suites).
-- **Bitwise gate:** a short fixed-seed `--game snake` and `--game fruitcake` run yields a SHA256-equal
+- **Bitwise gate:** a short fixed-seed `--game snake` and `--game suika` run yields a SHA256-equal
   `*.dqn.ckpt` + `*.dqn-state.ckpt` vs a pre-refactor baseline; likewise a short imitation/policy run after §3.4.
 - **`--viz` smoke** (dev-only): each game still streams a live net after the telemetry move.
 - Net **negative** line diff with the shared modules documented.

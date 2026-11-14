@@ -6,7 +6,7 @@
 
 ## 1. Problem
 
-The SDK trains agents in three paradigms today — model-free RL (DQN/PPO), planning over a learned value net (DAVI), and **imitation from an oracle** (the cube's Kociemba teacher, Rush Hour's BFS teacher). All three need an external signal: a reward function, a forward model, or an *exact oracle*. For a game like **chess** there is no cheap exact oracle, and a reactive policy plateaus — this repo's own history is unambiguous that **search is the lever** (Snake/FruitCake/Cube all show a capped reactive net amplified massively by inference search).
+The SDK trains agents in three paradigms today — model-free RL (DQN/PPO), planning over a learned value net (DAVI), and **imitation from an oracle** (the cube's Kociemba teacher, Rush Hour's BFS teacher). All three need an external signal: a reward function, a forward model, or an *exact oracle*. For a game like **chess** there is no cheap exact oracle, and a reactive policy plateaus — this repo's own history is unambiguous that **search is the lever** (Snake/Suika/Cube all show a capped reactive net amplified massively by inference search).
 
 The missing paradigm is **self-play**: two players (the same improving network) play each other, and the games themselves become the training signal — the network bootstraps from nothing to strong play with no human data and no oracle. That is how a from-scratch SDK trains chess. We want to add self-play as a **first-class, reusable capability** — chess is the headline, but the machinery (a two-player game abstraction + MCTS + a self-play campaign) should be shared so the *next* two-player game plugs in by writing only its rules.
 
