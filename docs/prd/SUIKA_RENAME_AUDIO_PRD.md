@@ -88,3 +88,57 @@ latch).
 
 - Changing the music itself (timbre or loudness).
 - Memory notes outside the repo. They are updated separately, not shipped in this PR.
+
+## 6. M72: the buzz survived M71 (2026-11-14, branch `suika-audio-suspend`)
+
+After M71 was deployed (`7b7ae15`), the owner reported the buzz still starts when a fruit lands, and
+**🔊 mute does not help**. That second fact refutes §3 as the whole story. In M71, mute silences both the
+music and the sound effects, so a buzz that survives mute is not any sound the game plays.
+
+### What the code rules out
+
+- `suika-audio.ts` is the only audio source in the client. There is no `<audio>`, `new Audio` or
+  `vibrate` anywhere.
+- Every one-shot oscillator (landing thud, merge pop) schedules `stop(t + 0.18)`.
+- `onLanded` fires at most once per fruit (`hasLanded` latch, impact-speed threshold).
+- Mute stops the music (M71).
+
+### Root cause
+
+Nothing ever suspended or closed the `AudioContext` while the game was open.
+
+- After M71 the context is created on the first sound, which is the first landing.
+- A running context keeps the OS audio output stream open, playing silence, until the page is left.
+- On some hardware (USB/HDMI audio, Bluetooth headsets, some laptop codecs) that open stream is itself
+  audible as a constant hum or buzz.
+- Mute cannot reach it, because mute only gates new sounds.
+
+This matches all three symptoms (starts at the first landing, never stops, immune to mute). It was not
+reproduced: hardware hum can't be observed from a headless browser. It is the only mechanism left that
+fits them.
+
+M71's music fix stays correct: it is a separate path to an audible drone.
+
+### Fix
+
+`SuikaAudio` suspends the context when idle, which releases the output stream:
+
+- Each one-shot schedules a suspend `0.18 s + IdleSuspendMs` (400 ms) later.
+- Stopping music schedules a suspend `IdleSuspendMs` later.
+- The next sound cancels a pending suspend and resumes the context. It also resumes when a suspend was
+  requested but hasn't taken effect yet.
+- Nothing suspends while music plays. `dispose()` clears the timer.
+
+### Regression tests (`suika-audio.spec.ts`, fake timers)
+
+- The context suspends after a thud, but not a millisecond before the sound could have ended.
+- A rapid cascade keeps pushing the suspend back.
+- The context resumes for the next sound.
+- Music blocks suspending, and stopping music allows it.
+- A sound during an in-flight suspend re-resumes the context.
+- No timer is left behind after `dispose()`.
+
+### Owner verification needed
+
+Play, let a fruit land, and wait about half a second. The hum should stop by itself. If it does not, the
+cause is outside the page (see the browser's audio indicator on the tab), and we look there next.

@@ -89,14 +89,33 @@ interface FakeOsc {
   stopped: boolean;
 }
 
-function installFakeAudioContext(): FakeOsc[] {
+/** `calls` logs every suspend/resume, in order; `state()` reads the (single) context's state. */
+interface FakeAudio {
+  oscs: FakeOsc[];
+  calls: string[];
+  state(): string | undefined;
+}
+
+function installFakeAudioContext(): FakeAudio {
   const oscs: FakeOsc[] = [];
+  const calls: string[] = [];
+  let ctx: FakeContext | undefined;
   const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} });
   class FakeContext {
     state = 'running';
     currentTime = 0;
     destination = {};
+    constructor() {
+      ctx = this; // eslint-disable-line @typescript-eslint/no-this-alias
+    }
     resume() {
+      calls.push('resume');
+      this.state = 'running';
+      return Promise.resolve();
+    }
+    suspend() {
+      calls.push('suspend');
+      this.state = 'suspended';
       return Promise.resolve();
     }
     close() {
@@ -127,14 +146,14 @@ function installFakeAudioContext(): FakeOsc[] {
   }
   vi.stubGlobal('AudioContext', FakeContext);
   (window as unknown as { AudioContext: unknown }).AudioContext = FakeContext;
-  return oscs;
+  return { oscs, calls, state: () => ctx?.state };
 }
 
 describe('SuikaAudio oscillator lifetimes', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('schedules a stop for every landing and merge oscillator', () => {
-    const oscs = installFakeAudioContext();
+    const { oscs } = installFakeAudioContext();
     const audio = new SuikaAudio();
     audio.playLand(0.8);
     audio.playMerge(3);
@@ -147,12 +166,88 @@ describe('SuikaAudio oscillator lifetimes', () => {
   });
 
   it('stops every music oscillator when music is turned off', () => {
-    const oscs = installFakeAudioContext();
+    const { oscs } = installFakeAudioContext();
     const audio = new SuikaAudio();
     audio.setMusic(true);
     expect(oscs.length).toBeGreaterThan(0);
     expect(oscs.every(o => o.started && !o.stopped)).toBe(true);
     audio.setMusic(false);
     expect(oscs.every(o => o.stopped)).toBe(true);
+  });
+});
+
+// Regression (M72): the buzz survived M71 and mute, because it was never a sound we played. A RUNNING
+// AudioContext keeps the OS output stream open (playing silence), and on some hardware that open stream
+// hums. Nothing ever suspended the context, so from the first landing on, the hum never stopped.
+describe('SuikaAudio releases the output stream when idle', () => {
+  const afterOneShot = 180 + SuikaAudio.IdleSuspendMs;
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('suspends the context shortly after a landing thud has finished', () => {
+    const fake = installFakeAudioContext();
+    const audio = new SuikaAudio();
+    audio.playLand(0.8);
+    expect(fake.state()).toBe('running');
+
+    vi.advanceTimersByTime(afterOneShot - 1);
+    expect(fake.state()).toBe('running'); // never cut a sound short
+
+    vi.advanceTimersByTime(1);
+    expect(fake.state()).toBe('suspended');
+  });
+
+  it('resumes for the next sound and keeps a rapid burst running until it ends', () => {
+    const fake = installFakeAudioContext();
+    const audio = new SuikaAudio();
+    audio.playLand(0.5);
+    vi.advanceTimersByTime(afterOneShot);
+    expect(fake.state()).toBe('suspended');
+
+    audio.playMerge(2);
+    expect(fake.state()).toBe('running');
+    vi.advanceTimersByTime(afterOneShot - 50);
+    audio.playMerge(3); // a cascade: each sound pushes the suspend back
+    vi.advanceTimersByTime(afterOneShot - 50);
+    expect(fake.state()).toBe('running');
+    vi.advanceTimersByTime(50);
+    expect(fake.state()).toBe('suspended');
+  });
+
+  it('never suspends while music plays, and suspends once music stops', () => {
+    const fake = installFakeAudioContext();
+    const audio = new SuikaAudio();
+    audio.setMusic(true);
+    audio.playLand(0.5);
+    vi.advanceTimersByTime(10_000);
+    expect(fake.state()).toBe('running');
+
+    audio.setMusic(false);
+    vi.advanceTimersByTime(SuikaAudio.IdleSuspendMs);
+    expect(fake.state()).toBe('suspended');
+  });
+
+  it('re-resumes when a sound arrives while a suspend is still in flight', () => {
+    const fake = installFakeAudioContext();
+    const audio = new SuikaAudio();
+    audio.playLand(0.5);
+    vi.advanceTimersByTime(afterOneShot);
+    expect(fake.calls).toEqual(['suspend']);
+
+    audio.playLand(0.5);
+    expect(fake.calls).toEqual(['suspend', 'resume']);
+  });
+
+  it('does not leave a suspend timer behind after dispose', () => {
+    const fake = installFakeAudioContext();
+    const audio = new SuikaAudio();
+    audio.playLand(0.5);
+    audio.dispose();
+    vi.advanceTimersByTime(afterOneShot);
+    expect(fake.calls).not.toContain('suspend');
   });
 });
