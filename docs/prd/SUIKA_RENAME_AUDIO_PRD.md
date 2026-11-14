@@ -142,3 +142,50 @@ M71's music fix stays correct: it is a separate path to an audible drone.
 
 Play, let a fruit land, and wait about half a second. The hum should stop by itself. If it does not, the
 cause is outside the page (see the browser's audio indicator on the tab), and we look there next.
+
+**Outcome:** it did not stop. §7 has the real cause. The idle suspend is still worth keeping: an idle page
+now releases the audio output.
+
+## 7. M73: the buzz IS the music (2026-11-14, branch `suika-phone-music`)
+
+### How it was finally pinned down
+
+M71 and M72 were each a plausible theory shipped without a reproduction. Both were wrong about the buzz
+itself. Four checks by the owner on the Android phone settled it:
+
+1. With media volume at 0 the buzz stops, and it comes back when volume is raised. So it is browser audio
+   output, not vibration.
+2. It is only a sound; the phone does not vibrate.
+3. Since M71, 🔊 mute stops it and unmuting brings it back. That rules out the one-shots: each fruit lands
+   once and the thud lasts 0.18 s, so unmuting cannot restart a buzz. Unmuting can only restart the music.
+4. Tapping 🎵 stops it. Confirmed: the buzz is the background music.
+
+The owner had **never heard any music** in this game. That is the core of the bug. The music was two
+endless sine tones, C3 and G3 (130.8 Hz and 196 Hz), low-passed at 420 Hz with a 0.05 Hz swell. Phone
+speakers roll off steeply below roughly 300–400 Hz, so all that came out was a faint distorted hum: a buzz
+that never stopped, because the tones never stopped. The setting was on because the `music` preference is
+persisted (and was migrated from `fruitcake:music` in M71). The buzz started at the first landing because
+the music fades in after the first tap (since M71), and before M71 it was woken by the first landing's
+`resume()`. Why only Android: desktop speakers reproduce 131 Hz as a soft drone.
+
+### Fix: phone-friendly music (owner's choice)
+
+- The music is now a 32-step C-major-pentatonic melody at 100 BPM, in C5–C6 (523–1047 Hz). It uses
+  triangle-wave notes with a 15 ms attack and a pluck-like decay of about 0.42 s.
+- Every note is a self-stopping one-shot. A standard lookahead scheduler (60 ms tick, 250 ms window)
+  queues them. There are no endless oscillators any more.
+- Turning music off clears the scheduler and stops the notes already queued. The master gain fades in
+  over 1 s.
+- `SuikaAudio.MinMusicHz = 500` is the speaker-safe floor, and a test enforces it.
+
+### Regression tests (`suika-audio.spec.ts`)
+
+- No music tone, scheduled or in the pattern, is below `MinMusicHz`. This would have failed on the old
+  131 Hz drone.
+- Every music note is a triangle one-shot with its stop scheduled at creation.
+- The melody keeps scheduling over time, and no new notes appear after music is turned off.
+
+### Lesson
+
+Ask for the cheapest discriminating observation before shipping a theory. "Does 🎵 stop it?" was one tap
+away from the start.
