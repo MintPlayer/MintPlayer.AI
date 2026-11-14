@@ -3768,3 +3768,10 @@ the first checkpoint after a resume writes a real rung, so a store repairs itsel
 - **Root cause:** the `AudioContext` was never suspended; a running context keeps the OS output stream open, which hums on some hardware. Not reproducible headless; the only mechanism left that fits all symptoms.
 - **Fix:** `SuikaAudio` suspends the context ~0.58 s after the last one-shot (never while music plays) and resumes on the next sound.
 - **Tests:** 5 new fake-timer cases in `suika-audio.spec.ts` (11/11 green).
+
+## M73 — Suika: the buzz IS the music — re-voice it for phone speakers  *(2026-11-14; branch `suika-phone-music`; see `SUIKA_RENAME_AUDIO_PRD.md` §7)* ✅
+
+- **Pinned down by owner checks on Android:** media volume 0 stops it, mute stops it / unmute restores it, 🎵 stops it. The owner had never heard any music: the C3+G3 sine drone (131/196 Hz) is below what phone speakers reproduce, so it was only ever a buzz.
+- **Fix:** music is now a C5–C6 pentatonic melody of self-stopping triangle notes on a lookahead scheduler; `MinMusicHz = 500` floor.
+- **Tests:** 3 new cases in `suika-audio.spec.ts` (13/13 green), including the speaker-safe frequency floor.
+- **M71/M72 status:** their changes stay (gesture-gated music, mute covers music, idle suspend), but neither was the cause of this buzz.

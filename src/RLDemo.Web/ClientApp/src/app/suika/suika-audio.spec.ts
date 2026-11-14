@@ -87,6 +87,8 @@ interface FakeOsc {
   started: boolean;
   stopAt: number | undefined;
   stopped: boolean;
+  type: string;
+  freq: number;
 }
 
 /** `calls` logs every suspend/resume, in order; `state()` reads the (single) context's state. */
@@ -94,6 +96,8 @@ interface FakeAudio {
   oscs: FakeOsc[];
   calls: string[];
   state(): string | undefined;
+  /** Move the fake context's clock forward (the music scheduler reads currentTime). */
+  advanceAudioTime(seconds: number): void;
 }
 
 function installFakeAudioContext(): FakeAudio {
@@ -128,25 +132,36 @@ function installFakeAudioContext(): FakeAudio {
       return { type: '', frequency: param(), Q: param(), connect() {} };
     }
     createOscillator() {
-      const rec: FakeOsc = { started: false, stopAt: undefined, stopped: false };
+      const rec: FakeOsc = { started: false, stopAt: undefined, stopped: false, type: '', freq: 0 };
       oscs.push(rec);
-      return {
+      const node = {
         type: '',
         frequency: param(),
+        onended: null as unknown,
         connect() {},
         start() {
           rec.started = true;
+          rec.type = node.type;
+          rec.freq = node.frequency.value;
         },
         stop(t?: number) {
           rec.stopped = true;
           rec.stopAt = t;
         },
       };
+      return node;
     }
   }
   vi.stubGlobal('AudioContext', FakeContext);
   (window as unknown as { AudioContext: unknown }).AudioContext = FakeContext;
-  return { oscs, calls, state: () => ctx?.state };
+  return {
+    oscs,
+    calls,
+    state: () => ctx?.state,
+    advanceAudioTime: (s: number) => {
+      if (ctx) ctx.currentTime += s;
+    },
+  };
 }
 
 describe('SuikaAudio oscillator lifetimes', () => {
@@ -165,14 +180,62 @@ describe('SuikaAudio oscillator lifetimes', () => {
     }
   });
 
-  it('stops every music oscillator when music is turned off', () => {
-    const { oscs } = installFakeAudioContext();
+});
+
+// Regression (M73): on Android the "music" was only ever heard as a never-ending BUZZ. It was two endless
+// low sines (131 + 196 Hz) that phone speakers cannot reproduce. Music is now a melody of short, high,
+// self-stopping notes.
+describe('SuikaAudio music is phone-speaker friendly', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  /** Run the music for `seconds` of audio time, ticking the scheduler as the real interval would. */
+  function play(fake: FakeAudio, seconds: number): void {
+    for (let t = 0; t < seconds; t += 0.06) {
+      fake.advanceAudioTime(0.06);
+      vi.advanceTimersByTime(60);
+    }
+  }
+
+  it('never plays a music tone below the speaker-safe floor', () => {
+    const fake = installFakeAudioContext();
     const audio = new SuikaAudio();
     audio.setMusic(true);
-    expect(oscs.length).toBeGreaterThan(0);
-    expect(oscs.every(o => o.started && !o.stopped)).toBe(true);
+    play(fake, 12); // more than one full loop of the pattern
+    expect(fake.oscs.length).toBeGreaterThan(10);
+    for (const o of fake.oscs) expect(o.freq).toBeGreaterThanOrEqual(SuikaAudio.MinMusicHz);
+    for (const f of SuikaAudio.MusicPattern) if (f !== null) expect(f).toBeGreaterThanOrEqual(SuikaAudio.MinMusicHz);
+  });
+
+  it('plays every music note as a short one-shot, never an endless tone', () => {
+    const fake = installFakeAudioContext();
+    const audio = new SuikaAudio();
+    audio.setMusic(true);
+    play(fake, 3);
+    expect(fake.oscs.length).toBeGreaterThan(0);
+    for (const o of fake.oscs) {
+      expect(o.type).toBe('triangle');
+      expect(o.stopped).toBe(true); // stop was scheduled at creation
+      expect(o.stopAt).toBeDefined();
+    }
+  });
+
+  it('keeps the melody going over time, and stops scheduling notes once music is off', () => {
+    const fake = installFakeAudioContext();
+    const audio = new SuikaAudio();
+    audio.setMusic(true);
+    play(fake, 2);
+    const afterTwoSeconds = fake.oscs.length;
+    play(fake, 2);
+    expect(fake.oscs.length).toBeGreaterThan(afterTwoSeconds); // the loop keeps scheduling
+
     audio.setMusic(false);
-    expect(oscs.every(o => o.stopped)).toBe(true);
+    const atStop = fake.oscs.length;
+    play(fake, 5);
+    expect(fake.oscs.length).toBe(atStop); // scheduler cleared: no new notes
   });
 });
 
