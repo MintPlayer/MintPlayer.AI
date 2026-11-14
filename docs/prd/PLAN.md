@@ -3761,3 +3761,10 @@ the first checkpoint after a resume writes a real rung, so a store repairs itsel
 - **Buzz root cause:** the game constructor started opted-in music on a suspended `AudioContext`; the first landing thud's `resume()` woke the endless drone, and 🔊 mute did not cover music.
 - **Fix:** music starts only on the first user gesture (`unlockAudio()`), mute silences music, 1.5 s fade-in.
 - **Regression test:** `ClientApp/src/app/suika/suika-audio.spec.ts`.
+
+## M72 — Suika: the buzz survived M71 — release the audio output stream when idle  *(2026-11-14; branch `suika-audio-suspend`; see `SUIKA_RENAME_AUDIO_PRD.md` §6)* 🟡 awaiting owner hardware check
+
+- **Owner report after M71 deployed:** buzz still starts on landing, and mute does not help — so it is not a sound the game plays.
+- **Root cause:** the `AudioContext` was never suspended; a running context keeps the OS output stream open, which hums on some hardware. Not reproducible headless; the only mechanism left that fits all symptoms.
+- **Fix:** `SuikaAudio` suspends the context ~0.58 s after the last one-shot (never while music plays) and resumes on the next sound.
+- **Tests:** 5 new fake-timer cases in `suika-audio.spec.ts` (11/11 green).

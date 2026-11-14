@@ -4,16 +4,50 @@
  * use (and resumed) so it satisfies the browser's user-gesture autoplay policy — the first sound
  * always follows a tap/drop. Every call is best-effort: failures are swallowed so audio never
  * breaks gameplay.
+ *
+ * The context is SUSPENDED whenever nothing is audible (shortly after the last one-shot ends, with no
+ * music playing) and resumed by the next sound. A running context keeps the OS audio output stream
+ * open, playing silence, and on some hardware (USB/HDMI audio, Bluetooth headsets, some laptop codecs)
+ * that open stream is itself an audible, never-ending hum or buzz — one that mute cannot stop, because
+ * mute only gates new sounds. That was the "buzz from the first landing onward" bug (PLAN M72).
  */
 export class SuikaAudio {
+  /** How long after the last sound ends before the context is suspended (output stream released). */
+  static readonly IdleSuspendMs = 400;
+  /** Longest one-shot (landing thud / merge pop), in seconds. */
+  private static readonly OneShotSeconds = 0.18;
+
   private ctx: AudioContext | null = null;
   private music: { gain: GainNode; oscs: OscillatorNode[]; lfo: OscillatorNode } | null = null;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private suspendRequested = false;
 
   private ac(): AudioContext {
     const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     this.ctx ??= new Ctor();
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    this.cancelIdleSuspend();
+    // Also resume when a suspend was requested but the state hasn't flipped yet: the calls queue in order.
+    if (this.ctx.state === 'suspended' || this.suspendRequested) {
+      this.suspendRequested = false;
+      void this.ctx.resume();
+    }
     return this.ctx;
+  }
+
+  /** Suspend the context `delayMs` from now unless another sound (or music) arrives first. */
+  private suspendWhenIdle(delayMs: number): void {
+    this.cancelIdleSuspend();
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.music || !this.ctx || this.ctx.state !== 'running') return;
+      this.suspendRequested = true;
+      void this.ctx.suspend();
+    }, delayMs);
+  }
+
+  private cancelIdleSuspend(): void {
+    if (this.idleTimer !== null) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
   }
 
   /** Merge pop. `tier` is the resulting fruit's tier — higher pitch for larger fruit. */
@@ -35,7 +69,8 @@ export class SuikaAudio {
       o.connect(g);
       g.connect(c.destination);
       o.start(t);
-      o.stop(t + 0.18);
+      o.stop(t + SuikaAudio.OneShotSeconds);
+      this.suspendWhenIdle(SuikaAudio.OneShotSeconds * 1000 + SuikaAudio.IdleSuspendMs);
     } catch {
       /* best-effort */
     }
@@ -78,6 +113,7 @@ export class SuikaAudio {
         this.music.lfo.stop();
         this.music.gain.disconnect();
         this.music = null;
+        this.suspendWhenIdle(SuikaAudio.IdleSuspendMs); // music was the last audible thing: release the stream
       }
     } catch {
       /* best-effort */
@@ -87,6 +123,7 @@ export class SuikaAudio {
   /** Stop music and release the audio context (call on teardown). */
   dispose(): void {
     this.setMusic(false);
+    this.cancelIdleSuspend();
     void this.ctx?.close();
     this.ctx = null;
   }
@@ -104,7 +141,8 @@ export class SuikaAudio {
       o.connect(g);
       g.connect(c.destination);
       o.start(t);
-      o.stop(t + 0.18);
+      o.stop(t + SuikaAudio.OneShotSeconds);
+      this.suspendWhenIdle(SuikaAudio.OneShotSeconds * 1000 + SuikaAudio.IdleSuspendMs);
     } catch {
       /* best-effort */
     }
