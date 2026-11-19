@@ -24,13 +24,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.10.1" PrivateAssets="all" />
-    <PackageReference Include="MintPlayer.SourceGenerators" Version="10.20.0">
+    <PackageReference Include="MintPlayer.Polyglot.MSBuild" Version="0.10.3" PrivateAssets="all" />
+    <PackageReference Include="MintPlayer.SourceGenerators" Version="10.21.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="MintPlayer.SourceGenerators.Attributes" Version="10.20.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
+    <PackageReference Include="MintPlayer.SourceGenerators.Attributes" Version="10.20.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.15" />
   </ItemGroup>
 
   <!-- The generated solver types (PgSuikaWorld etc.) are internal; the public SuikaWorld facade wraps
