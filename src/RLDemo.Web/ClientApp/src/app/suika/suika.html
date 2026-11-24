@@ -23,10 +23,33 @@
 <div #stage class="fc-stage">
   <canvas #board (pointermove)="onPointerMove($event)" (pointerdown)="onPointerDown($event)"></canvas>
 
+  <!-- Fullscreen-only "New game" (the windowed one above is outside the stage, so it's hidden here).
+       Same two-tap confirm; pointerdown is stopped so the tap never also drops a fruit. -->
+  @if (isFullscreen() && mode() === 'human') {
+    <button
+      type="button"
+      class="fc-overlay-btn fc-restart-overlay"
+      [class.armed]="restartArmed()"
+      (click)="onRestartClick()"
+      (pointerdown)="$event.stopPropagation()"
+      [attr.aria-label]="restartArmed() ? 'Confirm: start a new game (current game is lost)' : 'New game'"
+      [title]="restartArmed() ? 'Tap again to restart' : 'New game'"
+    >
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+        <path d="M3 3v5h5" />
+      </svg>
+      @if (restartArmed()) {
+        <span>Tap again to restart</span>
+      }
+    </button>
+  }
+
   <!-- Lives inside the stage so it stays reachable in fullscreen (no Esc key on touch devices). -->
   <button
     type="button"
-    class="fc-fullscreen"
+    class="fc-overlay-btn fc-fullscreen"
     [color]="colors.secondary"
     (click)="toggleFullscreen()"
     (pointerdown)="$event.stopPropagation()"
