@@ -43,6 +43,11 @@ export class Suika implements AfterViewInit {
   // The client-side AI game (created on first watch; the trained net loads itself). No server, no WebSocket.
   private director: SuikaDirector | null = null;
 
+  /** "New game" is two-step: the first tap arms it, a second tap within {@link RestartConfirmMs} restarts. */
+  protected readonly restartArmed = signal(false);
+  private restartDisarmTimer: ReturnType<typeof setTimeout> | undefined;
+  private static readonly RestartConfirmMs = 3000;
+
   private ctx: CanvasRenderingContext2D | null = null;
   private rafId = 0;
   private lastMs = 0;
@@ -65,6 +70,7 @@ export class Suika implements AfterViewInit {
   private teardown(): void {
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
+    clearTimeout(this.restartDisarmTimer);
     this.director?.dispose(); // release the AI worker
     void this.wakeLock.release();
     this.game.saveSnapshot();
@@ -84,6 +90,19 @@ export class Suika implements AfterViewInit {
       this.accumulator = 0;
       void this.wakeLock.release();
     }
+  }
+
+  protected onRestartClick(): void {
+    clearTimeout(this.restartDisarmTimer);
+    if (!this.restartArmed()) {
+      this.restartArmed.set(true);
+      this.restartDisarmTimer = setTimeout(() => this.restartArmed.set(false), Suika.RestartConfirmMs);
+      return;
+    }
+    this.restartArmed.set(false);
+    this.game.unlockAudio();
+    this.game.restart();
+    this.accumulator = 0;
   }
 
   private readonly frame = (nowMs: number): void => {
