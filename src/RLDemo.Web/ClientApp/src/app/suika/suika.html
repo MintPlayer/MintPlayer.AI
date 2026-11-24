@@ -8,6 +8,16 @@
 <div class="modes">
   <button type="button" [color]="mode() === 'human' ? colors.primary : colors.secondary" (click)="setMode('human')">Play yourself</button>
   <button type="button" [color]="mode() === 'watch' ? colors.primary : colors.secondary" (click)="setMode('watch')">Watch AI</button>
+  @if (mode() === 'human') {
+    <!-- Outside the board (no stray drop-taps land on it) and two-step: the first tap only arms it. -->
+    <button
+      type="button"
+      class="fc-restart"
+      [color]="restartArmed() ? colors.danger : colors.secondary"
+      (click)="onRestartClick()"
+      [attr.aria-label]="restartArmed() ? 'Confirm: start a new game (current game is lost)' : 'New game'"
+    >{{ restartArmed() ? 'Tap again to restart' : 'New game' }}</button>
+  }
 </div>
 
 <div #stage class="fc-stage">
